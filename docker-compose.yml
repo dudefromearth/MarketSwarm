@@ -1,0 +1,123 @@
+# docker-compose.yml
+
+services:
+  # -------------------- Redis (primary) --------------------
+  main-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # -------------------- Redis (market) --------------------
+  market-redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  # -------------------- RSS Aggregator --------------------
+  rss_agg:
+    build:
+      context: ./services/rss_agg
+      args:
+        UID: "${UID:-10001}"
+        GID: "${GID:-10001}"
+    environment:
+      FEEDS_FILE: /app/config/feeds.txt
+      REDIS_URL: redis://main-redis:6379
+      FETCH_TIMEOUT_SEC: "8"
+      MAX_CONCURRENCY: "16"
+      USER_AGENT: "MarketSwarm/1.0 (+https://your.site/contact)"
+      # App runs once; wrapper below schedules repeats
+      POLL_INTERVAL_SEC: "0"
+      SCHEDULE_SEC: "300"          # every 5 minutes
+      PYTHONUNBUFFERED: "1"
+      NO_PROXY: "localhost,127.0.0.1,host.docker.internal,.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    volumes:
+      - ./services/rss_agg/config:/app/config:ro
+      - ./logs/services/rss_agg:/app/logs
+    dns: ["8.8.8.8", "8.8.4.4"]
+    depends_on:
+      main-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # ESCAPED $ -> $$ so Compose doesn't interpolate; the shell sees $SCHEDULE_SEC
+    command:
+      - sh
+      - -c
+      - |
+        : $${SCHEDULE_SEC:=300}
+        echo "rss_agg scheduler: $${SCHEDULE_SEC}s"
+        while true; do
+          python -m rss_agg || echo "rss_agg exited with $?"
+          sleep "$${SCHEDULE_SEC}"
+        done
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python - <<'PY'\nimport socket, urllib.request as u\nsocket.getaddrinfo('example.com',443)\nu.urlopen('https://example.com', timeout=6).read(1)\nprint('ok')\nPY"
+        ]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 10s
+
+  # -------------------- Polygon WS --------------------
+  polygon_ws:
+    build:
+      context: ./services/polygon_ws
+      args:
+        UID: "${UID:-10001}"
+        GID: "${GID:-10001}"
+    # no API key needed yet
+    environment:
+      LOG_LEVEL: "INFO"
+      HB_INTERVAL_SEC: "5"
+      HB_LABEL: "polygon_ws"
+      HB_COUNT: "0"            # 0 = run forever
+      NET_PROBE_ON_START: "1"  # run probe at container start
+      NET_TIMEOUT_SEC: "6"
+      # NET_HOST: "example.com"
+      # NET_URL:  "https://example.com"
+    volumes:
+      - ./logs/services/polygon_ws:/app/logs
+    dns: [ "8.8.8.8","8.8.4.4" ]   # optional; remove if your DNS is fine
+    depends_on:
+      main-redis:
+        condition: service_healthy
+      market-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # minimal health (just that the process is alive). Upgrade later to hit Polygon.
+    healthcheck:
+      test: [ "CMD-SHELL", "python - <<'PY'\nprint('ok')\nPY" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # -------------------- On-demand network diagnostics --------------------
+  netcheck:
+    image: curlimages/curl:8.11.1
+    network_mode: "service:rss_agg"
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        echo "TCP egress:"; curl -fsS --connect-timeout 3 -o /dev/null http://1.1.1.1 && echo OK
+        echo "DNS:"; nslookup example.com 1.1.1.1 >/dev/null && echo OK
+        echo "HTTPS:"; curl -fsSIL --connect-timeout 3 --max-time 6 https://example.com | head -n1
+        echo "RSS sample:"; curl -fsS --connect-timeout 6 --max-time 10 https://hnrss.org/frontpage | head -n3
+        echo "netcheck: OK"
+    profiles: ["diag"]

@@ -1,0 +1,23 @@
+{
+  "version": "1.0",
+  "core": {
+    "redis_main_url": "redis://main-redis:6379",
+    "redis_market_url": "redis://market-redis:6379?password=swarmpass",
+    "polygon_api_key": "",
+    "system_ts": 0
+  },
+  "heartbeats": {
+    "polygon_ws": {"id": "polygon_ws", "frequency": 5, "status": "active"},
+    "logger": {"id": "logger", "frequency": 10, "status": "active"},
+    "mesh_coordinator": {"id": "mesh_coordinator", "frequency": 3, "status": "active"},
+    "rss_agg": {"id": "rss_agg", "frequency": 30, "status": "active"},
+    "vexy_ai": {"id": "vexy_ai", "frequency": 15, "status": "active"}
+  },
+  "components": {
+    "polygon_ws": {"market_redis_setup": {"init_keys": ["market_prices", "spot_fetches"]}},
+    "logger": {"log_channels": ["heartbeats", "errors"]},
+    "mesh_coordinator": {"dispatch_queues": ["vexy_tasks", "rss_updates"]},
+    "rss_agg": {"feeds": ["https://feeds.bbci.co.uk/news/rss.xml", "https://feeds.reuters.com/reuters/topNews"], "poll_interval_min": 5},
+    "vexy_ai": {"model": "gpt-4o-mini", "prompt_template": "Analyze: {data}"}
+  }
+}
