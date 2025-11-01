@@ -1,0 +1,234 @@
+*2
+$6
+SELECT
+$1
+0
+*3
+$3
+SET
+$5
+truth
+$973
+{"version": "1.0", "core": {"redis_main_url": "redis://main-redis:6379", "redis_market_url": "redis://market-redis:6379?password=swarmpass", "polygon_api_key": "zqgWGLn564g9sidvCoDj4fPebmhHSTqy", "system_ts": 1761959360}, "heartbeats": {"polygon_ws": {"id": "polygon_ws", "frequency": 5, "status": "active"}, "logger": {"id": "logger", "frequency": 10, "status": "active"}, "mesh_coordinator": {"id": "mesh_coordinator", "frequency": 3, "status": "active"}, "rss_agg": {"id": "rss_agg", "frequency": 30, "status": "active"}, "vexy_ai": {"id": "vexy_ai", "frequency": 15, "status": "active"}}, "components": {"polygon_ws": {"market_redis_setup": {"init_keys": ["market_prices", "spot_fetches"]}}, "logger": {"log_channels": ["heartbeats", "errors"]}, "mesh_coordinator": {"dispatch_queues": ["vexy_tasks", "rss_updates"]}, "rss_agg": {"feeds": ["https://example.com/rss1"], "poll_interval_min": 5}, "vexy_ai": {"model": "gpt-4o-mini", "prompt_template": "Analyze: {data}"}}}
+*2
+$6
+SELECT
+$1
+0
+*3
+$3
+SET
+$5
+truth
+$1031
+{"version": "1.0", "core": {"redis_main_url": "redis://main-redis:6379", "redis_market_url": "redis://market-redis:6379?password=swarmpass", "polygon_api_key": "zqgWGLn564g9sidvCoDj4fPebmhHSTqy", "system_ts": 1761964147}, "heartbeats": {"polygon_ws": {"id": "polygon_ws", "frequency": 5, "status": "active"}, "logger": {"id": "logger", "frequency": 10, "status": "active"}, "mesh_coordinator": {"id": "mesh_coordinator", "frequency": 3, "status": "active"}, "rss_agg": {"id": "rss_agg", "frequency": 30, "status": "active"}, "vexy_ai": {"id": "vexy_ai", "frequency": 15, "status": "active"}}, "components": {"polygon_ws": {"market_redis_setup": {"init_keys": ["market_prices", "spot_fetches"]}}, "logger": {"log_channels": ["heartbeats", "errors"]}, "mesh_coordinator": {"dispatch_queues": ["vexy_tasks", "rss_updates"]}, "rss_agg": {"feeds": ["https://feeds.bbci.co.uk/news/rss.xml", "https://feeds.reuters.com/reuters/topNews"], "poll_interval_min": 5}, "vexy_ai": {"model": "gpt-4o-mini", "prompt_template": "Analyze: {data}"}}}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1111
+{"title": "Andrew's move out of Royal Lodge may not happen until new year", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Andrew's move out of Royal Lodge may not happen until new year"}, "summary": "There are also no plans to formally remove Andrew from the line of succession, the government says.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "There are also no plans to formally remove Andrew from the line of succession, the government says."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2emmdnw82yo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 20:22:09 GMT", "published_parsed": [2025, 10, 31, 20, 22, 9, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/8f4c/live/fc6a9b40-b696-11f0-b2a1-6f537f66f9aa.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1160
+{"title": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal"}, "summary": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cy8vrzpgxnro#0", "guidislink": false, "published": "Fri, 31 Oct 2025 19:21:48 GMT", "published_parsed": [2025, 10, 31, 19, 21, 48, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/4edd/live/2b3161c0-b679-11f0-8e54-b35e49a65740.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1140
+{"title": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane"}, "summary": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c0jdd186l0go#0", "guidislink": false, "published": "Sat, 01 Nov 2025 02:10:13 GMT", "published_parsed": [2025, 11, 1, 2, 10, 13, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/5347/live/ffb40270-b6ad-11f0-80fd-e396b418a68d.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1152
+{"title": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life"}, "summary": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cvgd1zk5nrgo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 15:51:14 GMT", "published_parsed": [2025, 10, 31, 15, 51, 14, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/2cf8/live/5e13f9d0-af4f-11f0-8da8-177c6b913c3a.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1169
+{"title": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars"}, "summary": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2lp72n0p0vo#0", "guidislink": false, "published": "Sat, 01 Nov 2025 00:29:03 GMT", "published_parsed": [2025, 11, 1, 0, 29, 3, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/f444/live/89146950-b65f-11f0-aa13-0b0479f6f42a.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1111
+{"title": "Andrew's move out of Royal Lodge may not happen until new year", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Andrew's move out of Royal Lodge may not happen until new year"}, "summary": "There are also no plans to formally remove Andrew from the line of succession, the government says.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "There are also no plans to formally remove Andrew from the line of succession, the government says."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2emmdnw82yo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 20:22:09 GMT", "published_parsed": [2025, 10, 31, 20, 22, 9, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/8f4c/live/fc6a9b40-b696-11f0-b2a1-6f537f66f9aa.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1160
+{"title": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal"}, "summary": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cy8vrzpgxnro#0", "guidislink": false, "published": "Fri, 31 Oct 2025 19:21:48 GMT", "published_parsed": [2025, 10, 31, 19, 21, 48, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/4edd/live/2b3161c0-b679-11f0-8e54-b35e49a65740.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1140
+{"title": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane"}, "summary": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c0jdd186l0go#0", "guidislink": false, "published": "Sat, 01 Nov 2025 02:10:13 GMT", "published_parsed": [2025, 11, 1, 2, 10, 13, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/5347/live/ffb40270-b6ad-11f0-80fd-e396b418a68d.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1152
+{"title": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life"}, "summary": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cvgd1zk5nrgo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 15:51:14 GMT", "published_parsed": [2025, 10, 31, 15, 51, 14, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/2cf8/live/5e13f9d0-af4f-11f0-8da8-177c6b913c3a.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1169
+{"title": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars"}, "summary": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2lp72n0p0vo#0", "guidislink": false, "published": "Sat, 01 Nov 2025 00:29:03 GMT", "published_parsed": [2025, 11, 1, 0, 29, 3, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/f444/live/89146950-b65f-11f0-aa13-0b0479f6f42a.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1111
+{"title": "Andrew's move out of Royal Lodge may not happen until new year", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Andrew's move out of Royal Lodge may not happen until new year"}, "summary": "There are also no plans to formally remove Andrew from the line of succession, the government says.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "There are also no plans to formally remove Andrew from the line of succession, the government says."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2emmdnw82yo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 20:22:09 GMT", "published_parsed": [2025, 10, 31, 20, 22, 9, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/8f4c/live/fc6a9b40-b696-11f0-b2a1-6f537f66f9aa.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1160
+{"title": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal"}, "summary": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cy8vrzpgxnro#0", "guidislink": false, "published": "Fri, 31 Oct 2025 19:21:48 GMT", "published_parsed": [2025, 10, 31, 19, 21, 48, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/4edd/live/2b3161c0-b679-11f0-8e54-b35e49a65740.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1140
+{"title": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane"}, "summary": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c0jdd186l0go#0", "guidislink": false, "published": "Sat, 01 Nov 2025 02:10:13 GMT", "published_parsed": [2025, 11, 1, 2, 10, 13, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/5347/live/ffb40270-b6ad-11f0-80fd-e396b418a68d.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1152
+{"title": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life"}, "summary": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cvgd1zk5nrgo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 15:51:14 GMT", "published_parsed": [2025, 10, 31, 15, 51, 14, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/2cf8/live/5e13f9d0-af4f-11f0-8da8-177c6b913c3a.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1169
+{"title": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars"}, "summary": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2lp72n0p0vo#0", "guidislink": false, "published": "Sat, 01 Nov 2025 00:29:03 GMT", "published_parsed": [2025, 11, 1, 0, 29, 3, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/f444/live/89146950-b65f-11f0-aa13-0b0479f6f42a.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1111
+{"title": "Andrew's move out of Royal Lodge may not happen until new year", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Andrew's move out of Royal Lodge may not happen until new year"}, "summary": "There are also no plans to formally remove Andrew from the line of succession, the government says.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "There are also no plans to formally remove Andrew from the line of succession, the government says."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2emmdnw82yo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 20:22:09 GMT", "published_parsed": [2025, 10, 31, 20, 22, 9, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/8f4c/live/fc6a9b40-b696-11f0-b2a1-6f537f66f9aa.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1160
+{"title": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal"}, "summary": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cy8vrzpgxnro#0", "guidislink": false, "published": "Fri, 31 Oct 2025 19:21:48 GMT", "published_parsed": [2025, 10, 31, 19, 21, 48, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/4edd/live/2b3161c0-b679-11f0-8e54-b35e49a65740.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1140
+{"title": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane"}, "summary": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c0jdd186l0go#0", "guidislink": false, "published": "Sat, 01 Nov 2025 02:10:13 GMT", "published_parsed": [2025, 11, 1, 2, 10, 13, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/5347/live/ffb40270-b6ad-11f0-80fd-e396b418a68d.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1152
+{"title": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life"}, "summary": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cvgd1zk5nrgo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 15:51:14 GMT", "published_parsed": [2025, 10, 31, 15, 51, 14, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/2cf8/live/5e13f9d0-af4f-11f0-8da8-177c6b913c3a.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1169
+{"title": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars"}, "summary": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2lp72n0p0vo#0", "guidislink": false, "published": "Sat, 01 Nov 2025 00:29:03 GMT", "published_parsed": [2025, 11, 1, 0, 29, 3, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/f444/live/89146950-b65f-11f0-aa13-0b0479f6f42a.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1111
+{"title": "Andrew's move out of Royal Lodge may not happen until new year", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Andrew's move out of Royal Lodge may not happen until new year"}, "summary": "There are also no plans to formally remove Andrew from the line of succession, the government says.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "There are also no plans to formally remove Andrew from the line of succession, the government says."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2emmdnw82yo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 20:22:09 GMT", "published_parsed": [2025, 10, 31, 20, 22, 9, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/8f4c/live/fc6a9b40-b696-11f0-b2a1-6f537f66f9aa.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1160
+{"title": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal"}, "summary": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cy8vrzpgxnro#0", "guidislink": false, "published": "Fri, 31 Oct 2025 19:21:48 GMT", "published_parsed": [2025, 10, 31, 19, 21, 48, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/4edd/live/2b3161c0-b679-11f0-8e54-b35e49a65740.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1140
+{"title": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane"}, "summary": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c0jdd186l0go#0", "guidislink": false, "published": "Sat, 01 Nov 2025 02:10:13 GMT", "published_parsed": [2025, 11, 1, 2, 10, 13, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/5347/live/ffb40270-b6ad-11f0-80fd-e396b418a68d.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1152
+{"title": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life"}, "summary": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cvgd1zk5nrgo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 15:51:14 GMT", "published_parsed": [2025, 10, 31, 15, 51, 14, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/2cf8/live/5e13f9d0-af4f-11f0-8da8-177c6b913c3a.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1169
+{"title": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars"}, "summary": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2lp72n0p0vo#0", "guidislink": false, "published": "Sat, 01 Nov 2025 00:29:03 GMT", "published_parsed": [2025, 11, 1, 0, 29, 3, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/f444/live/89146950-b65f-11f0-aa13-0b0479f6f42a.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1111
+{"title": "Andrew's move out of Royal Lodge may not happen until new year", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Andrew's move out of Royal Lodge may not happen until new year"}, "summary": "There are also no plans to formally remove Andrew from the line of succession, the government says.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "There are also no plans to formally remove Andrew from the line of succession, the government says."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2emmdnw82yo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2emmdnw82yo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 20:22:09 GMT", "published_parsed": [2025, 10, 31, 20, 22, 9, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/8f4c/live/fc6a9b40-b696-11f0-b2a1-6f537f66f9aa.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1160
+{"title": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Why Sarah Ferguson, Beatrice and Eugenie can't escape the taint of family scandal"}, "summary": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "The scandal engulfing Andrew is of his own making but has had a profound impact on his immediate family."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cy8vrzpgxnro?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cy8vrzpgxnro#0", "guidislink": false, "published": "Fri, 31 Oct 2025 19:21:48 GMT", "published_parsed": [2025, 10, 31, 19, 21, 48, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/4edd/live/2b3161c0-b679-11f0-8e54-b35e49a65740.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1140
+{"title": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Scavenging for food in streets - desperation takes hold in Jamaica after hurricane"}, "summary": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "People in Black River haven't seen any aid and told the BBC that they are fighting to survive."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c0jdd186l0go?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c0jdd186l0go#0", "guidislink": false, "published": "Sat, 01 Nov 2025 02:10:13 GMT", "published_parsed": [2025, 11, 1, 2, 10, 13, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/5347/live/ffb40270-b6ad-11f0-80fd-e396b418a68d.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1152
+{"title": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Ex-sergeant major jailed for six months for sexual assault of soldier who took her own life"}, "summary": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "Michael Webber admitted sexually assaulting Jaysley Beck, 19, who later took her own life."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/cvgd1zk5nrgo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/cvgd1zk5nrgo#0", "guidislink": false, "published": "Fri, 31 Oct 2025 15:51:14 GMT", "published_parsed": [2025, 10, 31, 15, 51, 14, 4, 304, 0], "media_thumbnail": [{"width": "240", "height": "135", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/2cf8/live/5e13f9d0-af4f-11f0-8da8-177c6b913c3a.jpg"}], "href": ""}
+*3
+$5
+LPUSH
+$9
+rss_queue
+$1169
+{"title": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars", "title_detail": {"type": "text/plain", "language": null, "base": "", "value": "Strictly pros transform into ghouls for Halloween week - and a Celebrity Traitor guest stars"}, "summary": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman.", "summary_detail": {"type": "text/html", "language": null, "base": "", "value": "It comes as speculation continues over who will replace presenters Tess Daly and Claudia Winkleman."}, "links": [{"rel": "alternate", "type": "text/html", "href": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss"}], "link": "https://www.bbc.com/news/articles/c2lp72n0p0vo?at_medium=RSS&at_campaign=rss", "id": "https://www.bbc.com/news/articles/c2lp72n0p0vo#0", "guidislink": false, "published": "Sat, 01 Nov 2025 00:29:03 GMT", "published_parsed": [2025, 11, 1, 0, 29, 3, 5, 305, 0], "media_thumbnail": [{"width": "240", "height": "134", "url": "https://ichef.bbci.co.uk/ace/standard/240/cpsprodpb/f444/live/89146950-b65f-11f0-aa13-0b0479f6f42a.jpg"}], "href": ""}
