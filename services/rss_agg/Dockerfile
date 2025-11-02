@@ -12,13 +12,15 @@ RUN set -eux; \
     useradd -m -u "${UID}" -g "${grp}" -s /bin/bash app
 
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY services/rss_agg/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-COPY src ./src
-ENV PYTHONPATH=/app/src
+# bring in code from repo root context
+COPY services/rss_agg/src /app/src
+COPY shared /app/shared
+ENV PYTHONPATH=/app/src:/app/shared
 
 USER app
 ENV PYTHONUNBUFFERED=1
 ENTRYPOINT ["/usr/bin/tini","-g","-e","143","--"]
-CMD ["python","-u","-m","rss_agg"]
+CMD ["python","-u","-m","ingestor"]

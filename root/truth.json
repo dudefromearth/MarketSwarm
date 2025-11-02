@@ -7,35 +7,64 @@
     "system_ts": 0
   },
   "heartbeats": {
-    "polygon_ws": {"id": "polygon_ws", "frequency": 5, "status": "active"},
-    "logger": {"id": "logger", "frequency": 10, "status": "active"},
-    "mesh_coordinator": {"id": "mesh_coordinator", "frequency": 3, "status": "active"},
-    "rss_agg": {"id": "rss_agg", "frequency": 30, "status": "active"},
-    "vexy_ai": {"id": "vexy_ai", "frequency": 15, "status": "active"}
+    "massive": { "id": "massive", "frequency": 5, "status": "active" },
+    "logger": { "id": "logger", "frequency": 10, "status": "active" },
+    "mesh_coordinator": { "id": "mesh_coordinator", "frequency": 3, "status": "active" },
+    "rss_agg": { "id": "rss_agg", "frequency": 30, "status": "active" },
+    "vexy_ai": { "id": "vexy_ai", "frequency": 15, "status": "active" }
   },
   "components": {
-    "polygon_ws": {"market_redis_setup": {"init_keys": ["market_prices", "spot_fetches"]}},
-    "logger": {"log_channels": ["heartbeats", "errors"]},
-    "mesh_coordinator": {"dispatch_queues": ["vexy_tasks", "rss_updates"]},
-
-    "rss_agg": {
-      "poll_interval_min": 5,
-      "enabled_categories": ["tech","world"],          
-      "categories": {
-        "tech": [
-          "https://hnrss.org/frontpage",
-          "https://feeds.arstechnica.com/arstechnica/index"
-        ],
-        "world": [
-          "https://feeds.bbci.co.uk/news/rss.xml",
-          "https://feeds.reuters.com/reuters/topNews"
-        ],
-        "macro": [
-          "https://www.federalreserve.gov/feeds/press_all.xml"
-        ]
-      }
+    "massive": {
+      "meta": {
+        "name": "Massive",
+        "description": "Market data gateway (formerly Polygon): REST/WebSocket to ingest market data and publish to Market Redis.",
+        "service_id": "massive"
+      },
+      "market_redis_setup": { "init_keys": ["market_prices", "spot_fetches"] }
     },
 
-    "vexy_ai": {"model": "gpt-4o-mini", "prompt_template": "Analyze: {data}"}
+    "logger": {
+      "meta": {
+        "name": "Logger",
+        "description": "Central log/telemetry collector and channel forwarder.",
+        "service_id": "logger"
+      },
+      "log_channels": ["heartbeats", "errors"]
+    },
+
+    "mesh_coordinator": {
+      "meta": {
+        "name": "Mesh Coordinator",
+        "description": "Dispatch coordinator for task queues between services.",
+        "service_id": "mesh_coordinator"
+      },
+      "dispatch_queues": ["vexy_tasks", "rss_updates"]
+    },
+
+    "rss_agg": {
+  "meta": { "name": "RSS Aggregator", "service_id": "rss_agg", "description": "Fetches feeds and publishes items" },
+  "logging": {
+    "stream": "logs:events",
+    "channel": "logs:pub",
+    "maxlen": 20000
+  },
+  "poll_interval_min": 5,
+  "enabled_categories": ["tech","world"],
+  "categories": {
+    "tech":   ["https://hnrss.org/frontpage","https://feeds.arstechnica.com/arstechnica/index"],
+    "world":  ["https://feeds.bbci.co.uk/news/rss.xml","https://feeds.reuters.com/reuters/topNews"],
+    "macro":  ["https://www.federalreserve.gov/feeds/press_all.xml"]
+  }
+},
+
+    "vexy_ai": {
+      "meta": {
+        "name": "Vexy AI",
+        "description": "Consumes RSS items, produces summaries/analysis back to Redis.",
+        "service_id": "vexy_ai"
+      },
+      "model": "gpt-4o-mini",
+      "prompt_template": "Analyze: {data}"
+    }
   }
 }

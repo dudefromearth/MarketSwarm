@@ -1,40 +1,18 @@
 # docker-compose.yml
 
 services:
- # -------------------- One Shoot Bootstrap --------------------
-  truth_sync:
-    image: python:3.12-slim
-    working_dir: /app
-    env_file: .env
-    volumes:
-      - .:/app:ro
-      - ${TRUTH_FILE}:/app/truth.json:ro
-      - ${TRUTH_SECRETS_FILE}:/app/truth_secrets.json:ro
-    command:
-      - python
-      - -u
-      - load_truth.py
-      - --redis-url
-      - ${BOOTSTRAP_REDIS_URL}
-      - --truth
-      - /app/truth.json
-      - --secrets
-      - /app/truth_secrets.json
-    depends_on:
-      main-redis:
-        condition: service_healthy
-    restart: "no"
-
   # -------------------- Redis (primary) --------------------
   main-redis:
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    command: [ "redis-server", "--appendonly", "yes" ]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 5s
+    ports:
+      - "127.0.0.1:6379:6379"   # host-only bind for admin_console
     restart: unless-stopped
 
   # -------------------- Redis (market) --------------------
@@ -51,27 +29,45 @@ services:
 
   # -------------------- RSS Aggregator --------------------
   rss_agg:
+    dns: [ "8.8.8.8", "1.1.1.1" ]
     build:
-      context: ./services/rss_agg
+      context: .                                # include shared/ in build
+      dockerfile: services/rss_agg/Dockerfile
       args:
         UID: "${UID:-10001}"
         GID: "${GID:-10001}"
+
     environment:
-      REDIS_URL: redis://main-redis:6379
-      FEEDS_FILE: /app/config/feeds.txt
+      # identity
+      SERVICE_ID: "rss_agg"
+      MODULE_NAME: "ingestor"
+      LOG_LEVEL: "INFO"
+
+      # ---- Logit mirroring → Redis (ON) ----
+      LOG_MIRROR_ENABLE: "1"
+      LOG_REDIS_URL: "redis://main-redis:6379"
+      LOG_KEY: "logs:rss_agg"          # list key to tail
+      LOG_TTL_SEC: "86400"             # 24h retention
+      LOG_LIST_MAX: "2000"             # keep last 2k lines
+      # optional stream (disabled by default)
+      # LOG_STREAM: "logs:stream:rss_agg"
+
+      # ---- app config ----
+      REDIS_URL: "redis://main-redis:6379"
+      TRUTH_REDIS_KEY: "truth:doc"
       SCHEDULE_SEC: "600"
       FETCH_TIMEOUT_SEC: "8"
       MAX_PER_FEED: "50"
       USER_AGENT: "MarketSwarm/1.0 (+https://your.site/contact)"
-      LOG_LEVEL: "INFO"
-    volumes:
-      - ./services/ingestor/config:/app/config:ro
+      HEARTBEAT_CHANNEL: "heartbeat"
+
     depends_on:
       main-redis:
         condition: service_healthy
     restart: unless-stopped
+
     healthcheck:
-      test: [ "CMD-SHELL", "python - <<'PY'\nprint('ok')\nPY" ]
+      test: [ "CMD-SHELL", "python -c \"import importlib; importlib.import_module('ingestor'); print('ok')\"" ]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -100,7 +96,7 @@ services:
       timeout: 5s
       retries: 3
 
-  # -------------------- Polygon WS --------------------
+  # -------------------- Massive --------------------
   massive:
     build:
       context: services/massive
@@ -148,3 +144,49 @@ services:
         echo "RSS sample:"; curl -fsS --connect-timeout 6 --max-time 10 https://hnrss.org/frontpage | head -n3
         echo "netcheck: OK"
     profiles: ["diag"]
+
+  # -------------------- Mesh Coordinator --------------------
+  mesh_coordinator:
+    build: ./services/mesh_coordinator
+    image: mesh-coordinator
+    environment:
+      SERVICE_ID: "mesh_coordinator"
+      REDIS_MAIN_URL: "redis://main-redis:6379"
+    depends_on:
+      main-redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # -------------------- Log Analyzer --------------------
+  logger:
+    build:
+      context: ./services/logger
+    environment:
+      SERVICE_ID: "logger"
+      REDIS_MAIN_URL: "redis://main-redis:6379"
+      HEARTBEAT_CHANNEL: "heartbeats"
+      HEARTBEAT_INTERVAL: "10"
+    depends_on:
+      main-redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  play-redis:
+    image: redis:7-alpine
+    command: [ "redis-server", "--appendonly", "yes" ]
+    ports:
+      - "127.0.0.1:6400:6379"   # host-only exposure on 6400
+    volumes:
+      - play-redis-data:/data   # persistent (see ephemeral option below)
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    profiles: [ "play" ]          # only runs when you ask for the 'play' profile
+
+  # (at the bottom of the compose file, if not already present)
+  volumes:
+  play-redis-data: {}

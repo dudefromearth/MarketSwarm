@@ -2,3 +2,4 @@ venv/
 *.pyc
 redis-data/
 /root/truth_secrets.json
+.env.admin

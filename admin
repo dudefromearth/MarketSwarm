@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# MarketSwarm admin wrapper — prefers project-local .venv
+
+set -euo pipefail
+[ "${MS_DEBUG:-0}" = "1" ] && set -x
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+# --- load admin-only env (no UID/GID) ---
+load_env_file() {
+  local file="$1"
+  [ -f "$file" ] || return 0
+  local allow='^(TRUTH_FILE|TRUTH_SECRETS_FILE|BOOTSTRAP_REDIS_URL|TRUTH_REDIS_KEY|MS_DEBUG)='
+  while IFS= read -r line; do
+    [[ "$line" =~ ^\s*# ]] && continue
+    [[ "$line" =~ $allow ]] || continue
+    key="${line%%=*}"; val="${line#*=}"
+    [[ "$val" == \"*\" && "$val" == *\" ]] && val="${val:1:-1}"
+    export "$key=$val"
+  done < "$file"
+}
+load_env_file ".env.admin"
+[ -f ".env.admin" ] || load_env_file ".env"
+
+# --- choose python: prefer project-local .venv first ---
+if [ -x "$ROOT/.venv/bin/python" ]; then
+  PY="$ROOT/.venv/bin/python"
+elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+  PY="$VIRTUAL_ENV/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  PY="$(command -v python3)"
+else
+  PY="$(command -v python)"
+fi
+
+AC="$ROOT/admin_console.py"
+[ -f "$AC" ] || { echo "admin_console.py not found at $AC" >&2; exit 1; }
+
+run() {
+  BOOTSTRAP_REDIS_URL="${BOOTSTRAP_REDIS_URL:-redis://main-redis:6379}" \
+  TRUTH_REDIS_KEY="${TRUTH_REDIS_KEY:-truth:doc}" \
+  "$PY" "$AC" "$@"
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  # Create local venv and install admin deps
+  setup)
+    if [ ! -x "$ROOT/.venv/bin/python" ]; then
+      python3 -m venv "$ROOT/.venv"
+    fi
+    "$ROOT/.venv/bin/python" -m pip install -U pip
+    if [ -f "$ROOT/admin.requirements.txt" ]; then
+      "$ROOT/.venv/bin/python" -m pip install -r "$ROOT/admin.requirements.txt"
+    else
+      "$ROOT/.venv/bin/python" -m pip install "redis>=5.0"
+    fi
+    echo "Local admin python: $ROOT/.venv/bin/python"
+    exit 0
+    ;;
+  print-python)
+    echo "$PY"; exit 0 ;;
+  load-truth)
+    args=(load-truth)
+    want_truth=1; for a in "$@"; do [ "$a" = "--truth" ] && want_truth=0; done
+    [ $want_truth -eq 1 ] && [ -n "${TRUTH_FILE:-}" ] && args+=(--truth "$TRUTH_FILE")
+    want_secrets=1; for a in "$@"; do [ "$a" = "--secrets" ] && want_secrets=0; done
+    [ $want_secrets -eq 1 ] && [ -n "${TRUTH_SECRETS_FILE:-}" ] && args+=(--secrets "$TRUTH_SECRETS_FILE")
+    run "${args[@]}" "$@"
+    ;;
+  components|register|services|show|keys|help)
+    run "$cmd" "$@"
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    run help
+    exit 2
+    ;;
+esac
