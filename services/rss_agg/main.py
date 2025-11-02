@@ -8,7 +8,7 @@ async def run_mesh():
     while True:
         tasks = await redis.blpop(['rss_tasks'], timeout=1)
         if tasks:
-            await redis.publish('rss_agg', tasks[1])  # Dispatch stub
+            await redis.publish('ingestor', tasks[1])  # Dispatch stub
             print(f"Dispatched: {tasks[1]}")
         await asyncio.sleep(0.1)
 

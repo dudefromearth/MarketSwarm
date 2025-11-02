@@ -2,7 +2,7 @@ import asyncio
 import os
 
 from heartbeat import start_heartbeat
-from root.common.logger import run_logger
+from shared.logger import run_logger
 
 async def main_async():
     print("Logger: Starting async...")

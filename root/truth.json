@@ -17,7 +17,25 @@
     "polygon_ws": {"market_redis_setup": {"init_keys": ["market_prices", "spot_fetches"]}},
     "logger": {"log_channels": ["heartbeats", "errors"]},
     "mesh_coordinator": {"dispatch_queues": ["vexy_tasks", "rss_updates"]},
-    "rss_agg": {"feeds": ["https://feeds.bbci.co.uk/news/rss.xml", "https://feeds.reuters.com/reuters/topNews"], "poll_interval_min": 5},
+
+    "rss_agg": {
+      "poll_interval_min": 5,
+      "enabled_categories": ["tech","world"],          
+      "categories": {
+        "tech": [
+          "https://hnrss.org/frontpage",
+          "https://feeds.arstechnica.com/arstechnica/index"
+        ],
+        "world": [
+          "https://feeds.bbci.co.uk/news/rss.xml",
+          "https://feeds.reuters.com/reuters/topNews"
+        ],
+        "macro": [
+          "https://www.federalreserve.gov/feeds/press_all.xml"
+        ]
+      }
+    },
+
     "vexy_ai": {"model": "gpt-4o-mini", "prompt_template": "Analyze: {data}"}
   }
 }

@@ -8,7 +8,7 @@ def env(n: str, d: str | None = None) -> str | None:
 
 def main() -> int:
     setup_logging(level=env("LOG_LEVEL", "INFO"))
-    log = logging.getLogger("rss_agg")
+    log = logging.getLogger("ingestor")
 
     feeds_file    = env("FEEDS_FILE", "/app/config/feeds.txt")
     redis_url     = env("REDIS_URL", "redis://main-redis:6379")

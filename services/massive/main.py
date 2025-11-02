@@ -1,4 +1,4 @@
-# services/polygon_ws/main.py
+# services/massive/main.py
 from __future__ import annotations
 import json, logging, os, signal, sys, time, socket
 from urllib import request, error as urlerror
@@ -14,7 +14,7 @@ def setup_logging() -> logging.Logger:
         level=getattr(logging, level, logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s - %(message)s",
     )
-    return logging.getLogger("polygon_ws")
+    return logging.getLogger("massive")
 
 # ---------------- graceful stop ----------------
 _stop = False
@@ -138,7 +138,7 @@ def main() -> int:
 
     # Heartbeat knobs
     interval   = float(os.getenv("HB_INTERVAL_SEC", "5"))
-    label      = os.getenv("HB_LABEL", "polygon_ws")
+    label      = os.getenv("HB_LABEL", "massive")
     hb_count_s = os.getenv("HB_COUNT", "")
     count      = None if hb_count_s in ("", "0") else max(1, int(hb_count_s))
 

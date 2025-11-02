@@ -8,7 +8,7 @@ import feedparser, redis, requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-log = logging.getLogger("rss_agg")
+log = logging.getLogger("ingestor")
 
 def setup_logging(level: str | int = "INFO") -> None:
     lvl = getattr(logging, str(level).upper(), logging.INFO) if isinstance(level, str) else level

@@ -24,11 +24,11 @@ def start_heartbeat():
     try:
         truth = json.loads(r.get('truth') or '{}')
         hb_config = truth.get('heartbeats', {}).get('common', {})
-        identity = hb_config.get('id', 'polygon_ws')
+        identity = hb_config.get('id', 'massive')
         frequency = hb_config.get('frequency', 5)
     except Exception as e:
         print(f"Config error: {e} – fallback")
-        identity = "polygon_ws"
+        identity = "massive"
         frequency = 10
 
     def heartbeat():

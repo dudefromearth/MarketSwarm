@@ -1,6 +1,30 @@
 # docker-compose.yml
 
 services:
+ # -------------------- One Shoot Bootstrap --------------------
+  truth_sync:
+    image: python:3.12-slim
+    working_dir: /app
+    env_file: .env
+    volumes:
+      - .:/app:ro
+      - ${TRUTH_FILE}:/app/truth.json:ro
+      - ${TRUTH_SECRETS_FILE}:/app/truth_secrets.json:ro
+    command:
+      - python
+      - -u
+      - load_truth.py
+      - --redis-url
+      - ${BOOTSTRAP_REDIS_URL}
+      - --truth
+      - /app/truth.json
+      - --secrets
+      - /app/truth_secrets.json
+    depends_on:
+      main-redis:
+        condition: service_healthy
+    restart: "no"
+
   # -------------------- Redis (primary) --------------------
   main-redis:
     image: redis:7-alpine
@@ -33,50 +57,53 @@ services:
         UID: "${UID:-10001}"
         GID: "${GID:-10001}"
     environment:
-      FEEDS_FILE: /app/config/feeds.txt
       REDIS_URL: redis://main-redis:6379
+      FEEDS_FILE: /app/config/feeds.txt
+      SCHEDULE_SEC: "600"
       FETCH_TIMEOUT_SEC: "8"
-      MAX_CONCURRENCY: "16"
+      MAX_PER_FEED: "50"
       USER_AGENT: "MarketSwarm/1.0 (+https://your.site/contact)"
-      # App runs once; wrapper below schedules repeats
-      POLL_INTERVAL_SEC: "0"
-      SCHEDULE_SEC: "300"          # every 5 minutes
-      PYTHONUNBUFFERED: "1"
-      NO_PROXY: "localhost,127.0.0.1,host.docker.internal,.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+      LOG_LEVEL: "INFO"
     volumes:
-      - ./services/rss_agg/config:/app/config:ro
-      - ./logs/services/rss_agg:/app/logs
-    dns: ["8.8.8.8", "8.8.4.4"]
+      - ./services/ingestor/config:/app/config:ro
     depends_on:
       main-redis:
         condition: service_healthy
     restart: unless-stopped
-    # ESCAPED $ -> $$ so Compose doesn't interpolate; the shell sees $SCHEDULE_SEC
-    command:
-      - sh
-      - -c
-      - |
-        : $${SCHEDULE_SEC:=300}
-        echo "rss_agg scheduler: $${SCHEDULE_SEC}s"
-        while true; do
-          python -m rss_agg || echo "rss_agg exited with $?"
-          sleep "$${SCHEDULE_SEC}"
-        done
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "python - <<'PY'\nimport socket, urllib.request as u\nsocket.getaddrinfo('example.com',443)\nu.urlopen('https://example.com', timeout=6).read(1)\nprint('ok')\nPY"
-        ]
+      test: [ "CMD-SHELL", "python - <<'PY'\nprint('ok')\nPY" ]
       interval: 30s
-      timeout: 8s
+      timeout: 5s
       retries: 3
-      start_period: 10s
+
+# -------------------- Vexu  AI --------------------
+  vexy_ai:
+    build:
+      context: ./services/vexy_ai
+      args:
+        UID: "${UID:-10001}"
+        GID: "${GID:-10001}"
+    environment:
+      REDIS_URL: redis://main-redis:6379
+      RSS_STREAM: rss:queue
+      RSS_GROUP: vexy
+      RSS_CONSUMER: vexy-1
+      RSS_BLOCK_MS: "5000"
+      LOG_LEVEL: "INFO"
+    depends_on:
+      main-redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "python - <<'PY'\nprint('ok')\nPY" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   # -------------------- Polygon WS --------------------
-  polygon_ws:
+  massive:
     build:
-      context: ./services/polygon_ws
+      context: services/massive
       args:
         UID: "${UID:-10001}"
         GID: "${GID:-10001}"
@@ -84,14 +111,14 @@ services:
     environment:
       LOG_LEVEL: "INFO"
       HB_INTERVAL_SEC: "5"
-      HB_LABEL: "polygon_ws"
+      HB_LABEL: "massive"
       HB_COUNT: "0"            # 0 = run forever
       NET_PROBE_ON_START: "1"  # run probe at container start
       NET_TIMEOUT_SEC: "6"
       # NET_HOST: "example.com"
       # NET_URL:  "https://example.com"
     volumes:
-      - ./logs/services/polygon_ws:/app/logs
+      - ./logs/services/massive:/app/logs
     dns: [ "8.8.8.8","8.8.4.4" ]   # optional; remove if your DNS is fine
     depends_on:
       main-redis:
@@ -109,7 +136,7 @@ services:
   # -------------------- On-demand network diagnostics --------------------
   netcheck:
     image: curlimages/curl:8.11.1
-    network_mode: "service:rss_agg"
+    network_mode: "service:ingestor"
     command:
       - sh
       - -c
