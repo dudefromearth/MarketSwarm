@@ -1,26 +1,12 @@
 FROM python:3.12-slim
 
-ARG UID=10001
-ARG GID=10001
-
-RUN apt-get update && apt-get install -y --no-install-recommends tini ca-certificates \
-  && rm -rf /var/lib/apt/lists/*
-
-RUN set -eux; \
-    if getent group "${GID}" >/dev/null; then grp="$(getent group "${GID}" | cut -d: -f1)"; \
-    else grp=app; groupadd -g "${GID}" "${grp}"; fi; \
-    useradd -m -u "${UID}" -g "${grp}" -s /bin/bash app
-
 WORKDIR /app
-COPY services/rss_agg/requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# bring in code from repo root context
-COPY services/rss_agg/src /app/src
-COPY shared /app/shared
-ENV PYTHONPATH=/app/src:/app/shared
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-USER app
-ENV PYTHONUNBUFFERED=1
-ENTRYPOINT ["/usr/bin/tini","-g","-e","143","--"]
-CMD ["python","-u","-m","ingestor"]
+COPY . .
+
+ENV PYTHONPATH=/app
+
+CMD ["python", "main.py"]

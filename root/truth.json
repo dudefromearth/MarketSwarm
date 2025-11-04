@@ -1,70 +1,49 @@
 {
-  "version": "1.0",
-  "core": {
-    "redis_main_url": "redis://main-redis:6379",
-    "redis_market_url": "redis://market-redis:6379?password=swarmpass",
-    "polygon_api_key": "",
-    "system_ts": 0
-  },
-  "heartbeats": {
-    "massive": { "id": "massive", "frequency": 5, "status": "active" },
-    "logger": { "id": "logger", "frequency": 10, "status": "active" },
-    "mesh_coordinator": { "id": "mesh_coordinator", "frequency": 3, "status": "active" },
-    "rss_agg": { "id": "rss_agg", "frequency": 30, "status": "active" },
-    "vexy_ai": { "id": "vexy_ai", "frequency": 15, "status": "active" }
-  },
+  "version": "1.2",
+  "description": "Truth: Shared access/API for ingest (RSS Agg/Massive to Market Redis), Vexy augmentation.",
   "components": {
+    "rss_agg": {
+      "meta": {
+        "name": "Feed Aggregator",
+        "description": "Ingests RSS to self-describing Market Redis (rss:queue for Vexy/SSE)"
+      },
+      "access_points": {
+        "publish_to": "market-redis",
+        "queue_key": "rss:queue",
+        "index_key": "rss:index",
+        "item_template": "rss:item:{uid}",
+        "format_key": "rss:format"
+      },
+      "dependencies": [],
+      "internal_config": "feeds.json"
+    },
     "massive": {
       "meta": {
-        "name": "Massive",
-        "description": "Market data gateway (formerly Polygon): REST/WebSocket to ingest market data and publish to Market Redis.",
-        "service_id": "massive"
+        "name": "Market Data Ingestor",
+        "description": "Ingests Massive to self-describing Market Redis (market:tick for Vexy/SSE)"
       },
-      "market_redis_setup": { "init_keys": ["market_prices", "spot_fetches"] }
-    },
-
-    "logger": {
-      "meta": {
-        "name": "Logger",
-        "description": "Central log/telemetry collector and channel forwarder.",
-        "service_id": "logger"
+      "access_points": {
+        "publish_to": "market-redis",
+        "tick_key": "market:tick:{symbol}",
+        "snapshot_key": "market:snapshot:{symbol}",
+        "format_key": "market:format"
       },
-      "log_channels": ["heartbeats", "errors"]
+      "dependencies": [],
+      "api_key": "[POLYGON_API_KEY]"
     },
-
-    "mesh_coordinator": {
-      "meta": {
-        "name": "Mesh Coordinator",
-        "description": "Dispatch coordinator for task queues between services.",
-        "service_id": "mesh_coordinator"
-      },
-      "dispatch_queues": ["vexy_tasks", "rss_updates"]
-    },
-
-    "rss_agg": {
-  "meta": { "name": "RSS Aggregator", "service_id": "rss_agg", "description": "Fetches feeds and publishes items" },
-  "logging": {
-    "stream": "logs:events",
-    "channel": "logs:pub",
-    "maxlen": 20000
-  },
-  "poll_interval_min": 5,
-  "enabled_categories": ["tech","world"],
-  "categories": {
-    "tech":   ["https://hnrss.org/frontpage","https://feeds.arstechnica.com/arstechnica/index"],
-    "world":  ["https://feeds.bbci.co.uk/news/rss.xml","https://feeds.reuters.com/reuters/topNews"],
-    "macro":  ["https://www.federalreserve.gov/feeds/press_all.xml"]
-  }
-},
-
     "vexy_ai": {
       "meta": {
-        "name": "Vexy AI",
-        "description": "Consumes RSS items, produces summaries/analysis back to Redis.",
-        "service_id": "vexy_ai"
+        "name": "Vexy AI Base Service",
+        "description": "Subscribes to RSS/Market, augments, publishes derived to Market Redis"
       },
-      "model": "gpt-4o-mini",
-      "prompt_template": "Analyze: {data}"
+      "access_points": {
+        "subscribe_to": ["rss:queue", "market:tick:{symbol}"],
+        "publish_to": "market-redis",
+        "analysis_template": "rss:analysis:{uid}",
+        "format_key": "vexy:format"
+      },
+      "dependencies": ["rss_agg", "massive"],
+      "workflow": "augment_bias_gamma"
     }
   }
 }

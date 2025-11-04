@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# MarketSwarm admin wrapper — prefers project-local .venv
+# MarketSwarm admin wrapper — Minimal, deterministic truth load.
 
 set -euo pipefail
 [ "${MS_DEBUG:-0}" = "1" ] && set -x
@@ -7,15 +7,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-# --- load admin-only env (no UID/GID) ---
+# --- Load admin env (THE_TRUTH, etc.) ---
 load_env_file() {
   local file="$1"
   [ -f "$file" ] || return 0
-  local allow='^(TRUTH_FILE|TRUTH_SECRETS_FILE|BOOTSTRAP_REDIS_URL|TRUTH_REDIS_KEY|MS_DEBUG)='
   while IFS= read -r line; do
     [[ "$line" =~ ^\s*# ]] && continue
-    [[ "$line" =~ $allow ]] || continue
-    key="${line%%=*}"; val="${line#*=}"
+    key="${line%%=*}"
+    val="${line#*=}"
     [[ "$val" == \"*\" && "$val" == *\" ]] && val="${val:1:-1}"
     export "$key=$val"
   done < "$file"
@@ -23,7 +22,7 @@ load_env_file() {
 load_env_file ".env.admin"
 [ -f ".env.admin" ] || load_env_file ".env"
 
-# --- choose python: prefer project-local .venv first ---
+# --- Choose python: Prefer .venv ---
 if [ -x "$ROOT/.venv/bin/python" ]; then
   PY="$ROOT/.venv/bin/python"
 elif [ -n "${VIRTUAL_ENV:-}" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
@@ -45,7 +44,6 @@ run() {
 
 cmd="${1:-help}"; shift || true
 case "$cmd" in
-  # Create local venv and install admin deps
   setup)
     if [ ! -x "$ROOT/.venv/bin/python" ]; then
       python3 -m venv "$ROOT/.venv"
@@ -62,12 +60,31 @@ case "$cmd" in
   print-python)
     echo "$PY"; exit 0 ;;
   load-truth)
-    args=(load-truth)
-    want_truth=1; for a in "$@"; do [ "$a" = "--truth" ] && want_truth=0; done
-    [ $want_truth -eq 1 ] && [ -n "${TRUTH_FILE:-}" ] && args+=(--truth "$TRUTH_FILE")
-    want_secrets=1; for a in "$@"; do [ "$a" = "--secrets" ] && want_secrets=0; done
-    [ $want_secrets -eq 1 ] && [ -n "${TRUTH_SECRETS_FILE:-}" ] && args+=(--secrets "$TRUTH_SECRETS_FILE")
-    run "${args[@]}" "$@"
+    args=("load-truth")  # Add cmd to args
+    truth_path=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --truth)
+          shift
+          truth_path="$1"
+          args+=("--truth" "$truth_path")
+          shift
+          ;;
+        *)
+          args+=("$1")
+          shift
+          ;;
+      esac
+    done
+    if [ -z "$truth_path" ]; then
+      truth_path="${THE_TRUTH:-truth.json}"
+      args+=("--truth" "$truth_path")
+    fi
+    if [ ! -f "$truth_path" ]; then
+      echo "ERROR: Truth file not found: $truth_path" >&2
+      exit 1
+    fi
+    run "${args[@]}"
     ;;
   components|register|services|show|keys|help)
     run "$cmd" "$@"

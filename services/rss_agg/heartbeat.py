@@ -4,9 +4,8 @@ import os
 import time
 from redis.asyncio import Redis
 
-
 async def start_heartbeat():
-    redis_url = os.environ.get('REDIS_MAIN_URL', 'redis://main-redis:6379')
+    redis_url = os.environ.get('REDIS_URL', 'redis://localhost:6379')  # Use REDIS_URL, fallback local for standalone
     redis = Redis.from_url(redis_url)
     try:
         truth_json = await redis.get('truth')

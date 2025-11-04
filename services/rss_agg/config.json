@@ -1,0 +1,33 @@
+{
+  "version": "1.0",
+  "description": "Storage schema for RSS articles (keys for items/index/queue, with 24h TTL cap for freshness).",
+  "keys": [
+    {
+      "name": "rss:item:{uid}",
+      "type": "HASH",
+      "description": "Full article (title/url/abstract/images/extracts JSON)",
+      "attributes": ["title", "url", "published_ts", "summary", "abstract", "images", "extracts"]
+    },
+    {
+      "name": "rss:index",
+      "type": "ZSET",
+      "description": "UIDs sorted by published_ts (recent first)"
+    },
+    {
+      "name": "rss:queue",
+      "type": "STREAM",
+      "description": "UID + abstract/images/extracts for Vexy pull"
+    },
+    {
+      "name": "rss:seen",
+      "type": "SET",
+      "description": "UID dedupe (TTL 7d)"
+    }
+  ],
+  "global_ttls": {
+    "rss:seen": 604800,
+    "rss:item:{uid}": 86400,
+    "rss:index": 86400,
+    "rss:queue": 86400
+  }
+}
