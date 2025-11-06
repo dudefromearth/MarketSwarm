@@ -1,73 +1,90 @@
-# docker-compose.yml
-
 services:
-  # -------------------- Redis (primary) --------------------
-  main-redis:
+  # -------------------- Redis (system) --------------------
+  system-redis:
+    container_name: system-redis
     image: redis:7-alpine
-    command: [ "redis-server", "--appendonly", "yes" ]
+    command: [ "redis-server", "--port", "6379", "--appendonly", "yes" ]
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: [ "CMD", "redis-cli", "-p", "6379", "ping" ]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 5s
     ports:
-      - "127.0.0.1:6379:6379"   # host-only bind for admin_console
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - system_redis_data:/data
     restart: unless-stopped
+    networks:
+      appnet:
+        aliases: [ "system-redis" ]
 
   # -------------------- Redis (market) --------------------
   market-redis:
+    container_name: market-redis
     image: redis:7-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    command: [ "redis-server", "--port", "6379", "--appendonly", "yes" ]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "-p", "6379", "ping" ]
       interval: 10s
       timeout: 3s
       retries: 5
       start_period: 5s
+    ports:
+      - "127.0.0.1:6380:6379"
+    volumes:
+      - market_redis_data:/data
     restart: unless-stopped
+    networks:
+      - appnet
+
+  # -------------------- Bootstrap (seed truth then exit) --------------------
+  bootstrap:
+    image: redis:7-alpine          # has redis-cli
+    networks: [ appnet ]
+    restart: "no"
+    volumes:
+      - ./truth.json:/seed/truth.json:ro
+      - ./scripts/bootstrap.sh:/seed/bootstrap.sh:ro
+    depends_on:
+      system-redis:
+        condition: service_started   # we do our own wait-for-ready
+      market-redis:
+        condition: service_started
+    entrypoint: [ "/bin/sh","-eu","/seed/bootstrap.sh" ]
 
   # -------------------- RSS Aggregator --------------------
   rss_agg:
     build:
       context: .
       dockerfile: services/rss_agg/Dockerfile
-      args: { UID: "${UID:-10001}", GID: "${GID:-10001}" }
+      args:
+        UID: "${UID:-10001}"
+        GID: "${GID:-10001}"
     environment:
       SERVICE_ID: "rss_agg"
-      MODULE_NAME: "ingestor"
       LOG_LEVEL: "INFO"
-      LOG_MIRROR_ENABLE: "1"
-      LOG_REDIS_URL: "redis://main-redis:6379"
-      LOG_KEY: "logs:rss_agg"
-      LOG_TTL_SEC: "86400"
-      LOG_LIST_MAX: "2000"
-      REDIS_URL: "redis://main-redis:6379"
+      REDIS_URL: "redis://system-redis:6379"
+      MARKET_REDIS_URL: "redis://market-redis:6379"
       TRUTH_REDIS_KEY: "truth:doc"
       SCHEDULE_SEC: "600"
       FETCH_TIMEOUT_SEC: "8"
       MAX_PER_FEED: "50"
-      USER_AGENT: "MarketSwarm/1.0 (+https://your.site/contact)"
+      USER_AGENT: "MarketSwarm/1.0 (+https://flyonthewall.ai/contact)"
       HEARTBEAT_CHANNEL: "heartbeat"
-      PYTHONPATH: "/app/src"                  # <-- ensure sibling pkgs are importable
-    # OPTIONAL: force entrypoint if Dockerfile doesn't already
-    command: [ "python","-m","ingestor" ]       # expects ingestor/__main__.py
+    command: [ "python", "main.py" ]
     volumes:
-      # Mount the *package* directories into /app/src (sibling layout)
-      # Use the path that contains your package folders:
-      - ./services/rss_agg/src/ingestor:/app/src/ingestor:delegated
-      - ./shared:/app/src/shared:ro
-    depends_on:
-      main-redis:
-        condition: service_healthy
+      - ./services/rss_agg:/app:delegated
+      - ./shared:/app/shared:ro
+    dns: ["8.8.8.8", "8.8.4.4"]
     restart: unless-stopped
-    healthcheck:
-      test: [ "CMD-SHELL","python -c \"import shared, ingestor, import importlib; importlib.import_module('ingestor.__main__'); print('ok')\"" ]
-      interval: 30s
-      timeout: 5s
-      retries: 3
+    networks:
+      - appnet
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
 
-# -------------------- Vexu  AI --------------------
+  # -------------------- Vexy AI --------------------
   vexy_ai:
     build:
       context: ./services/vexy_ai
@@ -75,21 +92,25 @@ services:
         UID: "${UID:-10001}"
         GID: "${GID:-10001}"
     environment:
-      REDIS_URL: redis://main-redis:6379
-      RSS_STREAM: rss:queue
-      RSS_GROUP: vexy
-      RSS_CONSUMER: vexy-1
+      REDIS_URL: "redis://system-redis:6379"
+      RSS_STREAM: "rss:queue"
+      RSS_GROUP: "vexy"
+      RSS_CONSUMER: "vexy-1"
       RSS_BLOCK_MS: "5000"
       LOG_LEVEL: "INFO"
     depends_on:
-      main-redis:
+      system-redis:
         condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
-      test: [ "CMD-SHELL", "python - <<'PY'\nprint('ok')\nPY" ]
+      test: ["CMD-SHELL", "python - <<'PY'\nprint('ok')\nPY"]
       interval: 30s
       timeout: 5s
       retries: 3
+    networks:
+      - appnet
 
   # -------------------- Massive --------------------
   massive:
@@ -98,36 +119,95 @@ services:
       args:
         UID: "${UID:-10001}"
         GID: "${GID:-10001}"
-    # no API key needed yet
     environment:
+      SERVICE_ID: "massive"
       LOG_LEVEL: "INFO"
       HB_INTERVAL_SEC: "5"
       HB_LABEL: "massive"
-      HB_COUNT: "0"            # 0 = run forever
-      NET_PROBE_ON_START: "1"  # run probe at container start
+      HB_COUNT: "0"
+      NET_PROBE_ON_START: "1"
       NET_TIMEOUT_SEC: "6"
-      # NET_HOST: "example.com"
-      # NET_URL:  "https://example.com"
     volumes:
-      - ./logs/services/massive:/app/logs
-    dns: [ "8.8.8.8","8.8.4.4" ]   # optional; remove if your DNS is fine
+      - ${PWD}/logs/services/massive:/app/logs
+    dns: ["8.8.8.8", "8.8.4.4"]
     depends_on:
-      main-redis:
+      system-redis:
         condition: service_healthy
       market-redis:
         condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
     restart: unless-stopped
-    # minimal health (just that the process is alive). Upgrade later to hit Polygon.
     healthcheck:
-      test: [ "CMD-SHELL", "python - <<'PY'\nprint('ok')\nPY" ]
+      test: ["CMD-SHELL", "python - <<'PY'\nprint('ok')\nPY"]
       interval: 30s
       timeout: 5s
       retries: 3
+    networks:
+      - appnet
 
-  # -------------------- On-demand network diagnostics --------------------
+  # -------------------- Mesh Coordinator --------------------
+  mesh:
+    build: services/mesh
+    environment:
+      SERVICE_ID: "mesh"
+      REDIS_URL: "redis://system-redis:6379"
+      TRUTH_FILE: ""  # Force Redis pull, no file fallback
+    dns: ["8.8.8.8", "8.8.4.4"]
+    depends_on:
+      system-redis:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - appnet
+
+  # -------------------- Healer --------------------
+  healer:
+    build:
+      context: services/healer
+    command: [ "python","-u","monitor.py" ]   # ← run subscriber/monitor
+    volumes:
+      - ./services/healer:/app:ro           # /app/monitor.py & notifier.py visible
+    environment:
+      SERVICE_ID: "healer"
+      REDIS_URL: "redis://system-redis:6379"   # where truth:doc lives
+      TRUTH_REDIS_KEY: "truth:doc"
+      DEFAULT_TIMEOUT_SEC: "30"                # fallback if truth lacks threshold
+      ALERT_CHANNEL: "healer:alerts"           # explicit until you switch to truth-driven selection
+      HB_INTERVAL_SEC: "10"                    # healer’s own heartbeat
+      LOG_LEVEL: "INFO"
+      # WEBHOOK_URL: "https://hooks.slack.com/services/XXX/YYY/ZZZ"  # optional notifications
+    depends_on:
+      system-redis:
+        condition: service_healthy
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [ appnet ]
+
+# -------------------- Sentinel only watches Healer --------------------
+  sentinel:
+    image: python:3.11-slim
+    working_dir: /app
+    command: ["python","-u","guard.py"]
+    volumes:
+      - ./services/sentinel:/app:ro     # ← mount host code into container
+    environment:
+      TRUTH_REDIS_URL: "redis://system-redis:6379"
+      TRUTH_REDIS_KEY: "truth:doc"
+      SENTINEL_TIMEOUT_SEC: "30"   # fallback; defaults to ~3× healer interval
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks: [appnet]
+
+  # -------------------- Network Diagnostics (Optional) --------------------
   netcheck:
     image: curlimages/curl:8.11.1
-    network_mode: "service:ingestor"
+    network_mode: "service:rss_agg"
     command:
       - sh
       - -c
@@ -140,50 +220,13 @@ services:
         echo "netcheck: OK"
     profiles: ["diag"]
 
-  # -------------------- Mesh Coordinator --------------------
-  mesh_coordinator:
-    build: ./services/mesh_coordinator
-    image: mesh-coordinator
-    environment:
-      SERVICE_ID: "mesh_coordinator"
-      REDIS_MAIN_URL: "redis://main-redis:6379"
-    depends_on:
-      main-redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  # -------------------- Log Analyzer --------------------
-  logger:
-    build:
-      context: ./services/logger
-    environment:
-      SERVICE_ID: "logger"
-      REDIS_MAIN_URL: "redis://main-redis:6379"
-      HEARTBEAT_CHANNEL: "heartbeats"
-      HEARTBEAT_INTERVAL: "10"
-    depends_on:
-      main-redis:
-        condition: service_healthy
-    restart: unless-stopped
-
-  play-redis:
-    image: redis:7-alpine
-    command: [ "redis-server", "--appendonly", "yes" ]
-    ports:
-      - "127.0.0.1:6400:6379"   # host-only exposure on 6400
-    volumes:
-      - play-redis-data:/data   # persistent (see ephemeral option below)
-    healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-    restart: unless-stopped
-    profiles: [ "play" ]          # only runs when you ask for the 'play' profile
-
 volumes:
-    main_redis_data: { }
+  system_redis_data:
+    external: true
+  market_redis_data:
+    external: true
 
 networks:
-    appnet: { }
+  appnet:
+    external: true
+    name: marketswarm-bus

@@ -1,2 +1,0 @@
-redis==7.0.1
-pytest

@@ -1,161 +1,70 @@
-from __future__ import annotations
-import hashlib, json, os, re, time
-from typing import Dict, Iterable
-from collections import Counter
-import feedparser
-from redis.asyncio import Redis as AsyncRedis
-from bs4 import BeautifulSoup
-import aiohttp
-import asyncio
-import sys
-from heartbeat import start_heartbeat
+# ---- Tiny Truth→Heartbeat (hostname-based SERVICE_ID) ----
+import os, re, json, time, socket
+from urllib.parse import urlparse
 
-def _env(name: str, default: str) -> str:
-    v = os.getenv(name)
-    return default if v is None or v.strip() == "" else v
+def parse(u):
+    p = urlparse(u or "redis://system-redis:6379")
+    return (p.hostname or "system-redis", p.port or 6379)
 
-def clean_url(u: str) -> str:
-    _INVIS = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"), None)
-    return (u.translate(_INVIS).strip() if isinstance(u, str) else "")
-
-async def fetch_feed_async(url: str, timeout: float, ua: str) -> feedparser.FeedParserDict:
-    url = clean_url(url)
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers={"User-Agent": ua}, timeout=timeout) as resp:
-            if resp.status == 200:
-                content = await resp.text()
-                return feedparser.parse(content)
-            raise Exception(f"HTTP {resp.status}")
-
-def normalize_entry(feed_url: str, e) -> Dict[str, str]:
-    link = clean_url(e.get("link") or "")
-    guid = clean_url(e.get("id") or link or "")
-    uid = hashlib.sha1(guid.encode()).hexdigest()
-    pub = e.get("published_parsed") or e.get("updated_parsed")
-    ts = int(time.mktime(pub)) if pub else int(time.time())
-    src = feed_url.split("/")[2] if "://" in feed_url else feed_url
-    title = (e.get("title") or link or "").strip()
-    summary = e.get("summary", "")
-    return {"uid": uid, "url": link, "source": src, "title": title, "published_ts": str(ts), "summary": summary}
-
-async def enrich_article_async(link: str, abstract: str, session: aiohttp.ClientSession, max_abstract: int = 800) -> dict:
-    if len(abstract) > 400:
-        return {'abstract': abstract, 'images': [], 'extracts': {'keywords': [], 'quotes': []}}
+def guess_service_id():
+    # 1) explicit override wins
+    sid = os.getenv("SERVICE_ID")
+    if sid: return sid
+    # 2) try compose-style names: project-service-1  → service
+    hn = os.getenv("HOSTNAME") or socket.gethostname()
+    m = re.match(r"^[^-]+-([^-]+)-\d+$", hn)
+    if m: return m.group(1)
+    # 3) try cgroup hint: .../project/service/abc123
     try:
-        async with session.get(link, headers={"User-Agent": _env("USER_AGENT", "Aggregator/1.0")}, timeout=10) as resp:
-            if resp.status != 200:
-                return {'abstract': abstract, 'images': [], 'extracts': {'keywords': [], 'quotes': []}}
-            content = await resp.text()
-            soup = BeautifulSoup(content, 'html.parser')
-            body = soup.find('article') or soup.find('div', class_='story-body') or soup.find('main')
-            if body:
-                paras = body.find_all('p')[:3]
-                full_text = ' '.join(p.get_text(strip=True) for p in paras)
-                abstract = full_text[:max_abstract] + '...' if len(full_text) > max_abstract else full_text
-            text_lower = (full_text or abstract).lower()
-            words = re.findall(r'\b[a-z]{4,}\b', text_lower)
-            keywords = [word for word, _ in Counter(words).most_common(5)]
-            quotes = [strong.get_text(strip=True) for strong in soup.find_all(['strong', 'b']) if len(strong.get_text()) > 20][:3]
-            imgs = body.find_all('img', alt=re.compile(r'chart|graph|yield|rate', re.I)) or body.find_all('img')[:2]
-            images = [img.get('src') for img in imgs if img.get('src') and 'http' in img.get('src')]
-            base = resp.url.rsplit('/', 1)[0] + '/' if images and images[0].startswith('/') else ''
-            images = [base + img if img.startswith('/') else img for img in images]
-            return {'abstract': abstract, 'images': images, 'extracts': {'keywords': keywords, 'quotes': quotes}}
+        with open("/proc/1/cpuset") as f:
+            cp = f.read().strip()
+        m = re.search(r"/[^/]+/([^/]+)/[0-9a-f]+$", cp)
+        if m: return m.group(1)
     except Exception:
-        return {'abstract': abstract, 'images': [], 'extracts': {'keywords': [], 'quotes': []}}
+        pass
+    # 4) last resort: raw hostname
+    return hn
 
-def load_feeds_from_schema(schema_path: str = "/app/schema/feeds.json") -> list[str]:
-    with open(schema_path, 'r') as f:
-        schema = json.load(f)
-    rss_comp = schema.get('components', {}).get('rss_agg', {})
-    cats = rss_comp.get('categories', {})
-    enabled = rss_comp.get('enabled_categories', [])
-    feeds = []
-    for c in enabled:
-        feeds.extend(cats.get(c, []))
-    return [f for f in feeds if f.startswith("http")]
+svc = guess_service_id()
+host, port = parse(os.getenv("REDIS_URL","redis://system-redis:6379"))
 
-def init_schema(redis_url: str, schema_path: str = "/app/schema/feeds.json") -> bool:
-    from redis import Redis as SyncRedis
-    r = SyncRedis.from_url(redis_url, decode_responses=True)
-    try:
-        with open(schema_path, 'r') as f:
-            schema = json.load(f)
-        ver = schema['version']
-        deployed = r.get("rss:schema_version") or "0.0"
-        if ver <= deployed:
-            return True
-        pipe = r.pipeline()
-        for k in schema['keys']:
-            key = k['name']
-            if not r.exists(key):
-                if k['type'] == 'SET': pipe.sadd(key, '')
-                elif k['type'] == 'ZSET': pipe.zadd(key, {'placeholder': 0})
-                elif k['type'] == 'STREAM': pipe.xadd(key, {'uid': 'init', 'abstract': 'ready'})
-        pipe.execute()
-        for key, ttl in schema.get('global_ttls', {}).items():
-            r.expire(key, ttl)
-        r.set("rss:schema_version", ver)
-        r.bgsave()
-        return True
-    except Exception as e:
-        print(f"Schema init failed: {e}")
-        return False
+def send(sock,*parts):
+    enc=[(x if isinstance(x,bytes) else str(x).encode()) for x in parts]
+    buf=b"*%d\r\n"%len(enc)+b"".join([b"$%d\r\n%s\r\n"%(len(x),x) for x in enc])
+    sock.sendall(buf)
 
-async def publish_once_async(r: AsyncRedis, feeds: list[str], max_items: int, session: aiohttp.ClientSession, ua: str) -> int:
-    seen_key, index_key, queue_key = "rss:seen", "rss:index", "rss:queue"
-    new_total = 0
-    for feed in feeds:
-        print(f"Requesting feed: {feed}")
-        try:
-            fp = await fetch_feed_async(feed, 10, ua)
-            print(f"Feed parsed: {len(fp.entries)} entries total")
-            count = 0
-            for e in fp.entries:
-                d = normalize_entry(feed, e)
-                uid = d["uid"]
-                if not await r.sadd(seen_key, uid): continue
-                enriched = await enrich_article_async(d['url'], d['summary'], session)
-                d['abstract'] = enriched['abstract']
-                d['images'] = json.dumps(enriched['images'])
-                d['extracts'] = json.dumps(enriched['extracts'])
-                await r.hset(f"rss:item:{uid}", mapping=d)
-                await r.zadd(index_key, {uid: float(d["published_ts"])})
-                await r.xadd(queue_key, {"uid": uid, "abstract": d['abstract'], "images": d['images'], "extracts": d['extracts']})
-                count += 1
-                new_total += 1
-                if count >= max_items: break
-            print(f"Processed {count} new from {feed} (after dedupe)")
-        except Exception as e:
-            print(f"Feed error {feed}: {e}")
-    return new_total
+def rdline(sock):
+    b=b""
+    while not b.endswith(b"\r\n"): b+=sock.recv(1)
+    return b[:-2]
 
-async def main_async() -> int:
-    redis_url = _env("REDIS_URL", "redis://main-redis:6379")
-    r = AsyncRedis.from_url(redis_url, decode_responses=True)
-    if not init_schema(redis_url):
-        return 1
-    # Heartbeat task
-    asyncio.create_task(start_heartbeat())
-    schedule = int(_env("SCHEDULE_SEC", "60"))  # 1 min
-    max_per = int(_env("MAX_PER_FEED", "5"))
-    ua = _env("USER_AGENT", "MarketSwarm/1.0")
-    async with aiohttp.ClientSession() as session:
-        while True:
-            try:
-                feeds = load_feeds_from_schema()
-                print(f"Polling {len(feeds)} feeds")
-                new_ct = await publish_once_async(r, feeds, max_per, session, ua)
-                print(f"Cycle: {new_ct} new items")
-            except Exception as e:
-                print(f"Cycle error: {e}", file=sys.stderr)
-            await asyncio.sleep(schedule)
-    return 0
+def get_bulk(sock,key):
+    send(sock,"GET",key); assert sock.recv(1)==b"$"
+    ln=int(rdline(sock));
+    if ln<0: return None
+    data=b""
+    while len(data)<ln+2: data+=sock.recv(ln+2-len(data))
+    return data[:-2]
 
-if __name__ == "__main__":
-    try:
-        asyncio.run(main_async())
-    except KeyboardInterrupt:
-        print("Shutting down gracefully", file=sys.stderr)
-    except Exception as e:
-        print(f"Fatal error: {e}", file=sys.stderr)
+# 1) load truth
+s=socket.create_connection((host,port),2)
+truth=json.loads((get_bulk(s,"truth:doc") or b"{}").decode() or "{}")
+
+# 2) find this service's heartbeat endpoint from truth.components.<svc>.access_points.publish_to
+pubs=(truth.get("components",{}).get(svc,{}).get("access_points",{}).get("publish_to",[]) or [])
+hb=next((x for x in pubs if x.get("key","").endswith(":heartbeat")), None)
+assert hb, f"no heartbeat publish_to found for {svc}"
+bus=hb.get("bus","system-redis"); ch=hb["key"]
+bh,bp={"system-redis":("system-redis",6379),"market-redis":("market-redis",6379)}.get(bus,(host,port))
+ps = s if (bh,bp)==(host,port) else socket.create_connection((bh,bp),2)
+
+# beats
+interval=float(os.getenv("HB_INTERVAL_SEC","5"))
+i=0
+while True:
+    i+=1
+    send(ps,"PUBLISH",ch,json.dumps({"svc":svc,"i":i,"ts":int(time.time())}))
+    rdline(ps)  # drop integer reply
+    print(f"beat {svc} #{i} -> {ch}", flush=True)
+    time.sleep(interval)
+# ---- end ----

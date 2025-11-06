@@ -80,8 +80,8 @@ mkdir -p ~/.marketswarm
   },
   "heartbeats": {
     "massive": { "id": "massive", "frequency": 5, "status": "active" },
-    "logger": { "id": "logger", "frequency": 10, "status": "active" },
-    "mesh_coordinator": { "id": "mesh_coordinator", "frequency": 3, "status": "active" },
+    "logger": { "id": "healer", "frequency": 10, "status": "active" },
+    "mesh_coordinator": { "id": "mesh", "frequency": 3, "status": "active" },
     "rss_agg": { "id": "rss_agg", "frequency": 30, "status": "active" },
     "vexy_ai": { "id": "vexy_ai", "frequency": 15, "status": "active" }
   },
@@ -98,7 +98,7 @@ mkdir -p ~/.marketswarm
       "meta": {
         "name": "Logger",
         "description": "Central log/telemetry collector and channel forwarder.",
-        "service_id": "logger"
+        "service_id": "healer"
       },
       "log_channels": ["heartbeats", "errors"]
     },
@@ -106,7 +106,7 @@ mkdir -p ~/.marketswarm
       "meta": {
         "name": "Mesh Coordinator",
         "description": "Dispatch coordinator for task queues between services.",
-        "service_id": "mesh_coordinator"
+        "service_id": "mesh"
       },
       "dispatch_queues": ["vexy_tasks", "rss_updates"]
     },
