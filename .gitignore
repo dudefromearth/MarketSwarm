@@ -3,3 +3,4 @@ venv/
 redis-data/
 /truth_secrets.json
 .env.admin
+.env

@@ -1,6 +1,7 @@
-# ---- Tiny Truth→Heartbeat (hostname-based SERVICE_ID) ----
+# ---- Tiny Truth→Heartbeat + Chain 0DTE (hostname-based SERVICE_ID) ----
 import os, re, json, time, socket
 from urllib.parse import urlparse
+from chain_0dte import run_chain0dte  # New: for options chain
 
 def parse(u):
     p = urlparse(u or "redis://system-redis:6379")
@@ -58,13 +59,39 @@ bus=hb.get("bus","system-redis"); ch=hb["key"]
 bh,bp={"system-redis":("system-redis",6379),"market-redis":("market-redis",6379)}.get(bus,(host,port))
 ps = s if (bh,bp)==(host,port) else socket.create_connection((bh,bp),2)
 
-# beats
-interval=float(os.getenv("HB_INTERVAL_SEC","5"))
-i=0
+# New: Find chain publish channel (sse:chain-feed) and spot channel
+chain_pub = next((x for x in pubs if x.get("key") == "sse:chain-feed"), None)
+spot_pub = next((x for x in pubs if x.get("key") == "massive:spot"), None)
+chain_ch = chain_pub["key"] if chain_pub else None
+spot_bus = spot_pub.get("bus", "system-redis") if spot_pub else bus
+spot_ch = spot_pub["key"] if spot_pub else None
+spot_sock = ps  # Reuse for now; extend if needed
+
+# Beats (heartbeat every 5s)
+hb_interval = float(os.getenv("HB_INTERVAL_SEC", "5"))
+# Chain every 30s (configurable)
+chain_interval = float(os.getenv("CHAIN_INTERVAL_SEC", "30"))
+chain_counter = 0
+i = 0
 while True:
-    i+=1
-    send(ps,"PUBLISH",ch,json.dumps({"svc":svc,"i":i,"ts":int(time.time())}))
-    rdline(ps)  # drop integer reply
+    i += 1
+    send(ps, "PUBLISH", ch, json.dumps({"svc": svc, "i": i, "ts": int(time.time())}))
+    rdline(ps)  # drop reply
     print(f"beat {svc} #{i} -> {ch}", flush=True)
-    time.sleep(interval)
+
+    # New: Run chain fetch every chain_interval
+    chain_counter += hb_interval
+    if chain_counter >= chain_interval and chain_ch:
+        try:
+            run_chain0dte(ps, chain_ch, underlying=os.getenv("UNDERLYING", "SPX"))
+            # Also pub spot separately if channel exists
+            if spot_ch and 'spot' in locals():
+                spot_data = {"underlying": os.getenv("UNDERLYING", "SPX"), "spot": spot, "ts": int(time.time())}
+                send(spot_sock, "PUBLISH", spot_ch, json.dumps(spot_data))
+                print(f"Published spot {spot} -> {spot_ch}")
+        except Exception as e:
+            print(f"Chain/spot pub error: {e}")
+        chain_counter = 0
+
+    time.sleep(hb_interval)
 # ---- end ----

@@ -56,7 +56,10 @@
           { "bus": "system-redis", "key": "rss:queue" },
           { "bus": "system-redis", "key": "massive:spot" }
         ],
-        "publish_to": [{ "bus": "market-redis", "key": "sse:vexy-message" }]
+        "publish_to": [
+          { "bus": "market-redis", "key": "sse:vexy-message" },
+          { "bus": "system-redis", "key": "vexy_ai:heartbeat" }
+        ]
       },
       "dependencies": ["rss_agg", "massive"],
       "workflow": "augment_bias_gamma"

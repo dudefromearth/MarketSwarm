@@ -22,4 +22,4 @@ USER app
 ENV PYTHONUNBUFFERED=1
 ENTRYPOINT ["/usr/bin/tini","-g","-e","143","--"]
 # ← run the simple entrypoint directly
-CMD ["python","-u","/app/main.py"]
+CMD ["python","-u","main.py"]
