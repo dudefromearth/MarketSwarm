@@ -35,8 +35,7 @@ services:
     volumes:
       - market_redis_data:/data
     restart: unless-stopped
-    networks:
-      - appnet
+    networks: [appnet]
 
   # -------------------- Bootstrap (seed truth then exit) --------------------
   bootstrap:
@@ -78,8 +77,7 @@ services:
       - ./shared:/app/shared:ro
     dns: ["8.8.8.8", "8.8.4.4"]
     restart: unless-stopped
-    networks:
-      - appnet
+    networks: [appnet]
     depends_on:
       bootstrap:
         condition: service_completed_successfully
@@ -109,8 +107,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    networks:
-      - appnet
+    networks: [appnet]
 
   # -------------------- Massive --------------------
   massive:
@@ -121,6 +118,9 @@ services:
         GID: "${GID:-10001}"
     environment:
       SERVICE_ID: "massive"
+      POLYGON_API_KEY: "${POLYGON_API_KEY}"
+      MODE: "${MODE}"
+      GROUP: "${GROUP}"
       LOG_LEVEL: "INFO"
       HB_INTERVAL_SEC: "5"
       HB_LABEL: "massive"
@@ -143,8 +143,8 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    networks:
-      - appnet
+      start_period: 10s
+    networks: [appnet]
 
   # -------------------- Mesh Coordinator --------------------
   mesh:
@@ -160,8 +160,7 @@ services:
       bootstrap:
         condition: service_completed_successfully
     restart: unless-stopped
-    networks:
-      - appnet
+    networks: [appnet]
 
   # -------------------- Healer --------------------
   healer:
@@ -174,7 +173,8 @@ services:
       SERVICE_ID: "healer"
       REDIS_URL: "redis://system-redis:6379"   # where truth:doc lives
       TRUTH_REDIS_KEY: "truth:doc"
-      DEFAULT_TIMEOUT_SEC: "30"                # fallback if truth lacks threshold
+      REDIS_CONNECT_TIMEOUT: "15"
+      DEFAULT_TIMEOUT_SEC: "60"                # fallback if truth lacks threshold
       ALERT_CHANNEL: "healer:alerts"           # explicit until you switch to truth-driven selection
       HB_INTERVAL_SEC: "10"                    # healer’s own heartbeat
       LOG_LEVEL: "INFO"

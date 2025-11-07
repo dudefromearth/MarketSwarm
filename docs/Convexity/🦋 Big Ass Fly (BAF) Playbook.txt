@@ -1,0 +1,97 @@
+# 🦋 Big Ass Fly (BAF) Playbook – Volatility Signal & IV Compression Strategy
+
+> **Note**: The BAF is **not a tail risk trade**. It is a **volatility behavior signal** and a **premium decay structure** optimized for short-term, event-driven IV compression. It exploits **known volatility cycles** (e.g., macro event crushes), not unknown tail events.
+
+---
+
+## 🧭 I. BAF as a Volatility Indicator
+
+### ✅ Setup:
+- **Structure**: 50-point wide **ATM ES butterfly**
+- **Entry Window**: 7:30–8:30 AM ET
+- **Standardization**: Fixed 50-wide for sensitivity and consistency
+
+### 🔍 Interpretation Logic:
+| Debit Value | Meaning                            | Action             |
+|-------------|------------------------------------|--------------------|
+| ≤ $25       | Elevated IV → BAF in play          | Evaluate for trade |
+| > $25       | IV too low → decay likely          | Skip trade         |
+
+> The BAF debit acts as a **microstructure volatility gauge**, aligning with the macro VIX regime.
+
+---
+
+## 🧨 II. BAF as a Volatility Crush Trade
+
+### 📌 Setup Details:
+- **Structure**: Long ATM Butterfly (ES, 50-wide)
+- **DTE**: 0DTE (same-day expiration)
+- **Trigger**: Must be placed **before a scheduled macro report**
+- **Debit Cap**: Must be **≤ $25**
+
+### 🎯 Profit Thesis:
+Buy IV → wait for **macro report print** → IV crush triggers **premium expansion at center strikes** → exit into profit.
+
+### 📈 Profit Management:
+- **Initial Target**: $1.50–$3.00
+- **Max Gain**: $25 (width – debit)
+- **Trailing Stop**: After green, set a mental trailing stop from highest unrealized gain.
+
+### 🚨 Risk Management:
+| Scenario                       | Action                                      |
+|--------------------------------|---------------------------------------------|
+| Loss > $3.50 (before 8:30 AM)  | Hold through macro print                    |
+| Loss > $3.50 (after 8:30 AM)   | Exit trade                                  |
+| Price moves sharply away       | Monitor for gamma risk, exit near open      |
+
+---
+
+## 🧱 III. When *Not* to Trade the BAF
+
+### ❌ Skip Trade If:
+- No economic report or catalyst that morning
+- Debit > $25 (low IV, poor decay edge)
+- Volatility regime unclear or compressed
+
+> *Default stance is to protect capital. IV crush edge must be present.*
+
+---
+
+## 🔄 IV. Exceptions & Extensions
+
+### ✅ Situations Where Holding to Open May Be Justified:
+- Market is range-bound inside a high-volume node
+- BAF has built sufficient early premium (e.g., $2–$3)
+- Break-even width is wide and gamma risk is low
+- **Only extend if setup is A+ grade**
+
+### ⚠️ Caution:
+- Compressed IV environments can create sudden, large open moves
+- Gamma increases rapidly near expiration
+- *Take the easy profit unless all conditions align*
+
+---
+
+## 🧘🏻‍♂️ V. Reflection Prompts
+
+- What is the BAF debit telling me about morning IV structure?
+- Is there an event to cause a vol crush today?
+- Am I trading this from signal clarity—or action bias?
+- Is this setup optional or mandatory?
+- Where is my exit—before I enter?
+
+---
+
+## ✅ BAF Trade Checklist
+
+| Checkpoint                            | Criteria                                                   | Action                     |
+|--------------------------------------|-------------------------------------------------------------|----------------------------|
+| **Macro Event Present?**             | Yes → Continue; No → Likely skip                            | No event = no crush edge   |
+| **Debit ≤ $25?**                     | Yes → Setup valid; No → Skip                                | Must confirm high IV       |
+| **Gamma Exposure Low?**              | Only if holding through open                                | High gamma = exit early    |
+| **Profit Present Pre-Open?**         | Yes → Book and move on                                      | Easy win = take it         |
+| **Vol Node Compression?**            | Maybe hold—**only** on A+ setups                            | Default = exit early       |
+
+---
+
+> 🌿 *This is not a tail hedge. This is a signal-calibrated, volatility-sensitive instrument for traders who want to operate with discipline, timing, and edge.*

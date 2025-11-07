@@ -6,7 +6,7 @@ from notifier import Notifier
 
 # ---- Minimal RESP client (GET/SET/PUBLISH/SUBSCRIBE) ----
 class R:
-    def __init__(self, host="system-redis", port=6379, timeout=3.0, log=None):
+    def __init__(self, host="system-redis", port=6379, timeout=15.0, log=None):
         self.h, self.p, self.t, self.log = host, port, timeout, log
         self.s = socket.create_connection((self.h, self.p), timeout=self.t)
     def _send(self,*parts):

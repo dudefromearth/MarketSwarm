@@ -42,28 +42,17 @@ def run_chain0dte(sock, ch, underlying="SPX", range_points=150):
 
     for ctype in ["call", "put"]:
         try:
-            # Fetch chain snapshot for today
-            resp = client.list_snapshot_options_chain(
-                underlying_asset=underlying,
-                expiration_date=today,
-                contract_type=ctype,
-                sort="strike_price",
-                order="asc",
-                limit=1000  # Covers full 0DTE range
-            )
-
-            # Handle pagination if needed (rare for 0DTE)
-            results = list(resp)
-            while resp.next_url:
-                resp = client.list_snapshot_options_chain(underlying_asset=underlying, url=resp.next_url)
-                results.extend(list(resp))
+            # Fetch full chain snapshot
+            results = []
+            for o in client.list_snapshot_options_chain(underlying_asset=underlying):
+                if getattr(o.details, "expiration_date", None) == today and getattr(o.details, "contract_type", None) == ctype:
+                    results.append(o)
 
             for r in results:
                 strike = r.details.strike_price
                 if min_strike <= strike <= max_strike:
-                    # Pack key fields
                     entry = {
-                        "ticker": r.ticker,
+                        "ticker": getattr(r.details, "ticker", "UNKNOWN"),
                         "strike": float(strike),
                         "bid": float(r.last_quote.bid) if r.last_quote else 0.0,
                         "ask": float(r.last_quote.ask) if r.last_quote else 0.0,
@@ -75,10 +64,8 @@ def run_chain0dte(sock, ch, underlying="SPX", range_points=150):
                             "gamma": float(r.greeks.gamma) if r.greeks and r.greeks.gamma else None,
                             "theta": float(r.greeks.theta) if r.greeks and r.greeks.theta else None,
                             "vega": float(r.greeks.vega) if r.greeks and r.greeks.vega else None,
-                            # Rho often missing; add if present
                         }
                     }
-                    # Clean Nones
                     entry["greeks"] = {k: v for k, v in entry["greeks"].items() if v is not None}
                     if ctype == "call":
                         chain["calls"].append(entry)
