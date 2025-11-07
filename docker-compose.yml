@@ -85,16 +85,12 @@ services:
   # -------------------- Vexy AI --------------------
   vexy_ai:
     build:
-      context: ./services/vexy_ai
-      args:
-        UID: "${UID:-10001}"
-        GID: "${GID:-10001}"
+      context: services/vexy_ai
+    command: [ "python", "-u", "main.py" ]
     environment:
+      SERVICE_ID: "vexy_ai"
       REDIS_URL: "redis://system-redis:6379"
-      RSS_STREAM: "rss:queue"
-      RSS_GROUP: "vexy"
-      RSS_CONSUMER: "vexy-1"
-      RSS_BLOCK_MS: "5000"
+      HB_INTERVAL_SEC: "10"
       LOG_LEVEL: "INFO"
     depends_on:
       system-redis:
@@ -102,12 +98,7 @@ services:
       bootstrap:
         condition: service_completed_successfully
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "python - <<'PY'\nprint('ok')\nPY"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-    networks: [appnet]
+    networks: [ appnet ]
 
   # -------------------- Massive --------------------
   massive:
