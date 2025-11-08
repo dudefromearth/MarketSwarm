@@ -1,45 +1,48 @@
 {
-  "version": "1.0",
-  "description": "RSS schema: Keys + truth-style feeds for Fed Alerts.",
-  "keys": [
-    { "name": "rss:seen", "type": "SET", "init": "SADD {} ''" },
-    { "name": "rss:index", "type": "ZSET", "init": "ZADD {} 0 'placeholder'" },
-    { "name": "rss:queue", "type": "STREAM", "init": "XADD {} * uid 'init' abstract 'ready'" },
-    { "name": "rss:schema_version", "type": "STRING", "init": "SET {} '1.0'" }
-  ],
-  "global_ttls": { "rss:seen": 604800 },
-  "components": {
-    "rss_agg": {
-      "meta": {
-        "name": "Fed Alerts Aggregator",
-        "description": "Polls categorized Google Alerts for macro signals"
-      },
-      "enabled_categories": ["fomc_alerts", "economic_reports"],
-      "categories": {
-        "fomc_alerts": [
-          "https://www.google.com/alerts/feeds/18068156851767145348/15070650452603148120",
-          "https://www.google.com/alerts/feeds/18068156851767145348/12169640906365262022",
-          "https://www.google.com/alerts/feeds/18068156851767145348/1400617060424894835",
-          "https://www.google.com/alerts/feeds/18068156851767145348/12016843298852990478",
-          "https://www.google.com/alerts/feeds/18068156851767145348/2792038623167850646",
-          "https://www.google.com/alerts/feeds/18068156851767145348/17930593839239830382",
-          "https://www.google.com/alerts/feeds/18068156851767145348/10362974182106822400",
-          "https://www.google.com/alerts/feeds/18068156851767145348/6533550261515729312",
-          "https://www.google.com/alerts/feeds/18068156851767145348/14138202427431249230",
-          "https://www.google.com/alerts/feeds/18068156851767145348/15535607658455447980",
-          "https://www.google.com/alerts/feeds/18068156851767145348/13545689248470725943"
-        ],
-        "economic_reports": [
-          "https://www.google.com/alerts/feeds/18068156851767145348/13422958400861430689",
-          "https://www.google.com/alerts/feeds/18068156851767145348/5118116501410332078",
-          "https://www.google.com/alerts/feeds/18068156851767145348/864076457789630681",
-          "https://www.google.com/alerts/feeds/18068156851767145348/12343839001370133244",
-          "https://www.google.com/alerts/feeds/18068156851767145348/4046719616798015086"
-        ]
-      },
-      "max_per_feed": 5,
-      "enrich": true,
-      "schedule_sec": 600
+  "version": "2.0",
+  "description": "RSS Aggregator schema for Google Alert feeds — includes categories, search terms, workflow, and Redis schema.",
+  "storage": {
+    "schema_key": "rss:schema_version",
+    "index_key": "rss:index",
+    "queue_key": "rss:queue",
+    "seen_key": "rss:seen",
+    "status_key": "rss:status",
+    "ttl": {
+      "rss:seen": 2592000,
+      "rss:index": 86400,
+      "rss:queue": 86400
     }
+  },
+  "workflow": {
+    "schedule_sec": 600,
+    "max_per_feed": 5,
+    "enrich": true,
+    "publish_dir": "/app/feeds",
+    "output_feeds": {
+      "fomc_alerts": "fomc_alerts.xml",
+      "economic_reports": "economic_reports.xml"
+    }
+  },
+  "feeds": {
+    "fomc_alerts": [
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15070650452603148120", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/12169640906365262022", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/1400617060424894835", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/12016843298852990478", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/2792038623167850646", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/17930593839239830382", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/10362974182106822400", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/6533550261515729312", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/14138202427431249230", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15535607658455447980", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/13545689248470725943", "search_term": "placeholder term for FOMC alerts" }
+    ],
+    "economic_reports": [
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/13422958400861430689", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/5118116501410332078", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/864076457789630681", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/12343839001370133244", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/4046719616798015086", "search_term": "placeholder term for economic reports" }
+    ]
   }
 }

@@ -102,18 +102,50 @@ docker compose up -d
 
 # Step 5 — Redis health check
 echo -e "${CYAN}🩺  Waiting for Redis health...${RESET}"
-until [[ $(docker inspect --format='{{.State.Health.Status}}' system-redis 2>/dev/null) == "healthy" && \
-        $(docker inspect --format='{{.State.Health.Status}}' market-redis 2>/dev/null) == "healthy" ]]; do
+check_healthy() {
+  docker inspect --format '{{.State.Health.Status}}' "$1" 2>/dev/null | grep -q healthy
+}
+timeout=$((SECONDS+120))  # 2-minute safety cap
+while true; do
+  if check_healthy system-redis && check_healthy market-redis; then
+    echo -e "${GREEN}✅  Redis cluster healthy.${RESET}"
+    break
+  fi
+  if [ $SECONDS -ge $timeout ]; then
+    echo -e "${YELLOW}⚠️  Timeout reached, continuing anyway.${RESET}"
+    break
+  fi
   echo "⏳  Waiting for Redis containers..."
   sleep 2
 done
-echo -e "${GREEN}✅  Redis cluster healthy.${RESET}"
 
-# Step 6 — list containers
+# Step 6 — Verify truth:doc seeding
+echo -e "${CYAN}🧾  Verifying truth:doc key on Redis buses...${RESET}"
+for host in system-redis market-redis; do
+  if ! docker exec "$host" redis-cli EXISTS truth:doc | grep -q 1; then
+    echo -e "${YELLOW}⚠️  truth:doc missing on ${host} — attempting re-seed...${RESET}"
+    if [ -f "./truth.json" ]; then
+      docker exec -i "$host" redis-cli -x SET truth:doc < ./truth.json
+      if docker exec "$host" redis-cli EXISTS truth:doc | grep -q 1; then
+        echo -e "${GREEN}✅  truth:doc successfully re-seeded on ${host}.${RESET}"
+      else
+        echo -e "${RED}❌  Failed to seed truth:doc on ${host}.${RESET}"
+        exit 2
+      fi
+    else
+      echo -e "${RED}❌  Missing local truth.json file for seeding.${RESET}"
+      exit 2
+    fi
+  else
+    echo -e "${GREEN}✅  truth:doc verified on ${host}.${RESET}"
+  fi
+done
+
+# Step 7 — list containers
 echo -e "${CYAN}🔍  Checking container status...${RESET}"
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 
-# Step 7 — optional tail
+# Step 8 — optional tail
 if [ "$TAIL_MODE" = true ]; then
   echo ""
   echo -e "${CYAN}💓  Tailing live heartbeats (Ctrl+C to exit)...${RESET}"

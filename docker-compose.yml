@@ -45,6 +45,7 @@ services:
     volumes:
       - ./truth.json:/seed/truth.json:ro
       - ./scripts/bootstrap.sh:/seed/bootstrap.sh:ro
+      - ./scripts/lua_diff.lua:/seed/lua_diff.lua:ro
     depends_on:
       system-redis:
         condition: service_started   # we do our own wait-for-ready
