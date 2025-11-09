@@ -1,60 +1,24 @@
+version: "3.9"
+
 services:
-  # -------------------- Redis (system) --------------------
-  system-redis:
-    container_name: system-redis
-    image: redis:7-alpine
-    command: [ "redis-server", "--port", "6379", "--appendonly", "yes" ]
-    healthcheck:
-      test: [ "CMD", "redis-cli", "-p", "6379", "ping" ]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-    ports:
-      - "127.0.0.1:6379:6379"
-    volumes:
-      - system_redis_data:/data
-    restart: unless-stopped
-    networks:
-      appnet:
-        aliases: [ "system-redis" ]
-
-  # -------------------- Redis (market) --------------------
-  market-redis:
-    container_name: market-redis
-    image: redis:7-alpine
-    command: [ "redis-server", "--port", "6379", "--appendonly", "yes" ]
-    healthcheck:
-      test: [ "CMD", "redis-cli", "-p", "6379", "ping" ]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-      start_period: 5s
-    ports:
-      - "127.0.0.1:6380:6379"
-    volumes:
-      - market_redis_data:/data
-    restart: unless-stopped
-    networks: [appnet]
-
   # -------------------- Bootstrap (seed truth then exit) --------------------
   bootstrap:
-    image: redis:7-alpine          # has redis-cli
-    networks: [ appnet ]
+    image: redis:7-alpine
+    networks: [appnet]
     restart: "no"
     volumes:
       - ./truth.json:/seed/truth.json:ro
       - ./scripts/bootstrap.sh:/seed/bootstrap.sh:ro
       - ./scripts/lua_diff.lua:/seed/lua_diff.lua:ro
-    depends_on:
-      system-redis:
-        condition: service_started   # we do our own wait-for-ready
-      market-redis:
-        condition: service_started
-    entrypoint: [ "/bin/sh","-eu","/seed/bootstrap.sh" ]
+    environment:
+      TRUTH_REDIS_URL: redis://host.docker.internal:6379
+      MARKET_REDIS_URL: redis://host.docker.internal:6380
+      RSS_REDIS_URL: redis://host.docker.internal:6381
+    entrypoint: ["/bin/sh", "-eu", "/seed/bootstrap.sh"]
 
   # -------------------- RSS Aggregator --------------------
   rss_agg:
+    image: marketswarm-rss_agg:latest
     build:
       context: .
       dockerfile: services/rss_agg/Dockerfile
@@ -64,18 +28,20 @@ services:
     environment:
       SERVICE_ID: "rss_agg"
       LOG_LEVEL: "INFO"
-      REDIS_URL: "redis://system-redis:6379"
-      MARKET_REDIS_URL: "redis://market-redis:6379"
+      REDIS_URL: "redis://host.docker.internal:6379"
+      MARKET_REDIS_URL: "redis://host.docker.internal:6380"
+      RSS_REDIS_URL: "redis://host.docker.internal:6381"
       TRUTH_REDIS_KEY: "truth:doc"
       SCHEDULE_SEC: "600"
       FETCH_TIMEOUT_SEC: "8"
       MAX_PER_FEED: "50"
       USER_AGENT: "MarketSwarm/1.0 (+https://flyonthewall.ai/contact)"
       HEARTBEAT_CHANNEL: "heartbeat"
-    command: [ "python", "main.py" ]
+    command: ["python", "main.py"]
     volumes:
       - ./services/rss_agg:/app:delegated
       - ./shared:/app/shared:ro
+      - ./feeds:/app/feeds
     dns: ["8.8.8.8", "8.8.4.4"]
     restart: unless-stopped
     networks: [appnet]
@@ -85,24 +51,26 @@ services:
 
   # -------------------- Vexy AI --------------------
   vexy_ai:
+    image: marketswarm-vexy_ai:latest
     build:
       context: services/vexy_ai
-    command: [ "python", "-u", "main.py" ]
+    command: ["python", "-u", "main.py"]
     environment:
       SERVICE_ID: "vexy_ai"
-      REDIS_URL: "redis://system-redis:6379"
+      REDIS_URL: "redis://host.docker.internal:6379"
+      MARKET_REDIS_URL: "redis://host.docker.internal:6380"
+      RSS_REDIS_URL: "redis://host.docker.internal:6381"
       HB_INTERVAL_SEC: "10"
       LOG_LEVEL: "INFO"
     depends_on:
-      system-redis:
-        condition: service_healthy
       bootstrap:
         condition: service_completed_successfully
     restart: unless-stopped
-    networks: [ appnet ]
+    networks: [appnet]
 
   # -------------------- Massive --------------------
   massive:
+    image: marketswarm-massive:latest
     build:
       context: services/massive
       args:
@@ -119,14 +87,12 @@ services:
       HB_COUNT: "0"
       NET_PROBE_ON_START: "1"
       NET_TIMEOUT_SEC: "6"
+      SYSTEM_REDIS_URL: "redis://host.docker.internal:6379"
+      MARKET_REDIS_URL: "redis://host.docker.internal:6380"
     volumes:
       - ${PWD}/logs/services/massive:/app/logs
     dns: ["8.8.8.8", "8.8.4.4"]
     depends_on:
-      system-redis:
-        condition: service_healthy
-      market-redis:
-        condition: service_healthy
       bootstrap:
         condition: service_completed_successfully
     restart: unless-stopped
@@ -140,15 +106,14 @@ services:
 
   # -------------------- Mesh Coordinator --------------------
   mesh:
+    image: marketswarm-mesh:latest
     build: services/mesh
     environment:
       SERVICE_ID: "mesh"
-      REDIS_URL: "redis://system-redis:6379"
+      REDIS_URL: "redis://host.docker.internal:6379"
       TRUTH_FILE: ""  # Force Redis pull, no file fallback
     dns: ["8.8.8.8", "8.8.4.4"]
     depends_on:
-      system-redis:
-        condition: service_healthy
       bootstrap:
         condition: service_completed_successfully
     restart: unless-stopped
@@ -156,40 +121,38 @@ services:
 
   # -------------------- Healer --------------------
   healer:
+    image: marketswarm-healer:latest
     build:
       context: services/healer
-    command: [ "python","-u","monitor.py" ]   # ← run subscriber/monitor
+    command: ["python", "-u", "monitor.py"]
     volumes:
-      - ./services/healer:/app:ro           # /app/monitor.py & notifier.py visible
+      - ./services/healer:/app:ro
     environment:
       SERVICE_ID: "healer"
-      REDIS_URL: "redis://system-redis:6379"   # where truth:doc lives
+      REDIS_URL: "redis://host.docker.internal:6379"
       TRUTH_REDIS_KEY: "truth:doc"
       REDIS_CONNECT_TIMEOUT: "15"
-      DEFAULT_TIMEOUT_SEC: "60"                # fallback if truth lacks threshold
-      ALERT_CHANNEL: "healer:alerts"           # explicit until you switch to truth-driven selection
-      HB_INTERVAL_SEC: "10"                    # healer’s own heartbeat
+      DEFAULT_TIMEOUT_SEC: "60"
+      ALERT_CHANNEL: "healer:alerts"
+      HB_INTERVAL_SEC: "10"
       LOG_LEVEL: "INFO"
-      # WEBHOOK_URL: "https://hooks.slack.com/services/XXX/YYY/ZZZ"  # optional notifications
     depends_on:
-      system-redis:
-        condition: service_healthy
       bootstrap:
         condition: service_completed_successfully
     restart: unless-stopped
-    networks: [ appnet ]
+    networks: [appnet]
 
-# -------------------- Sentinel only watches Healer --------------------
+  # -------------------- Sentinel --------------------
   sentinel:
     image: python:3.11-slim
     working_dir: /app
-    command: ["python","-u","guard.py"]
+    command: ["python", "-u", "guard.py"]
     volumes:
-      - ./services/sentinel:/app:ro     # ← mount host code into container
+      - ./services/sentinel:/app:ro
     environment:
-      TRUTH_REDIS_URL: "redis://system-redis:6379"
+      TRUTH_REDIS_URL: "redis://host.docker.internal:6379"
       TRUTH_REDIS_KEY: "truth:doc"
-      SENTINEL_TIMEOUT_SEC: "30"   # fallback; defaults to ~3× healer interval
+      SENTINEL_TIMEOUT_SEC: "30"
     depends_on:
       bootstrap:
         condition: service_completed_successfully
@@ -211,12 +174,6 @@ services:
         echo "RSS sample:"; curl -fsS --connect-timeout 6 --max-time 10 https://hnrss.org/frontpage | head -n3
         echo "netcheck: OK"
     profiles: ["diag"]
-
-volumes:
-  system_redis_data:
-    external: true
-  market_redis_data:
-    external: true
 
 networks:
   appnet:
