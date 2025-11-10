@@ -4,10 +4,12 @@ import asyncio
 import feedparser
 import hashlib
 import time
+import os
 import redis.asyncio as redis
 from bs4 import BeautifulSoup
 
 
+# ---- HTML Fetch Helpers ----
 async def fetch_html(session, url):
     """Fetch HTML content safely."""
     try:
@@ -46,7 +48,6 @@ def extract_abstract(html):
         soup = BeautifulSoup(html, "html.parser")
         paragraphs = [p.get_text().strip() for p in soup.find_all("p") if len(p.get_text().strip()) > 40]
         if paragraphs:
-            # Return first paragraph with intelligent truncation
             abstract = paragraphs[0]
             if len(abstract) > 300:
                 abstract = abstract[:297].rsplit(" ", 1)[0] + "..."
@@ -56,10 +57,11 @@ def extract_abstract(html):
     return "Full details at link."
 
 
-async def process_feed(r, session, cat, feed_url, max_per_feed=5):
-    """Fetch a single feed and store items in Redis."""
+# ---- Core Feed Processor ----
+async def process_feed(r, session, category, feed_url, max_per_feed=5):
+    """Fetch and store items from a single RSS feed."""
     try:
-        async with session.get(feed_url, timeout=10) as resp:
+        async with session.get(feed_url, timeout=30) as resp:
             xml = await resp.text()
     except Exception as e:
         print(f"[Feed Error] {feed_url}: {e}")
@@ -67,48 +69,59 @@ async def process_feed(r, session, cat, feed_url, max_per_feed=5):
 
     feed = feedparser.parse(xml)
     for entry in feed.entries[:max_per_feed]:
-        uid = hashlib.sha1(entry.link.encode()).hexdigest()
+        # Normalize UID
+        raw_uid = entry.get("id") or entry.get("link") or entry.get("title")
+        if not raw_uid:
+            continue
+        uid = hashlib.sha1(raw_uid.encode()).hexdigest()
+
+        # Deduplication
         if await r.sismember("rss:seen", uid):
             continue
 
-        # Fetch full article HTML
+        # Fetch and parse full article
         html = await fetch_html(session, entry.link)
         image_url = extract_main_image(html)
         abstract = extract_abstract(html)
 
-        # Store in Redis
+        # Store normalized data
         item = {
             "title": entry.get("title", "Untitled"),
             "url": entry.get("link", ""),
             "abstract": abstract,
-            "category": cat,
+            "category": category,
             "image": image_url or "",
-            "published_ts": time.time(),
+            "timestamp": time.time(),
         }
 
-        await r.hset(f"rss:item:{uid}", mapping=item)
+        key = f"rss:item:{uid}"
+        await r.hset(key, mapping=item)
         await r.zadd("rss:index", {uid: time.time()})
         await r.xadd("rss:queue", {"uid": uid, "title": item["title"], "image": item["image"]})
         await r.sadd("rss:seen", uid)
 
-        print(f"📰 Stored {uid[:8]} from {cat} ({'🖼️' if image_url else '❌ no image'})")
+        print(f"📰 Stored {uid[:8]} in category {category} ({'🖼️' if image_url else '❌ no image'})")
 
 
+# ---- Top-Level Ingestion ----
 async def ingest_all_feeds(feeds_conf):
-    """Fetch and store all feeds defined in feeds.json."""
+    """Fetch and store all RSS feeds into Redis."""
+    redis_host = os.getenv("SYSTEM_REDIS_HOST", "localhost")
+    redis_port = int(os.getenv("SYSTEM_REDIS_PORT", "6379"))
+    print(f"[debug] Connecting to Redis host={redis_host} port={redis_port} for ingestion...")
+
+    r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
     feeds = feeds_conf.get("feeds", {})
-    workflow = feeds_conf.get("workflow", {})
-    max_per_feed = workflow.get("max_per_feed", 5)
+    max_per_feed = feeds_conf["workflow"].get("max_per_feed", 5)
 
-    r = redis.Redis(host="system-redis", port=6379, decode_responses=True)
-
-    print("\n📡 Starting feed ingestion...")
     async with aiohttp.ClientSession() as session:
-        tasks = []
-        for cat, feed_list in feeds.items():
-            for feed_entry in feed_list:
-                url = feed_entry.get("url")
-                if url:
-                    tasks.append(process_feed(r, session, cat, url, max_per_feed))
-        await asyncio.gather(*tasks)
+        for category, feed_list in feeds.items():
+            print(f"📡 Starting feed ingestion for category: {category}")
+            for feed in feed_list:
+                url = feed["url"]
+                try:
+                    await process_feed(r, session, category, url, max_per_feed)
+                except Exception as e:
+                    print(f"[Feed Error] {url}: {e}")
+
     print("✅ Feed ingestion complete.\n")

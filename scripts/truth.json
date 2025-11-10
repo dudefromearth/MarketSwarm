@@ -1,72 +1,70 @@
 {
-  "version": "2.0",
-  "description": "Truth: Hybrid host-based Redis deployment (system=6379, market=6380, rss=6381). Maintains prior wiring, adds explicit bus map for clarity and scaling.",
+  "version": "3.0",
+  "description": "Truth: Host-based Redis topology for MarketSwarm stack. Simplified for direct OS-level services without Docker or containers.",
   "buses": {
     "system-redis": {
-      "url": "redis://host.docker.internal:6379",
+      "url": "redis://127.0.0.1:6379",
       "role": "governance",
-      "description": "Primary coordination and heartbeat bus for mesh, healer, truth, and orchestration."
+      "description": "Primary coordination, truth, and heartbeat bus for all services."
     },
     "market-redis": {
-      "url": "redis://host.docker.internal:6380",
+      "url": "redis://127.0.0.1:6380",
       "role": "market-data",
-      "description": "Real-time market and chainfeed publication bus for Massive and Vexy output."
+      "description": "Real-time market and chainfeed publication bus for Massive and Vexy."
     },
     "rss-redis": {
-      "url": "redis://host.docker.internal:6381",
+      "url": "redis://127.0.0.1:6381",
       "role": "content",
-      "description": "Dedicated RSS ingestion and semantic enrichment bus for aggregator and Vexy input."
+      "description": "Dedicated RSS ingestion and enrichment bus for RSSAgg and Vexy."
     }
   },
+
   "components": {
     "rss_agg": {
       "meta": {
-        "name": "Feed Aggregator",
-        "description": "Ingests RSS feeds to host-based RSS Redis (rss-redis) for Vexy and publication."
+        "name": "RSS Aggregator",
+        "description": "Ingests, enriches, and republishes RSS feeds for Vexy and external publication."
       },
       "access_points": {
         "publish_to": [
           { "bus": "rss-redis", "key": "rss:queue" },
           { "bus": "system-redis", "key": "rss_agg:heartbeat" }
         ],
-        "queue_key": "rss:queue",
+        "subscribe_to": [],
         "index_key": "rss:index",
-        "item_template": "rss:item:{uid}",
-        "format_key": "rss:format"
+        "queue_key": "rss:queue"
       },
-      "generate_rss": {
-        "schedule": {
-          "interval_sec": 600,
-          "description": "Run every 10 minutes"
-        }
+      "workflow": {
+        "interval_sec": 600,
+        "publish_dir": "/app/feeds"
       },
-      "filters": {
-        "required_fields": ["title", "abstract", "url"],
-        "on_failure": "rss:quarantine"
-      },
-      "dependencies": [],
-      "internal_config": "feeds.json"
+      "dependencies": []
     },
+
     "massive": {
       "meta": {
-        "name": "Market Data Ingestor",
-        "description": "Publishes market data to market-redis and system-redis for coordination."
+        "name": "Massive ChainFeed Service",
+        "description": "Harvests SPX option chain via Polygon REST and publishes deltas to market bus."
       },
       "access_points": {
         "publish_to": [
           { "bus": "market-redis", "key": "sse:chain-feed" },
-          { "bus": "system-redis", "key": "massive:spot" },
           { "bus": "system-redis", "key": "massive:heartbeat" }
         ],
-        "services_key": "massive:services"
+        "subscribe_to": []
       },
-      "dependencies": [],
-      "api_key": "[POLYGON_API_KEY]"
+      "workflow": {
+        "interval_hz": 2,
+        "symbol": "SPX",
+        "api_key_env": "POLYGON_API_KEY"
+      },
+      "dependencies": []
     },
+
     "vexy_ai": {
       "meta": {
-        "name": "Vexy AI Base Service",
-        "description": "Subscribes to RSS and Market buses, augments, and publishes enriched outputs."
+        "name": "Vexy AI",
+        "description": "Consumes market and RSS streams, generates derived intelligence and alerts."
       },
       "access_points": {
         "subscribe_to": [
@@ -74,31 +72,32 @@
           { "bus": "market-redis", "key": "sse:chain-feed" }
         ],
         "publish_to": [
-          { "bus": "rss-redis", "key": "sse:vexy-message" },
-          { "bus": "system-redis", "key": "vexy_ai:heartbeat" }
+          { "bus": "system-redis", "key": "vexy_ai:heartbeat" },
+          { "bus": "rss-redis", "key": "intel:reports" }
         ]
       },
-      "dependencies": ["rss_agg", "massive"],
-      "workflow": "augment_bias_gamma"
+      "dependencies": ["rss_agg", "massive"]
     },
+
     "mesh": {
       "meta": {
         "name": "Mesh Coordinator",
-        "description": "Registers and monitors all active services via heartbeat."
+        "description": "Maintains service registry and monitors heartbeat health."
       },
       "access_points": {
         "publish_to": [
-          { "bus": "system-redis", "key": "mesh:gossip" },
-          { "bus": "system-redis", "key": "mesh:heartbeat" }
+          { "bus": "system-redis", "key": "mesh:heartbeat" },
+          { "bus": "system-redis", "key": "mesh:gossip" }
         ],
-        "services_key": "mesh:services"
+        "subscribe_to": []
       },
       "dependencies": []
     },
+
     "healer": {
       "meta": {
-        "name": "Service Healer",
-        "description": "Monitors the heartbeats of all services and resuscitates them when necessary."
+        "name": "Healer",
+        "description": "Watches all service heartbeats and restarts or alerts when any fail."
       },
       "access_points": {
         "subscribe_to": [
@@ -108,16 +107,13 @@
           { "bus": "system-redis", "key": "mesh:heartbeat" }
         ],
         "publish_to": [
-          { "bus": "system-redis", "key": "healer:alerts" },
-          { "bus": "system-redis", "key": "healer:heartbeat" }
-        ],
-        "services_key": "healer:services"
+          { "bus": "system-redis", "key": "healer:heartbeat" },
+          { "bus": "system-redis", "key": "healer:alerts" }
+        ]
       },
-      "threshold": { "heartbeat_cadence": 30 },
       "heartbeat": {
-        "channel": "healer:heartbeat",
         "interval_sec": 10,
-        "redis_url": "redis://host.docker.internal:6379"
+        "channel": "healer:heartbeat"
       },
       "dependencies": []
     }

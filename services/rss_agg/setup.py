@@ -14,15 +14,15 @@ def setup_service_environment(svc: str):
 
     try:
         # Connect to System Redis
-        r = redis.Redis(host="system-redis", port=6379, decode_responses=True)
+        r = redis.Redis(host=os.getenv("SYSTEM_REDIS_HOST", "localhost"), port=6379, decode_responses=True)
         r.ping()
         print("✅ Connected to system-redis:6379")
     except Exception as e:
         raise RuntimeError(f"❌ Failed to connect to Redis: {e}")
 
     # Schema paths
-    feeds_schema_path = "/app/schema/feeds.json"
-    articles_schema_path = "/app/schema/articles.json"
+    feeds_schema_path = "/Users/ernie/MarketSwarm/scripts/rssagg/feeds.json"
+    articles_schema_path = "/Users/ernie/MarketSwarm/scripts/rssagg/articles.json"
 
     # Check that schema files exist
     for path in (feeds_schema_path, articles_schema_path):
@@ -75,15 +75,13 @@ def setup_service_environment(svc: str):
         except Exception as e:
             print(f"   ⚠️ TTL setup failed for {key_root}: {e}")
 
-    # Filesystem check
-    os.makedirs("/app/feeds", exist_ok=True)
-    print("📦 Verified /app/feeds directory for published RSS files")
+    # Filesystem check (Docker-safe + local-safe)
+    feeds_dir = os.getenv("FEEDS_DIR", "./feeds")
+    if not os.path.isabs(feeds_dir):
+        feeds_dir = os.path.join(os.getcwd(), feeds_dir)
 
-    # Optional: verify sample structure creation
-    schema_version = articles_cfg.get("version", "unknown")
-    r.set("rss:schema_version", schema_version)
-    print(f"🧾 Registered schema version: {schema_version}")
-
-    # Final summary
-    print(f"✅ Setup verified: {created} new, {existing} existing keys.\n")
-    print("💚 RSS Aggregator environment ready.\n")
+    try:
+        os.makedirs(feeds_dir, exist_ok=True)
+        print(f"📦 Verified {feeds_dir} directory for published RSS files")
+    except Exception as e:
+        raise RuntimeError(f"❌ Failed to create feeds directory at {feeds_dir}: {e}")

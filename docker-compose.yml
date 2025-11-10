@@ -1,49 +1,27 @@
-version: "3.9"
-
 # ──────────────────────────────────────────────
-# 🧭 MarketSwarm Hybrid Architecture
+# 🧭 MarketSwarm — Node-Native Architecture
+# Author: Ernie Varitimos / FatTail Systems
 # ──────────────────────────────────────────────
-# External Redis (8.2.3) runs natively on host:
-#   system → 6379
-#   market → 6380
-#   intel  → 6381
+# Version: v5.0 (Host-Network Edition)
 #
-# Docker handles service isolation only — no Redis inside.
-# Containers use `host.docker.internal` to reach host Redis.
+# Core principle:
+#   • All containers run in host network mode
+#   • Redis buses (system, market, intel) live on the host:
+#       system → localhost:6379
+#       market → localhost:6380
+#       intel  → localhost:6381
+#   • Containers use localhost directly — no DNS aliases or bridges
+#   • Truth.json and environment are unified to reflect host-based Redis
 #
-# Redis buses:
-#   • system: orchestration, truth, and global control
-#   • market: options chain, pricing, and analytics
-#   • intel:  RSS + data intelligence model (Vexy AI)
-#
-# This file defines four functional tiers:
-#   1️⃣ Bootstrap Tier — seeds truth into Redis
-#   2️⃣ Data Tier — RSS aggregator, data collectors
-#   3️⃣ Processing Tier — AI, mesh, analytics, and market state
-#   4️⃣ Control Tier — health, recovery, diagnostics
+# Benefits:
+#   ✅ Zero network translation overhead
+#   ✅ Containers share the same view of localhost as the host OS
+#   ✅ Perfect semantic alignment with truth.json
+#   ✅ Simpler orchestration via Whale + inject-truth
 # ──────────────────────────────────────────────
 
 services:
-  # ─────────────────── 1️⃣ Bootstrap Tier ───────────────────
-  # Seeds the truth.json into system/market/intel Redis buses.
-  # Exits after injecting data; all other services depend on its success.
-  bootstrap:
-    image: redis:8.2.3-alpine
-    networks: [appnet]
-    restart: "no"
-    volumes:
-      - ./truth.json:/seed/truth.json:ro
-      - ./scripts/bootstrap.sh:/seed/bootstrap.sh:ro
-      - ./scripts/lua_diff.lua:/seed/lua_diff.lua:ro
-    environment:
-      TRUTH_REDIS_URL: redis://host.docker.internal:6379
-      MARKET_REDIS_URL: redis://host.docker.internal:6380
-      INTEL_REDIS_URL:  redis://host.docker.internal:6381
-    entrypoint: ["/bin/sh", "-eu", "/seed/bootstrap.sh"]
-
-  # ─────────────────── 2️⃣ Data Tier ───────────────────
-  # Aggregates external information — RSS, macro data, reports, etc.
-  # Feeds structured data into the intel bus and market Redis.
+  # ─────────────────── 1️⃣ Data Tier ───────────────────
   rss_agg:
     image: marketswarm-rss_agg:latest
     build:
@@ -52,12 +30,13 @@ services:
       args:
         UID: "${UID:-10001}"
         GID: "${GID:-10001}"
+    network_mode: "host"
     environment:
       SERVICE_ID: "rss_agg"
       LOG_LEVEL: "INFO"
-      SYSTEM_REDIS_URL: "redis://host.docker.internal:6379"
-      MARKET_REDIS_URL: "redis://host.docker.internal:6380"
-      INTEL_REDIS_URL:  "redis://host.docker.internal:6381"
+      SYSTEM_REDIS_URL: "redis://localhost:6379"
+      MARKET_REDIS_URL: "redis://localhost:6380"
+      INTEL_REDIS_URL:  "redis://localhost:6381"
       TRUTH_REDIS_KEY: "truth:doc"
       SCHEDULE_SEC: "600"
       FETCH_TIMEOUT_SEC: "8"
@@ -69,36 +48,24 @@ services:
       - ./services/rss_agg:/app:delegated
       - ./shared:/app/shared:ro
       - ./feeds:/app/feeds
-    dns: ["8.8.8.8", "8.8.4.4"]
     restart: unless-stopped
-    networks: [appnet]
-    depends_on:
-      bootstrap:
-        condition: service_completed_successfully
 
-  # ─────────────────── 3️⃣ Processing Tier ───────────────────
-  # Vexy AI — the central intelligence layer.
-  # Analyzes market data, generates insights, updates the intel model.
+  # ─────────────────── 2️⃣ Processing Tier ───────────────────
   vexy_ai:
     image: marketswarm-vexy_ai:latest
     build:
       context: services/vexy_ai
+    network_mode: "host"
     command: ["python", "-u", "main.py"]
     environment:
       SERVICE_ID: "vexy_ai"
-      SYSTEM_REDIS_URL: "redis://host.docker.internal:6379"
-      MARKET_REDIS_URL: "redis://host.docker.internal:6380"
-      INTEL_REDIS_URL:  "redis://host.docker.internal:6381"
-      HB_INTERVAL_SEC: "10"
       LOG_LEVEL: "INFO"
-    depends_on:
-      bootstrap:
-        condition: service_completed_successfully
+      SYSTEM_REDIS_URL: "redis://localhost:6379"
+      MARKET_REDIS_URL: "redis://localhost:6380"
+      INTEL_REDIS_URL:  "redis://localhost:6381"
+      HB_INTERVAL_SEC: "10"
     restart: unless-stopped
-    networks: [appnet]
 
-  # Massive — core market data processor.
-  # Polls APIs, builds options-chain graphs, feeds market Redis.
   massive:
     image: marketswarm-massive:latest
     build:
@@ -106,6 +73,7 @@ services:
       args:
         UID: "${UID:-10001}"
         GID: "${GID:-10001}"
+    network_mode: "host"
     environment:
       SERVICE_ID: "massive"
       POLYGON_API_KEY: "${POLYGON_API_KEY}"
@@ -117,15 +85,11 @@ services:
       HB_COUNT: "0"
       NET_PROBE_ON_START: "1"
       NET_TIMEOUT_SEC: "6"
-      SYSTEM_REDIS_URL: "redis://host.docker.internal:6379"
-      MARKET_REDIS_URL: "redis://host.docker.internal:6380"
-      INTEL_REDIS_URL:  "redis://host.docker.internal:6381"
+      SYSTEM_REDIS_URL: "redis://localhost:6379"
+      MARKET_REDIS_URL: "redis://localhost:6380"
+      INTEL_REDIS_URL:  "redis://localhost:6381"
     volumes:
       - ${PWD}/logs/services/massive:/app/logs
-    dns: ["8.8.8.8", "8.8.4.4"]
-    depends_on:
-      bootstrap:
-        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "python - <<'PY'\nprint('ok')\nPY"]
@@ -133,77 +97,45 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-    networks: [appnet]
 
-  # Mesh — coordination and message routing layer.
-  # Reads Truth from Redis to orchestrate how components interconnect.
   mesh:
     image: marketswarm-mesh:latest
     build: services/mesh
+    network_mode: "host"
     environment:
       SERVICE_ID: "mesh"
-      SYSTEM_REDIS_URL: "redis://host.docker.internal:6379"
-      MARKET_REDIS_URL: "redis://host.docker.internal:6380"
-      INTEL_REDIS_URL:  "redis://host.docker.internal:6381"
+      SYSTEM_REDIS_URL: "redis://localhost:6379"
+      MARKET_REDIS_URL: "redis://localhost:6380"
+      INTEL_REDIS_URL:  "redis://localhost:6381"
       TRUTH_FILE: ""  # Always pull from Redis
-    dns: ["8.8.8.8", "8.8.4.4"]
-    depends_on:
-      bootstrap:
-        condition: service_completed_successfully
     restart: unless-stopped
-    networks: [appnet]
 
-  # ─────────────────── 4️⃣ Control Tier ───────────────────
-  # Healer — monitors component heartbeats and alerts on anomalies.
+  # ─────────────────── 3️⃣ Control Tier ───────────────────
   healer:
     image: marketswarm-healer:latest
     build:
       context: services/healer
+    network_mode: "host"
     command: ["python", "-u", "monitor.py"]
     volumes:
       - ./services/healer:/app:ro
     environment:
       SERVICE_ID: "healer"
-      SYSTEM_REDIS_URL: "redis://host.docker.internal:6379"
-      MARKET_REDIS_URL: "redis://host.docker.internal:6380"
-      INTEL_REDIS_URL:  "redis://host.docker.internal:6381"
+      LOG_LEVEL: "INFO"
+      SYSTEM_REDIS_URL: "redis://localhost:6379"
+      MARKET_REDIS_URL: "redis://localhost:6380"
+      INTEL_REDIS_URL:  "redis://localhost:6381"
       TRUTH_REDIS_KEY: "truth:doc"
       REDIS_CONNECT_TIMEOUT: "15"
       DEFAULT_TIMEOUT_SEC: "60"
       ALERT_CHANNEL: "healer:alerts"
       HB_INTERVAL_SEC: "10"
-      LOG_LEVEL: "INFO"
-    depends_on:
-      bootstrap:
-        condition: service_completed_successfully
     restart: unless-stopped
-    networks: [appnet]
 
-  # Sentinel — safety process that ensures Truth remains present and valid.
-  # Acts as a watchdog to verify integrity and lifecycle across Redis buses.
-  sentinel:
-    image: python:3.11-slim
-    working_dir: /app
-    command: ["python", "-u", "guard.py"]
-    volumes:
-      - ./services/sentinel:/app:ro
-    environment:
-      SYSTEM_REDIS_URL: "redis://host.docker.internal:6379"
-      MARKET_REDIS_URL: "redis://host.docker.internal:6380"
-      INTEL_REDIS_URL:  "redis://host.docker.internal:6381"
-      TRUTH_REDIS_KEY: "truth:doc"
-      SENTINEL_TIMEOUT_SEC: "30"
-    depends_on:
-      bootstrap:
-        condition: service_completed_successfully
-    restart: unless-stopped
-    networks: [appnet]
-
-  # ─────────────────── Optional Diagnostic Tier ───────────────────
-  # Network validation — confirms container egress and host reachability.
+  # ─────────────────── 4️⃣ Optional Diagnostic Tier ───────────────────
   netcheck:
     image: curlimages/curl:8.11.1
-    network_mode: "service:rss_agg"
+    network_mode: "host"
     command:
       - sh
       - -c
@@ -217,9 +149,9 @@ services:
     profiles: ["diag"]
 
 # ──────────────────────────────────────────────
-# External Docker network (shared bus namespace)
+# 🧠 Notes:
+# • No external Docker networks are used.
+# • Redis runs directly on the host (native).
+# • Containers access Redis via localhost ports.
+# • Truth.json should reflect "redis://localhost" URIs.
 # ──────────────────────────────────────────────
-networks:
-  appnet:
-    external: true
-    name: marketswarm-bus

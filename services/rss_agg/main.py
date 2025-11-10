@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# ---- RSS Aggregator Service Entrypoint ----
-import os, re, json, time, socket, asyncio, threading
+# ---- RSS Aggregator Service Entrypoint (Debug Enhanced) ----
+import os, re, json, time, socket, asyncio, threading, traceback
 from urllib.parse import urlparse
 from setup import setup_service_environment
 from intel.orchestrator import run_orchestrator
@@ -8,27 +8,32 @@ from intel.orchestrator import run_orchestrator
 
 # ---- Redis helpers ----
 def parse(u):
-    p = urlparse(u or "redis://system-redis:6379")
-    return (p.hostname or "system-redis", p.port or 6379)
+    p = urlparse(u or "redis://127.0.0.1:6379")
+    return (p.hostname or "127.0.0.1", p.port or 6379)
 
 
 def guess_service_id():
     """Derive the service ID from environment or container naming."""
     sid = os.getenv("SERVICE_ID")
     if sid:
+        print(f"[debug] SERVICE_ID environment variable = {sid}")
         return sid
     hn = os.getenv("HOSTNAME") or socket.gethostname()
+    print(f"[debug] HOSTNAME fallback = {hn}")
     m = re.match(r"^[^-]+-([^-]+)-\d+$", hn)
     if m:
+        print(f"[debug] Parsed hostname-derived service ID = {m.group(1)}")
         return m.group(1)
     try:
         with open("/proc/1/cpuset") as f:
             cp = f.read().strip()
         m = re.search(r"/[^/]+/([^/]+)/[0-9a-f]+$", cp)
         if m:
+            print(f"[debug] Parsed cpuset-derived service ID = {m.group(1)}")
             return m.group(1)
     except Exception:
         pass
+    print(f"[debug] Using hostname as service ID = {hn}")
     return hn
 
 
@@ -64,10 +69,11 @@ def start_async_orchestrator(svc):
     """Run orchestrator in its own event loop (non-blocking)."""
     async def run():
         try:
-            print("🚀 Launching RSS Aggregator orchestrator...")
+            print(f"🚀 Launching RSS Aggregator orchestrator for {svc} ...")
             await run_orchestrator(svc)
         except Exception as e:
             print(f"❌ Orchestrator crashed: {e}")
+            traceback.print_exc()
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
@@ -80,28 +86,64 @@ if __name__ == "__main__":
     print(f"🧠 Initializing {svc} service...")
 
     # ---- Connect to Redis + fetch Truth document ----
-    host, port = parse(os.getenv("REDIS_URL", "redis://system-redis:6379"))
-    s = socket.create_connection((host, port), 2)
-    truth = json.loads((get_bulk(s, "truth:doc") or b"{}").decode() or "{}")
+    redis_url = os.getenv("REDIS_URL", "redis://127.0.0.1:6379")
+    host, port = parse(redis_url)
+    print(f"[debug] Connecting to Redis host={host} port={port} ...")
+    try:
+        s = socket.create_connection((host, port), 2)
+        print("[debug] Connected to Redis successfully.")
+        truth_raw = get_bulk(s, "truth:doc")
+        if not truth_raw:
+            print("[debug] truth:doc key not found in Redis.")
+        else:
+            print(f"[debug] Loaded truth:doc ({len(truth_raw)} bytes)")
+        truth = json.loads((truth_raw or b"{}").decode() or "{}")
+    except Exception as e:
+        print(f"❌ Failed to connect to Redis or load truth:doc: {e}")
+        traceback.print_exc()
+        exit(1)
 
     # ---- Find heartbeat endpoint for this service ----
+    comps = truth.get("components", {})
+    if not comps:
+        print("[debug] No 'components' found in truth:doc.")
+    else:
+        print(f"[debug] Found {len(comps)} components in truth:doc: {list(comps.keys())}")
+
+    this_comp = comps.get(svc)
+    if not this_comp:
+        print(f"[debug] No component block found for '{svc}' in truth:doc.")
+    else:
+        aps = this_comp.get("access_points", {})
+        print(f"[debug] Found access_points for '{svc}': {json.dumps(aps, indent=2)}")
+
     pubs = (
-        truth.get("components", {})
-        .get(svc, {})
-        .get("access_points", {})
-        .get("publish_to", [])
+        comps.get(svc, {})
+             .get("access_points", {})
+             .get("publish_to", [])
         or []
     )
+    print(f"[debug] publish_to list: {json.dumps(pubs, indent=2)}")
+
     hb = next((x for x in pubs if x.get("key", "").endswith(":heartbeat")), None)
+    if hb:
+        print(f"[debug] Heartbeat entry found: {hb}")
+    else:
+        print(f"[debug] No heartbeat entry found for {svc}")
     assert hb, f"no heartbeat publish_to found for {svc}"
 
     bus = hb.get("bus", "system-redis")
     ch = hb["key"]
-    bh, bp = {
-        "system-redis": ("system-redis", 6379),
-        "market-redis": ("market-redis", 6379),
-    }.get(bus, (host, port))
+    bus_map = {
+        "system-redis": ("127.0.0.1", 6379),
+        "market-redis": ("127.0.0.1", 6380),
+        "rss-redis": ("127.0.0.1", 6381)
+    }
+    bh, bp = bus_map.get(bus, (host, port))
+    print(f"[debug] Resolved heartbeat bus={bus} host={bh} port={bp} key={ch}")
+
     ps = s if (bh, bp) == (host, port) else socket.create_connection((bh, bp), 2)
+    print(f"[debug] Ready to publish heartbeat to {bus}:{ch}")
 
     # ---- 1️⃣ Setup working environment ----
     try:
@@ -109,6 +151,7 @@ if __name__ == "__main__":
         print("✅ Environment setup complete.")
     except Exception as e:
         print(f"❌ Setup failed: {e}")
+        traceback.print_exc()
         exit(1)
 
     # ---- 2️⃣ Launch orchestrator (in background thread) ----
@@ -124,10 +167,13 @@ if __name__ == "__main__":
     while True:
         try:
             i += 1
-            send(ps, "PUBLISH", ch, json.dumps({"svc": svc, "i": i, "ts": int(time.time())}))
-            rdline(ps)
+            payload = json.dumps({"svc": svc, "i": i, "ts": int(time.time())})
+            send(ps, "PUBLISH", ch, payload)
+            ack = rdline(ps)
+            print(f"[debug] Redis publish ack: {ack}")
             print(f"beat {svc} #{i} -> {ch}", flush=True)
             time.sleep(interval)
         except Exception as e:
             print(f"⚠️ Heartbeat error: {e}")
+            traceback.print_exc()
             time.sleep(interval)
