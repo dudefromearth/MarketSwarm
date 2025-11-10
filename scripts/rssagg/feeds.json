@@ -1,0 +1,61 @@
+{
+  "version": "2.0",
+  "description": "RSS Aggregator schema for Google Alert feeds — includes categories, search terms, workflow, and Redis schema.",
+  "storage": {
+    "schema_key": "rss:schema_version",
+    "index_key": "rss:index",
+    "queue_key": "rss:queue",
+    "seen_key": "rss:seen",
+    "status_key": "rss:status",
+    "ttl": {
+      "rss:seen": 2592000,
+      "rss:index": 86400,
+      "rss:queue": 86400
+    }
+  },
+  "workflow": {
+    "schedule_sec": 600,
+    "max_per_feed": 5,
+    "enrich": true,
+    "publish_dir": "/Users/ernie/Sites/feeds",
+    "output_feeds": {
+      "fomc_alerts": "fomc_alerts.xml",
+      "jobs_report": "jobs_report.xml",
+      "economic_reports": "economic_reports.xml"
+    }
+  },
+  "feeds": {
+    "fomc_alerts": [
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15070650452603148120", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/12169640906365262022", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/1400617060424894835", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/12016843298852990478", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/2792038623167850646", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/17930593839239830382", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/10362974182106822400", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/6533550261515729312", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/14138202427431249230", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15535607658455447980", "search_term": "placeholder term for FOMC alerts" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/13545689248470725943", "search_term": "placeholder term for FOMC alerts" }
+    ],
+    "economic_reports": [
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/13422958400861430689", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/5118116501410332078", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/864076457789630681", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/16457551870751936221/18319799582832831123", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/16457551870751936221/4087274030114628826", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/16457551870751936221/8454246542038993794", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/12343839001370133244", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/4046719616798015086", "search_term": "placeholder term for economic reports" }
+    ],
+    "jobs_report": [
+      { "url": "https://www.google.com/alerts/feeds/16457551870751936221/1735623167563941562", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/16457551870751936221/471359145568545330", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/16457551870751936221/17331406867454051184", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/16457551870751936221/7921224552814816151", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/16457551870751936221/16994311343502336776", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/16457551870751936221/2429707572755427996", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/16457551870751936221/7705397854956163455", "search_term": "placeholder term for economic reports" }
+    ]
+  }
+}
