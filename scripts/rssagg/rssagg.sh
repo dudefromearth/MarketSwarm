@@ -67,6 +67,15 @@ SYSTEM_REDIS_PORT="${SYSTEM_REDIS_PORT:-6379}"
 SYSTEM_REDIS_URL="${SYSTEM_REDIS_URL:-redis://${SYSTEM_REDIS_HOST}:${SYSTEM_REDIS_PORT}}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load environment overrides if .env exists
+ENV_FILE="${SCRIPT_DIR}/.env"
+if [[ -f "$ENV_FILE" ]]; then
+  set -o allexport
+  source "$ENV_FILE"
+  set +o allexport
+fi
+
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../../" && pwd)"
 RSSAGG_DIR="$(cd "${ROOT_DIR}/services/rss_agg" && pwd)"
 RUN_DIR="${SCRIPT_DIR}/run";  mkdir -p "$RUN_DIR"

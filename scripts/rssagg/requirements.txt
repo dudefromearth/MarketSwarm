@@ -1,0 +1,7 @@
+# Core dependencies for RSS Aggregator
+redis>=5.0
+feedparser>=6.0
+requests>=2.31
+beautifulsoup4>=4.12
+html5lib>=1.1
+python-dateutil>=2.8
