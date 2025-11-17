@@ -1,4 +1,20 @@
 #!/usr/bin/env python3
+"""
+publisher.py
+------------
+Tier-4 + Tier-5D Premium RSS Feed Publisher
+
+Pipeline:
+  - Tier 3 articles (LLM-enriched)
+  - Tier 0 canonical articles (fallback)
+  - Tier 4 premium overlays (context blocks)
+  - Tier 5D market-anomaly feed (tail events)
+
+Outputs:
+  category.xml
+  tail_events.xml
+"""
+
 import os
 import json
 import time
@@ -6,11 +22,32 @@ from datetime import datetime
 from xml.sax.saxutils import escape
 
 import redis
+from openai import OpenAI
+
+# Tail-event subsystem
+from .tail_detector import generate_tail_events_feed
 
 
-# --------------------------------------------------------------------
-# Bloomberg-grade RSS publisher
-# --------------------------------------------------------------------
+# ============================================================
+# OpenAI Client
+# ============================================================
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+
+def ai(prompt: str) -> str:
+    """LLM wrapper with safe defaults."""
+    r = client.chat.completions.create(
+        model="gpt-4.1-mini",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=400,
+        temperature=0.3,
+    )
+    return r.choices[0].message.content.strip()
+
+
+# ============================================================
+# PUBLIC ENTRYPOINT — Generate All Feeds
+# ============================================================
 def generate_all_feeds(feeds_conf: dict, truth: dict):
     comp = truth["components"]["rss_agg"]
 
@@ -18,53 +55,139 @@ def generate_all_feeds(feeds_conf: dict, truth: dict):
     if not os.path.isabs(publish_dir):
         publish_dir = os.path.abspath(publish_dir)
 
+    os.makedirs(publish_dir, exist_ok=True)
+
     r = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
 
-    feeds = feeds_conf.get("feeds", {})
-    workflow = feeds_conf.get("workflow", {})
-    max_items = int(workflow.get("max_items", 50))
+    feeds = feeds_conf["feeds"]
+    max_items = int(feeds_conf["workflow"].get("max_items", 50))
 
     index_key = comp["access_points"]["index_key"]
 
-    # ----------------------------------------------------------------
-    # For each category → generate premium-grade RSS feed
-    # ----------------------------------------------------------------
+    # --------------------------------------------------------
+    # Generate each category feed
+    # --------------------------------------------------------
     for category in feeds.keys():
-        print(f"📝 Generating Bloomberg-grade feed: {category}")
+
+        print(f"📝 Generating Tier-4 feed for category: {category}")
 
         uids = r.zrevrange(index_key, 0, max_items - 1)
         items = []
 
         for uid in uids:
 
+            # Tier-3 enriched
             enriched = r.hgetall(f"rss:article:{uid}")
             if enriched and enriched.get("category") == category:
+                enriched["_tier"] = "tier3"
                 items.append(enriched)
                 continue
 
-            raw = r.hgetall(f"rss:item:{uid}")
-            if raw and raw.get("category") == category:
-                items.append(raw)
+            # Canonical fallback
+            canon = r.hgetall(f"rss:article_canonical:{uid}")
+            if canon and canon.get("category") == category:
+                canon["_tier"] = "canonical"
+                items.append(canon)
+                continue
 
-        xml = render_bloomberg_rss(category, items)
+        # No items → still publish a minimal feed
+        context_blocks = build_context_blocks(category, items)
+
+        xml = render_feed(category, context_blocks + items)
 
         final_path = os.path.join(publish_dir, f"{category}.xml")
         tmp_path = final_path + ".tmp"
 
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(xml)
-
         os.replace(tmp_path, final_path)
-        print(f"   → wrote {final_path} (atomic)")
+
+        print(f"   → wrote {final_path}")
+
+    # --------------------------------------------------------
+    # Generate Global Tail-Event Feed (Tier-5D)
+    # --------------------------------------------------------
+    print("⚠️  Generating Global Tail-Event Feed...")
+    generate_tail_events_feed(publish_dir)
+    print("   → tail_events.xml complete.")
 
 
-# --------------------------------------------------------------------
-# Bloomberg-grade rendering
-# --------------------------------------------------------------------
-def render_bloomberg_rss(category: str, items: list):
+# ============================================================
+# STEP 4 — AI Context Blocks
+# ============================================================
+def build_context_blocks(category: str, items: list):
+    """
+    Builds 3 synthetic context entries:
+      1. Category Overview
+      2. Rolling Weekly Meta-Summary
+      3. AI Highlights (bullets)
+    These appear at the top of the feed.
+    """
+
+    summaries = [it.get("summary") for it in items if it.get("summary")]
+    titles = [it.get("title") for it in items]
+
+    summaries_joined = "\n".join(summaries[:20])
+
+    # ------------------------------
+    # 1. CATEGORY OVERVIEW
+    # ------------------------------
+    category_blurb = ai(
+        f"Explain the category '{category}' to a financial professional. "
+        f"Cover: why it matters, relevant signals, macro relevance, and how to interpret this category’s feed."
+    )
+
+    # ------------------------------
+    # 2. WEEKLY SUMMARY
+    # ------------------------------
+    weekly = ai(
+        f"Summarize the last week of news in category '{category}'. "
+        f"Here are the article summaries:\n\n{summaries_joined}\n\n"
+        f"Extract themes, regime shifts, and risks."
+    )
+
+    # ------------------------------
+    # 3. AI HIGHLIGHTS
+    # ------------------------------
+    highlights = ai(
+        "From the following article titles, produce 3–5 high-value bullet point insights:\n\n"
+        + "\n".join(titles[:15])
+    )
+
+    now = time.time()
+
+    return [
+        {
+            "_special": True,
+            "title": f"{category.upper()} — Category Overview",
+            "abstract": category_blurb[:600],
+            "content": category_blurb,
+            "published_ts": now,
+        },
+        {
+            "_special": True,
+            "title": f"{category.upper()} — Weekly Meta Summary",
+            "abstract": weekly[:600],
+            "content": weekly,
+            "published_ts": now,
+        },
+        {
+            "_special": True,
+            "title": f"{category.upper()} — AI Highlights",
+            "abstract": highlights[:600],
+            "content": highlights,
+            "published_ts": now,
+        },
+    ]
+
+
+# ============================================================
+# RSS Renderer — Tier-4 Renderer
+# ============================================================
+def render_feed(category: str, items: list):
+
     now = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
 
-    # Add namespaces for advanced RSS
     out = []
     out.append('<?xml version="1.0" encoding="UTF-8"?>')
     out.append(
@@ -74,92 +197,29 @@ def render_bloomberg_rss(category: str, items: list):
     )
     out.append("<channel>")
     out.append(f"<title>{escape(category)}</title>")
-    out.append(f"<description>Premium feed: {escape(category)}</description>")
+    out.append(f"<description>Tier-4 Premium Feed: {escape(category)}</description>")
     out.append(f"<pubDate>{now}</pubDate>")
 
-    # ------------------------------------------------------------
-    # Render each item with Bloomberg-level structure
-    # ------------------------------------------------------------
     for it in items:
 
         title = escape(it.get("title", "Untitled"))
         link = escape(it.get("url", ""))
 
-        ts = (
-            float(it.get("published_ts"))
-            if it.get("published_ts")
-            else float(it.get("timestamp", time.time()))
+        ts = float(it.get("published_ts", time.time()))
+        pubdate = datetime.utcfromtimestamp(ts).strftime(
+            "%a, %d %b %Y %H:%M:%S GMT"
         )
-        pubdate = datetime.utcfromtimestamp(ts).strftime("%a, %d %b %Y %H:%M:%S GMT")
 
-        abstract = it.get("abstract") or it.get("cleaned_text") or ""
-        abstract = escape(abstract[:600])
+        abstract = escape((it.get("abstract") or "")[:600])
+        content = it.get("content") or it.get("summary") or it.get("abstract") or ""
 
-        hero = it.get("image") or ""
-        summary = it.get("summary", "")
-        reading_time = it.get("reading_time", "")
-        sentiment = it.get("sentiment", "")
-        tickers = json.loads(it.get("tickers", "[]")) if "tickers" in it else []
-        entities = json.loads(it.get("entities", "[]")) if "entities" in it else []
-        takeaways = json.loads(it.get("takeaways", "[]")) if "takeaways" in it else []
-
-        # Build HTML content block
-        html = []
-        html.append("<div style='font-family: Georgia, serif; font-size: 15px;'>")
-
-        # Hero image
-        if hero:
-            html.append(
-                f"<p><img src='{escape(hero)}' style='max-width:100%; border-radius:8px;' /></p>"
-            )
-
-        # Summary block
-        if summary:
-            html.append(f"<p><strong>{escape(summary)}</strong></p>")
-
-        # Bullet takeaways
-        if takeaways:
-            html.append("<ul>")
-            for t in takeaways:
-                html.append(f"<li>{escape(t)}</li>")
-            html.append("</ul>")
-
-        # Metadata footer
-        meta_html = "<p style='color:#666; font-size: 13px;'>"
-        if sentiment:
-            meta_html += f"Sentiment: <b>{escape(sentiment)}</b> &nbsp; "
-        if reading_time:
-            meta_html += f"Reading time: {escape(str(reading_time))} min &nbsp; "
-        if tickers:
-            meta_html += "Tickers: " + ", ".join(tickers) + " &nbsp; "
-        if entities:
-            meta_html += "Entities: " + ", ".join(entities)
-        meta_html += "</p>"
-
-        html.append(meta_html)
-
-        html.append("</div>")
-        content_encoded = escape("\n".join(html))
-
-        # --------------------------------------------------------
-        # Write RSS <item>
-        # --------------------------------------------------------
         out.append("<item>")
         out.append(f"<title>{title}</title>")
         if link:
             out.append(f"<link>{link}</link>")
         out.append(f"<pubDate>{pubdate}</pubDate>")
         out.append(f"<description>{abstract}</description>")
-
-        # Media enclosure
-        if hero:
-            out.append(
-                f'<media:content url="{escape(hero)}" medium="image" type="image/jpeg" />'
-            )
-
-        # Full HTML content
-        out.append(f"<content:encoded><![CDATA[{content_encoded}]]></content:encoded>")
-
+        out.append(f"<content:encoded><![CDATA[{content}]]></content:encoded>")
         out.append("</item>")
 
     out.append("</channel>")

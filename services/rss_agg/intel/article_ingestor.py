@@ -5,9 +5,10 @@ import json
 import redis.asyncio as redis
 from datetime import datetime
 
-from bs4 import BeautifulSoup
+import re
 
-# NEW: Tier-3 LLM enricher
+
+# Tier-3 LLM enricher
 from .tier3_enricher import generate_tier3_metadata
 
 
@@ -20,84 +21,109 @@ def log(component, status, emoji, msg):
 
 
 # ------------------------------------------------------------
-# Extract readable text from raw HTML
+# FIX 2 — Robust fallback extractor (now applied on canonical text)
 # ------------------------------------------------------------
-def extract_readable_text(raw_html: str):
-    soup = BeautifulSoup(raw_html, "html.parser")
-    paragraphs = [
-        p.get_text().strip()
-        for p in soup.find_all("p")
-        if len(p.get_text().strip()) > 40
+def fallback_extract_text(text: str) -> dict:
+    """
+    Strong fallback cleaner for canonical text.
+    This guarantees downstream text is clean & usable.
+    """
+    if not text:
+        return {"clean_text": "", "abstract": "", "sentences": []}
+
+    # normalize whitespace
+    clean = re.sub(r"\s+", " ", text).strip()
+
+    # sentence split
+    sentences = [
+        s.strip() for s in re.split(r"[.!?]\s+", clean)
+        if len(s.strip()) > 20
     ]
-    return "\n\n".join(paragraphs)
+
+    abstract = sentences[0] if sentences else clean[:200]
+
+    return {
+        "clean_text": clean,
+        "abstract": abstract,
+        "sentences": sentences
+    }
 
 
 # ------------------------------------------------------------
-# Main Tier-3 enrichment loop
+# Tier-3 enrichment loop — NOW CANONICAL-BASED
 # ------------------------------------------------------------
 async def enrich_articles(interval_sec=90):
     """
-    Tier-3 enrichment pipeline:
-      1. Find raw articles in rss:article_raw:{uid}
-      2. Extract readable text
-      3. LLM: summarization, metadata, rewriting
-      4. Store into rss:article:{uid}
-      5. Publish to vexy:intake
+    NEW Tier-3 pipeline:
+      1. Pulls articles from canonical Tier-0 store ONLY
+      2. Cleans using FIX-2 text extractor
+      3. Generates metadata with LLM
+      4. Stores Tier-3 enriched article
+      5. Publishes onto vexy:intake
+
+    No HTML is ever processed here.
     """
+
     intel = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
 
-    log("article", "ok", "🚀", f"Tier-3 enrichment loop started (interval={interval_sec}s)")
+    log("article", "ok", "🚀",
+        f"Tier-3 enrichment loop started (interval={interval_sec}s)")
 
     while True:
         try:
-            # Pull most recent raw articles
-            raw_uids = await intel.zrevrange("rss:article_raw:index", 0, 50)
+            # canonical substrate index
+            uids = await intel.zrevrange("rss:article_canonical:index", 0, 50)
 
-            if not raw_uids:
-                log("article", "info", "💤", "No raw articles available")
+            if not uids:
+                log("article", "info", "💤",
+                    "No canonical Tier-0 articles available")
                 await asyncio.sleep(interval_sec)
                 continue
 
-            log("article", "info", "🔎", f"Scanning {len(raw_uids)} raw articles")
+            log("article", "info", "🔎",
+                f"Scanning {len(uids)} canonical articles")
 
-            for uid in raw_uids:
-                raw_key = f"rss:article_raw:{uid}"
+            for uid in uids:
+                canon_key = f"rss:article_canonical:{uid}"
                 enriched_key = f"rss:article:{uid}"
 
-                # Skip if enriched already exists
+                # skip already enriched
                 if await intel.exists(enriched_key):
                     continue
 
-                raw = await intel.hgetall(raw_key)
+                raw = await intel.hgetall(canon_key)
                 if not raw:
                     continue
 
-                log("article", "info", "📝", f"Tier-3 enriching {uid[:8]}")
+                log("article", "info", "📝",
+                    f"Tier-3 enriching {uid[:8]}")
 
+                # canonical fields
                 title = raw.get("title", "")
                 url = raw.get("url", "")
                 category = raw.get("category", "")
+                text = raw.get("text", "")
 
-                raw_html = raw.get("raw_html", "")
-                if not raw_html:
-                    log("article", "warn", "⚠️", f"No raw_html for {uid[:8]}")
-                    continue
-
-                # Extract readable text
-                clean_text = extract_readable_text(raw_html)
-
-                if len(clean_text) < 80:
+                if not text or len(text) < 50:
                     log("article", "warn", "⚠️",
-                        f"Extracted text too short for LLM → {uid[:8]}")
+                        f"Canonical text too short → {uid[:8]}")
                     continue
 
                 # ------------------------------------------------------------
-                # Tier-3 LLM metadata generation
+                # FIX-2 fallback extraction (on canonical clean text)
+                # ------------------------------------------------------------
+                extracted = fallback_extract_text(text)
+                clean_text = extracted["clean_text"]
+                abstract = extracted["abstract"]
+                sentences = extracted["sentences"]
+
+                # ------------------------------------------------------------
+                # Tier-3 LLM metadata
                 # ------------------------------------------------------------
                 meta = generate_tier3_metadata(
                     raw_text=clean_text,
                     title=title,
-                    fallback_image=raw.get("image", "")
+                    fallback_image=raw.get("main_image", "")
                 )
 
                 if not meta:
@@ -106,12 +132,14 @@ async def enrich_articles(interval_sec=90):
                     continue
 
                 # ------------------------------------------------------------
-                # Store enriched article
+                # Store enriched Tier-3 article
                 # ------------------------------------------------------------
                 mapping = {
                     "uid": uid,
                     "url": url,
                     "title": meta["clean_title"],
+
+                    # summary & metadata
                     "abstract": meta["abstract"],
                     "summary": meta["summary"],
                     "takeaways": json.dumps(meta["takeaways"]),
@@ -122,7 +150,14 @@ async def enrich_articles(interval_sec=90):
                     "quality_score": meta["quality_score"],
                     "reading_time": meta["reading_time"],
                     "image": meta["hero_image"],
+
+                    # FIX-2 outputs
                     "full_text": clean_text,
+                    "cleaned_text": clean_text,
+                    "sentence_0": sentences[0] if len(sentences) > 0 else "",
+                    "sentence_1": sentences[1] if len(sentences) > 1 else "",
+                    "sentence_2": sentences[2] if len(sentences) > 2 else "",
+
                     "tier": "3",
                     "enriched_ts": time.time(),
                 }
@@ -131,11 +166,9 @@ async def enrich_articles(interval_sec=90):
                 await intel.zadd("rss:article:index", {uid: time.time()})
 
                 log("article", "ok", "💎",
-                    f"Stored Tier-3 article {uid[:8]} → rss:article")
+                    f"Stored Tier-3 article {uid[:8]}")
 
-                # ------------------------------------------------------------
-                # Push to vexy:intake
-                # ------------------------------------------------------------
+                # publish
                 await intel.xadd("vexy:intake", mapping)
                 log("article", "ok", "📤",
                     f"Pushed Tier-3 article {uid[:8]} → vexy:intake")
@@ -145,5 +178,6 @@ async def enrich_articles(interval_sec=90):
             await asyncio.sleep(interval_sec)
 
         except Exception as e:
-            log("article", "error", "🔥", f"Unhandled enrichment error: {e}")
+            log("article", "error", "🔥",
+                f"Unhandled enrichment error: {e}")
             await asyncio.sleep(interval_sec)

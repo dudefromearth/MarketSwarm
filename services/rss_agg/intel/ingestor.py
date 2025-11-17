@@ -8,6 +8,18 @@ import os
 import json
 import redis.asyncio as redis
 from urllib.parse import urlparse, parse_qs, unquote
+from bs4 import BeautifulSoup
+
+
+# --------------------------------------------------------
+# HTML stripper (FIX 1)
+# --------------------------------------------------------
+def strip_html(html: str) -> str:
+    """Remove HTML tags from RSS-provided content."""
+    if not html:
+        return ""
+    soup = BeautifulSoup(html, "html.parser")
+    return soup.get_text(separator=" ", strip=True)
 
 
 # --------------------------------------------------------
@@ -67,23 +79,33 @@ async def process_feed(r, session, category, feed_url, max_per_feed):
 
     for entry in feed.entries[:max_per_feed]:
 
+        # --- Identifier (unwrap first)
         raw_identifier = entry.get("id") or entry.get("link") or entry.get("title")
         clean_identifier = unwrap_redirect(raw_identifier)
-
         uid = hashlib.sha1(clean_identifier.encode()).hexdigest()
 
         # Dedup
         if await r.sismember("rss:seen", uid):
             continue
 
+        # --- URL (unwrap)
         raw_url = entry.get("link", "")
         clean_url = unwrap_redirect(raw_url)
+
+        # --- FIX 1: Clean summary/description HTML
+        raw_html_desc = (
+            entry.get("summary", "")
+            or entry.get("description", "")
+            or entry.get("content", [{}])[0].get("value", "")
+        )
+        clean_desc = strip_html(raw_html_desc)
 
         item = {
             "uid": uid,
             "category": category,
-            "title": entry.get("title", "Untitled"),
+            "title": strip_html(entry.get("title", "Untitled")),  # no HTML in title
             "url": clean_url,
+            "abstract": clean_desc,       # <-- FIX 1 STORED HERE
             "timestamp": time.time()
         }
 
