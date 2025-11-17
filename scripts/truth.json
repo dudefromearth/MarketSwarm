@@ -1,21 +1,34 @@
 {
-  "version": "3.0",
-  "description": "Truth: Host-based Redis topology for MarketSwarm stack. Simplified for direct OS-level services without Docker or containers.",
+  "version": "3.1",
+  "description": "Truth: Host-based Redis topology for MarketSwarm stack. Canonical configuration for all services.",
+
   "buses": {
     "system-redis": {
       "url": "redis://127.0.0.1:6379",
       "role": "governance",
-      "description": "Primary coordination, truth, and heartbeat bus for all services."
+      "description": "Primary coordination, truth, heartbeat, and system events bus."
     },
     "market-redis": {
       "url": "redis://127.0.0.1:6380",
       "role": "market-data",
       "description": "Real-time market and chainfeed publication bus for Massive and Vexy."
     },
-    "rss-redis": {
+    "intel-redis": {
       "url": "redis://127.0.0.1:6381",
       "role": "content",
       "description": "Dedicated RSS ingestion and enrichment bus for RSSAgg and Vexy."
+    }
+  },
+
+  "domain": {
+    "keys": {
+      "rss:index":  { "type": "ZSET",   "ttl_sec": 86400 },
+      "rss:queue":  { "type": "STREAM", "ttl_sec": 86400 },
+      "rss:seen":   { "type": "SET",    "ttl_sec": 86400 },
+      "rss:item:{uid}": { "type": "HASH", "ttl_sec": 86400 },
+
+      "massive:chain:{uid}": { "type": "HASH", "ttl_sec": 86400 },
+      "sse:chain-feed":      { "type": "STREAM", "ttl_sec": 86400 }
     }
   },
 
@@ -23,28 +36,39 @@
     "rss_agg": {
       "meta": {
         "name": "RSS Aggregator",
-        "description": "Ingests, enriches, and republishes RSS feeds for Vexy and external publication."
+        "description": "Ingests, enriches, and republishes RSS feeds."
       },
       "access_points": {
         "publish_to": [
-          { "bus": "rss-redis", "key": "rss:queue" },
+          { "bus": "intel-redis", "key": "vexy:intake" },
           { "bus": "system-redis", "key": "rss_agg:heartbeat" }
         ],
         "subscribe_to": [],
         "index_key": "rss:index",
         "queue_key": "rss:queue"
       },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15,
+        "channel": "rss_agg:heartbeat"
+      },
       "workflow": {
         "interval_sec": 600,
-        "publish_dir": "/app/feeds"
+        "publish_dir": "/Users/ernie/Sites/feeds"
       },
+      "domain_keys": [
+        "rss:index",
+        "rss:queue",
+        "rss:seen",
+        "rss:item:{uid}"
+      ],
       "dependencies": []
     },
 
     "massive": {
       "meta": {
         "name": "Massive ChainFeed Service",
-        "description": "Harvests SPX option chain via Polygon REST and publishes deltas to market bus."
+        "description": "Harvests SPX option chain and publishes deltas to market bus."
       },
       "access_points": {
         "publish_to": [
@@ -53,8 +77,16 @@
         ],
         "subscribe_to": []
       },
-      "workflow": {
+      "heartbeat": {
         "interval_hz": 2,
+        "ttl_sec": 10,
+        "channel": "massive:heartbeat"
+      },
+      "domain_keys": [
+        "massive:chain:{uid}",
+        "sse:chain-feed"
+      ],
+      "workflow": {
         "symbol": "SPX",
         "api_key_env": "POLYGON_API_KEY"
       },
@@ -68,15 +100,21 @@
       },
       "access_points": {
         "subscribe_to": [
-          { "bus": "rss-redis", "key": "rss:queue" },
+          { "bus": "intel-redis", "key": "vexy:intake" },
           { "bus": "market-redis", "key": "sse:chain-feed" }
         ],
         "publish_to": [
           { "bus": "system-redis", "key": "vexy_ai:heartbeat" },
-          { "bus": "rss-redis", "key": "intel:reports" }
+          { "bus": "intel-redis", "key": "intel:reports" }
         ]
       },
-      "dependencies": ["rss_agg", "massive"]
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15,
+        "channel": "vexy_ai:heartbeat"
+      },
+      "dependencies": ["rss_agg", "massive"],
+      "domain_keys": []
     },
 
     "mesh": {
@@ -90,6 +128,11 @@
           { "bus": "system-redis", "key": "mesh:gossip" }
         ],
         "subscribe_to": []
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15,
+        "channel": "mesh:heartbeat"
       },
       "dependencies": []
     },
@@ -113,6 +156,7 @@
       },
       "heartbeat": {
         "interval_sec": 10,
+        "ttl_sec": 30,
         "channel": "healer:heartbeat"
       },
       "dependencies": []

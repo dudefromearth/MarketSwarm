@@ -1,43 +1,43 @@
 # heartbeat.py
 import asyncio
-import json
-import os
 import time
+import json
 from redis.asyncio import Redis
 
-async def start_heartbeat(service_name: str, truth_path: str = "./root/truth.json"):
-    """Start a heartbeat loop based on Truth configuration."""
-    # Load Truth
-    try:
-        with open(truth_path, "r") as f:
-            truth = json.load(f)
-    except Exception as e:
-        print(f"[Heartbeat:{service_name}] ⚠️ Could not load truth: {e}")
-        truth = {}
 
-    # Extract service definition
-    comp = truth.get("components", {}).get(service_name, {})
-    access_points = comp.get("access_points", {})
+async def start_heartbeat(service_name: str, truth: dict):
+    """Send heartbeat pulses based on canonical truth.json."""
 
-    # Find heartbeat configuration
-    publish_targets = access_points.get("publish_to", [])
-    heartbeat_entry = next(
-        (p for p in publish_targets if "heartbeat" in p.get("key", "")), None
+    comp = truth.get("components", {}).get(service_name)
+    if not comp:
+        raise RuntimeError(f"No component entry in truth for {service_name}")
+
+    hb = comp.get("heartbeat", {})
+    interval = hb.get("interval_sec", 5)
+    channel = hb.get("channel", f"{service_name}:heartbeat")
+
+    # Lookup bus target from access_points.publish_to
+    publish_to = comp.get("access_points", {}).get("publish_to", [])
+    hb_target = next(
+        (p for p in publish_to if p.get("key") == channel),
+        None
     )
 
-    redis_url = (
-        f"redis://{heartbeat_entry['bus']}:6379"
-        if heartbeat_entry
-        else os.getenv("REDIS_URL", "redis://localhost:6379")
-    )
-    heartbeat_key = (
-        heartbeat_entry["key"]
-        if heartbeat_entry
-        else f"{service_name}:heartbeat"
-    )
+    if not hb_target:
+        raise RuntimeError(f"No heartbeat publish_to entry for {service_name}")
+
+    bus_name = hb_target["bus"]
+
+    # Resolve Redis host/port for this bus
+    bus_cfg = truth.get("buses", {}).get(bus_name)
+    if not bus_cfg:
+        raise RuntimeError(f"Bus '{bus_name}' not defined in truth")
+
+    # redis://127.0.0.1:6379
+    redis_url = bus_cfg["url"]
 
     r = Redis.from_url(redis_url, decode_responses=True)
-    print(f"[Heartbeat:{service_name}] Connected to {redis_url}, key={heartbeat_key}")
+    print(f"[Heartbeat:{service_name}] Connected to {redis_url}, channel={channel}")
 
     # Pulse loop
     while True:
@@ -46,5 +46,6 @@ async def start_heartbeat(service_name: str, truth_path: str = "./root/truth.jso
             "ts": time.time(),
             "status": "alive"
         }
-        await r.publish(heartbeat_key, json.dumps(payload))
-        await asyncio.sleep(10)
+        await r.publish(channel, json.dumps(payload))
+        print(f"[Heartbeat:{service_name}] ✔ pulse → {channel}")
+        await asyncio.sleep(interval)

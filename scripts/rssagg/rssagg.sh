@@ -1,4 +1,6 @@
 #!/opt/homebrew/bin/bash
+# Ensure Homebrew redis-cli is reachable
+export PATH="/opt/homebrew/bin:$PATH"
 # ─────────────────────────────────────────────────────────────────────────────
 # RSS Aggregator Launcher (Host-Native)
 # Service: rss_agg  |  Author: Ernie Varitimos / FatTail Systems
@@ -60,7 +62,7 @@ VERSION="1.3.0"
 # ── Config & Paths ───────────────────────────────────────────────────────────
 SERVICE_ID="${SERVICE_ID:-rss_agg}"
 PROC_TITLE="${PROC_TITLE:-${SERVICE_ID}:main}"
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+PYTHON_BIN="${PYTHON_BIN:-/Users/ernie/MarketSwarm/.venv/bin/python}"
 
 SYSTEM_REDIS_HOST="${SYSTEM_REDIS_HOST:-localhost}"
 SYSTEM_REDIS_PORT="${SYSTEM_REDIS_PORT:-6379}"
@@ -160,25 +162,100 @@ ENV
 }
 
 doctor() {
+  echo "────────────────────────────────────────────"
+  echo " RSS Aggregator Doctor (First-Principles)"
+  echo "────────────────────────────────────────────"
+
   local ok=0
-  [[ -f "$FEEDS_CONFIG" ]] || { log ERROR "feeds.json missing at $FEEDS_CONFIG"; ok=2; }
-  command -v redis-cli >/dev/null 2>&1 || { log ERROR "redis-cli not found in PATH"; ok=2; }
-  if ! redis-cli -u "$SYSTEM_REDIS_URL" PING >/dev/null 2>&1; then
-    log ERROR "Redis unavailable at $SYSTEM_REDIS_URL"; [[ $ok -eq 0 ]] && ok=1
+
+  #
+  # 1. Check .env-derived variables
+  #
+  echo -n "• Checking .env variables... "
+  if [[ -z "$PYTHON_BIN" || -z "$SYSTEM_REDIS_URL" || -z "$FEEDS_CONFIG" ]]; then
+    echo "FAIL (missing required environment variables)"
+    ok=2
   else
-    log OK "Redis reachable at $SYSTEM_REDIS_URL"
+    echo "OK"
   fi
-  if ! "${PYTHON_BIN}" -c 'import sys; sys.exit(0)' >/dev/null 2>&1; then
-    log ERROR "Python not found or not runnable: ${PYTHON_BIN}"; ok=2
+
+  #
+  # 2. Check Python interpreter
+  #
+  echo -n "• Checking Python interpreter... "
+  if "$PYTHON_BIN" -c "import sys" >/dev/null 2>&1; then
+    version=$("$PYTHON_BIN" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}')")
+    echo "OK (Python $version)"
   else
-    log OK "Python resolved: $(command -v "${PYTHON_BIN}")"
+    echo "FAIL (Python not runnable: $PYTHON_BIN)"
+    ok=2
   fi
-  if [[ -f "${RSSAGG_DIR}/setup.py" ]]; then
-    log INFO "Running setup.py…"
-    "${PYTHON_BIN}" "${RSSAGG_DIR}/setup.py" || { log ERROR "setup.py failed"; ok=2; }
+
+  #
+  # 3. Check Redis connectivity
+  #
+  echo -n "• Checking Redis ($SYSTEM_REDIS_URL)... "
+  if redis-cli -u "$SYSTEM_REDIS_URL" PING >/dev/null 2>&1; then
+    echo "OK (PONG)"
   else
-    log ERROR "Missing ${RSSAGG_DIR}/setup.py"; ok=2
+    echo "FAIL (Redis unreachable)"
+    ok=1
   fi
+
+  #
+  # 4. Check feeds.json existence
+  #
+  echo -n "• Checking feeds.json... "
+  if [[ -f "$FEEDS_CONFIG" ]]; then
+    echo "OK ($FEEDS_CONFIG)"
+  else
+    echo "FAIL (missing $FEEDS_CONFIG)"
+    ok=2
+  fi
+
+  #
+  # 5. Run setup_service_environment()
+  #    — FIXED: correctly cd into service directory so import works
+  #
+  echo -n "• Running setup_service_environment()... "
+  if [[ ! -f "$RSSAGG_DIR/setup.py" ]]; then
+    echo "FAIL (setup.py not found in $RSSAGG_DIR)"
+    ok=2
+  else
+    if (
+      cd "$RSSAGG_DIR" && \
+      "$PYTHON_BIN" - <<EOF
+from setup import setup_service_environment
+setup_service_environment("${SERVICE_ID}")
+EOF
+    ); then
+      echo "OK"
+    else
+      echo "FAIL (setup_service_environment threw an error)"
+      ok=2
+    fi
+  fi
+
+  #
+  # 6. Check feeds output directory
+  #
+  echo -n "• Checking feeds output directory... "
+  FEED_OUT_DIR="$ROOT_DIR/feeds"
+  if [[ -d "$FEED_OUT_DIR" ]]; then
+    echo "OK ($FEED_OUT_DIR)"
+  else
+    echo "FAIL ($FEED_OUT_DIR missing)"
+    ok=1
+  fi
+
+  echo "────────────────────────────────────────────"
+  if [[ $ok -eq 0 ]]; then
+    echo "✔️  Doctor completed successfully."
+  else
+    echo "❌ Doctor found issues — fix above failures."
+  fi
+  echo "────────────────────────────────────────────"
+
   return "$ok"
 }
 

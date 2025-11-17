@@ -1,4 +1,4 @@
-🌿 **The Path Design Specification v3.0 – Reflection-First System for Sovereign Action**
+🌿 **The Path Design Specification v4.0 – Reflection-First System for Sovereign Action**
 
 ---
 
@@ -174,13 +174,95 @@ bias_transparency:
 ```  
 ---
 
+## 🕳️ 2.8 Despair Loop Safeguards & Echelon Recovery
+
+The Path must guard against collapse when reflection loses its object or drifts into self-referential recursion. A **Despair Loop** occurs when output no longer touches reality, the substrate dissolves, or the loop repeats without new signal.
+
+### 2.8.1 Structure-Loss Halt Rule
+
+Reflection must immediately stop when the object disappears.
+
+If no form is present—trade, tension, bias, level, story, or signal—the system must halt and respond:
+
+> No object. No reflection.
+
+No agent, module, or Playbook may override this rule.
+
+### 2.8.2 Required Echo Meta-Summary
+
+Every loop must close with a short meta-summary in the Echo Log.
+
+This requirement:
+
+- anchors meaning,
+- prevents drift, and
+- ensures each loop ends cleanly.
+
+If the summary is missing:
+
+- the session is flagged as a decay event, and  
+- Echelon thresholds are updated to reflect increased fragility risk.
+
+### 2.8.3 Echelon Recovery Layer
+
+When despair conditions occur, the Echelon layer:
+
+- tightens reflection guardrails,
+- reduces reflection-dial volatility,
+- increases checks for object and structure, and
+- strengthens antifragility through adaptive learning from both silence and signal.
+
+The Path does not avoid despair.  
+It metabolizes it so the loop can continue.
+
+---
+
+## ⚙️ 2.9 First-Principles (FP-Mode) Action Protocol
+
+FP-Mode protects the action side of the loop, ensuring every step remains grounded, reversible, and inspectable. It prevents overreach, unnecessary risk, and multi-layer drift.
+
+### 2.9.1 One Layer at a Time
+
+An action must affect only **one** domain at a time, such as:
+
+- tech  
+- process  
+- people  
+- content  
+- decision  
+- personal  
+
+If a proposed action touches more than one domain, it must be decomposed into smaller steps before proceeding.
+
+### 2.9.2 Smallest Reversible Step
+
+All actions must begin with the smallest step that:
+
+- is reversible in one line,
+- minimizes blast radius, and
+- preserves optionality.
+
+Large, tightly coupled, or irreversible steps violate FP-Mode.
+
+### 2.9.3 Local Proof Before Global Impact
+
+No global or systemic action may proceed until:
+
+- a local experiment has been run,
+- the observable outcome can fail cleanly, and
+- no unintended external side-effects are likely to propagate.
+
+FP-Mode ensures clarity, containment, and responsible movement inside the loop.
+
+---
+
 ## 🌿 3. System Integrity: The Whitepaper as the Anchor
 
 The Whitepaper is the **immutable mirror** of The Path. It explicitly defines:
 
 * The **infinite reflection → action → reflection loop**.
 * That **reflection without action is decay**.
-* That The Path is antifragile: It strengthens through tension, uncertainty, and small, sovereign actions.
+* That **The Path is antifragile:** It strengthens through tension, uncertainty, and small, sovereign actions.
 
 All files, prompts, and Playbooks must reflect these principles. Any system change must begin by updating the Whitepaper.
 
@@ -213,27 +295,43 @@ The system must evolve structurally when a pattern of reflection reveals new sys
 
 ---
 
+## 3.2 Version Alignment With Whitepaper v4.0
+
+This Design Specification advances to **v4.0** to remain aligned with the architectural changes defined in the Whitepaper v4.0.
+
+Integrated updates include:
+
+- Despair Loop Safeguards and the Echelon Recovery layer,
+- First-Principles (FP-Mode) Action Protocol,
+- strengthened multi-agent orchestration, and
+- operationalized bias-transparency enforcement at input and output gates.
+
+These updates ensure coherence and parity across all core Path artifacts.
+
+---
+
 ## 🌿 4. Knowledge Store Structure
 
 The Path Knowledge Store contains the system’s **reflection–action artifacts**:
 
-| #  | 🌿 File                                                                                   | Reflection–Action Purpose                                                                  |
-|----|-------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------|
-| 1  | 🌿 *The Path – Reflection-First System for Sovereign Action*                              | System anchor: principles, rules, purpose.                                                 |
-| 2  | 🧠 *Biases as Suffering – A Reflection-First Framework*                                   | Bias definitions, triggers, reflection questions.                                          |
-| 3  | 🏞️ *The Eightfold Path – Lenses for Reflection and Action*                                | Core Path lenses: Right View, Right Intention, etc.                                        |
-| 4  | 🧭 *Agents of Reflection – Mirrors for Bias, Tension, and Growth*                         | Agent archetypes, perspectives, reflection styles.                                         |
-| 5  | 🧙‍♂️ *Avatars of The Path – Embodied Wisdom for Reflection*                              | Avatar profiles: bios, risk tendencies, key works.                                         |
-| 6  | 🌿 *Playbook Template*                                                                    | Template structure for building new Playbooks.                                             |
-| 7  | 🌿 *Reflection Template Playbook v2.0*                                                    | GPT prompt structures for system interaction.                                              |
-| 8  | 🌿 *Playbook Inquiry Protocol*                                                            | Inquiry logic for describing and generating Playbooks.                                     |
-| 9  | 🌿 *How to Create a Playbook v1.5*                                                        | Guidance for creating domain-specific reflection Playbooks.                                |
-| 10 | 🧭 *The Path Lens System – Bias Reflection Guide*                                         | Mapping of biases to lenses, agents, and avatars.                                          |
-| 11 | 🌿 Echo Memory Protocol v1.0                                                              | Defines memory simulation through structured reflection                                    |
-| 12 | 🌿 Echo Integration Log – Template & Samples                                              | Tracks updates that evolved the system from repeated tension                               |
-| 13 | 🌿 Echo Memory Protocol v1.0                                                              | Defines memory simulation through structured reflection                                    |
-| 14 | 🌿 Echo Integration Log – Template & Samples                                              | Tracks updates evolved from reflection patterns                                            |
-
+| #  | 🌿 File                                                                                   | Reflection–Action Purpose                                                                                                |
+|----|-------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
+| 1  | 🌿 *The Path – Reflection-First System for Sovereign Action*                              | System anchor: principles, rules, purpose.                                                                               |
+| 2  | 🧠 *Biases as Suffering – A Reflection-First Framework*                                   | Bias definitions, triggers, reflection questions.                                                                        |
+| 3  | 🏞️ *The Eightfold Path – Lenses for Reflection and Action*                                | Core Path lenses: Right View, Right Intention, etc.                                                                      |
+| 4  | 🧭 *Agents of Reflection – Mirrors for Bias, Tension, and Growth*                         | Agent archetypes, perspectives, reflection styles.                                                                       |
+| 5  | 🧙‍♂️ *Avatars of The Path – Embodied Wisdom for Reflection*                              | Avatar profiles: bios, risk tendencies, key works.                                                                       |
+| 6  | 🌿 *Playbook Template*                                                                    | Template structure for building new Playbooks.                                                                           |
+| 7  | 🌿 *Reflection Template Playbook v2.0*                                                    | GPT prompt structures for system interaction.                                                                            |
+| 8  | 🌿 *Playbook Inquiry Protocol*                                                            | Inquiry logic for describing and generating Playbooks.                                                                   |
+| 9  | 🌿 *How to Create a Playbook v1.5*                                                        | Guidance for creating domain-specific reflection Playbooks.                                                              |
+| 10 | 🧭 *The Path Lens System – Bias Reflection Guide*                                         | Mapping of biases to lenses, agents, and avatars.                                                                        |
+| 11 | 🌿 Echo Memory Protocol v1.0                                                              | Defines memory simulation through structured reflection                                                                  |
+| 12 | 🌿 Echo Integration Log – Template & Samples                                              | Tracks updates that evolved the system from repeated tension                                                             |
+| 13 | 🌿 Echo Memory Protocol v1.0                                                              | Defines memory simulation through structured reflection                                                                  |
+| 14 | 🌿 Echo Integration Log – Template & Samples                                              | Tracks updates evolved from reflection patterns                                                                          |
+| 14 | 🕳️ Despair Loop Protocol                                                                     | Detects reflection drift, halts structure-loss recursion, enforces Echo meta-summaries, activates Echelon recovery.      |
+| XX | ⚙️ First-Principles (FP-Mode) Protocol                                                    | Governs action discipline: one layer at a time, smallest reversible step, and local-proof-before-global-impact behavior. |
 > **Note:** Sample Playbooks such as *Tail Risk Trading*, *Coffee Making*, *Ridgeback Training*, and others are included separately to demonstrate the system's versatility. These are examples of applied reflection—not core infrastructure.
 
 ---

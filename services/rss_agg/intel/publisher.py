@@ -1,79 +1,116 @@
-#!/usr/bin/env python3
-import json
-import redis
-import xml.etree.ElementTree as ET
-from datetime import datetime
+# publisher.py — Premium Abstract RSS Publisher
+
 import os
+import json
+from datetime import datetime
+from xml.sax.saxutils import escape
+import redis
 
-
-def generate_all_feeds(feeds_conf):
-    """Generate all configured category RSS feeds from Redis data."""
-
-    # 🧩 Redis connection (host-based, not Docker alias)
-    redis_host = os.getenv("SYSTEM_REDIS_HOST", "127.0.0.1")
-    redis_port = int(os.getenv("SYSTEM_REDIS_PORT", "6379"))
-    r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
-    print(f"[debug] Connected to Redis at {redis_host}:{redis_port} for publishing")
-
-    # 🗂 Feed configuration and output mapping
-    feeds = feeds_conf.get("feeds", {})
-    output_map = feeds_conf["workflow"].get("output_feeds", {})
-
-    # 🗃 Resolve publish directory
-    publish_dir = os.getenv("FEEDS_DIR") or feeds_conf["workflow"].get("publish_dir", "./feeds")
+def generate_all_feeds(feeds_conf: dict, truth: dict):
+    """
+    Generate Premium Abstract RSS feeds from enriched articles in Redis.
+    """
+    comp = truth["components"]["rss_agg"]
+    publish_dir = comp["workflow"]["publish_dir"]
     if not os.path.isabs(publish_dir):
-        publish_dir = os.path.join(os.getcwd(), publish_dir)
+        publish_dir = os.path.abspath(publish_dir)
 
-    os.makedirs(publish_dir, exist_ok=True)
-    print(f"\n🧩 Generating RSS feeds into {publish_dir}")
+    r = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
 
-    # 🌀 Generate RSS for each feed category
-    for category, feed_list in feeds.items():
-        output_name = output_map.get(category, f"{category}.xml")
-        output_path = os.path.join(publish_dir, output_name)
+    feeds = feeds_conf.get("feeds", {})
+    workflow = feeds_conf.get("workflow", {})
+    max_items = int(workflow.get("max_items", 50))
 
-        try:
-            # Collect items by category
-            uids = [
-                uid for uid in r.zrange("rss:index", 0, -1)
-                if r.hget(f"rss:item:{uid}", "category") == category
-            ]
-            if not uids:
-                print(f"⚠️  No items found for {category}, skipping.")
-                continue
+    index_key = comp["access_points"]["index_key"]
 
-            # Build RSS feed structure
-            root = ET.Element("rss", version="2.0")
-            channel = ET.SubElement(root, "channel")
-            ET.SubElement(channel, "title").text = f"Fed Alerts – {category.replace('_', ' ').title()}"
-            ET.SubElement(channel, "link").text = "https://x.com/FOMCAlerts"
-            ET.SubElement(channel, "description").text = (
-                "Curated financial and macroeconomic alerts with abstracts and images"
-            )
+    for category in feeds.keys():
+        print(f"📝 Generating feed: {category}")
 
-            for uid in uids:
-                item = r.hgetall(f"rss:item:{uid}")
-                title = item.get("title", "Untitled")
-                abstract = item.get("abstract", "Full details at link.")
-                url = item.get("url", "")
-                image = item.get("image", "")
+        uids = r.zrevrange(index_key, 0, max_items - 1)
 
-                entry = ET.SubElement(channel, "item")
-                ET.SubElement(entry, "title").text = title
-                ET.SubElement(entry, "description").text = abstract
-                ET.SubElement(entry, "link").text = url
-                if image:
-                    ET.SubElement(entry, "enclosure", url=image, type="image/jpeg", length="10000")
-                ET.SubElement(entry, "pubDate").text = datetime.now().strftime(
-                    "%a, %d %b %Y %H:%M:%S %z"
-                )
+        items = []
+        for uid in uids:
+            h = r.hgetall(f"rss:item:{uid}")
+            if h and h.get("category") == category:
+                enriched = r.hgetall(f"rss:article:{uid}")  # enriched article
+                items.append(merge_item_and_article(h, enriched))
 
-            # Write feed to file
-            tree = ET.ElementTree(root)
-            tree.write(output_path, encoding="utf-8", xml_declaration=True)
-            print(f"✅ Generated {output_name} ({len(uids)} items)")
+        xml = render_rss_xml(category, items)
 
-        except Exception as e:
-            print(f"❌ Error generating feed for {category}: {e}")
+        final_path = os.path.join(publish_dir, f"{category}.xml")
+        tmp_path = final_path + ".tmp"
 
-    print("🎉 All category RSS feeds generated successfully.\n")
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(xml)
+
+        os.replace(tmp_path, final_path)
+        print(f"   → wrote {final_path} (atomic)")
+
+
+def merge_item_and_article(item: dict, article: dict):
+    """
+    Merge raw RSS item + enriched article data into a unified object
+    for RSS construction.
+    """
+
+    if not article:
+        return {
+            "uid": item.get("uid"),
+            "title": item.get("title"),
+            "link": item.get("url"),
+            "abstract": item.get("abstract"),
+            "image": item.get("image"),
+            "pub": item.get("timestamp")
+        }
+
+    # Pick best abstract available
+    abstract = (
+        article.get("summary")
+        or article.get("abstract")
+        or (article.get("text", "")[:300] + "...")
+        or item.get("abstract", "")
+    )
+
+    return {
+        "uid": item.get("uid"),
+        "title": article.get("title") or item.get("title"),
+        "link": article.get("canonical_url") or item.get("url"),
+        "abstract": abstract,
+        "image": article.get("hero_image") or article.get("image") or item.get("image"),
+        "pub": article.get("published_ts") or item.get("timestamp")
+    }
+
+
+def render_rss_xml(category: str, items: list):
+    now = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+    out = []
+    out.append('<?xml version="1.0" encoding="UTF-8"?>')
+    out.append('<rss version="2.0">')
+    out.append("<channel>")
+    out.append(f"<title>{escape(category)}</title>")
+    out.append(f"<description>Premium Abstract RSS: {escape(category)}</description>")
+    out.append(f"<pubDate>{now}</pubDate>")
+
+    for it in items:
+        title = escape(it.get("title", "Untitled"))
+        link = escape(it.get("link", ""))
+        desc = escape(it.get("abstract", ""))
+        pubDate = escape(str(it.get("pub", now)))
+
+        out.append("<item>")
+        out.append(f"<title>{title}</title>")
+        if link:
+            out.append(f"<link>{link}</link>")
+        out.append(f"<pubDate>{pubDate}</pubDate>")
+        out.append(f"<description>{desc}</description>")
+
+        if it.get("image"):
+            out.append(f"<enclosure url=\"{escape(it['image'])}\" type=\"image/jpeg\" />")
+
+        out.append("</item>")
+
+    out.append("</channel>")
+    out.append("</rss>")
+
+    return "\n".join(out)
