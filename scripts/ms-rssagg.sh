@@ -1,6 +1,18 @@
 #!/opt/homebrew/bin/bash
 set -euo pipefail
 
+# ──────────────────────────────────────────────
+# Environment (inject API keys for rss_agg here)
+# ──────────────────────────────────────────────
+
+export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+# If future models require org/project:
+# export OPENAI_ORG="your-org"
+# export OPENAI_PROJECT="your-project"
+
+# Continue with your existing script
+# ──────────────────────────────────────────────
+
 # --- Brew Paths ---
 BREW_PY="/opt/homebrew/bin/python3.14"
 BREW_REDIS="/opt/homebrew/bin/redis-cli"

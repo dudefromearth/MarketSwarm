@@ -1,16 +1,19 @@
-# publisher.py — Premium Abstract RSS Publisher
-
+#!/usr/bin/env python3
 import os
 import json
+import time
 from datetime import datetime
 from xml.sax.saxutils import escape
+
 import redis
 
+
+# --------------------------------------------------------------------
+# Bloomberg-grade RSS publisher
+# --------------------------------------------------------------------
 def generate_all_feeds(feeds_conf: dict, truth: dict):
-    """
-    Generate Premium Abstract RSS feeds from enriched articles in Redis.
-    """
     comp = truth["components"]["rss_agg"]
+
     publish_dir = comp["workflow"]["publish_dir"]
     if not os.path.isabs(publish_dir):
         publish_dir = os.path.abspath(publish_dir)
@@ -23,19 +26,27 @@ def generate_all_feeds(feeds_conf: dict, truth: dict):
 
     index_key = comp["access_points"]["index_key"]
 
+    # ----------------------------------------------------------------
+    # For each category → generate premium-grade RSS feed
+    # ----------------------------------------------------------------
     for category in feeds.keys():
-        print(f"📝 Generating feed: {category}")
+        print(f"📝 Generating Bloomberg-grade feed: {category}")
 
         uids = r.zrevrange(index_key, 0, max_items - 1)
-
         items = []
-        for uid in uids:
-            h = r.hgetall(f"rss:item:{uid}")
-            if h and h.get("category") == category:
-                enriched = r.hgetall(f"rss:article:{uid}")  # enriched article
-                items.append(merge_item_and_article(h, enriched))
 
-        xml = render_rss_xml(category, items)
+        for uid in uids:
+
+            enriched = r.hgetall(f"rss:article:{uid}")
+            if enriched and enriched.get("category") == category:
+                items.append(enriched)
+                continue
+
+            raw = r.hgetall(f"rss:item:{uid}")
+            if raw and raw.get("category") == category:
+                items.append(raw)
+
+        xml = render_bloomberg_rss(category, items)
 
         final_path = os.path.join(publish_dir, f"{category}.xml")
         tmp_path = final_path + ".tmp"
@@ -47,66 +58,107 @@ def generate_all_feeds(feeds_conf: dict, truth: dict):
         print(f"   → wrote {final_path} (atomic)")
 
 
-def merge_item_and_article(item: dict, article: dict):
-    """
-    Merge raw RSS item + enriched article data into a unified object
-    for RSS construction.
-    """
-
-    if not article:
-        return {
-            "uid": item.get("uid"),
-            "title": item.get("title"),
-            "link": item.get("url"),
-            "abstract": item.get("abstract"),
-            "image": item.get("image"),
-            "pub": item.get("timestamp")
-        }
-
-    # Pick best abstract available
-    abstract = (
-        article.get("summary")
-        or article.get("abstract")
-        or (article.get("text", "")[:300] + "...")
-        or item.get("abstract", "")
-    )
-
-    return {
-        "uid": item.get("uid"),
-        "title": article.get("title") or item.get("title"),
-        "link": article.get("canonical_url") or item.get("url"),
-        "abstract": abstract,
-        "image": article.get("hero_image") or article.get("image") or item.get("image"),
-        "pub": article.get("published_ts") or item.get("timestamp")
-    }
-
-
-def render_rss_xml(category: str, items: list):
+# --------------------------------------------------------------------
+# Bloomberg-grade rendering
+# --------------------------------------------------------------------
+def render_bloomberg_rss(category: str, items: list):
     now = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
 
+    # Add namespaces for advanced RSS
     out = []
     out.append('<?xml version="1.0" encoding="UTF-8"?>')
-    out.append('<rss version="2.0">')
+    out.append(
+        '<rss version="2.0" '
+        'xmlns:media="http://search.yahoo.com/mrss/" '
+        'xmlns:content="http://purl.org/rss/1.0/modules/content/">'
+    )
     out.append("<channel>")
     out.append(f"<title>{escape(category)}</title>")
-    out.append(f"<description>Premium Abstract RSS: {escape(category)}</description>")
+    out.append(f"<description>Premium feed: {escape(category)}</description>")
     out.append(f"<pubDate>{now}</pubDate>")
 
+    # ------------------------------------------------------------
+    # Render each item with Bloomberg-level structure
+    # ------------------------------------------------------------
     for it in items:
-        title = escape(it.get("title", "Untitled"))
-        link = escape(it.get("link", ""))
-        desc = escape(it.get("abstract", ""))
-        pubDate = escape(str(it.get("pub", now)))
 
+        title = escape(it.get("title", "Untitled"))
+        link = escape(it.get("url", ""))
+
+        ts = (
+            float(it.get("published_ts"))
+            if it.get("published_ts")
+            else float(it.get("timestamp", time.time()))
+        )
+        pubdate = datetime.utcfromtimestamp(ts).strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+        abstract = it.get("abstract") or it.get("cleaned_text") or ""
+        abstract = escape(abstract[:600])
+
+        hero = it.get("image") or ""
+        summary = it.get("summary", "")
+        reading_time = it.get("reading_time", "")
+        sentiment = it.get("sentiment", "")
+        tickers = json.loads(it.get("tickers", "[]")) if "tickers" in it else []
+        entities = json.loads(it.get("entities", "[]")) if "entities" in it else []
+        takeaways = json.loads(it.get("takeaways", "[]")) if "takeaways" in it else []
+
+        # Build HTML content block
+        html = []
+        html.append("<div style='font-family: Georgia, serif; font-size: 15px;'>")
+
+        # Hero image
+        if hero:
+            html.append(
+                f"<p><img src='{escape(hero)}' style='max-width:100%; border-radius:8px;' /></p>"
+            )
+
+        # Summary block
+        if summary:
+            html.append(f"<p><strong>{escape(summary)}</strong></p>")
+
+        # Bullet takeaways
+        if takeaways:
+            html.append("<ul>")
+            for t in takeaways:
+                html.append(f"<li>{escape(t)}</li>")
+            html.append("</ul>")
+
+        # Metadata footer
+        meta_html = "<p style='color:#666; font-size: 13px;'>"
+        if sentiment:
+            meta_html += f"Sentiment: <b>{escape(sentiment)}</b> &nbsp; "
+        if reading_time:
+            meta_html += f"Reading time: {escape(str(reading_time))} min &nbsp; "
+        if tickers:
+            meta_html += "Tickers: " + ", ".join(tickers) + " &nbsp; "
+        if entities:
+            meta_html += "Entities: " + ", ".join(entities)
+        meta_html += "</p>"
+
+        html.append(meta_html)
+
+        html.append("</div>")
+        content_encoded = escape("\n".join(html))
+
+        # --------------------------------------------------------
+        # Write RSS <item>
+        # --------------------------------------------------------
         out.append("<item>")
         out.append(f"<title>{title}</title>")
         if link:
             out.append(f"<link>{link}</link>")
-        out.append(f"<pubDate>{pubDate}</pubDate>")
-        out.append(f"<description>{desc}</description>")
+        out.append(f"<pubDate>{pubdate}</pubDate>")
+        out.append(f"<description>{abstract}</description>")
 
-        if it.get("image"):
-            out.append(f"<enclosure url=\"{escape(it['image'])}\" type=\"image/jpeg\" />")
+        # Media enclosure
+        if hero:
+            out.append(
+                f'<media:content url="{escape(hero)}" medium="image" type="image/jpeg" />'
+            )
+
+        # Full HTML content
+        out.append(f"<content:encoded><![CDATA[{content_encoded}]]></content:encoded>")
 
         out.append("</item>")
 
