@@ -1,145 +1,173 @@
 #!/usr/bin/env python3
-import aiohttp
 import asyncio
+import aiohttp
 import feedparser
-import hashlib
-import time
-import os
-import json
+import urllib.parse
 import redis.asyncio as redis
-from urllib.parse import urlparse, parse_qs, unquote
-from bs4 import BeautifulSoup
+
+# ============================================================
+# LOGGING
+# ============================================================
+def log(component, emoji, msg):
+    print(f"[{component}] {emoji} {msg}")
 
 
-# --------------------------------------------------------
-# HTML stripper (FIX 1)
-# --------------------------------------------------------
-def strip_html(html: str) -> str:
-    """Remove HTML tags from RSS-provided content."""
-    if not html:
-        return ""
-    soup = BeautifulSoup(html, "html.parser")
-    return soup.get_text(separator=" ", strip=True)
+# ============================================================
+# GOOGLE/BING/YAHOO LINK UNWRAPPER
+# ============================================================
+def unwrap_url(url: str) -> str:
+    """
+    Extracts the true origin URL from Google/MSN/Yahoo RSS wrappers.
+    Returns "" if URL cannot be unwrapped or validated.
+    """
 
-
-# --------------------------------------------------------
-# URL Unwrapper
-# --------------------------------------------------------
-def unwrap_redirect(url: str) -> str:
     if not url:
-        return url
-
-    u = url.lower()
-
-    if "://www.google.com/url" in u:
-        try:
-            q = urlparse(url).query
-            params = parse_qs(q)
-            if "url" in params:
-                return unquote(params["url"][0])
-        except:
-            pass
-
-    if "/amp/" in u:
-        return url.replace("/amp/", "/")
-
-    if "redir.aspx" in u:
-        try:
-            q = urlparse(url).query
-            params = parse_qs(q)
-            if "url" in params:
-                return unquote(params["url"][0])
-        except:
-            pass
-
-    if "r.search.yahoo.com" in u:
-        try:
-            q = parse_qs(urlparse(url).query)
-            if "p" in q:
-                return unquote(q["p"][0])
-        except:
-            pass
-
-    return url
-
-
-# --------------------------------------------------------
-# Core feed processor
-# --------------------------------------------------------
-async def process_feed(r, session, category, feed_url, max_per_feed):
+        return ""
 
     try:
-        async with session.get(feed_url, timeout=20) as resp:
-            xml = await resp.text()
-    except Exception as e:
-        print(f"[Feed Error] {feed_url}: {e}")
-        return
+        parsed = urllib.parse.urlparse(url)
 
-    feed = feedparser.parse(xml)
+        # --- GOOGLE WRAPPER ----------------------------------
+        if "google.com" in parsed.netloc and parsed.path == "/url":
+            qs = urllib.parse.parse_qs(parsed.query)
+            real = qs.get("url") or qs.get("q")
+            if real:
+                return real[0]
 
-    for entry in feed.entries[:max_per_feed]:
+        # --- MSN / BING WRAPPER ------------------------------
+        if "msn.com" in parsed.netloc and "url=" in url:
+            # MSN usually embeds the full URL already decoded
+            qs = urllib.parse.parse_qs(parsed.query)
+            real = qs.get("url")
+            if real:
+                return real[0]
 
-        # --- Identifier (unwrap first)
-        raw_identifier = entry.get("id") or entry.get("link") or entry.get("title")
-        clean_identifier = unwrap_redirect(raw_identifier)
-        uid = hashlib.sha1(clean_identifier.encode()).hexdigest()
+        # --- YAHOO WRAPPER ------------------------------------
+        if "yahoo.com" in parsed.netloc and "u=" in parsed.query:
+            qs = urllib.parse.parse_qs(parsed.query)
+            real = qs.get("u")
+            if real:
+                return real[0]
 
-        # Dedup
-        if await r.sismember("rss:seen", uid):
-            continue
+        # If not a wrapper — return as-is
+        return url
 
-        # --- URL (unwrap)
-        raw_url = entry.get("link", "")
-        clean_url = unwrap_redirect(raw_url)
-
-        # --- FIX 1: Clean summary/description HTML
-        raw_html_desc = (
-            entry.get("summary", "")
-            or entry.get("description", "")
-            or entry.get("content", [{}])[0].get("value", "")
-        )
-        clean_desc = strip_html(raw_html_desc)
-
-        item = {
-            "uid": uid,
-            "category": category,
-            "title": strip_html(entry.get("title", "Untitled")),  # no HTML in title
-            "url": clean_url,
-            "abstract": clean_desc,       # <-- FIX 1 STORED HERE
-            "timestamp": time.time()
-        }
-
-        # store raw RSS item
-        await r.hset(f"rss:item:{uid}", mapping=item)
-        await r.zadd("rss:index", {uid: item["timestamp"]})
-        await r.sadd("rss:seen", uid)
-
-        # push into raw fetch queue
-        await r.xadd("rss:raw_fetch_queue", item)
-
-        print(f"📰 New item {uid[:8]} ({category}) → queued for raw-fetch")
+    except Exception:
+        return ""
 
 
-# --------------------------------------------------------
-# Ingest all feeds
-# --------------------------------------------------------
-async def ingest_all():
-    host = os.getenv("INTEL_REDIS_HOST", "127.0.0.1")
-    port = int(os.getenv("INTEL_REDIS_PORT", 6381))
-    r = redis.Redis(host=host, port=port, decode_responses=True)
+# ============================================================
+# URL VALIDATOR
+# ============================================================
+def validate_origin(url: str) -> bool:
+    """
+    Accept ONLY clean HTTP(S) URLs.
+    Reject tracking, base64, javascript, mailto, etc.
+    """
+    if not url or not isinstance(url, str):
+        return False
 
-    root = os.getcwd()
-    path = os.path.join(root, "services/rss_agg/schema/feeds.json")
-    with open(path, "r") as f:
-        cfg = json.load(f)
+    parsed = urllib.parse.urlparse(url)
 
-    feeds = cfg["feeds"]
-    max_per_feed = cfg["workflow"].get("max_per_feed", 5)
+    if parsed.scheme not in ("http", "https"):
+        return False
+
+    if not parsed.netloc:
+        return False
+
+    # Reject google/msn/yahoo wrappers — these must have been unwrapped earlier
+    forbidden = ["google.com/url", "msn.com", "news.google.com"]
+    if any(f in url for f in forbidden):
+        return False
+
+    return True
+
+
+# ============================================================
+# INGESTOR ENTRYPOINT
+# ============================================================
+async def ingest_feeds(feeds_cfg: dict):
+    """
+    Feeds.json → category → clean URLs stored into:
+      - rss:category_links:{category} (TTL 48h)
+      - rss:all_links (no TTL)
+    """
+    r = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
+
+    feeds = feeds_cfg.get("feeds", {})
 
     async with aiohttp.ClientSession() as session:
-        for category, feed_list in feeds.items():
-            print(f"\n📡 Category: {category}")
-            for feed in feed_list:
-                await process_feed(r, session, category, feed["url"], max_per_feed)
 
-    print("\n✅ Ingestion complete.\n")
+        for category, sources in feeds.items():
+            log("link_ingestor", "📡", f"Category: {category}")
+
+            # Redis structures
+            cat_key = f"rss:category_links:{category}"
+
+            total_found = 0
+            total_saved = 0
+            total_rejected = 0
+
+            # Each category contains an array of RSS URLs
+            for src in sources:
+                feed_url = src.get("url")
+                if not feed_url:
+                    continue
+
+                log("link_ingestor", "🌐", f"Fetching feed → {feed_url}")
+
+                # -----------------------------------------------------
+                # Fetch RSS feed
+                # -----------------------------------------------------
+                try:
+                    async with session.get(feed_url, timeout=20) as resp:
+                        raw = await resp.read()
+                except Exception as e:
+                    log("link_ingestor", "⚠️", f"Failed to fetch feed: {e}")
+                    continue
+
+                parsed = feedparser.parse(raw)
+
+                for entry in parsed.entries:
+                    total_found += 1
+
+                    link = entry.get("link")
+                    if not link:
+                        total_rejected += 1
+                        continue
+
+                    # unwrap Google/MSN/Yahoo
+                    clean = unwrap_url(link)
+
+                    if not validate_origin(clean):
+                        log("link_ingestor", "⛔", f"Rejected: {link}")
+                        total_rejected += 1
+                        continue
+
+                    # store in category
+                    added = await r.sadd(cat_key, clean)
+                    if added:
+                        total_saved += 1
+
+                    # global history
+                    await r.sadd("rss:all_links", clean)
+
+            # 48-hour rolling TTL
+            await r.expire(cat_key, 172800)
+
+            log("link_ingestor", "✅",
+                f"{category}: found={total_found} saved={total_saved} rejected={total_rejected}")
+
+
+# ============================================================
+# INTERVAL SCHEDULER
+# ============================================================
+async def schedule_link_ingestor(feeds_cfg: dict, interval: int = 600):
+    log("link_ingestor", "🚀", f"Starting Tier-0 link ingestor (every {interval}s)")
+    while True:
+        try:
+            await ingest_feeds(feeds_cfg)
+        except Exception as e:
+            log("link_ingestor", "🔥", f"Fatal ingestion error: {e}")
+
+        await asyncio.sleep(interval)
