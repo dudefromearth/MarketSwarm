@@ -26,20 +26,25 @@
   },
   "feeds": {
     "fomc_alerts": [
-      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15070650452603148120", "search_term": "placeholder term for FOMC alerts" },
-      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/12169640906365262022", "search_term": "placeholder term for FOMC alerts" },
-      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/1400617060424894835", "search_term": "placeholder term for FOMC alerts" },
-      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/12016843298852990478", "search_term": "placeholder term for FOMC alerts" },
-      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/2792038623167850646", "search_term": "placeholder term for FOMC alerts" },
-      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/17930593839239830382", "search_term": "placeholder term for FOMC alerts" },
-      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/10362974182106822400", "search_term": "placeholder term for FOMC alerts" },
-      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/6533550261515729312", "search_term": "placeholder term for FOMC alerts" },
-      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/14138202427431249230", "search_term": "placeholder term for FOMC alerts" },
-      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15535607658455447980", "search_term": "placeholder term for FOMC alerts" },
-      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/13545689248470725943", "search_term": "placeholder term for FOMC alerts" }
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15070650452603148120", "search_term": "Jerome Powell" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/2792038623167850646", "search_term": "John C. Williams" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/17930593839239830382", "search_term": "Michael S Barr" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/10362974182106822400", "search_term": "Michelle W Bowman" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/6533550261515729312", "search_term": "Christopher J Waller" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/14138202427431249230", "search_term": "Philip N Jefferson" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15535607658455447980", "search_term": "Lisa D Cook" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/997730687197024070", "search_term": "Susan M. Collins" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/9234528481756313120", "search_term": "Austan D. Goolsbee" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15367672778500812683", "search_term": "Alberto G. Musalem" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15367672778500812019", "search_term": "Jeffrey R. Schmid" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/1400617060424894835", "search_term": "FOMC Press Release" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/12016843298852990478", "search_term": "FOMC Minutes" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/14390263403446161138", "search_term": "FOMC Beige Book" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/13545689248470725943", "search_term": "FOMC Statement" }
     ],
     "economic_reports": [
       { "url": "https://www.google.com/alerts/feeds/18068156851767145348/13422958400861430689", "search_term": "placeholder term for economic reports" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/7836210267910287961", "search_term": "CPI and PCE" },
       { "url": "https://www.google.com/alerts/feeds/18068156851767145348/5118116501410332078", "search_term": "placeholder term for economic reports" },
       { "url": "https://www.google.com/alerts/feeds/18068156851767145348/864076457789630681", "search_term": "placeholder term for economic reports" },
       { "url": "https://www.google.com/alerts/feeds/16457551870751936221/18319799582832831123", "search_term": "placeholder term for economic reports" },
@@ -47,6 +52,29 @@
       { "url": "https://www.google.com/alerts/feeds/16457551870751936221/8454246542038993794", "search_term": "placeholder term for economic reports" },
       { "url": "https://www.google.com/alerts/feeds/18068156851767145348/12343839001370133244", "search_term": "placeholder term for economic reports" },
       { "url": "https://www.google.com/alerts/feeds/18068156851767145348/4046719616798015086", "search_term": "placeholder term for economic reports" }
+    ],
+    "inflation": [
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/5691184587435737658", "search_term": "\"CPI inflation\" OR \"core CPI\" BLS release" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/17502291603050262066", "search_term": "\"PCE inflation\" BEA" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/5633267607050438611", "search_term": "\"core PCE\" report" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/10295479953926508643", "search_term": "\"inflation expectations\" survey" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/12002388902727546333", "search_term": "\"ISM prices paid\" index" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/1103531532646215022", "search_term": "\"PMI prices\" US" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/2935296191520907496", "search_term": "\"NY Fed Supply Chain Pressure Index\"" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/6492965186662169846", "search_term": "\"global freight rates\" shipping" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/8105482615182050473", "search_term": "\"sticky CPI\" Atlanta Fed" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15157518504808024211", "search_term": "\"trimmed mean PCE\" Dallas Fed" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/3902260892169604823", "search_term": "\"median CPI\" Cleveland Fed" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/16338383428924517122", "search_term": "\"rent inflation\" shelter" }
+    ],
+    "treasury_liquidity": [
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/15027152695660415649", "search_term": " \"2-year Treasury yield\" OR \"10-year Treasury yield\" OR \"30-year Treasury\" auction results" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/18159479448103354220", "search_term": "\"term premium\" Treasury" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/16078580338344809610", "search_term": "\"reverse repo\" RRP usage OR \"discount window\" borrowing" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/17704466570043853623", "search_term": "\"BTFP\" Federal Reserve OR \"TGA balance\" Treasury" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/18281446203532772567", "search_term": "\"Federal Reserve balance sheet\" update" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/1134767854352361437", "search_term": "\"quantitative tightening\" QT" },
+      { "url": "https://www.google.com/alerts/feeds/18068156851767145348/13529028572040791328", "search_term": "\"MBS runoff\" Federal Reserve\n" }
     ],
     "jobs_report": [
       { "url": "https://www.google.com/alerts/feeds/16457551870751936221/1735623167563941562", "search_term": "placeholder term for economic reports" },

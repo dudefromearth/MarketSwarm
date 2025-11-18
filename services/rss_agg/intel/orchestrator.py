@@ -9,7 +9,7 @@ import redis.asyncio as redis
 # Primary ingestor
 from .ingestor import ingest_feeds
 
-# Publisher (now takes publish_dir only)
+# Publisher (takes only publish_dir)
 from .publisher import generate_all_feeds
 
 # Enrichment + raw fetch + canonical
@@ -23,6 +23,9 @@ from .article_enricher import enrich_articles_lifo
 # Pipeline mode switch
 # ------------------------------------------------------------
 PIPELINE_MODE = os.getenv("PIPELINE_MODE", "full").lower()
+
+# NEW: propagate FORCE_INGEST into orchestrator logging
+FORCE_INGEST = os.getenv("FORCE_INGEST", "false").lower() == "true"
 
 
 # ------------------------------------------------------------
@@ -52,12 +55,9 @@ async def load_feeds_config():
 
 
 # ------------------------------------------------------------
-# Publisher Scheduler (fixed)
+# Publisher Scheduler
 # ------------------------------------------------------------
 async def schedule_feed_generation(publish_dir: str, interval_sec: int):
-    """
-    publish_dir comes from truth.json, not feeds.json.
-    """
     while True:
         try:
             print(f"🧩 Generating all RSS feeds into: {publish_dir}")
@@ -86,7 +86,7 @@ async def schedule_canonical_fetcher(interval_sec: int = 300):
 
 
 # ------------------------------------------------------------
-# Raw Fetch (legacy)
+# Raw Article Fetching
 # ------------------------------------------------------------
 async def schedule_article_fetching(interval_sec: int = 45):
     r = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
@@ -134,7 +134,7 @@ async def schedule_article_fetching(interval_sec: int = 45):
 
 
 # ------------------------------------------------------------
-# Enrichment Stage
+# Enrichment
 # ------------------------------------------------------------
 async def schedule_article_enrichment(interval_sec: int):
     while True:
@@ -148,7 +148,7 @@ async def schedule_article_enrichment(interval_sec: int):
 
 
 # ------------------------------------------------------------
-# Tier-1 Ingestor (RSS → URLs)
+# Tier-0 Ingestor
 # ------------------------------------------------------------
 async def start_workflow(svc, feeds_conf):
     redis_host = os.getenv("SYSTEM_REDIS_HOST", "127.0.0.1")
@@ -167,6 +167,10 @@ async def start_workflow(svc, feeds_conf):
 
     print(f"🚀 Starting RSS ingest workflow for {svc}")
     print(f"⏱️ Every {interval}s")
+
+    # Operator feedback for force mode
+    if FORCE_INGEST:
+        print("⚡ [ingestor] FORCE_INGEST active — ignoring rss:seen filter")
 
     while True:
         try:
@@ -197,15 +201,10 @@ async def run_orchestrator(svc: str, setup_info: dict, truth: dict):
     feeds_cfg = setup_info["feeds_cfg"]
     intel_info = setup_info["intel_redis"]
 
-    # Pull publisher directory from truth.json
-    publish_dir = (
-        truth["components"][svc]["workflow"]["publish_dir"]
-    )
-
-    # Interval still comes from feeds_cfg
+    publish_dir = truth["components"][svc]["workflow"]["publish_dir"]
     interval = feeds_cfg["workflow"].get("schedule_sec", 600)
 
-    # Validate intel redis
+    # Validate intel-redis
     r_intel = redis.Redis(
         host=intel_info["host"],
         port=intel_info["port"],
@@ -216,7 +215,11 @@ async def run_orchestrator(svc: str, setup_info: dict, truth: dict):
     print(f"[orchestrator] [ok] Connected to intel-redis at "
           f"{intel_info['host']}:{intel_info['port']}")
 
-    # --------------------- MODES ---------------------
+    # Show force mode
+    if FORCE_INGEST:
+        print("⚡ [orchestrator] FORCE_INGEST=true — ingestor will reprocess all URLs")
+
+    # ----------------- MODES -----------------
 
     if PIPELINE_MODE == "ingest_only":
         print("[orchestrator] 🔬 Ingest-only")
@@ -240,19 +243,16 @@ async def run_orchestrator(svc: str, setup_info: dict, truth: dict):
 
     if PIPELINE_MODE == "publish_only":
         print("[orchestrator] 🔬 Publish-only")
-        await asyncio.gather(
-            schedule_feed_generation(publish_dir, interval)
-        )
+        await asyncio.gather(schedule_feed_generation(publish_dir, interval))
         return
 
-    # ---------------- FULL PIPELINE ------------------
-
+    # ---------------- FULL PIPELINE -----------------
     print("[orchestrator] 🚀 FULL PIPELINE MODE")
 
     await asyncio.gather(
-        start_workflow(svc, feeds_cfg),               # Step 1
-        schedule_canonical_fetcher(300),              # Step 2
-        schedule_article_fetching(30),                # Step 3
-        enrich_articles_lifo(30),                     # Step 4
-        schedule_feed_generation(publish_dir, interval),  # Step 5 (FIXED)
+        start_workflow(svc, feeds_cfg),
+        schedule_canonical_fetcher(300),
+        schedule_article_fetching(30),
+        enrich_articles_lifo(30),
+        schedule_feed_generation(publish_dir, interval),
     )

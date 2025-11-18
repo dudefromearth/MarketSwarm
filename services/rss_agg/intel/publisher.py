@@ -7,40 +7,100 @@ r_intel = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
 
 
 # ------------------------------------------------------------
-# Extracts a “safe” description
+# Extract title safely
+# ------------------------------------------------------------
+def build_title(article: dict) -> str:
+    """
+    Priority:
+      1. canonical 'title' if present
+      2. canonical 'abstract' first sentence
+      3. fallback to 'Untitled'
+    """
+
+    title = (article.get("title") or "").strip()
+    if title:
+        return escape(title)
+
+    # fallback: use first sentence of abstract
+    abstract = (article.get("abstract") or "").strip()
+    if abstract:
+        s = abstract.split(".")
+        return escape(s[0].strip() or "Untitled")
+
+    return "Untitled"
+
+
+# ------------------------------------------------------------
+# Extract a “safe” description
 # ------------------------------------------------------------
 def build_description(article: dict) -> str:
     """
     Description priority:
-      1. abstract (if present)
+      1. abstract
       2. first 2–3 sentences of clean_text
     """
-    abstract = article.get("abstract", "").strip()
+    abstract = (article.get("abstract") or "").strip()
     if abstract:
         return escape(abstract)
 
-    text = article.get("clean_text", "")
+    text = (article.get("clean_text") or "").strip()
     if not text:
         return ""
 
-    # crude sentence split
-    sentences = text.split(".")
-    lead = ".".join(sentences[:3]).strip()
-    return escape(lead)
+    # sentence extraction that handles newline and whitespace noise
+    raw_sentences = text.replace("\n", " ").split(".")
+    sentences = [s.strip() for s in raw_sentences if s.strip()]
+
+    lead = ". ".join(sentences[:3])
+    if lead:
+        return escape(lead)
+
+    return ""
+
+
+# ------------------------------------------------------------
+# Build pubDate
+# ------------------------------------------------------------
+def build_pubdate(article: dict) -> str:
+    """
+    Uses fetched_ts stored in canonical record.
+    This is the *closest available approximation* to actual pub date
+    (Google Alerts usually surface items within ~1 hour).
+    """
+    ts = float(article.get("fetched_ts", time.time()))
+    return time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(ts))
+
+
+# ------------------------------------------------------------
+# Pick the best image
+# ------------------------------------------------------------
+def build_image(article: dict) -> str:
+    """
+    Priority:
+      1. article['image'] if stored
+      2. look for image in enrichment (if present later)
+      3. return ""
+    """
+    if article.get("image"):
+        return article["image"]
+
+    # future: enriched image metadata
+    if article.get("enriched_image"):
+        return article["enriched_image"]
+
+    return ""
 
 
 # ------------------------------------------------------------
 # Builds <item> blocks for RSS XML
 # ------------------------------------------------------------
 def build_rss_item(article: dict) -> str:
-    title = escape(article.get("title", "Untitled"))
-    link = article.get("url", "")
+    title = build_title(article)
+    link = escape(article.get("url", ""))
     guid = article.get("uid", "")
-    pub_ts = float(article.get("fetched_ts", time.time()))
-    pubDate = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(pub_ts))
-
+    pubDate = build_pubdate(article)
     description = build_description(article)
-    image = article.get("image", "")
+    image = build_image(article)
 
     enclosure = ""
     if image:
@@ -49,7 +109,7 @@ def build_rss_item(article: dict) -> str:
     return f"""
         <item>
             <title>{title}</title>
-            <link>{escape(link)}</link>
+            <link>{link}</link>
             <guid isPermaLink="false">{guid}</guid>
             <pubDate>{pubDate}</pubDate>
             <description>{description}</description>
@@ -84,22 +144,20 @@ def write_rss_feed(category: str, items_xml: str, output_path: str):
 # ------------------------------------------------------------
 def generate_all_feeds(publish_dir: str):
     """
-    New API: Only publish_dir is required.
-    Feeds.json no longer dictates categories for publishing.
-    Redis contains the authoritative category list.
+    Only publish_dir is required.
+    Categories come from Redis keys: rss:articles_by_category:*
     """
 
     if not os.path.exists(publish_dir):
         os.makedirs(publish_dir, exist_ok=True)
 
-    # Find categories from Redis
+    # Find categories dynamically
     keys = r_intel.keys("rss:articles_by_category:*")
     categories = [k.split(":", 2)[2] for k in keys]
 
     print(f"[publisher] Categories discovered: {categories}")
 
     for category in categories:
-        # Fetch UIDs for category
         set_key = f"rss:articles_by_category:{category}"
         uids = r_intel.smembers(set_key)
 
@@ -107,7 +165,6 @@ def generate_all_feeds(publish_dir: str):
             print(f"[publisher] (skip) No articles for {category}")
             continue
 
-        # Build item blocks
         items_xml = ""
         for uid in uids:
             art_key = f"rss:article_canonical:{uid}"
@@ -117,7 +174,6 @@ def generate_all_feeds(publish_dir: str):
 
             items_xml += build_rss_item(article)
 
-        # Write RSS XML file
         out_path = os.path.join(publish_dir, f"{category}.xml")
         write_rss_feed(category, items_xml, out_path)
 

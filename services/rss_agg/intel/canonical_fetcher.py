@@ -101,16 +101,77 @@ def clean_html(raw_html: str):
 # --------------------------------------------------------------------
 # Download HTML (simple HTTP fetch)
 # --------------------------------------------------------------------
+# --------------------------------------------------------------------
+# Download HTML (via Oxylabs Web Unblocker)
+# --------------------------------------------------------------------
+import os
+import json
+import base64
+import random
+
 async def fetch_html(session: aiohttp.ClientSession, url: str) -> str | None:
-    try:
-        async with session.get(url, timeout=15) as resp:
-            if resp.status >= 400:
-                log("canon", "⚠️", f"HTTP {resp.status} → {url}")
-                return None
-            return await resp.text()
-    except Exception as e:
-        log("canon", "⚠️", f"Network error for {url}: {e}")
+    """
+    Fetch HTML using Oxylabs Web Unblocker.
+    - Full JS rendering
+    - Anti-bot bypass
+    - User-agent rotation
+    - Retry with jitter
+    """
+    OXY_USER = "dudefromearth"
+    OXY_PASS = "P3t3rG30r&3s"
+
+    if not OXY_USER or not OXY_PASS:
+        log("canon", "❌", "Oxylabs credentials missing (OXYLABS_USER/OXYLABS_PASS)")
         return None
+
+    # Basic auth header
+    auth = base64.b64encode(f"{OXY_USER}:{OXY_PASS}".encode()).decode()
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Basic {auth}",
+    }
+
+    payload = {
+        "source": "universal",
+        "url": url,
+        "render": "html",
+        "user_agent": "random",
+        "geo_location": "United States",
+    }
+
+    # Try 3 times with exponential jittered backoff
+    for attempt in range(3):
+        try:
+            await asyncio.sleep(random.uniform(0.25, 0.75))
+
+            async with session.post(
+                "https://realtime.oxylabs.io/v1/queries",
+                data=json.dumps(payload),
+                headers=headers,
+                timeout=45,
+            ) as resp:
+
+                if resp.status >= 400:
+                    log("canon", "⚠️", f"Oxylabs HTTP {resp.status} → {url}")
+                    continue
+
+                data = await resp.json()
+
+                try:
+                    html = data["results"][0]["content"]
+                    if html and len(html) > 200:
+                        return html
+                except Exception:
+                    log("canon", "⚠️", f"Malformed Oxylabs response for {url}")
+                    return None
+
+        except Exception as e:
+            log("canon", "⚠️", f"Unblocker error (attempt {attempt+1}) → {e}")
+
+        await asyncio.sleep(1.0 + attempt * 1.5)
+
+    log("canon", "❌", f"Failed (3 attempts) → {url}")
+    return None
 
 
 # --------------------------------------------------------------------

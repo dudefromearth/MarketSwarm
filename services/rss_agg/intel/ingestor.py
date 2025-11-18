@@ -3,6 +3,7 @@ import asyncio
 import aiohttp
 import feedparser
 import urllib.parse
+import os
 import redis.asyncio as redis
 
 # ============================================================
@@ -36,7 +37,6 @@ def unwrap_url(url: str) -> str:
 
         # --- MSN / BING WRAPPER ------------------------------
         if "msn.com" in parsed.netloc and "url=" in url:
-            # MSN usually embeds the full URL already decoded
             qs = urllib.parse.parse_qs(parsed.query)
             real = qs.get("url")
             if real:
@@ -49,7 +49,7 @@ def unwrap_url(url: str) -> str:
             if real:
                 return real[0]
 
-        # If not a wrapper — return as-is
+        # Not a wrapper
         return url
 
     except Exception:
@@ -62,7 +62,6 @@ def unwrap_url(url: str) -> str:
 def validate_origin(url: str) -> bool:
     """
     Accept ONLY clean HTTP(S) URLs.
-    Reject tracking, base64, javascript, mailto, etc.
     """
     if not url or not isinstance(url, str):
         return False
@@ -71,11 +70,10 @@ def validate_origin(url: str) -> bool:
 
     if parsed.scheme not in ("http", "https"):
         return False
-
     if not parsed.netloc:
         return False
 
-    # Reject google/msn/yahoo wrappers — these must have been unwrapped earlier
+    # reject wrapper/redirect patterns
     forbidden = ["google.com/url", "msn.com", "news.google.com"]
     if any(f in url for f in forbidden):
         return False
@@ -88,11 +86,16 @@ def validate_origin(url: str) -> bool:
 # ============================================================
 async def ingest_feeds(feeds_cfg: dict):
     """
-    Feeds.json → category → clean URLs stored into:
+    Feeds.json → category → URLs stored into:
       - rss:category_links:{category} (TTL 48h)
-      - rss:all_links (no TTL)
+      - rss:all_links
+      - rss:seen (unless FORCE_INGEST=true)
     """
     r = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
+
+    FORCE_INGEST = os.getenv("FORCE_INGEST", "false").lower() == "true"
+    if FORCE_INGEST:
+        log("link_ingestor", "⚡", "FORCE_INGEST enabled — ignoring seen filter")
 
     feeds = feeds_cfg.get("feeds", {})
 
@@ -101,14 +104,12 @@ async def ingest_feeds(feeds_cfg: dict):
         for category, sources in feeds.items():
             log("link_ingestor", "📡", f"Category: {category}")
 
-            # Redis structures
             cat_key = f"rss:category_links:{category}"
 
             total_found = 0
             total_saved = 0
             total_rejected = 0
 
-            # Each category contains an array of RSS URLs
             for src in sources:
                 feed_url = src.get("url")
                 if not feed_url:
@@ -116,9 +117,6 @@ async def ingest_feeds(feeds_cfg: dict):
 
                 log("link_ingestor", "🌐", f"Fetching feed → {feed_url}")
 
-                # -----------------------------------------------------
-                # Fetch RSS feed
-                # -----------------------------------------------------
                 try:
                     async with session.get(feed_url, timeout=20) as resp:
                         raw = await resp.read()
@@ -136,27 +134,42 @@ async def ingest_feeds(feeds_cfg: dict):
                         total_rejected += 1
                         continue
 
-                    # unwrap Google/MSN/Yahoo
                     clean = unwrap_url(link)
-
                     if not validate_origin(clean):
                         log("link_ingestor", "⛔", f"Rejected: {link}")
                         total_rejected += 1
                         continue
 
-                    # store in category
+                    uid = clean
+
+                    # ---------------------------------------------------------
+                    # NEWNESS FILTER (disabled when FORCE_INGEST=true)
+                    # ---------------------------------------------------------
+                    if not FORCE_INGEST:
+                        if await r.sismember("rss:seen", uid):
+                            continue  # skip because we've already ingested it
+
+                    # ---------------------------------------------------------
+                    # ALWAYS store the URL (force mode bypasses "added" result)
+                    # ---------------------------------------------------------
                     added = await r.sadd(cat_key, clean)
                     if added:
                         total_saved += 1
+                    elif FORCE_INGEST:
+                        # In force mode, log duplicates so user sees they exist
+                        log("link_ingestor", "↩️", f"Already existed (force): {clean}")
 
-                    # global history
+                    # Global tracking
                     await r.sadd("rss:all_links", clean)
+                    await r.sadd("rss:seen", uid)
 
-            # 48-hour rolling TTL
             await r.expire(cat_key, 172800)
 
-            log("link_ingestor", "✅",
-                f"{category}: found={total_found} saved={total_saved} rejected={total_rejected}")
+            log(
+                "link_ingestor",
+                "✅",
+                f"{category}: found={total_found} saved={total_saved} rejected={total_rejected}"
+            )
 
 
 # ============================================================

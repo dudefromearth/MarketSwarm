@@ -9,7 +9,10 @@ set -euo pipefail
 export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
 export SYSTEM_REDIS_URL="redis://127.0.0.1:6379"
 export INTEL_REDIS_URL="redis://127.0.0.1:6381"
+
 export PIPELINE_MODE="${PIPELINE_MODE:-full}"
+export FORCE_INGEST="${FORCE_INGEST:-false}"
+export FORCE_FULL_PIPELINE="${FORCE_FULL_PIPELINE:-false}"
 
 BREW_PY="/opt/homebrew/bin/python3.14"
 BREW_REDIS="/opt/homebrew/bin/redis-cli"
@@ -52,6 +55,9 @@ print_saved_urls() {
   read -n 1 -s -r -p "Press any key to return to menu..."
 }
 
+###############################################
+# Main Menu
+###############################################
 menu() {
   clear
   line
@@ -67,8 +73,11 @@ menu() {
   echo "  6) Publish Only      (RSS XML generation)"
   echo "  7) View Saved URLs   (Redis category sets)"
   echo "  8) Quit"
+  echo ""
+  echo "  9) ⚡ FORCE BOOTSTRAP INGEST (ignore rss:seen)"
+  echo " 10) ⚡ FORCE FULL PIPELINE (force ingest + full rebuild)"
   line
-  read -rp "Enter choice [1-8]: " CH
+  read -rp "Enter choice [1-10]: " CH
   echo ""
 
   case "$CH" in
@@ -80,17 +89,46 @@ menu() {
     6) export PIPELINE_MODE="publish_only" ;;
     7) print_saved_urls; menu ;;
     8) echo "Goodbye"; exit 0 ;;
-    *) echo "Invalid selection"; sleep 1; menu ;;
+
+    9)
+      export FORCE_INGEST="true"
+      export FORCE_FULL_PIPELINE="false"
+      export PIPELINE_MODE="ingest_only"
+      echo "⚡ FORCE_INGEST enabled — one-shot ingest will run."
+      ;;
+
+    10)
+      export FORCE_INGEST="true"
+      export FORCE_FULL_PIPELINE="true"
+      export PIPELINE_MODE="full"
+      echo "⚡ FORCE FULL PIPELINE — full rebuild enabled."
+      ;;
+
+    *)
+      echo "Invalid selection"
+      sleep 1
+      menu
+      ;;
   esac
 }
 
 ###############################################
-# If argument provided, override menu
+# Argument override
 ###############################################
 if [[ $# -gt 0 ]]; then
   case "$1" in
     full|ingest_only|canonical_only|fetch_only|enrich_only|publish_only)
       export PIPELINE_MODE="$1"
+      ;;
+    force_ingest|bootstrap)
+      export FORCE_INGEST="true"
+      export FORCE_FULL_PIPELINE="false"
+      export PIPELINE_MODE="ingest_only"
+      ;;
+    force_full|rebuild_all)
+      export FORCE_INGEST="true"
+      export FORCE_FULL_PIPELINE="true"
+      export PIPELINE_MODE="full"
       ;;
     show_urls)
       print_saved_urls
@@ -98,7 +136,7 @@ if [[ $# -gt 0 ]]; then
       ;;
     *)
       echo "❌ Invalid argument: $1"
-      echo "Usage: $0 [full|ingest_only|canonical_only|fetch_only|enrich_only|publish_only|show_urls]"
+      echo "Usage: $0 [full|ingest_only|canonical_only|fetch_only|enrich_only|publish_only|force_ingest|force_full|show_urls]"
       exit 1
       ;;
   esac
@@ -114,7 +152,17 @@ echo " RSS Aggregator Service Runner (Brew)"
 line
 echo "ROOT: $ROOT"
 echo "MODE: $PIPELINE_MODE"
+echo "FORCE_INGEST: $FORCE_INGEST"
+echo "FORCE_FULL_PIPELINE: $FORCE_FULL_PIPELINE"
 echo ""
+
+if [[ "$FORCE_INGEST" == "true" ]]; then
+  echo "⚡ WARNING: Ignoring rss:seen — ingest will reprocess ALL URLs"
+fi
+
+if [[ "$FORCE_FULL_PIPELINE" == "true" ]]; then
+  echo "⚡ WARNING: FORCE FULL PIPELINE active — entire pipeline will rebuild"
+fi
 
 if [[ ! -x "$BREW_PY" ]]; then
   echo "❌ Brew Python missing: $BREW_PY"
@@ -153,7 +201,7 @@ echo "✔ truth exists"
 # Launch orchestrator
 ###############################################
 line
-echo "🚀 Launching RSS Aggregator (MODE=$PIPELINE_MODE)"
+echo "🚀 Launching RSS Aggregator (MODE=$PIPELINE_MODE, FORCE=$FORCE_INGEST)"
 line
 
 export SERVICE_ID="$SERVICE"
