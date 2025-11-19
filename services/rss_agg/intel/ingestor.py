@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-import asyncio
-import aiohttp
+import requests
 import feedparser
 import urllib.parse
 import os
-import redis.asyncio as redis
+import redis
 
 # ============================================================
 # LOGGING
@@ -49,7 +48,7 @@ def unwrap_url(url: str) -> str:
             if real:
                 return real[0]
 
-        # Not a wrapper
+        # Not a wrapper → return original
         return url
 
     except Exception:
@@ -82,14 +81,16 @@ def validate_origin(url: str) -> bool:
 
 
 # ============================================================
-# INGESTOR ENTRYPOINT
+# INGESTOR ENTRYPOINT (SYNC)
 # ============================================================
-async def ingest_feeds(feeds_cfg: dict):
+def ingest_feeds(feeds_cfg: dict):
     """
     Feeds.json → category → URLs stored into:
       - rss:category_links:{category} (TTL 48h)
       - rss:all_links
       - rss:seen (unless FORCE_INGEST=true)
+
+    Fully synchronous version.
     """
     r = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
 
@@ -99,88 +100,91 @@ async def ingest_feeds(feeds_cfg: dict):
 
     feeds = feeds_cfg.get("feeds", {})
 
-    async with aiohttp.ClientSession() as session:
+    for category, sources in feeds.items():
+        log("link_ingestor", "📡", f"Category: {category}")
 
-        for category, sources in feeds.items():
-            log("link_ingestor", "📡", f"Category: {category}")
+        cat_key = f"rss:category_links:{category}"
 
-            cat_key = f"rss:category_links:{category}"
+        total_found = 0
+        total_saved = 0
+        total_rejected = 0
 
-            total_found = 0
-            total_saved = 0
-            total_rejected = 0
+        for src in sources:
+            feed_url = src.get("url")
+            if not feed_url:
+                continue
 
-            for src in sources:
-                feed_url = src.get("url")
-                if not feed_url:
+            log("link_ingestor", "🌐", f"Fetching feed → {feed_url}")
+
+            try:
+                resp = requests.get(feed_url, timeout=20)
+                resp.raise_for_status()
+                raw = resp.content
+            except Exception as e:
+                log("link_ingestor", "⚠️", f"Failed to fetch feed: {e}")
+                continue
+
+            parsed = feedparser.parse(raw)
+
+            for entry in parsed.entries:
+                total_found += 1
+
+                link = entry.get("link")
+                if not link:
+                    total_rejected += 1
                     continue
 
-                log("link_ingestor", "🌐", f"Fetching feed → {feed_url}")
-
-                try:
-                    async with session.get(feed_url, timeout=20) as resp:
-                        raw = await resp.read()
-                except Exception as e:
-                    log("link_ingestor", "⚠️", f"Failed to fetch feed: {e}")
+                clean = unwrap_url(link)
+                if not validate_origin(clean):
+                    log("link_ingestor", "⛔", f"Rejected: {link}")
+                    total_rejected += 1
                     continue
 
-                parsed = feedparser.parse(raw)
+                uid = clean
 
-                for entry in parsed.entries:
-                    total_found += 1
-
-                    link = entry.get("link")
-                    if not link:
-                        total_rejected += 1
+                # ---------------------------------------------------------
+                # NEWNESS FILTER (disabled when FORCE_INGEST=true)
+                # ---------------------------------------------------------
+                if not FORCE_INGEST:
+                    if r.sismember("rss:seen", uid):
                         continue
 
-                    clean = unwrap_url(link)
-                    if not validate_origin(clean):
-                        log("link_ingestor", "⛔", f"Rejected: {link}")
-                        total_rejected += 1
-                        continue
+                # ---------------------------------------------------------
+                # STORE URL
+                # ---------------------------------------------------------
+                added = r.sadd(cat_key, clean)
+                if added:
+                    total_saved += 1
+                elif FORCE_INGEST:
+                    log("link_ingestor", "↩️", f"Already existed (force): {clean}")
 
-                    uid = clean
+                # Global tracking
+                r.sadd("rss:all_links", clean)
+                r.sadd("rss:seen", uid)
 
-                    # ---------------------------------------------------------
-                    # NEWNESS FILTER (disabled when FORCE_INGEST=true)
-                    # ---------------------------------------------------------
-                    if not FORCE_INGEST:
-                        if await r.sismember("rss:seen", uid):
-                            continue  # skip because we've already ingested it
+        # TTL on the category link set
+        r.expire(cat_key, 172800)
 
-                    # ---------------------------------------------------------
-                    # ALWAYS store the URL (force mode bypasses "added" result)
-                    # ---------------------------------------------------------
-                    added = await r.sadd(cat_key, clean)
-                    if added:
-                        total_saved += 1
-                    elif FORCE_INGEST:
-                        # In force mode, log duplicates so user sees they exist
-                        log("link_ingestor", "↩️", f"Already existed (force): {clean}")
-
-                    # Global tracking
-                    await r.sadd("rss:all_links", clean)
-                    await r.sadd("rss:seen", uid)
-
-            await r.expire(cat_key, 172800)
-
-            log(
-                "link_ingestor",
-                "✅",
-                f"{category}: found={total_found} saved={total_saved} rejected={total_rejected}"
-            )
+        log(
+            "link_ingestor",
+            "✅",
+            f"{category}: found={total_found} saved={total_saved} rejected={total_rejected}"
+        )
 
 
 # ============================================================
-# INTERVAL SCHEDULER
+# (OPTIONAL) INTERVAL SCHEDULER — NOT USED IN SYNC MODE
 # ============================================================
-async def schedule_link_ingestor(feeds_cfg: dict, interval: int = 600):
+def schedule_link_ingestor(feeds_cfg: dict, interval: int = 600):
+    """
+    Not used in synchronous orchestrator mode.
+    Kept only for compatibility.
+    """
+    import time
     log("link_ingestor", "🚀", f"Starting Tier-0 link ingestor (every {interval}s)")
     while True:
         try:
-            await ingest_feeds(feeds_cfg)
+            ingest_feeds(feeds_cfg)
         except Exception as e:
             log("link_ingestor", "🔥", f"Fatal ingestion error: {e}")
-
-        await asyncio.sleep(interval)
+        time.sleep(interval)

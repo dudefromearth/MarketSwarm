@@ -21,3 +21,8 @@ soupsieve==2.8
 typing_extensions==4.15.0
 urllib3==2.5.0
 yarl==1.22.0
+markdownify==0.*
+readability-lxml==0.*
+openai==1.*
+xmltodict==0.*
+lxml==4.*

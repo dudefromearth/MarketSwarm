@@ -1,76 +1,62 @@
 #!/usr/bin/env python3
 """
-Stage-2 Canonical Article Fetcher
----------------------------------
-Input:  rss:category_links:<category>   (clean URLs)
-Output: rss:article_canonical:<uid>     (7-day canonical articles)
+Stage-2 Canonical Article Fetcher — Markdown Baseline (SYNC, NO PROXY)
+-----------------------------------------------------------------------
+Input:  rss:category_links:<category>
+Output: rss:article_canonical:<uid>     (markdown-first, 7d TTL)
         rss:articles_by_category:<category>
         rss:article_canonical_index
-        rss:canonical_tried_urls        (30-day memory of attempts)
+        rss:canonical_tried_urls
 """
 
-import asyncio
 import hashlib
 import time
-from datetime import datetime
 import re
+import requests
+from datetime import datetime
 
-import aiohttp
-import redis.asyncio as redis
+import redis
 from bs4 import BeautifulSoup
+from markdownify import markdownify as html_to_md
+from readability import Document
 
 
-# --------------------------------------------------------------------
-# Small helpers
-# --------------------------------------------------------------------
-def log(comp: str, emoji: str, msg: str):
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
+def log(comp, emoji, msg):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] [{comp}] {emoji} {msg}")
 
 
 def uid_from_url(url: str) -> str:
-    """Stable canonical UID based on SHA1(url)."""
     return hashlib.sha1(url.encode("utf-8")).hexdigest()[:16]
 
 
-# --------------------------------------------------------------------
-# HTML → clean text / first-image / abstract
-# --------------------------------------------------------------------
-def clean_html(raw_html: str):
+# ------------------------------------------------------------
+# HTML → readability → markdown + metadata
+# ------------------------------------------------------------
+def clean_html_to_markdown(raw_html: str):
     if not raw_html:
-        return "", "", "", "", 0
+        return "", "", "", ""
 
-    soup = BeautifulSoup(raw_html, "html.parser")
+    extracted_title = ""
+    try:
+        doc = Document(raw_html)
+        main_html = doc.summary(html_partial=True)
+        extracted_title = (doc.short_title() or "").strip()
+    except Exception:
+        main_html = raw_html
 
-    # Remove garbage
-    for t in soup(["script", "style", "noscript"]):
-        t.decompose()
+    # FIXED: strip must be a list, not a boolean
+    markdown = html_to_md(
+        main_html,
+        strip=["script", "style"]   # <-- safe, correct
+    )
 
-    # -------------------------------
-    # TITLE EXTRACTION (NEW)
-    # -------------------------------
-    title = ""
+    soup = BeautifulSoup(main_html, "html.parser")
 
-    # Priority: og:title
-    og = soup.find("meta", property="og:title")
-    if og and og.get("content"):
-        title = og["content"].strip()
-
-    # Fallback to <title>
-    if not title:
-        if soup.title and soup.title.string:
-            title = soup.title.string.strip()
-
-    # Fallback to first <h1>
-    if not title:
-        h1 = soup.find("h1")
-        if h1 and h1.get_text():
-            title = h1.get_text().strip()
-
-    # Fallback last resort later (using abstract)
-    # -------------------------------
-
-    # Extract first usable image
+    # first image
     first_img = ""
     for img in soup.find_all("img"):
         src = img.get("src", "")
@@ -78,232 +64,172 @@ def clean_html(raw_html: str):
             first_img = src
             break
 
-    # Extract text
-    text = soup.get_text(separator="\n")
-    text = re.sub(r"\n\s*\n", "\n\n", text)
-    text = re.sub(r"[ \t]+", " ", text)
-    text = text.strip()
+    # title extraction chain
+    title = ""
+    og = soup.find("meta", property="og:title")
+    if og and og.get("content"):
+        title = og["content"].strip()
 
-    # Abstract = first meaningful paragraph
+    if not title and soup.title and soup.title.string:
+        title = soup.title.string.strip()
+
+    if not title:
+        h1 = soup.find("h1")
+        if h1 and h1.get_text():
+            title = h1.get_text().strip()
+
+    if not title and extracted_title:
+        title = extracted_title
+
+    # abstract extraction
+    plain = soup.get_text(separator="\n")
+    plain = re.sub(r"\n\s*\n", "\n\n", plain)
+    plain = re.sub(r"[ \t]+", " ", plain).strip()
+
     abstract = ""
-    for p in text.split("\n\n"):
+    for p in plain.split("\n\n"):
         if len(p.strip()) > 40:
             abstract = p.strip()
             break
 
-    # Fallback title: abstract
     if not title:
         title = abstract[:120].strip()
 
-    return text, first_img, abstract, title
+    return markdown, abstract, first_img, title
 
+# ------------------------------------------------------------
+# Fetch HTML (SYNC, requests)
+# ------------------------------------------------------------
+def fetch_html(url: str):
+    try:
+        resp = requests.get(
+            url,
+            timeout=20,
+            headers={
+                "User-Agent":
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/118 Safari/537.36"
+            }
+        )
+        if resp.status_code >= 400:
+            log("canon", "⚠️", f"HTTP {resp.status_code} → {url}")
+            return None
 
-# --------------------------------------------------------------------
-# Download HTML (simple HTTP fetch)
-# --------------------------------------------------------------------
-# --------------------------------------------------------------------
-# Download HTML (via Oxylabs Web Unblocker)
-# --------------------------------------------------------------------
-import os
-import json
-import base64
-import random
+        return resp.text
 
-async def fetch_html(session: aiohttp.ClientSession, url: str) -> str | None:
-    """
-    Fetch HTML using Oxylabs Web Unblocker.
-    - Full JS rendering
-    - Anti-bot bypass
-    - User-agent rotation
-    - Retry with jitter
-    """
-    OXY_USER = "dudefromearth"
-    OXY_PASS = "P3t3rG30r&3s"
-
-    if not OXY_USER or not OXY_PASS:
-        log("canon", "❌", "Oxylabs credentials missing (OXYLABS_USER/OXYLABS_PASS)")
+    except Exception as e:
+        log("canon", "⚠️", f"Fetch error → {e}")
         return None
 
-    # Basic auth header
-    auth = base64.b64encode(f"{OXY_USER}:{OXY_PASS}".encode()).decode()
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Basic {auth}",
-    }
 
-    payload = {
-        "source": "universal",
-        "url": url,
-        "render": "html",
-        "user_agent": "random",
-        "geo_location": "United States",
-    }
-
-    # Try 3 times with exponential jittered backoff
-    for attempt in range(3):
-        try:
-            await asyncio.sleep(random.uniform(0.25, 0.75))
-
-            async with session.post(
-                "https://realtime.oxylabs.io/v1/queries",
-                data=json.dumps(payload),
-                headers=headers,
-                timeout=45,
-            ) as resp:
-
-                if resp.status >= 400:
-                    log("canon", "⚠️", f"Oxylabs HTTP {resp.status} → {url}")
-                    continue
-
-                data = await resp.json()
-
-                try:
-                    html = data["results"][0]["content"]
-                    if html and len(html) > 200:
-                        return html
-                except Exception:
-                    log("canon", "⚠️", f"Malformed Oxylabs response for {url}")
-                    return None
-
-        except Exception as e:
-            log("canon", "⚠️", f"Unblocker error (attempt {attempt+1}) → {e}")
-
-        await asyncio.sleep(1.0 + attempt * 1.5)
-
-    log("canon", "❌", f"Failed (3 attempts) → {url}")
-    return None
-
-
-# --------------------------------------------------------------------
-# ONE-SHOT canonical fetcher
-#  - No internal while True
-#  - Orchestrator/scheduler controls when it runs
-# --------------------------------------------------------------------
-async def canonical_fetcher_run_once():
-    """
-    Process all category link sets once.
-
-    For each URL in rss:category_links:<category>:
-      - Skip if URL is already in rss:canonical_tried_urls
-      - Skip if rss:article_canonical:<uid> already exists
-      - Fetch HTML, clean, and store canonical article
-      - Mark URL as tried in rss:canonical_tried_urls (30-day TTL)
-    """
-
+# ------------------------------------------------------------
+# Canonical Fetcher (SYNC)
+# ------------------------------------------------------------
+def canonical_fetcher_run_once():
     r = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
     tried_key = "rss:canonical_tried_urls"
 
-    # Stats for this run
     total_urls = 0
-    total_new_candidates = 0
+    total_new = 0
     total_success = 0
-    total_fail_network = 0
+    total_fail_net = 0
     total_fail_parse = 0
 
     log("canon", "🚀", "canonical_fetcher_run_once() starting")
 
-    # Discover categories from link sets
-    keys = await r.keys("rss:category_links:*")
-    categories = [k.split(":", 2)[-1] for k in keys]  # handle rss:category_links:<cat>
+    keys = r.keys("rss:category_links:*")
+    categories = [k.split(":")[-1] for k in keys]
 
     if not categories:
-        log("canon", "💤", "No category link sets found; nothing to do")
+        log("canon", "💤", "No category link sets")
         return
 
-    async with aiohttp.ClientSession() as session:
-        for category in categories:
-            cat_key = f"rss:category_links:{category}"
-            urls = await r.smembers(cat_key)
-            if not urls:
+    for category in categories:
+        cat_key = f"rss:category_links:{category}"
+        urls = r.smembers(cat_key)
+
+        if not urls:
+            continue
+
+        log("canon", "📂", f"{category}: {len(urls)} URLs")
+
+        for url in urls:
+            total_urls += 1
+
+            if r.sismember(tried_key, url):
                 continue
 
-            log("canon", "📂", f"Category → {category} ({len(urls)} URLs)")
+            uid = uid_from_url(url)
+            art_key = f"rss:article_canonical:{uid}"
 
-            for url in urls:
-                total_urls += 1
+            if r.exists(art_key):
+                r.sadd(tried_key, url)
+                r.expire(tried_key, 30 * 86400)
+                continue
 
-                # Skip if we've tried this URL in the last 30 days
-                if await r.sismember(tried_key, url):
-                    # comment this out if logs get too noisy
-                    # log("canon", "↩️", f"Already tried → {url}")
-                    continue
+            total_new += 1
+            log("canon", "🌐", f"Fetching → {url}")
 
-                uid = uid_from_url(url)
-                art_key = f"rss:article_canonical:{uid}"
+            raw_html = fetch_html(url)
 
-                # If canonical article already exists, just mark URL as tried and move on
-                if await r.exists(art_key):
-                    await r.sadd(tried_key, url)
-                    await r.expire(tried_key, 30 * 24 * 3600)
-                    # log("canon", "✅", f"Already canonical → {uid}")
-                    continue
+            if not raw_html or len(raw_html) < 200:
+                total_fail_net += 1
+                log("canon", "⚠️", "Bad HTML → skip")
+                r.sadd(tried_key, url)
+                r.expire(tried_key, 30 * 86400)
+                continue
 
-                total_new_candidates += 1
-                log("canon", "🌐", f"Fetching → {url}")
+            markdown, abstract, first_img, title = clean_html_to_markdown(raw_html)
 
-                raw_html = await fetch_html(session, url)
-                if not raw_html or len(raw_html) < 200:
-                    log("canon", "⚠️", "Bad HTML → skip")
-                    total_fail_network += 1
+            if not markdown or len(markdown) < 80:
+                total_fail_parse += 1
+                log("canon", "⚠️", "Markdown too short → skip")
+                r.sadd(tried_key, url)
+                r.expire(tried_key, 30 * 86400)
+                continue
 
-                    # mark as tried even if bad; we don't want to hammer it
-                    await r.sadd(tried_key, url)
-                    await r.expire(tried_key, 30 * 24 * 3600)
-                    continue
+            mapping = {
+                "uid": uid,
+                "url": url,
+                "category": category,
+                "title": title,
+                "markdown": markdown,
+                "abstract": (abstract or markdown[:500]).strip(),
+                "image": first_img,
+                "raw_len": len(raw_html),
+                "markdown_len": len(markdown),
+                "fetched_ts": time.time(),
+            }
 
-                clean_text, first_img, abstract, title = clean_html(raw_html)
+            # store canonical
+            r.hset(art_key, mapping=mapping)
+            r.expire(art_key, 7 * 86400)
 
-                if not clean_text or len(clean_text) < 80:
-                    log("canon", "⚠️", "No readable text → skip")
-                    total_fail_parse += 1
+            # category index
+            cat_index = f"rss:articles_by_category:{category}"
+            r.sadd(cat_index, uid)
+            r.expire(cat_index, 7 * 86400)
 
-                    await r.sadd(tried_key, url)
-                    await r.expire(tried_key, 30 * 24 * 3600)
-                    continue
+            # global index
+            r.zadd("rss:article_canonical_index", {uid: time.time()})
 
-                # Build canonical mapping
-                mapping = {
-                    "uid": uid,
-                    "url": url,
-                    "category": category,
-                    "title": title,
-                    "raw_len": len(raw_html),
-                    "text_len": len(clean_text),
-                    "clean_text": clean_text,
-                    "abstract": abstract[:500] if abstract else clean_text[:500],
-                    "image": first_img,
-                    "fetched_ts": time.time(),
-                }
+            # mark tried
+            r.sadd(tried_key, url)
+            r.expire(tried_key, 30 * 86400)
 
-                # Store canonical article (7-day TTL)
-                await r.hset(art_key, mapping=mapping)
-                await r.expire(art_key, 7 * 24 * 3600)
+            total_success += 1
+            log("canon", "✅", f"Stored canonical → {uid}")
 
-                # Category index (7-day TTL)
-                cat_index_key = f"rss:articles_by_category:{category}"
-                await r.sadd(cat_index_key, uid)
-                await r.expire(cat_index_key, 7 * 24 * 3600)
-
-                # Global index (no TTL — time-based score)
-                await r.zadd("rss:article_canonical_index", {uid: time.time()})
-
-                # Mark URL as tried (30-day TTL)
-                await r.sadd(tried_key, url)
-                await r.expire(tried_key, 30 * 24 * 3600)
-
-                total_success += 1
-                log("canon", "✅", f"Stored canonical → {uid}")
-
-    # Store summary stats for this run (optional, but handy)
-    stats_key = "rss:canonical_stats:last_run"
-    await r.hset(
-        stats_key,
+    # stats
+    r.hset(
+        "rss:canonical_stats:last_run",
         mapping={
             "ts": time.time(),
             "total_urls": total_urls,
-            "new_candidates": total_new_candidates,
+            "new": total_new,
             "success": total_success,
-            "fail_network": total_fail_network,
+            "fail_net": total_fail_net,
             "fail_parse": total_fail_parse,
         },
     )
@@ -311,27 +237,6 @@ async def canonical_fetcher_run_once():
     log(
         "canon",
         "📊",
-        (
-            f"Run complete. urls={total_urls} "
-            f"new={total_new_candidates} "
-            f"ok={total_success} "
-            f"net_fail={total_fail_network} "
-            f"parse_fail={total_fail_parse}"
-        ),
+        f"Run complete: urls={total_urls}, new={total_new}, "
+        f"ok={total_success}, net_fail={total_fail_net}, parse_fail={total_fail_parse}"
     )
-
-
-# --------------------------------------------------------------------
-# OPTIONAL: legacy loop wrapper (not used by orchestrator)
-# --------------------------------------------------------------------
-async def canonical_fetcher_loop(interval_sec: int = 300):
-    """
-    Backward-compatible loop wrapper.
-    Orchestrator currently uses schedule_canonical_fetcher(),
-    which calls canonical_fetcher_run_once() on its own cadence.
-    """
-    log("canon", "ℹ️", f"canonical_fetcher_loop starting (interval={interval_sec}s)")
-    while True:
-        await canonical_fetcher_run_once()
-        log("canon", "⏳", f"Sleeping {interval_sec}s")
-        await asyncio.sleep(interval_sec)

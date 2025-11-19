@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """
-Canonical Article Schema Builder
---------------------------------
-Takes raw HTML → produces deterministic structured article object.
+Canonical Article Schema Builder — Markdown Baseline
+---------------------------------------------------
+This Tier-0 canonicalizer is now markdown-first.
 
-This is the *root substrate* for the entire pipeline.
+It takes raw HTML → Readability → Markdown + metadata → CanonicalArticle
 """
 
 import re
 import time
 from dataclasses import dataclass, asdict
-from bs4 import BeautifulSoup, Comment
-from datetime import datetime
+from bs4 import BeautifulSoup
+from readability import Document
+from markdownify import markdownify as html_to_md
 
 
 # ------------------------------------------------------------
-# Canonical Article Schema (Tier-0 substrate)
+# Canonical Article Schema (Tier-0, Markdown-first)
 # ------------------------------------------------------------
 @dataclass
 class CanonicalArticle:
@@ -24,113 +25,130 @@ class CanonicalArticle:
     title: str
     category: str
 
-    # timestamps
     fetched_ts: float
     normalized_ts: float
 
-    # raw HTML snapshot
+    # snapshots
     raw_html: str
+    markdown: str
 
-    # cleaned substrate fields
-    text: str           # plain cleaned text
-    abstract: str       # first meaningful paragraph
-    main_image: str     # first valid image
+    # metadata
+    abstract: str
+    main_image: str
     word_count: int
     source_domain: str
 
 
 # ------------------------------------------------------------
-# HARD HTML STRIPPER — canonical text extractor
+# HTML → Readability → Markdown
 # ------------------------------------------------------------
-def extract_clean_text(raw_html: str) -> str:
-    """Canonical hard-cleaner: removes *all* HTML constructs."""
+def extract_markdown(raw_html: str) -> tuple[str, str, str]:
+    """
+    Returns: (markdown, abstract, first_image)
+    """
+
     if not raw_html:
-        return ""
+        return "", "", ""
 
-    # LXML parser = far stricter and cleaner
-    soup = BeautifulSoup(raw_html, "lxml")
+    # 1) Readability isolate main content
+    try:
+        doc = Document(raw_html)
+        main_html = doc.summary(html_partial=True)
+    except Exception:
+        main_html = raw_html
 
-    # Remove scripts, styles, comments, noscript, meta, svg, etc
-    for tag in soup([
-        "script", "style", "noscript",
-        "meta", "link", "iframe", "svg", "picture",
-        "source", "header", "footer", "form"
-    ]):
-        tag.decompose()
+    # 2) Convert to Markdown
+    markdown = html_to_md(main_html, strip=True)
 
-    # Kill HTML comments
-    for c in soup.find_all(string=lambda s: isinstance(s, Comment)):
-        c.extract()
+    # 3) Parse main HTML for metadata
+    soup = BeautifulSoup(main_html, "html.parser")
 
-    # Get pure text with normalized breaks
-    text = soup.get_text(separator="\n")
-
-    # Collapse multiple blank lines
-    text = re.sub(r"\n{2,}", "\n\n", text)
-    text = re.sub(r"[ \t]+", " ", text)
-
-    return text.strip()
-
-
-# ------------------------------------------------------------
-# First meaningful paragraph → abstract
-# ------------------------------------------------------------
-def extract_abstract(text: str) -> str:
-    for para in text.split("\n\n"):
-        if len(para.strip()) > 40:
-            return para.strip()[:400]
-    return ""
-
-
-# ------------------------------------------------------------
-# First real image
-# ------------------------------------------------------------
-def extract_image(raw_html: str) -> str:
-    if not raw_html:
-        return ""
-    soup = BeautifulSoup(raw_html, "lxml")
+    # Extract first usable image
+    first_img = ""
     for img in soup.find_all("img"):
         src = img.get("src", "")
         if src and not src.startswith("data:"):
-            return src
-    return ""
+            first_img = src
+            break
+
+    # 4) Compute abstract (first meaningful paragraph)
+    plain = soup.get_text(separator="\n")
+    plain = re.sub(r"\n\s*\n", "\n\n", plain)
+    plain = re.sub(r"[ \t]+", " ", plain).strip()
+
+    abstract = ""
+    for p in plain.split("\n\n"):
+        if len(p.strip()) > 40:
+            abstract = p.strip()
+            break
+
+    if not abstract and markdown:
+        # fallback: first 300 chars of markdown
+        abstract = markdown[:300]
+
+    return markdown.strip(), abstract.strip(), first_img
 
 
 # ------------------------------------------------------------
-# Schema builder — Tier-0 canonicalizer
+# Title extractor (matches canonical_fetcher hierarchy)
+# ------------------------------------------------------------
+def extract_title(raw_html: str, fallback: str = "") -> str:
+    if not raw_html:
+        return fallback or "Untitled"
+
+    soup = BeautifulSoup(raw_html, "html.parser")
+
+    og = soup.find("meta", property="og:title")
+    if og and og.get("content"):
+        return og["content"].strip()
+
+    if soup.title and soup.title.string:
+        return soup.title.string.strip()
+
+    h1 = soup.find("h1")
+    if h1 and h1.get_text():
+        return h1.get_text().strip()
+
+    return fallback or "Untitled"
+
+
+# ------------------------------------------------------------
+# Core schema builder
 # ------------------------------------------------------------
 def build_canonical_article(raw: dict) -> CanonicalArticle:
     uid = raw.get("uid")
     url = raw.get("url")
-    title = raw.get("title", "Untitled")
     category = raw.get("category", "")
     raw_html = raw.get("raw_html", "")
     fetched_ts = float(raw.get("fetched_ts", time.time()))
 
-    # Extract canonical fields
-    clean_text = extract_clean_text(raw_html)
-    abstract = extract_abstract(clean_text)
-    main_image = extract_image(raw_html)
+    # markdown + metadata
+    markdown, abstract, main_image = extract_markdown(raw_html)
+
+    # Extract title AFTER readability so fallback is better
+    title = extract_title(raw_html, fallback=raw.get("title", ""))
 
     return CanonicalArticle(
         uid=uid,
         url=url,
-        title=title,
+        title=title or "Untitled",
         category=category,
+
         fetched_ts=fetched_ts,
         normalized_ts=time.time(),
+
         raw_html=raw_html,
-        text=clean_text,
+        markdown=markdown,
+
         abstract=abstract,
         main_image=main_image,
-        word_count=len(clean_text.split()),
+        word_count=len(markdown.split()),
         source_domain=url.split("/")[2] if "://" in url else "",
     )
 
 
 # ------------------------------------------------------------
-# Export helper
+# Export helper — dict for Redis
 # ------------------------------------------------------------
 def as_mapping(article: CanonicalArticle) -> dict:
-    """Convert article dataclass → dict suitable for Redis storage."""
     return asdict(article)

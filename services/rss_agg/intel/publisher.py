@@ -1,27 +1,37 @@
+#!/usr/bin/env python3
+"""
+publisher.py — Transaction-Safe RSS Publisher with 3-Day Ledger
+---------------------------------------------------------------
+Writes RSS feeds only when NEW canonical articles exist since
+the last successful publish transaction.
+
+Ledger key:
+    rss:publish_ledger:{category}  (ZSET, score = published_ts)
+
+TTL:
+    Ledger entries auto-expire after 3 days
+"""
+
 import os
 import time
 import redis
 from xml.sax.saxutils import escape
+import re
 
-r_intel = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
+# 3-day TTL for ledger entries
+PUBLISH_LEDGER_TTL = 3 * 24 * 3600   # 259,200 seconds
+
+r = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
 
 
 # ------------------------------------------------------------
-# Extract title safely
+# Helpers
 # ------------------------------------------------------------
 def build_title(article: dict) -> str:
-    """
-    Priority:
-      1. canonical 'title' if present
-      2. canonical 'abstract' first sentence
-      3. fallback to 'Untitled'
-    """
-
     title = (article.get("title") or "").strip()
     if title:
         return escape(title)
 
-    # fallback: use first sentence of abstract
     abstract = (article.get("abstract") or "").strip()
     if abstract:
         s = abstract.split(".")
@@ -30,69 +40,46 @@ def build_title(article: dict) -> str:
     return "Untitled"
 
 
-# ------------------------------------------------------------
-# Extract a “safe” description
-# ------------------------------------------------------------
 def build_description(article: dict) -> str:
-    """
-    Description priority:
-      1. abstract
-      2. first 2–3 sentences of clean_text
-    """
+    # 1 — Prefer explicit abstract
     abstract = (article.get("abstract") or "").strip()
     if abstract:
         return escape(abstract)
 
-    text = (article.get("clean_text") or "").strip()
-    if not text:
+    # 2 — fallback to markdown content
+    md = (article.get("markdown") or "").strip()
+    if not md:
         return ""
 
-    # sentence extraction that handles newline and whitespace noise
-    raw_sentences = text.replace("\n", " ").split(".")
-    sentences = [s.strip() for s in raw_sentences if s.strip()]
+    # Normalize whitespace
+    text = re.sub(r"\s+", " ", md)
+
+    # Naive sentence detection
+    raw_sentences = re.split(r'[.!?]\s+', text)
+    sentences = [s.strip() for s in raw_sentences if len(s.strip()) > 0]
+
+    if not sentences:
+        return escape(text[:300])
 
     lead = ". ".join(sentences[:3])
-    if lead:
-        return escape(lead)
-
-    return ""
+    return escape(lead)
 
 
-# ------------------------------------------------------------
-# Build pubDate
-# ------------------------------------------------------------
 def build_pubdate(article: dict) -> str:
-    """
-    Uses fetched_ts stored in canonical record.
-    This is the *closest available approximation* to actual pub date
-    (Google Alerts usually surface items within ~1 hour).
-    """
     ts = float(article.get("fetched_ts", time.time()))
     return time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(ts))
 
 
-# ------------------------------------------------------------
-# Pick the best image
-# ------------------------------------------------------------
 def build_image(article: dict) -> str:
-    """
-    Priority:
-      1. article['image'] if stored
-      2. look for image in enrichment (if present later)
-      3. return ""
-    """
     if article.get("image"):
         return article["image"]
-
-    # future: enriched image metadata
-    if article.get("enriched_image"):
-        return article["enriched_image"]
-
+    if article.get("hero_image"):
+        return article["hero_image"]
     return ""
 
 
 # ------------------------------------------------------------
-# Builds <item> blocks for RSS XML
+# RSS Item Builder
 # ------------------------------------------------------------
 def build_rss_item(article: dict) -> str:
     title = build_title(article)
@@ -119,7 +106,7 @@ def build_rss_item(article: dict) -> str:
 
 
 # ------------------------------------------------------------
-# Writes an RSS XML file for a category
+# Write RSS File
 # ------------------------------------------------------------
 def write_rss_feed(category: str, items_xml: str, output_path: str):
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
@@ -134,49 +121,101 @@ def write_rss_feed(category: str, items_xml: str, output_path: str):
 </channel>
 </rss>
 """
-
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(xml)
 
 
 # ------------------------------------------------------------
-# Main Publisher API (new signature)
+# Ledger Logic
+# ------------------------------------------------------------
+def get_newest_article_ts(category):
+    """
+    Read canonical articles for this category and return
+    the *newest* fetched timestamp.
+    """
+    set_key = f"rss:articles_by_category:{category}"
+    uids = r.smembers(set_key)
+
+    newest_ts = 0
+    for uid in uids:
+        art_key = f"rss:article_canonical:{uid}"
+        art = r.hgetall(art_key)
+        if not art:
+            continue
+        ts = float(art.get("fetched_ts", 0))
+        if ts > newest_ts:
+            newest_ts = ts
+
+    return newest_ts
+
+
+def get_last_publish_ts(category):
+    """
+    Look inside ledger:
+        rss:publish_ledger:{category}
+
+    Return timestamp of most recent publish transaction.
+    """
+    ledger_key = f"rss:publish_ledger:{category}"
+    res = r.zrevrange(ledger_key, 0, 0, withscores=True)
+    if not res:
+        return 0
+    _, ts = res[0]
+    return ts
+
+
+def record_publish_transaction(category, ts):
+    """
+    Write a ledger event: { published_ts → 1 }
+    """
+    ledger_key = f"rss:publish_ledger:{category}"
+    r.zadd(ledger_key, {1: ts})
+    r.expire(ledger_key, PUBLISH_LEDGER_TTL)
+
+
+# ------------------------------------------------------------
+# Publisher Main
 # ------------------------------------------------------------
 def generate_all_feeds(publish_dir: str):
-    """
-    Only publish_dir is required.
-    Categories come from Redis keys: rss:articles_by_category:*
-    """
-
     if not os.path.exists(publish_dir):
         os.makedirs(publish_dir, exist_ok=True)
 
-    # Find categories dynamically
-    keys = r_intel.keys("rss:articles_by_category:*")
+    keys = r.keys("rss:articles_by_category:*")
     categories = [k.split(":", 2)[2] for k in keys]
 
     print(f"[publisher] Categories discovered: {categories}")
 
     for category in categories:
         set_key = f"rss:articles_by_category:{category}"
-        uids = r_intel.smembers(set_key)
+        uids = r.smembers(set_key)
 
         if not uids:
             print(f"[publisher] (skip) No articles for {category}")
             continue
 
+        # ---- Ledger decision ----
+        newest_article_ts = get_newest_article_ts(category)
+        last_publish_ts = get_last_publish_ts(category)
+
+        if newest_article_ts <= last_publish_ts:
+            print(f"[publisher] (skip) No new articles since last publish for {category}")
+            continue
+
+        # ---- Build RSS XML ----
         items_xml = ""
         for uid in uids:
             art_key = f"rss:article_canonical:{uid}"
-            article = r_intel.hgetall(art_key)
+            article = r.hgetall(art_key)
             if not article:
                 continue
-
             items_xml += build_rss_item(article)
 
+        # ---- Write file ----
         out_path = os.path.join(publish_dir, f"{category}.xml")
         write_rss_feed(category, items_xml, out_path)
-
         print(f"[publisher] ✔ wrote {out_path}")
+
+        # ---- Record transaction ----
+        record_publish_transaction(category, time.time())
 
     print("[publisher] ✔ All feeds generated")

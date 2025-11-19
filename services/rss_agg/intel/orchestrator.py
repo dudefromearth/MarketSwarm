@@ -1,258 +1,190 @@
 #!/usr/bin/env python3
-import asyncio
-import json
+"""
+MarketSwarm Orchestrator — Synchronous Pipeline with Stage Switches + Ledger Awareness
+-------------------------------------------------------------------------------------
+A clean, deterministic pipeline that runs one stage at a time.
+
+Pipeline:
+ 1. ingest feeds        (RSS → category URL sets)
+ 2. canonical fetch     (URL → canonical markdown articles)
+ 3. enrich              (LLM Tier-3 metadata)
+ 4. publish             (RSS XML per category, transaction ledger)
+ 5. stats               (system counters)
+
+All stages are synchronous.
+Publisher now uses a 3-day transaction ledger to ensure correctness.
+Orchestrator reports ledger status when publishing is invoked.
+"""
+
 import os
 import time
+import redis
 
-import redis.asyncio as redis
-
-# Primary ingestor
+# ----- Pipeline stage imports -----
 from .ingestor import ingest_feeds
-
-# Publisher (takes only publish_dir)
-from .publisher import generate_all_feeds
-
-# Enrichment + raw fetch + canonical
-from .article_ingestor import enrich_articles
-from .article_fetcher import fetch_and_store_article
 from .canonical_fetcher import canonical_fetcher_run_once
 from .article_enricher import enrich_articles_lifo
+from .publisher import generate_all_feeds
+from .stats import generate_stats
 
 
-# ------------------------------------------------------------
-# Pipeline mode switch
-# ------------------------------------------------------------
 PIPELINE_MODE = os.getenv("PIPELINE_MODE", "full").lower()
-
-# NEW: propagate FORCE_INGEST into orchestrator logging
 FORCE_INGEST = os.getenv("FORCE_INGEST", "false").lower() == "true"
 
-
 # ------------------------------------------------------------
-# Load feeds.json
+# Stage switches (0 or 1)
 # ------------------------------------------------------------
-async def load_feeds_config():
-    feeds_path = os.getenv("FEEDS_CONFIG")
+def flag(name, default=1):
+    """Read 0/1 environment switches safely."""
+    return os.getenv(name, str(default)).strip() == "1"
 
-    if feeds_path and os.path.exists(feeds_path):
-        print(f"📘 Loaded feeds.json from env: {feeds_path}")
-        with open(feeds_path, "r") as f:
-            return json.load(f)
-
-    local_path = os.path.join(os.getcwd(), "schema", "feeds.json")
-    if os.path.exists(local_path):
-        print(f"📘 Loaded feeds.json from local: {local_path}")
-        with open(local_path, "r") as f:
-            return json.load(f)
-
-    docker_path = "/app/schema/feeds.json"
-    if os.path.exists(docker_path):
-        print(f"📘 Loaded feeds.json from docker: {docker_path}")
-        with open(docker_path, "r") as f:
-            return json.load(f)
-
-    raise FileNotFoundError("❌ feeds.json not found.")
+PIPELINE_INGEST     = flag("PIPELINE_INGEST",     1)
+PIPELINE_CANONICAL  = flag("PIPELINE_CANONICAL",  1)
+PIPELINE_ENRICH     = flag("PIPELINE_ENRICH",     1)
+PIPELINE_PUBLISH    = flag("PIPELINE_PUBLISH",    1)
+PIPELINE_STATS      = flag("PIPELINE_STATS",      1)
 
 
 # ------------------------------------------------------------
-# Publisher Scheduler
+# Stage runners — all synchronous
 # ------------------------------------------------------------
-async def schedule_feed_generation(publish_dir: str, interval_sec: int):
-    while True:
-        try:
-            print(f"🧩 Generating all RSS feeds into: {publish_dir}")
-            await asyncio.to_thread(generate_all_feeds, publish_dir)
-            print("✅ Feed generation complete.")
-        except Exception as e:
-            print(f"[Publisher Error] {e}")
-
-        await asyncio.sleep(interval_sec)
+def run_ingest(feeds_cfg):
+    print("\n[INGEST] 📡 ingest_feeds()")
+    ingest_feeds(feeds_cfg)
+    print("[INGEST] ✔ complete\n")
 
 
-# ------------------------------------------------------------
-# Canonical Fetcher Scheduler
-# ------------------------------------------------------------
-async def schedule_canonical_fetcher(interval_sec: int = 300):
-    print(f"[canon_sched] 🚀 Canonical fetch scheduler every {interval_sec}s")
-    while True:
-        try:
-            print("[canon_sched] 🔁 Running canonical_fetcher_run_once()")
-            await canonical_fetcher_run_once()
-        except Exception as e:
-            print(f"[canon_sched] 🔥 Error: {e}")
-
-        print(f"[canon_sched] ⏳ Sleeping {interval_sec}s")
-        await asyncio.sleep(interval_sec)
+def run_canonical():
+    print("[CANON] 🧱 canonical_fetcher_run_once()")
+    canonical_fetcher_run_once()
+    print("[CANON] ✔ complete\n")
 
 
-# ------------------------------------------------------------
-# Raw Article Fetching
-# ------------------------------------------------------------
-async def schedule_article_fetching(interval_sec: int = 45):
-    r = redis.Redis(host="127.0.0.1", port=6381, decode_responses=True)
-    print(f"[article_raw] 🚀 Raw fetcher (interval={interval_sec}s)")
+def run_enrich():
+    print("[ENRICH] 🧠 enrich_articles_lifo()")
+    enrich_articles_lifo()   # fully synchronous
+    print("[ENRICH] ✔ complete\n")
 
-    while True:
-        try:
-            uids = await r.zrevrange("rss:index", 0, 50)
 
-            if not uids:
-                print("[article_raw] 💤 No items in rss:index")
-                await asyncio.sleep(interval_sec)
-                continue
+def run_publish(publish_dir):
+    print("[PUBLISH] 📰 generate_all_feeds() (ledger-aware)")
+    generate_all_feeds(publish_dir)
+    print("[PUBLISH] ✔ complete\n")
 
-            for uid in uids:
-                item_key = f"rss:item:{uid}"
-                raw_key = f"rss:article_raw:{uid}"
 
-                if await r.exists(raw_key):
-                    continue
-
-                item = await r.hgetall(item_key)
-                if not item:
-                    continue
-
-                url = item.get("url")
-                if not url:
-                    continue
-
-                print(f"[article_raw] 🌐 Fetching {uid[:8]} → {url}")
-
-                await fetch_and_store_article(
-                    uid=uid,
-                    url=url,
-                    title=item.get("title", ""),
-                    category=item.get("category", ""),
-                    r_intel=r,
-                )
-
-            await asyncio.sleep(interval_sec)
-
-        except Exception as e:
-            print(f"[article_raw] 🔥 Error: {e}")
-            await asyncio.sleep(interval_sec)
+def run_stats():
+    print("[STATS] 📊 generate_stats()")
+    generate_stats()
+    print("[STATS] ✔ complete\n")
 
 
 # ------------------------------------------------------------
-# Enrichment
+# Optional: ledger debugging helper
 # ------------------------------------------------------------
-async def schedule_article_enrichment(interval_sec: int):
-    while True:
-        try:
-            print("[enrich] 📝 Running enrichment cycle…")
-            await enrich_articles()
-        except Exception as e:
-            print(f"[Enrichment Error] {e}")
+def debug_ledger_state(redis_conn):
+    """
+    Print ledger entries so the operator can see what categories
+    have been published recently.
 
-        await asyncio.sleep(interval_sec)
+    This is informational only — publisher performs all logic.
+    """
+    print("[ledger] 📘 Checking publish ledgers…")
 
+    keys = redis_conn.keys("rss:publish_ledger:*")
+    if not keys:
+        print("[ledger] (none) no ledger keys found\n")
+        return
 
-# ------------------------------------------------------------
-# Tier-0 Ingestor
-# ------------------------------------------------------------
-async def start_workflow(svc, feeds_conf):
-    redis_host = os.getenv("SYSTEM_REDIS_HOST", "127.0.0.1")
-    redis_port = int(os.getenv("SYSTEM_REDIS_PORT", "6379"))
+    for key in keys:
+        category = key.split(":", 2)[2]
+        latest = redis_conn.zrevrange(key, 0, 0, withscores=True)
+        if latest:
+            _, ts = latest[0]
+            print(f"[ledger] {category}: last_publish_ts={ts}")
+        else:
+            print(f"[ledger] {category}: (empty ledger)")
 
-    print(f"[debug] Connecting to Redis {redis_host}:{redis_port}")
-
-    try:
-        r = redis.Redis(host=redis_host, port=redis_port, decode_responses=True)
-        await r.ping()
-        print(f"[debug] ✅ Connected to Redis {redis_host}:{redis_port}")
-    except Exception as e:
-        raise ConnectionError(f"[Redis Error] Could not connect: {e}")
-
-    interval = feeds_conf["workflow"].get("schedule_sec", 600)
-
-    print(f"🚀 Starting RSS ingest workflow for {svc}")
-    print(f"⏱️ Every {interval}s")
-
-    # Operator feedback for force mode
-    if FORCE_INGEST:
-        print("⚡ [ingestor] FORCE_INGEST active — ignoring rss:seen filter")
-
-    while True:
-        try:
-            print("📡 Starting feed ingestion…")
-            await ingest_feeds(feeds_conf)
-
-            await r.hset("rss_agg:status", mapping={
-                "last_run_ts": time.time(),
-                "last_status": "success",
-            })
-
-        except Exception as e:
-            await r.hset("rss_agg:status", mapping={
-                "last_run_ts": time.time(),
-                "last_status": f"failed: {e}",
-            })
-            print(f"[RSS Agg Error] {e}")
-
-        await asyncio.sleep(interval)
+    print("")
 
 
 # ------------------------------------------------------------
-# ORCHESTRATOR ENTRYPOINT
+# Orchestrator entrypoint (now with 5-minute loop)
 # ------------------------------------------------------------
-async def run_orchestrator(svc: str, setup_info: dict, truth: dict):
-    print(f"[orchestrator:init] 🧠 Orchestrator starting ({PIPELINE_MODE})")
+def run_orchestrator(svc: str, setup_info: dict, truth: dict):
+
+    print("\n──────────────────────────────")
+    print(" Orchestrator Stage Switches")
+    print("──────────────────────────────")
+    print(f"  INGEST:     {PIPELINE_INGEST}")
+    print(f"  CANONICAL:  {PIPELINE_CANONICAL}")
+    print(f"  ENRICH:     {PIPELINE_ENRICH}")
+    print(f"  PUBLISH:    {PIPELINE_PUBLISH}")
+    print(f"  STATS:      {PIPELINE_STATS}")
+    print("──────────────────────────────\n")
 
     feeds_cfg = setup_info["feeds_cfg"]
-    intel_info = setup_info["intel_redis"]
-
     publish_dir = truth["components"][svc]["workflow"]["publish_dir"]
-    interval = feeds_cfg["workflow"].get("schedule_sec", 600)
 
     # Validate intel-redis
-    r_intel = redis.Redis(
+    intel_info = setup_info["intel_redis"]
+    r = redis.Redis(
         host=intel_info["host"],
         port=intel_info["port"],
-        decode_responses=True,
+        decode_responses=True
     )
-    await r_intel.ping()
+    try:
+        r.ping()
+        print(f"[orchestrator] ✔ Connected to intel-redis {intel_info['host']}:{intel_info['port']}")
+    except Exception as e:
+        raise ConnectionError(f"Could not connect to intel-redis: {e}")
 
-    print(f"[orchestrator] [ok] Connected to intel-redis at "
-          f"{intel_info['host']}:{intel_info['port']}")
-
-    # Show force mode
-    if FORCE_INGEST:
-        print("⚡ [orchestrator] FORCE_INGEST=true — ingestor will reprocess all URLs")
-
-    # ----------------- MODES -----------------
-
+    # --------------------------------------------------------
+    # MODE-SPECIFIC OVERRIDES (no looping)
+    # --------------------------------------------------------
     if PIPELINE_MODE == "ingest_only":
-        print("[orchestrator] 🔬 Ingest-only")
-        await asyncio.gather(start_workflow(svc, feeds_cfg))
+        run_ingest(feeds_cfg)
         return
 
     if PIPELINE_MODE == "canonical_only":
-        print("[orchestrator] 🔬 Canonical-only")
-        await asyncio.gather(schedule_canonical_fetcher(300))
-        return
-
-    if PIPELINE_MODE == "fetch_only":
-        print("[orchestrator] 🔬 Raw fetch-only")
-        await asyncio.gather(schedule_article_fetching(30))
+        run_canonical()
         return
 
     if PIPELINE_MODE == "enrich_only":
-        print("[orchestrator] 🔬 Enrichment-only")
-        await asyncio.gather(enrich_articles_lifo(30))
+        run_enrich()
         return
 
     if PIPELINE_MODE == "publish_only":
-        print("[orchestrator] 🔬 Publish-only")
-        await asyncio.gather(schedule_feed_generation(publish_dir, interval))
+        run_publish(publish_dir)
         return
 
-    # ---------------- FULL PIPELINE -----------------
-    print("[orchestrator] 🚀 FULL PIPELINE MODE")
+    if PIPELINE_MODE == "stats_only":
+        run_stats()
+        return
 
-    await asyncio.gather(
-        start_workflow(svc, feeds_cfg),
-        schedule_canonical_fetcher(300),
-        schedule_article_fetching(30),
-        enrich_articles_lifo(30),
-        schedule_feed_generation(publish_dir, interval),
-    )
+    # --------------------------------------------------------
+    # FULL PIPELINE LOOP — runs forever (5-minute interval)
+    # --------------------------------------------------------
+    while True:
+        print("\n[orchestrator] 🔥 FULL PIPELINE START\n")
+        print(f"[orchestrator] 🚀 Starting (mode={PIPELINE_MODE}, force={FORCE_INGEST})")
+
+        if PIPELINE_INGEST:
+            run_ingest(feeds_cfg)
+
+        if PIPELINE_CANONICAL:
+            run_canonical()
+
+        if PIPELINE_ENRICH:
+            run_enrich()
+
+        if PIPELINE_PUBLISH:
+            run_publish(publish_dir)
+
+        if PIPELINE_STATS:
+            run_stats()
+
+        print("\n[orchestrator] 🎉 FULL PIPELINE CYCLE COMPLETE\n")
+        print("[orchestrator] ⏳ Sleeping 300 seconds before next cycle...\n")
+
+        time.sleep(300)   # <-- 5 MINUTES
+

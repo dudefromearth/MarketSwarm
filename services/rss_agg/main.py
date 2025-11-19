@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """
 main.py — Canonical entry for RSS Aggregator.
-Performs:
-  1) Truth load & service identity resolution
-  2) Validation of access points + heartbeat channel
-  3) Environment setup
-  4) Heartbeat launch
-  5) Orchestrator launch
+Now fully synchronous for the pipeline,
+while keeping heartbeat async in its own background event loop.
 """
 
 import os
@@ -69,13 +65,12 @@ def load_truth():
 
         first = s.recv(1)
         if first != b"$":
-            raise RuntimeError("Unexpected RESP response (expected bulk string)")
+            raise RuntimeError("Unexpected RESP response")
 
-        # Read length
         ln_bytes = b""
         while not ln_bytes.endswith(b"\r\n"):
             ln_bytes += s.recv(1)
-        ln = int(ln_bytes[:-2])
+        ln = int(ln_bytes[:-2])   # strip CRLF
 
         if ln < 0:
             raise RuntimeError("Truth key missing in Redis")
@@ -100,9 +95,9 @@ def load_truth():
 
 
 # ------------------------------------------------------------
-# Main entry
+# MAIN — now fully synchronous
 # ------------------------------------------------------------
-async def main():
+def main():
     # 1) Identity
     svc = guess_service_id()
 
@@ -111,24 +106,24 @@ async def main():
     if not truth:
         raise SystemExit("❌ Cannot continue without truth")
 
-    # 3) Validate component block
     comp = truth.get("components", {}).get(svc)
     if not comp:
-        log("truth", "error", "❌", f"No component definition for '{svc}' in truth.json")
+        log("truth", "error", "❌", f"No component definition for '{svc}'")
         raise SystemExit(1)
 
     log("truth", "ok", "🔎", f"Component block discovered for {svc}")
 
-    # 4) Heartbeat configuration
+    # 3) Heartbeat configuration
     pubs = comp.get("access_points", {}).get("publish_to", [])
     hb = next((x for x in pubs if "heartbeat" in x.get("key", "")), None)
     if not hb:
         log("heartbeat", "error", "❌", "No heartbeat publish_to entry found")
         raise SystemExit(1)
 
-    log("heartbeat", "ok", "❤️", f"Heartbeat channel: {hb['key']} on {hb['bus']}")
+    log("heartbeat", "ok", "❤️",
+        f"Heartbeat channel: {hb['key']} on {hb['bus']}")
 
-    # 5) Setup environment
+    # 4) Setup environment
     try:
         log("setup", "info", "⚙️", "Running setup_service_environment()")
         setup_info = setup_service_environment(svc)
@@ -137,17 +132,22 @@ async def main():
         log("setup", "error", "❌", f"Setup failure: {e}")
         raise SystemExit(1)
 
-    # 6) Start heartbeat task
+    # 5) Start heartbeat in its own asyncio event loop STAYING ASYNC
     log("heartbeat", "info", "💓", "Starting heartbeat loop…")
-    asyncio.create_task(start_heartbeat(svc, truth))
 
-    # 7) Start orchestrator
+    def heartbeat_runner():
+        asyncio.run(start_heartbeat(svc, truth))
+
+    import threading
+    threading.Thread(target=heartbeat_runner, daemon=True).start()
+
+    # 6) Run orchestrator (synchronous)
     log("orchestrator", "info", "🚀", "Starting orchestrator…")
-    await run_orchestrator(svc, setup_info, truth)
+    run_orchestrator(svc, setup_info, truth)
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         log("system", "stop", "🛑", "Service interrupted by user")
