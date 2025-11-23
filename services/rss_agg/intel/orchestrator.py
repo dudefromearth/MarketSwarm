@@ -27,6 +27,8 @@ from .article_enricher import enrich_articles_lifo
 from .publisher import generate_all_feeds
 from .stats import generate_stats
 
+# Add this near the top, after imports
+r = redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
 
 PIPELINE_MODE = os.getenv("PIPELINE_MODE", "full").lower()
 FORCE_INGEST = os.getenv("FORCE_INGEST", "false").lower() == "true"
@@ -35,14 +37,35 @@ FORCE_INGEST = os.getenv("FORCE_INGEST", "false").lower() == "true"
 # Stage switches (0 or 1)
 # ------------------------------------------------------------
 def flag(name, default=1):
-    """Read 0/1 environment switches safely."""
-    return os.getenv(name, str(default)).strip() == "1"
+    """
+    Read pipeline stage switches:
+    1. First check Redis key: pipeline:switch:<name>
+    2. Fallback to environment variable
+    3. Final fallback to default
+    """
+    redis_key = f"pipeline:switch:{name}"
+    redis_val = r.get(redis_key)
+    if redis_val is not None:
+        value = int(redis_val)
+        print(f"[switch] {redis_key} = {value} (from Redis)")
+        return value
+
+    env_val = os.getenv(f"PIPELINE_{name.upper()}", str(default))
+    value = int(env_val.strip() == "1")
+    print(f"[switch] PIPELINE_{name.upper()} = {value} (from env, default={default})")
+    return value
 
 PIPELINE_INGEST     = flag("PIPELINE_INGEST",     1)
 PIPELINE_CANONICAL  = flag("PIPELINE_CANONICAL",  1)
 PIPELINE_ENRICH     = flag("PIPELINE_ENRICH",     1)
 PIPELINE_PUBLISH    = flag("PIPELINE_PUBLISH",    1)
 PIPELINE_STATS      = flag("PIPELINE_STATS",      1)
+
+def flag(name, default=1):
+    redis_val = r.get(f"pipeline:switch:{name}")
+    if redis_val is not None:
+        return int(redis_val)
+    return int(os.getenv(name, str(default)).strip() == "1")
 
 
 # ------------------------------------------------------------

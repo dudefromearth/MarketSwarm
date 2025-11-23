@@ -21,16 +21,20 @@
   },
 
   "domain": {
-    "keys": {
-      "rss:index":  { "type": "ZSET",   "ttl_sec": 86400 },
-      "rss:queue":  { "type": "STREAM", "ttl_sec": 86400 },
-      "rss:seen":   { "type": "SET",    "ttl_sec": 86400 },
-      "rss:item:{uid}": { "type": "HASH", "ttl_sec": 86400 },
+  "keys": {
+    "rss:index":  { "type": "ZSET",   "ttl_sec": 86400 },
+    "rss:queue":  { "type": "STREAM", "ttl_sec": 86400 },
+    "rss:seen":   { "type": "SET",    "ttl_sec": 86400 },
+    "rss:item:{uid}": { "type": "HASH", "ttl_sec": 86400 },
 
-      "massive:chain:{uid}": { "type": "HASH", "ttl_sec": 86400 },
-      "sse:chain-feed":      { "type": "STREAM", "ttl_sec": 86400 }
-    }
-  },
+    "massive:chain:{uid}": { "type": "HASH", "ttl_sec": 86400 },
+    "sse:chain-feed":      { "type": "STREAM", "ttl_sec": 86400 },
+
+    "rss:article_enriched_index": { "type": "ZSET", "ttl_sec": 604800 },
+    "rss:article_enriched:{uid}": { "type": "HASH", "ttl_sec": 604800 },
+    "rss:article_canonical:{uid}": { "type": "HASH", "ttl_sec": 604800 }
+  }
+},
 
   "components": {
     "rss_agg": {
@@ -65,54 +69,127 @@
       "dependencies": []
     },
 
-    "massive": {
+    "content_anal": {
       "meta": {
-        "name": "Massive ChainFeed Service",
-        "description": "Harvests SPX option chain and publishes deltas to market bus."
-      },
-      "access_points": {
-        "publish_to": [
-          { "bus": "market-redis", "key": "sse:chain-feed" },
-          { "bus": "system-redis", "key": "massive:heartbeat" }
-        ],
-        "subscribe_to": []
-      },
-      "heartbeat": {
-        "interval_hz": 2,
-        "ttl_sec": 10,
-        "channel": "massive:heartbeat"
-      },
-      "domain_keys": [
-        "massive:chain:{uid}",
-        "sse:chain-feed"
-      ],
-      "workflow": {
-        "symbol": "SPX",
-        "api_key_env": "POLYGON_API_KEY"
-      },
-      "dependencies": []
-    },
-
-    "vexy_ai": {
-      "meta": {
-        "name": "Vexy AI",
-        "description": "Consumes market and RSS streams, generates derived intelligence and alerts."
+        "name": "Content Analysis Engine",
+        "description": "LLM-driven category analysis of enriched content, produces synthetic insights adapted the the original content shema."
       },
       "access_points": {
         "subscribe_to": [
-          { "bus": "intel-redis", "key": "vexy:intake" },
-          { "bus": "market-redis", "key": "sse:chain-feed" }
+          { "bus": "intel-redis", "key": "vexy:intake" }
         ],
         "publish_to": [
-          { "bus": "system-redis", "key": "vexy_ai:heartbeat" },
-          { "bus": "intel-redis", "key": "intel:reports" }
+          { "bus": "intel-redis", "key": "content_anal:outbox" },
+          { "bus": "system-redis", "key": "content_anal:heartbeat" }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 15,
+        "ttl_sec": 45,
+        "channel": "content_anal:heartbeat"
+      },
+      "domain_keys": [
+        "rss:index",
+        "rss:article_enriched_index",
+        "rss:article_enriched:{uid}"
+      ],
+      "dependencies": ["rss_agg"]
+    },
+
+    "vigil": {
+      "meta": {
+        "name": "Market Event Watcher",
+        "description": "Filters for market events, send to Vexy."
+      },
+      "access_points": {
+        "publish_to": [
+          { "bus": "market-redis", "key": "vigil:events" },
+          { "bus": "system-redis", "key": "vigil:heartbeat" }
+        ],
+        "subscribe_to": [
+          { "bus": "market-redis",  "key": "sse:chain-feed" }
         ]
       },
       "heartbeat": {
         "interval_sec": 5,
         "ttl_sec": 15,
+        "channel": "vigil:heartbeat"
+      },
+      "dependencies": []
+    },
+
+"massive": {
+  "meta": {
+    "name": "Massive Market Data Engine",
+    "description": "Real-time SPX market engine providing chainfeed, SPY→SPX volume profile, time-series data, and convexity digests."
+  },
+  "access_points": {
+    "publish_to": [
+      { "bus": "market-redis", "key": "sse:chain-feed" },
+      { "bus": "market-redis", "key": "sse:volume-profile" },
+      { "bus": "market-redis", "key": "sse:timeseries" },
+      { "bus": "market-redis", "key": "sse:convexity-feed" },
+      { "bus": "system-redis", "key": "massive:heartbeat" }
+    ],
+    "subscribe_to": []
+  },
+  "heartbeat": {
+    "interval_hz": 2,
+    "ttl_sec": 10,
+    "channel": "massive:heartbeat"
+  },
+  "domain_keys": [
+    "massive:chain:{uid}",
+    "massive:volume_profile:{uid}",
+    "massive:timeseries:{uid}",
+    "sse:chain-feed",
+    "sse:volume-profile",
+    "sse:timeseries",
+    "sse:convexity-feed"
+  ],
+  "workflow": {
+    "symbol": "SPX",
+    "spy_symbol": "SPY",
+    "api_key_env": "POLYGON_API_KEY",
+    "volume_profile": {
+      "enabled": true,
+      "spy_to_spx_scale": 10.0,
+      "bin_size_spy": 0.01,
+      "window_days": 365,
+      "dynamic_price_span": true
+    },
+    "publish_chainfeed": true,
+    "publish_volume_profile": true,
+    "publish_timeseries": true,
+    "publish_convexity": false
+  },
+  "dependencies": []
+},
+
+    "vexy_ai": {
+      "meta": {
+        "name": "Vexy AI",
+        "description": "Epoch + event-driven play-by-play voice. Consumes market and RSS streams, publishes real-time commentary."
+      },
+  "access_points": {
+    "subscribe_to": [
+      { "bus": "intel-redis",  "key": "vexy:intake" },
+      { "bus": "market-redis", "key": "sse:chain-feed" },
+      { "bus": "market-redis", "key": "sse:volume-profile" },
+      { "bus": "market-redis", "key": "sse:timeseries" },
+      { "bus": "market-redis", "key": "vigil:events" }
+    ],
+    "publish_to": [
+      { "bus": "system-redis", "key": "vexy_ai:heartbeat" },
+      { "bus": "market-redis", "key": "vexy:playbyplay" }
+    ]
+  },
+      "heartbeat": {
+        "interval_sec": 15,
+        "ttl_sec": 45,
         "channel": "vexy_ai:heartbeat"
       },
+      "restart_cmd": "/Users/ernie/MarketSwarm/scripts/ms-vexyai.sh restart",
       "dependencies": ["rss_agg", "massive"],
       "domain_keys": []
     },

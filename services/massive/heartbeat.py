@@ -1,50 +1,28 @@
 # heartbeat.py
-import asyncio
-import json
-import os
+#!/usr/bin/env python3
+"""
+heartbeat.py — Async Heartbeat Loop for Massive
+"""
 import time
-from redis.asyncio import Redis
+from datetime import datetime, timezone
 
-async def start_heartbeat(service_name: str, truth_path: str = "./root/truth.json"):
-    """Start a heartbeat loop based on Truth configuration."""
-    # Load Truth
-    try:
-        with open(truth_path, "r") as f:
-            truth = json.load(f)
-    except Exception as e:
-        print(f"[Heartbeat:{service_name}] ⚠️ Could not load truth: {e}")
-        truth = {}
+def start_heartbeat(r_system, service_id, interval_sec, ttl_sec, stop_flag, log):
+    while not stop_flag():
+        now = datetime.now(timezone.utc).isoformat()
+        r_system.setex(f"{service_id}:heartbeat", ttl_sec, now)
+        log("heartbeat", "❤️", "Heartbeat sent")
+        time.sleep(interval_sec)
 
-    # Extract service definition
-    comp = truth.get("components", {}).get(service_name, {})
-    access_points = comp.get("access_points", {})
 
-    # Find heartbeat configuration
-    publish_targets = access_points.get("publish_to", [])
-    heartbeat_entry = next(
-        (p for p in publish_targets if "heartbeat" in p.get("key", "")), None
-    )
+# orchestrator.py
+#!/usr/bin/env python3
+"""
+orchestrator.py — Massive Market Data Engine
+Stub that will publish chainfeed + spotfeed
+"""
 
-    redis_url = (
-        f"redis://{heartbeat_entry['bus']}:6379"
-        if heartbeat_entry
-        else os.getenv("REDIS_URL", "redis://localhost:6379")
-    )
-    heartbeat_key = (
-        heartbeat_entry["key"]
-        if heartbeat_entry
-        else f"{service_name}:heartbeat"
-    )
+def run_orchestrator(cfg, log, stop_flag):
+    # TODO: integrate Conor's request-handling logic
+    log("orchestrator", "⚙️", "Massive cycle placeholder — ready for data integration")
+    return
 
-    r = Redis.from_url(redis_url, decode_responses=True)
-    print(f"[Heartbeat:{service_name}] Connected to {redis_url}, key={heartbeat_key}")
-
-    # Pulse loop
-    while True:
-        payload = {
-            "service": service_name,
-            "ts": time.time(),
-            "status": "alive"
-        }
-        await r.publish(heartbeat_key, json.dumps(payload))
-        await asyncio.sleep(10)

@@ -3,18 +3,19 @@
 Tier-3 Enricher (Markdown Baseline)
 -----------------------------------
 Input:
-    - raw_text: canonical MARKDOWN (not HTML, not plain text)
+    - raw_text: canonical MARKDOWN
     - title: canonical extracted title
     - fallback_image: canonical first-img
 
 Output:
-    - JSON metadata block used by article_enricher.py
-    - All fields required by the Tier-3 enriched schema
+    - JSON metadata with full provenance
+    - Never crashes — even on empty/malformed LLM responses
 """
 
 import os
-import time
+import re
 import json
+import time
 from datetime import datetime
 from openai import OpenAI
 
@@ -26,93 +27,76 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # ------------------------------------------------------------
 # Logging helper
 # ------------------------------------------------------------
-def log(status, emoji, msg):
+def log(status: str, emoji: str, msg: str):
     ts = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{ts}] [tier3] [{status}] {emoji} {msg}")
 
 # ------------------------------------------------------------
-# Prompt (Markdown-aware)
+# Prompt (strict JSON output)
 # ------------------------------------------------------------
 TIER3_PROMPT = """
-You are an expert financial editor, analyst, and summarizer.
+You are an expert financial editor and analyst.
 
 You will receive:
 - an article TITLE
-- the full article content in MARKDOWN format (clean, human-readable)
+- the full article content in MARKDOWN format
 - optional fallback image URL
 
-Your job is to output a **pure JSON object** with the following keys:
+Your job is to output a **pure JSON object** with exactly these keys:
 
-1. "clean_title"  
-   • Rewrite title in neutral, journalistic tone.
+{
+  "clean_title": "...",
+  "abstract": "...",
+  "summary": "...",
+  "takeaways": [...],
+  "sentiment": "Bullish|Bearish|Neutral",
+  "entities": [...],
+  "tickers": [...],
+  "category": "macro|equities|fx|rates|crypto|earnings|energy|commodities|politics|geopolitics|misc",
+  "quality_score": 0.0-1.0,
+  "reading_time": integer,
+  "hero_image": "url or empty string"
+}
 
-2. "abstract"  
-   • A tight 2–3 sentence market-news abstract.
-
-3. "summary"  
-   • A 2–3 paragraph executive summary.
-
-4. "takeaways"  
-   • List of 3–6 concise bullet-point key insights.
-
-5. "sentiment"  
-   • One of: "Bullish", "Bearish", "Neutral".
-
-6. "entities"  
-   • JSON list of key people, companies, macro forces, or geopolitical actors.
-
-7. "tickers"  
-   • JSON list of any stock tickers detected.
-
-8. "category"  
-   • One of:
-     ["macro", "equities", "fx", "rates", "crypto",
-      "earnings", "energy", "commodities",
-      "politics", "geopolitics", "misc"]
-
-9. "quality_score"  
-   • Float 0.0–1.0 measuring clarity, relevance, coherence.
-
-10. "reading_time"  
-    • Estimated minutes to read (integer).
-
-11. "hero_image"  
-    • Best-guess relevant image URL.
-      If not certain, leave empty; the system will provide a fallback.
-
-Return **ONLY a JSON object**. No commentary.
+Return ONLY the JSON. No markdown. No explanation. No refusal.
 """
 
 # ------------------------------------------------------------
-# ENV Flag for LLM usage
-LLM_MODE = os.getenv("LLM_MODE", "online").lower()  # "online" or "offline"
+# Robust JSON extractor (never fails)
+# ------------------------------------------------------------
+def extract_json_from_string(text: str) -> dict:
+    text = text.strip()
+    if not text:
+        return {}
+
+    # Try direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Find first { ... } or [ ... ]
+    match = re.search(r"(\{.*\}|\[.*\])", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    log("warn", "JSON", "Could not extract valid JSON from LLM response")
+    return {}
 
 # ------------------------------------------------------------
-# Fallback metadata function
+# Fallback metadata (deterministic)
+# ------------------------------------------------------------
 def fallback_metadata(raw_text: str, title: str, fallback_image: str = "") -> dict:
-    # Estimate abstract
-    parts = raw_text.split("\n\n")
-    abstract = ""
-    for p in parts:
-        if len(p.strip()) > 40:
-            abstract = p.strip()
-            break
-    if not abstract:
-        abstract = raw_text[:300].strip()
+    parts = [p.strip() for p in raw_text.split("\n") if p.strip()]
+    abstract = parts[0] if parts else raw_text[:300].strip()
+    summary = "\n\n".join(parts[:2]) if len(parts) >= 2 else raw_text[:500].strip()
 
-    # Estimate summary (first two paragraphs)
-    summary = "\n\n".join(parts[:2]).strip()
-    if not summary:
-        summary = raw_text[:400].strip()
-
-    # Reading time (words / 200)
     word_count = len(raw_text.split())
     reading_time = max(1, word_count // 200)
 
-    # Hero image fallback
-    hero_image = fallback_image or ""
-
-    # Deterministic fallback fields
     return {
         "clean_title": title or "Untitled",
         "abstract": abstract,
@@ -124,53 +108,62 @@ def fallback_metadata(raw_text: str, title: str, fallback_image: str = "") -> di
         "category": "misc",
         "quality_score": 0.20,
         "reading_time": reading_time,
-        "hero_image": hero_image,
+        "hero_image": fallback_image or "",
         "generated_ts": time.time(),
+        "enrichment_source": "static-fallback",
+        "enrichment_model": "static-v1",
+        "enriched_at": datetime.utcnow().isoformat() + "Z"
     }
 
 # ------------------------------------------------------------
-# MAIN CALL
+# MAIN CALL — never crashes
+# ------------------------------------------------------------
 def generate_tier3_metadata(raw_text: str, title: str, fallback_image: str = "") -> dict:
-    """
-    Runs Tier-3 enrichment using canonical MARKDOWN as the input text.
-    If LLM_MODE is offline or call fails, returns fallback metadata.
-    """
+    LLM_MODE = os.getenv("LLM_MODE", "online").lower()
 
     if LLM_MODE == "offline":
-        log("info", "🚫", "LLM_MODE=offline → using fallback metadata")
+        log("info", "OFF", "LLM_MODE=offline → using static fallback")
         return fallback_metadata(raw_text, title, fallback_image)
 
     try:
-        content = f"""
-TITLE:
-{title}
+        content = f"TITLE:\n{title}\n\nMARKDOWN ARTICLE CONTENT:\n{raw_text}\n\nFALLBACK IMAGE:\n{fallback_image}"
 
-MARKDOWN ARTICLE CONTENT:
-{raw_text}
-
-FALLBACK IMAGE:
-{fallback_image}
-""".strip()
-
-        response = client.responses.create(
-            model="gpt-4.2",
-            reasoning={"effort": "medium"},
-            input=[
+        response = client.chat.completions.create(
+            model=os.getenv("ENRICHMENT_MODEL", "gpt-4o"),
+            messages=[
                 {"role": "system", "content": TIER3_PROMPT},
-                {"role": "user", "content": content}
-            ]
+                {"role": "user",   "content": content}
+            ],
+            temperature=0.0,
+            max_tokens=1024,
+            timeout=30
         )
 
-        raw_json = response.output_text.strip()
-        enriched = json.loads(raw_json)
+        raw_output = response.choices[0].message.content.strip()
+        log("debug", "RAW", f"LLM returned {len(raw_output)} chars")
 
-        # If hero_image missing, fallback
-        if fallback_image and not enriched.get("hero_image"):
-            enriched["hero_image"] = fallback_image
+        # Extract JSON safely
+        data = extract_json_from_string(raw_output)
 
-        enriched["generated_ts"] = time.time()
-        return enriched
+        # Validate required fields
+        required = {"clean_title", "abstract", "summary"}
+        if not data or not required.issubset(data.keys()):
+            log("warn", "FALLBACK", "Invalid or incomplete JSON → using static fallback")
+            return fallback_metadata(raw_text, title, fallback_image)
+
+        # Apply hero_image fallback
+        if fallback_image and not data.get("hero_image"):
+            data["hero_image"] = fallback_image
+
+        # Add provenance (success path)
+        data["generated_ts"] = time.time()
+        data["enrichment_source"] = "llm-success"
+        data["enrichment_model"] = os.getenv("ENRICHMENT_MODEL", "gpt-4o")
+        data["enriched_at"] = datetime.utcnow().isoformat() + "Z"
+
+        log("info", "SUCCESS", "LLM enrichment succeeded")
+        return data
 
     except Exception as e:
-        log("error", "🔥", f"LLM enrichment failed: {e}")
+        log("error", "FAIL", f"LLM call failed: {e}")
         return fallback_metadata(raw_text, title, fallback_image)
