@@ -3,8 +3,8 @@
 # ======================================================
 #  MASSIVE — Volume Profile Chart Generator Menu
 # ======================================================
-#  Generates a JPEG/PNG chart from volume_profile.json.
-#  Default orientation = RIGHT (price on right, bars left)
+#  Generates a JPEG chart from volume_profile.json.
+#  Supports RAW vs TV dataset + struct on/off + JSON dump.
 # ======================================================
 
 # ------------------------------------------------------
@@ -29,123 +29,137 @@ if [[ ! -f "$PY_SCRIPT" ]]; then
   exit 1
 fi
 
-# ------------------------------------------------------
-# Help Text
-# ------------------------------------------------------
-show_help() {
-  clear
-  echo "======================================================="
-  echo "        📘 HELP — Volume Profile Chart Utility"
-  echo "======================================================="
-  echo
-  echo "This tool renders a professional SPX Volume Profile"
-  echo "based on the JSON file created by:"
-  echo
-  echo "    ./scripts/vp-backfill.sh"
-  echo
-  echo "--------------------------------------------------------"
-  echo "  PRICE RANGE OPTIONS"
-  echo "--------------------------------------------------------"
-  echo "  --range-auto       (DEFAULT)"
-  echo "       Auto crop: ATH → ATH - 250 points"
-  echo
-  echo "  --range LOW HIGH"
-  echo "       Manual SPX price range"
-  echo
-  echo "--------------------------------------------------------"
-  echo "  ORIENTATION OPTIONS"
-  echo "--------------------------------------------------------"
-  echo "  --orientation right   (DEFAULT, PROFESSIONAL MODE)"
-  echo "       ✓ Price axis on RIGHT"
-  echo "       ✓ Bars extend LEFT"
-  echo "       ✓ Mirrored profile (matches trading platforms)"
-  echo
-  echo "  --orientation left"
-  echo "       ✓ Price axis on LEFT"
-  echo "       ✓ Bars extend RIGHT"
-  echo
-  echo "--------------------------------------------------------"
-  echo "  NOTES"
-  echo "--------------------------------------------------------"
-  echo "• This tool produces a JPEG (chart.jpg) by default."
-  echo "• Structural markers are disabled by default."
-  echo "• Charts integrate perfectly with Vexy & front-end UI."
-  echo
-  echo "Press ENTER to return to menu."
-  read
-}
+if [[ ! -f "$DATA_FILE" ]]; then
+  echo "❌ volume_profile.json not found:"
+  echo "   $DATA_FILE"
+  echo "Export it with:"
+  echo "  redis-cli -n 0 GET massive:volume_profile > volume_profile.json"
+  exit 1
+fi
+
 
 # ------------------------------------------------------
-# Rendering Functions
+# Rendering Helper
+# ------------------------------------------------------
+render_chart() {
+  local MODE="$1"
+  local OUT="$2"
+  shift 2
+
+  local DUMP_FLAG=""
+
+  # Ask whether to dump JSON
+  read -p "Dump JSON dataset? (y/N): " DUMP
+  if [[ "$DUMP" =~ ^[Yy]$ ]]; then
+    DUMP_FLAG="--dump-json"
+  fi
+
+  echo ""
+  echo "🎨 Rendering ($MODE) → $OUT"
+
+  python3 "$PY_SCRIPT" \
+    --input "$DATA_FILE" \
+    --mode "$MODE" \
+    --output "$OUT" \
+    $DUMP_FLAG \
+    "$@"
+}
+
+
+# ------------------------------------------------------
+# Menu-driven modes
 # ------------------------------------------------------
 
 run_default() {
-  # Default: Auto-range + Mirrored orientation (bars LEFT)
-  python3 "$PY_SCRIPT" \
-    --input "$DATA_FILE" \
+  read -p "Structural analysis on/off (default on): " S
+  if [[ "$S" =~ ^[Nn]$ ]]; then
+      STRUCT="off"
+  else
+      STRUCT="on"
+  fi
+
+  render_chart raw "chart_raw.jpg" \
     --range-auto \
-    --orientation right
+    --orientation right \
+    --struct "$STRUCT"
 }
 
 run_custom_size() {
   read -p "Image width (default 900): " WIDTH
   read -p "Image height (default 1400): " HEIGHT
-  read -p "Orientation (left/right, default right): " ORIENT
+  read -p "Mode raw/tv (default raw): " MODE
+  read -p "Structural analysis on/off (default on): " STRUCT
 
-  python3 "$PY_SCRIPT" \
-    --input "$DATA_FILE" \
+  render_chart "${MODE:-raw}" "chart_${MODE:-raw}.jpg" \
     --width "${WIDTH:-900}" \
     --height "${HEIGHT:-1400}" \
     --range-auto \
-    --orientation "${ORIENT:-right}"
+    --orientation right \
+    --struct "${STRUCT:-on}"
 }
 
 run_custom_struct() {
+  read -p "Mode raw/tv (default raw): " MODE
+  read -p "Structural analysis on/off (default on): " STRUCT
   read -p "Structural threshold (default 2.0): " THR
-  read -p "Orientation (left/right, default right): " ORIENT
 
-  python3 "$PY_SCRIPT" \
-    --input "$DATA_FILE" \
+  render_chart "${MODE:-raw}" "chart_${MODE:-raw}.jpg" \
+    --struct "${STRUCT:-on}" \
     --struct-threshold "${THR:-2.0}" \
     --range-auto \
-    --orientation "${ORIENT:-right}"
+    --orientation right
 }
 
 run_full_custom() {
-  read -p "Image width        (default 900):     " WIDTH
-  read -p "Image height       (default 1400):    " HEIGHT
-  read -p "Struct threshold   (default 2.0):     " THR
+  echo "--- FULL CUSTOM MODE ---"
+  read -p "Mode raw/tv (default raw): " MODE
+  read -p "Structural analysis on/off (default on): " STRUCT
+  read -p "Structural threshold (default 2.0): " THR
+  read -p "Image width (default 900): " WIDTH
+  read -p "Image height (default 1400): " HEIGHT
   read -p "Orientation (left/right, default right): " ORIENT
-  read -p "Output filename    (default chart.jpg): " OUT
+  read -p "Output filename (default chart.jpg): " OUT
+  read -p "Manual Range? (y/n, default n): " RANGE_CHOICE
 
-  python3 "$PY_SCRIPT" \
-    --input "$DATA_FILE" \
+  if [[ "$RANGE_CHOICE" =~ ^[Yy]$ ]]; then
+    read -p "LOW price: " LOW
+    read -p "HIGH price: " HIGH
+    RANGE_ARGS=(--range "$LOW" "$HIGH")
+  else
+    RANGE_ARGS=(--range-auto)
+  fi
+
+  render_chart "${MODE:-raw}" "${OUT:-chart.jpg}" \
     --width "${WIDTH:-900}" \
     --height "${HEIGHT:-1400}" \
+    --struct "${STRUCT:-on}" \
     --struct-threshold "${THR:-2.0}" \
     --orientation "${ORIENT:-right}" \
-    --output "${OUT:-chart.jpg}" \
-    --range-auto
+    "${RANGE_ARGS[@]}"
 }
 
 run_auto_range() {
+  read -p "Mode raw/tv (default raw): " MODE
+  read -p "Structural analysis on/off (default on): " STRUCT
   read -p "Orientation (left/right, default right): " ORIENT
 
-  python3 "$PY_SCRIPT" \
-    --input "$DATA_FILE" \
+  render_chart "${MODE:-raw}" "chart_${MODE:-raw}.jpg" \
     --range-auto \
-    --orientation "${ORIENT:-right}"
+    --orientation "${ORIENT:-right}" \
+    --struct "${STRUCT:-on}"
 }
 
 run_manual_range() {
-  read -p "Enter LOW SPX price:  " LOW
-  read -p "Enter HIGH SPX price: " HIGH
+  read -p "Mode raw/tv (default raw): " MODE
+  read -p "Structural analysis on/off (default on): " STRUCT
+  read -p "LOW price: " LOW
+  read -p "HIGH price: " HIGH
   read -p "Orientation (left/right, default right): " ORIENT
 
-  python3 "$PY_SCRIPT" \
-    --input "$DATA_FILE" \
+  render_chart "${MODE:-raw}" "chart_${MODE:-raw}.jpg" \
     --range "$LOW" "$HIGH" \
-    --orientation "${ORIENT:-right}"
+    --orientation "${ORIENT:-right}" \
+    --struct "${STRUCT:-on}"
 }
 
 
@@ -160,15 +174,14 @@ clear_menu() {
   echo
   echo "Data file: $DATA_FILE"
   echo
-  echo " 1) Generate Chart (Auto Range, Professional Mirrored Default)"
-  echo " 2) Generate w/ Custom Image Size + Orientation"
-  echo " 3) Generate w/ Structural Threshold + Orientation"
+  echo " 1) Generate RAW Chart (Auto Range)"
+  echo " 2) Custom Size + Mode"
+  echo " 3) Struct Threshold + Mode"
   echo " 4) Full Custom Mode"
   echo
-  echo " 5) Auto Range (ATH → ATH−250) + Orientation"
-  echo " 6) Manual Price Range + Orientation"
+  echo " 5) Auto Range + Mode"
+  echo " 6) Manual Range + Mode"
   echo
-  echo " h) Help"
   echo " x) Exit"
   echo
   printf "> "
@@ -188,8 +201,7 @@ while true; do
     4) run_full_custom ;;
     5) run_auto_range ;;
     6) run_manual_range ;;
-    h|H) show_help ;;
     x|X) echo "Exiting." ; exit 0 ;;
-    *) echo "Invalid choice"; sleep 1 ;;
+    *) echo "Invalid option"; sleep 1 ;;
   esac
 done

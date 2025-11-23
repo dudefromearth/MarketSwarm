@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
 """
-build_volume_profile.py — Historical SPY→SPX volume profile collector
-Stores:
-    massive:volume_profile = {
-        "symbol": "SPX",
-        "spy_multiplier": 10,
-        "bin_size_spx": 1,
-        "min_price_spx": int,
-        "max_price_spx": int,
-        "buckets": { "price:int": volume_float },
-        "last_updated": ISO timestamp
-    }
+Refactored build_volume_profile.py — WITH FIXED PAGINATION API KEY
+Fully corrected version.
 """
 
 import os
@@ -21,85 +12,32 @@ import requests
 import redis
 from datetime import datetime, UTC, timedelta, date
 
-# ---------------------------------------------------------
-# CONFIG
-# ---------------------------------------------------------
-
-POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "pdjraOWSpDbg3ER_RslZYe3dmn4Y7WCC")
+POLYGON_API_KEY = os.getenv("POLYGON_API_KEY", "YOUR_KEY_HERE")
 POLYGON_API = "https://api.polygon.io"
-TICKER = "SPY"
 
-# SPY→SPX
-MULTIPLIER = 10       # SPY * 10 = SPX
-BIN_SIZE_SPX = 1      # 1 SPX point resolution
+INSTRUMENTS = {
+    "SPY": {"synthetic": "SPX", "multiplier": 10},
+    "QQQ": {"synthetic": "NDX", "multiplier": 4},
+}
 
-REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_DB   = int(os.getenv("REDIS_DB", "0"))
+BIN_SIZE = 1
+SYSTEM_REDIS_URL = os.getenv("SYSTEM_REDIS_URL", "redis://127.0.0.1:6379")
+MARKET_REDIS_URL = os.getenv("MARKET_REDIS_URL", "redis://127.0.0.1:6380")
+SYSTEM_KEY = "massive:volume_profile"
+MARKET_CHANNEL = "sse:volume-profile"
 
-KEY = "massive:volume_profile"
+def rds_system(): return redis.Redis.from_url(SYSTEM_REDIS_URL, decode_responses=True)
+def rds_market(): return redis.Redis.from_url(MARKET_REDIS_URL, decode_responses=True)
 
+def save_to_system_redis(obj):
+    out = dict(obj)
+    for key in ("buckets_raw", "buckets_tv"):
+        out[key] = {str(int(k)): float(v) for k, v in out.get(key, {}).items()}
+    rds_system().set(SYSTEM_KEY, json.dumps(out))
 
-# ---------------------------------------------------------
-# Redis helpers
-# ---------------------------------------------------------
-def rds():
-    return redis.Redis(
-        host=REDIS_HOST,
-        port=REDIS_PORT,
-        db=REDIS_DB,
-        decode_responses=True
-    )
+def publish_to_market(obj): rds_market().publish(MARKET_CHANNEL, json.dumps(obj))
 
-
-def load_bins():
-    """Load existing profile and normalize bucket keys to int."""
-    raw = rds().get(KEY)
-    if not raw:
-        return {}
-
-    try:
-        data = json.loads(raw)
-    except Exception:
-        return {}
-
-    # Normalize buckets: keys → int, values → float
-    buckets = data.get("buckets", {}) or {}
-    clean = {}
-    for k, v in buckets.items():
-        try:
-            ik = int(k)
-            fv = float(v)
-        except Exception:
-            continue
-        clean[ik] = fv
-
-    data["buckets"] = clean
-    return data
-
-
-def save_bins(obj):
-    """Save profile, converting bucket keys back to str for JSON/Redis."""
-    buckets = obj.get("buckets", {}) or {}
-    out_buckets = {}
-    for k, v in buckets.items():
-        try:
-            sk = str(int(k))
-            fv = float(v)
-        except Exception:
-            continue
-        out_buckets[sk] = fv
-
-    obj = dict(obj)
-    obj["buckets"] = out_buckets
-    rds().set(KEY, json.dumps(obj))
-
-
-# ---------------------------------------------------------
-# Polygon fetch
-# ---------------------------------------------------------
 def http_get(url, params=None):
-    """GET with API key applied correctly even across next_url redirects."""
     headers = {"Authorization": f"Bearer {POLYGON_API_KEY}"}
     if params is None:
         params = {}
@@ -108,172 +46,118 @@ def http_get(url, params=None):
     for attempt in range(5):
         r = requests.get(url, params=params, headers=headers)
         if r.status_code == 429:
-            time.sleep(0.25)
-            continue
-
-        if r.status_code in (401, 403):
-            print(f"❌ AUTH ERROR {r.status_code}: {r.text}")
-            return None
-
-        if not r.ok:
-            print(f"❌ HTTP {r.status_code}: {r.text}")
-            return None
-
-        try:
-            return r.json()
-        except Exception:
-            print("❌ Bad JSON response")
-            return None
-
+            time.sleep(0.25); continue
+        if r.status_code in (401,403): print(f"AUTH ERROR {r.status_code}: {r.text}"); return None
+        if not r.ok: print(f"HTTP {r.status_code}: {r.text}"); return None
+        try: return r.json()
+        except: print("Bad JSON response"); return None
     return None
 
-
-def get_minute_bars(start_ymd, end_ymd):
-    """Pull all minute bars for SPY between two YYYY-MM-DD dates."""
-    url = f"{POLYGON_API}/v2/aggs/ticker/{TICKER}/range/1/minute/{start_ymd}/{end_ymd}"
+def get_minute_bars(ticker, start_ymd, end_ymd):
+    url = f"{POLYGON_API}/v2/aggs/ticker/{ticker}/range/1/minute/{start_ymd}/{end_ymd}"
     params = {"adjusted": "true", "limit": 50000, "sort": "asc"}
 
     out = []
     while True:
         data = http_get(url, params=params)
-        if not data:
-            break
+        if not data: break
 
         results = data.get("results") or []
         out.extend(results)
 
         next_url = data.get("next_url")
-        if not next_url:
-            break
+        if not next_url: break
 
-        # next_url already has query params; headers still carry auth
+        # FIXED: Ensure API KEY persists across paginated requests
         url = next_url
-        params = {}
+        params = {"apiKey": POLYGON_API_KEY}
 
     return out
 
+def accumulate_raw(bins_raw, price, vol, multiplier):
+    if price is None or vol is None: return
+    spx = int(round(price * multiplier))
+    bins_raw[spx] = bins_raw.get(spx, 0.0) + float(vol)
 
-# ---------------------------------------------------------
-# Binning
-# ---------------------------------------------------------
-def accumulate(bins, price_spy, volume):
-    """Price is SPY. Convert → SPX. Bin at 1 SPX increments."""
-    if not isinstance(price_spy, (int, float)):
-        return
-    if not isinstance(volume, (int, float)):
-        return
+def accumulate_tv(bins_tv, low, high, vol, multiplier, microbins=30):
+    if low is None or high is None or vol is None: return
+    if high <= low: return
+    step = (high - low) / microbins
+    vol_per = vol / microbins
+    for i in range(microbins):
+        spy_price = low + i * step
+        spx = int(round(spy_price * multiplier))
+        bins_tv[spx] = bins_tv.get(spx, 0.0) + vol_per
 
-    spx_price = int(round(price_spy * MULTIPLIER))
-    bins[spx_price] = bins.get(spx_price, 0.0) + float(volume)
+def backfill(ticker, years=None, start=None, end=None, publish_mode="raw"):
+    inst = INSTRUMENTS[ticker]
+    synthetic = inst["synthetic"]
+    multiplier = inst["multiplier"]
 
+    if start and end:
+        start_ymd, end_ymd = start, end
+    else:
+        if years == "max":
+            start_ymd = "1993-01-29" if ticker=="SPY" else "1999-03-10"
+            end_ymd = date.today().isoformat()
+        else:
+            yrs = int(years)
+            end_dt = date.today(); start_dt = end_dt - timedelta(days=yrs*365)
+            start_ymd = start_dt.isoformat(); end_ymd = end_dt.isoformat()
 
-# ---------------------------------------------------------
-# Main backfill logic
-# ---------------------------------------------------------
-def backfill_range(start_ymd, end_ymd):
-    print(f"Downloading SPY minute bars {start_ymd} → {end_ymd} …")
-    print(f"Using Polygon Key: {POLYGON_API_KEY[:6]}••••••••••")
+    print(f"Downloading {ticker} {start_ymd} → {end_ymd}")
+    bars = get_minute_bars(ticker, start_ymd, end_ymd)
+    print(f"Fetched {len(bars)} bars.")
 
-    bars = get_minute_bars(start_ymd, end_ymd)
-    if bars is None:
-        print("❌ No data returned — API auth likely failed.")
-        return
-
-    print(f"Fetched {len(bars)} minute bars.")
-
-    # Load existing profile (already normalized to int keys)
-    data = load_bins()
-    bins = data.get("buckets", {}) or {}
-
-    # Accumulate
+    ohlc = []; bins_raw = {}; bins_tv = {}
     for b in bars:
-        c = b.get("c")
-        v = b.get("v")
-        accumulate(bins, c, v)
+        t,o,h,l,c,v = b.get("t"),b.get("o"),b.get("h"),b.get("l"),b.get("c"),b.get("v")
+        ohlc.append({"t":t,"o":o,"h":h,"l":l,"c":c,"v":v})
+        accumulate_raw(bins_raw, c, v, multiplier)
+        accumulate_tv(bins_tv, l, h, v, multiplier)
 
-    # Ensure keys are int, values float (in case any weirdness slipped in)
-    clean_bins = {}
-    for k, v in bins.items():
-        try:
-            ik = int(k)
-            fv = float(v)
-        except Exception:
-            continue
-        clean_bins[ik] = fv
-    bins = clean_bins
-
-    # Determine price range
-    prices = list(bins.keys())
-    price_min = min(prices) if prices else 0
-    price_max = max(prices) if prices else 0
-
+    if bins_raw:
+        price_min, price_max = min(bins_raw.keys()), max(bins_raw.keys())
+    else:
+        price_min = price_max = 0
 
     out = {
-        "symbol": "SPX",
-        "spy_multiplier": MULTIPLIER,
-        "bin_size_spx": BIN_SIZE_SPX,
-        "min_price_spx": price_min,
-        "max_price_spx": price_max,
-        "buckets": bins,
-        "last_updated": datetime.now(UTC).isoformat()
+        "symbol": ticker,
+        "synthetic_symbol": synthetic,
+        "spy_multiplier": multiplier,
+        "bin_size": BIN_SIZE,
+        "min_price": price_min,
+        "max_price": price_max,
+        "last_updated": datetime.now(UTC).isoformat(),
+        "ohlc": ohlc,
+        "buckets_raw": bins_raw,
+        "buckets_tv": bins_tv,
     }
 
-    save_bins(out)
+    save_to_system_redis(out)
+    print("Saved full schema to system-redis → massive:volume_profile")
 
-    print(f"Saved profile: {len(bins)} bins, range {price_min} → {price_max}")
+    if publish_mode in ("raw","both"):
+        publish_to_market({"symbol": synthetic, "mode": "raw", "buckets": bins_raw})
+        print("Published RAW to market-redis → sse:volume-profile")
+    if publish_mode in ("tv","both"):
+        publish_to_market({"symbol": synthetic, "mode": "tv", "buckets": bins_tv})
+        print("Published TV to market-redis → sse:volume-profile")
 
-
-# ---------------------------------------------------------
-# CLI
-# ---------------------------------------------------------
 def main():
     args = sys.argv[1:]
-
     if not args:
-        print("Usage:")
-        print("  --years 5")
-        print("  --years max")
-        print("  --start YYYY-MM-DD --end YYYY-MM-DD")
-        print("  --summary")
-        print("  --wipe")
+        print("Usage:\n  --ticker SPY|QQQ\n  --years N|max\n  --start YYYY-MM-DD --end YYYY-MM-DD\n  --publish raw|tv|both|none")
         return
-
-    # Wipe
-    if "--wipe" in args:
-        print("WIPING ALL EXISTING VOLUME PROFILE DATA…")
-        rds().delete(KEY)
-
-    # Summary
-    if "--summary" in args:
-        data = load_bins()
-        bins = data.get("buckets", {})
-        print(f"Bins: {len(bins)}")
-        print(f"Range: {data.get('min_price_spx')} → {data.get('max_price_spx')}")
-        print(f"Last updated: {data.get('last_updated')}")
-        return
-
-    # Date range
-    if "--start" in args:
-        s = args[args.index("--start") + 1]
-        e = args[args.index("--end") + 1]
-        backfill_range(s, e)
-        return
-
-    # Years
+    ticker = "SPY"
+    if "--ticker" in args: ticker = args[args.index("--ticker")+1].upper()
+    publish_mode = "raw"
+    if "--publish" in args: publish_mode = args[args.index("--publish")+1]
+    if "--start" in args and "--end" in args:
+        s,e = args[args.index("--start")+1], args[args.index("--end")+1]
+        backfill(ticker, start=s, end=e, publish_mode=publish_mode); return
     if "--years" in args:
-        val = args[args.index("--years") + 1]
+        yrs = args[args.index("--years")+1]
+        backfill(ticker, years=yrs, publish_mode=publish_mode); return
 
-        if val == "max":
-            # SPY IPO start: 1993-01-29
-            start = date(1993, 1, 29)
-        else:
-            years = int(val)
-            end = date.today()
-            start = end - timedelta(days=365 * years)
-
-        backfill_range(start.isoformat(), date.today().isoformat())
-        return
-
-
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
