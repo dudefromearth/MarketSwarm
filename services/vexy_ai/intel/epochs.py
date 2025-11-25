@@ -38,15 +38,14 @@ from typing import Dict, Optional
 # =============================================================================
 # Times are in ET. This list is sacred.
 EPOCHS = [
-    {"name": "Premarket", "time": "08:00", "condition": "before_reports"},
-    {"name": "Post-Reports Premarket", "time": "08:35", "condition": "after_reports"},
+    {"name": "Premarket", "time": "08:00"},
     {"name": "Post-Open", "time": "09:35"},
     {"name": "European Close", "time": "11:30"},
     {"name": "Lunch Vol Crush", "time": "13:00"},
     {"name": "Commodity Shadow", "time": "14:00"},
     {"name": "Power Hour Begins", "time": "15:00"},
     {"name": "Into the Close", "time": "15:50"},
-    {"name": "Post-Close Wrap", "time": "16:01"},
+    {"name": "Post-Close Wrap", "time": "16:01"}
 ]
 
 

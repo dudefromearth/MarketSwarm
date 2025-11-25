@@ -2,79 +2,82 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TOOLS="$ROOT/services/massive/tools"
-PY="$ROOT/.venv/bin/python"
+PY="$ROOT/.venv/bin/python3"
+DL="$ROOT/services/massive/utils/massive_downloader.py"
 
-VP_BUILDER="$TOOLS/build_volume_profile.py"
-VP_PLOTTER="$TOOLS/plot_volume_profile.py"
+API_KEY="YOUR_HARDCODED_API_KEY_HERE"
+OUT_DIR="$ROOT/data"
+SYMBOLS="SPX SPY QQQ NDX"
+INTERVAL=1
+DAYS=1
+STRIKE_WINDOW=0.05
 
 line() { echo "──────────────────────────────────────────────────"; }
 
 menu() {
   clear
   line
-  echo "   SPX Volume Profile Builder"
+  echo "   Massive Options Snapshot Downloader"
   line
-  echo "1) Build full SPY→SPX profile"
-  echo "2) Resume interrupted build"
-  echo "3) Plot current profile (enter strike range)"
-  echo "4) Export current profile to JSON"
-  echo "5) Clear profile (delete redis keys)"
-  echo "6) Quit"
+  echo "1) Set symbols (cur: $SYMBOLS)"
+  echo "2) Set days back (cur: $DAYS)"
+  echo "3) Set interval seconds (cur: $INTERVAL)"
+  echo "4) Set strike window (cur: $STRIKE_WINDOW)"
+  echo "5) Set output directory (cur: $OUT_DIR)"
+  echo "6) Run downloader"
+  echo "x) Quit"
   line
   read -rp "Choice: " CH
 
   case "$CH" in
-    1) build_full ;;
-    2) resume_chk ;;
-    3) plot_range ;;
-    4) export_json ;;
-    5) clear_profile ;;
-    6) exit 0 ;;
+    1) set_symbols ;;
+    2) set_days ;;
+    3) set_interval ;;
+    4) set_window ;;
+    5) set_outdir ;;
+    6) run_downloader ;;
+    x) exit 0 ;;
   esac
 }
 
-build_full() {
+set_symbols() {
+  read -rp "Enter symbols (e.g. SPX SPY QQQ NDX): " SYMBOLS
+  menu
+}
+
+set_days() {
+  read -rp "Enter days back: " DAYS
+  menu
+}
+
+set_interval() {
+  read -rp "Enter interval seconds: " INTERVAL
+  menu
+}
+
+set_window() {
+  read -rp "Enter strike window (e.g. 0.05): " STRIKE_WINDOW
+  menu
+}
+
+set_outdir() {
+  read -rp "Enter output directory: " OUT_DIR
+  menu
+}
+
+run_downloader() {
   clear
   line
-  echo "Running full build (this may take minutes)…"
+  echo "Running snapshot downloader…"
   line
-  $PY "$VP_BUILDER"
+  $PY "$DL" \
+      --symbols "$SYMBOLS" \
+      --days "$DAYS" \
+      --interval "$INTERVAL" \
+      --strike-window "$STRIKE_WINDOW" \
+      --out-dir "$OUT_DIR" \
+      --api-key "$API_KEY"
   read -n1 -p "Done. Press any key…"
-  menu
-}
-
-resume_chk() {
-  clear
-  line
-  echo "Resuming build from checkpoint…"
-  line
-  $PY "$VP_BUILDER"
-  read -n1 -p "Resume complete. Press any key…"
-  menu
-}
-
-plot_range() {
-  read -rp "Min SPX strike: " MIN
-  read -rp "Max SPX strike: " MAX
-  $PY "$VP_PLOTTER" --min "$MIN" --max "$MAX"
-  read -n1 -p "Plot done. Press any key…"
-  menu
-}
-
-export_json() {
-  redis-cli -p 6380 HGETALL volume_profile:SPX:bins > volume_profile_export.txt
-  echo "Exported to volume_profile_export.txt"
-  read -n1 -p "Press any key…"
-  menu
-}
-
-clear_profile() {
-  redis-cli -p 6380 DEL volume_profile:SPX:bins
-  redis-cli -p 6380 DEL volume_profile:SPX:meta
-  redis-cli -p 6380 DEL volume_profile:SPX:checkpoint
-  echo "Cleared."
-  read -n1 -p "Press any key…"
   menu
 }
 
