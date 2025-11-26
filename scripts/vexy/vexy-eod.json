@@ -1,0 +1,144 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "ts", "meta", "messages", "widgets", "attachments"],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["conclusion"]
+    },
+
+    "ts": {
+      "type": "string",
+      "description": "ISO-8601 timestamp"
+    },
+
+    "meta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session_name",
+        "summary",
+        "market_character",
+        "key_drivers",
+        "forward_context"
+      ],
+      "properties": {
+        "session_name": {
+          "type": "string",
+          "description": "Typically 'Regular Trading Hours', 'Half-Day Session', etc."
+        },
+
+        "summary": {
+          "type": "string",
+          "description": "High-level EOD summary."
+        },
+
+        "market_character": {
+          "type": "string",
+          "description": "Describes the session behavior: directional bias, volatility, liquidity, regime effects."
+        },
+
+        "key_drivers": {
+          "type": "array",
+          "description": "List of the major forces shaping the session.",
+          "items": { "type": "string" }
+        },
+
+        "forward_context": {
+          "type": "string",
+          "description": "Contextual preview of tomorrow's environment (no predictions)."
+        },
+
+        "session_table": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": { "type": "string" },
+              "value": { "type": ["string", "number"] }
+            }
+          }
+        },
+
+        "inline_chart": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "type": "string" },
+            "data": {
+              "type": "array",
+              "items": { "type": "number" }
+            },
+            "labels": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "messages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observer", "activator", "navigator"],
+      "properties": {
+        "observer": { "type": "string" },
+        "activator": { "type": "string" },
+        "navigator": { "type": "string" }
+      }
+    },
+
+    "widgets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["GEX", "Heatmap", "MarketMode", "VIXRegime", "BiasLFI"],
+      "properties": {
+        "GEX": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "summary": { "type": "string" } }
+        },
+        "Heatmap": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "summary": { "type": "string" } }
+        },
+        "MarketMode": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "summary": { "type": "string" } }
+        },
+        "VIXRegime": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "summary": { "type": "string" } }
+        },
+        "BiasLFI": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "summary": { "type": "string" } }
+        }
+      }
+    },
+
+    "attachments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "url"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["chart", "table", "image", "document"]
+          },
+          "url": { "type": "string" },
+          "caption": { "type": "string" }
+        }
+      }
+    }
+  }
+}

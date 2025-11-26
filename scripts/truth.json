@@ -107,6 +107,7 @@
           { "bus": "system-redis", "key": "vigil:heartbeat" }
         ],
         "subscribe_to": [
+          { "bus": "market-redis", "key": "sse:timeseries" },
           { "bus": "market-redis",  "key": "sse:chain-feed" }
         ]
       },
@@ -125,6 +126,7 @@
   },
   "access_points": {
     "publish_to": [
+      { "bus": "market-redis", "key": "sse:chain-full" },
       { "bus": "market-redis", "key": "sse:chain-feed" },
       { "bus": "market-redis", "key": "sse:volume-profile" },
       { "bus": "market-redis", "key": "sse:timeseries" },

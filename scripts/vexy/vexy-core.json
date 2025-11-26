@@ -1,0 +1,124 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "ts", "messages", "widgets", "attachments"],
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": ["epoch", "event", "widget", "regime", "conclusion"]
+    },
+
+    "ts": {
+      "type": "string",
+      "description": "ISO-8601 timestamp with Z suffix"
+    },
+
+    "messages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["observer", "activator", "navigator"],
+      "properties": {
+        "observer": { "type": "string" },
+        "activator": { "type": "string" },
+        "navigator": { "type": "string" }
+      }
+    },
+
+    "widgets": {
+      "type": "object",
+      "description": "Snapshot of widget interpretations or values at message time.",
+      "additionalProperties": false,
+      "required": ["GEX", "Heatmap", "MarketMode", "VIXRegime", "BiasLFI"],
+      "properties": {
+        "GEX": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["summary"],
+          "properties": {
+            "summary": { "type": "string" },
+            "inline_table": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "label": { "type": "string" },
+                  "value": { "type": ["string", "number"] }
+                }
+              }
+            },
+            "inline_chart": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "type": { "type": "string" },
+                "data": {
+                  "type": "array",
+                  "items": { "type": "number" }
+                },
+                "labels": {
+                  "type": "array",
+                  "items": { "type": "string" }
+                }
+              }
+            }
+          }
+        },
+
+        "Heatmap": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["summary"],
+          "properties": {
+            "summary": { "type": "string" }
+          }
+        },
+
+        "MarketMode": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["summary"],
+          "properties": {
+            "summary": { "type": "string" }
+          }
+        },
+
+        "VIXRegime": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["summary"],
+          "properties": {
+            "summary": { "type": "string" }
+          }
+        },
+
+        "BiasLFI": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["summary"],
+          "properties": {
+            "summary": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "attachments": {
+      "type": "array",
+      "description": "Array of external file references (PNGs, JPGs, tables, docs).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "url"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["chart", "table", "image", "document"]
+          },
+          "url": { "type": "string" },
+          "caption": { "type": "string" }
+        }
+      }
+    }
+  }
+}

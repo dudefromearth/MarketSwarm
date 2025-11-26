@@ -288,3 +288,221 @@ Vexy embodies The Path:
 **Reflection → Clarity → Action.**
 
 And she grows alongside the trader.
+
+# 📘 Vexy Calendar & Event Schema (v1.0)
+
+**Master Schema used by Vexy AI for all session orchestration**
+```json
+{
+  "version": "1.0",
+  "description": "Canonical calendar, event, and widget schema for Vexy AI.",
+  "days": {
+    "YYYY-MM-DD": {
+      "daily_epochs": [
+        {
+          "name": "Premarket",
+          "time": "08:00",
+          "prompt_mode": "tldr",
+          "persona_modes": ["observer", "activator", "navigator"]
+        },
+        {
+          "name": "Post-Open",
+          "time": "09:35",
+          "prompt_mode": "tldr",
+          "persona_modes": ["observer", "activator", "navigator"]
+        },
+        {
+          "name": "European Close",
+          "time": "11:30",
+          "prompt_mode": "tldr"
+        },
+        {
+          "name": "Lunch Vol Crush",
+          "time": "13:00",
+          "prompt_mode": "tldr"
+        },
+        {
+          "name": "Power Hour",
+          "time": "15:00",
+          "prompt_mode": "tldr"
+        },
+        {
+          "name": "Into the Close",
+          "time": "15:50",
+          "prompt_mode": "tldr"
+        },
+        {
+          "name": "Session Conclusion",
+          "time": "16:10",
+          "is_final": true,
+          "include": {
+            "retrospective": true,
+            "forward_preview": true,
+            "echo_summary": true
+          }
+        }
+      ],
+
+      "contextual_regimes": [
+        {
+          "name": "Thanksgiving Week",
+          "priority": 7,
+          "phase": "during",
+          "notes": "Low liquidity; holiday flows."
+        },
+        {
+          "name": "FOMC Day",
+          "priority": 10,
+          "phase": "during",
+          "notes": "Rate decision at 2pm ET."
+        }
+      ],
+
+      "economic_events": [
+        {
+          "name": "CPI",
+          "impact": 9,
+          "time": "08:30",
+          "category": "inflation",
+          "flame_rating": 5,
+          "url": "https://www.bls.gov/",
+          "phase_prompts": {
+            "pre": "Explain consensus, probable volatility, and structure.",
+            "post": "Compare actual vs forecast; interpret flows and structure shifts."
+          }
+        }
+      ],
+
+      "widget_overlays": {
+        "GEX": {
+          "regime": "negative",
+          "value": -6200000,
+          "key_levels": [6735, 6720, 6750],
+          "thresholds": {
+            "warn": -5000000,
+            "critical": -10000000
+          }
+        },
+        "Heatmap": {
+          "pressure_zones": ["puts_6720", "calls_6750"],
+          "cheap_strikes": [6730, 6720],
+          "otm_intensity": 0.78
+        },
+        "MarketMode": {
+          "intraday": {
+            "regime": "normal",
+            "percentile": 78,
+            "vwap_distance": 0.3
+          },
+          "multiday": {
+            "window": "10D",
+            "compression_level": "medium"
+          }
+        },
+        "VIXRegime": {
+          "regime": "Goldilocks",
+          "range_low": 30,
+          "range_high": 40,
+          "baf_width": 13.25
+        },
+        "BiasLFI": {
+          "bias": 70,
+          "lfi": 20,
+          "quadrant": "Air-pocket risk"
+        }
+      },
+
+      "widget_events": [
+        {
+          "widget": "GEX",
+          "trigger": "cross_warn_threshold",
+          "commentary_mode": "tldr",
+          "severity": "warning",
+          "vexy_prompts": {
+            "short": "Describe shift in dealer flow and volatility posture.",
+            "long": "Explain expected implications for intraday expansion probability."
+          }
+        }
+      ],
+
+      "system": {
+        "persona_mode": {
+          "flavor": "navigator",
+          "experience": "professional"
+        },
+        "tier": "activator"
+      }
+    }
+  }
+}
+```
+
+⸻
+
+# 📌 Schema Field Definitions
+
+Below is the human-readable breakdown.
+
+### 1. daily_epochs
+
+Fixed, time-based, recurring market rhythm.
+
+Each epoch includes:
+* name
+* time
+* prompt_mode
+* persona compatibility
+* optional is_final
+
+⠀
+### 2. contextual_regimes
+
+Seasonal or market structure conditions.
+
+Each includes:
+* name
+* priority (to resolve conflicts)
+* phase (before / during / after)
+* notes
+
+⠀
+### 3. economic_events
+
+Market-moving scheduled events.
+
+Each includes:
+* name
+* category
+* time
+* impact score (0–10)
+* flame rating (1–5)
+* URLs
+* pre/post prompts
+
+⠀
+These trigger **pre-event** and **post-event messages**.
+
+### 4. widget_overlays
+
+Snapshot of widget states at the moment of message generation:
+* GEX
+* Convexity Heatmap
+* Market Mode (intraday + multiday)
+* VIX Regime
+* Bias + LFI Quadrant
+
+⠀
+### 5. widget_events
+
+Triggered when widget values cross thresholds.
+
+Includes:
+* widget name
+* trigger condition
+* severity
+* Vexy prompt guidance
+
+⠀
+### 6. system
+
+Defines the persona + voice + tier of the user for that session.
