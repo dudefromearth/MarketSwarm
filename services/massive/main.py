@@ -27,13 +27,22 @@ signal.signal(signal.SIGINT, handle_signal)
 signal.signal(signal.SIGTERM, handle_signal)
 
 def run():
-    cfg = setup_environment()
+    try:
+        cfg = setup_environment()
+    except RuntimeError as e:
+        # Graceful startup failure with clear explanation
+        log("main", "❌", f"Setup failed — {e}")
+        log("main", "🙏", "Massive will not start until the issue above is resolved.")
+        return
+
     r_system = cfg["r_system"]
-    comp = cfg["component"]
-    hb = comp["heartbeat"]
+    hb = cfg["heartbeat"]
     service_id = cfg["SERVICE_ID"]
 
-    log("main", "🚀", "Massive service starting…")
+    if not cfg.get("api_key"):
+        log("main", "⚠️", "MASSIVE_API_KEY missing — market pulls will fail until set")
+
+    log("main", "🚀", "Massive service starting (prototype market pull)…")
 
     # Heartbeat thread
     threading.Thread(

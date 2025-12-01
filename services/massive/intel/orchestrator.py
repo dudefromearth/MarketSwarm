@@ -4,7 +4,7 @@ MASSIVE Orchestrator — Market Data Engine
 Coordinates:
   • chainfeed_worker      (fast ~2s)
   • convexity_worker      (suppressed)
-  • volume_profile_worker (session-based VP — live updates)
+  • vp_live_worker        (optimized incremental VP updates)
 
 NO LONGER controls:
   • SSE gateway
@@ -18,32 +18,26 @@ from datetime import datetime, timezone
 # Worker imports
 from .chainfeed_worker import run_once as chainfeed_once
 from .convexity_worker import run_once as convexity_once
-from .volume_profile_worker import run_once as volume_profile_once
 
-
-# ---------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------
-def log(stage: str, emoji: str, msg: str):
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    print(f"[{ts}][massive|{stage}]{emoji} {msg}", flush=True)
+# UPDATED: use new optimized VP worker
+from .vp_live_worker import run_once as vp_live_once
 
 
 # ---------------------------------------------------------------------
 # Orchestrator Entry
 # ---------------------------------------------------------------------
-def run_orchestrator(config: dict, stop_flag):
-    schedules = config["schedules"]
+def run_orchestrator(config: dict, log, stop_flag):
+    schedules = config.get("schedules", {}) or {}
 
-    # Extract schedules
-    sec_chainfeed      = schedules["chainfeed"]
-    sec_convexity      = schedules["convexity"]
-    sec_volume_profile = schedules["volume_profile"]
+    # Extract schedules (with safe defaults)
+    sec_chainfeed      = schedules.get("chainfeed", 10)
+    sec_convexity      = schedules.get("convexity", 60)
+    sec_volume_profile = schedules.get("volume_profile", 60)
 
     # Feature toggles
-    enable_chainfeed      = schedules["enable_chainfeed"]
-    enable_convexity      = schedules["enable_convexity"]
-    enable_volume_profile = schedules["enable_volume_profile"]
+    enable_chainfeed      = schedules.get("enable_chainfeed", True)
+    enable_convexity      = schedules.get("enable_convexity", False)
+    enable_volume_profile = schedules.get("enable_volume_profile", False)
 
     # Timers
     last_chainfeed  = 0
@@ -63,7 +57,7 @@ def run_orchestrator(config: dict, stop_flag):
         if enable_chainfeed and (now - last_chainfeed >= sec_chainfeed):
             try:
                 log("chainfeed", "📈", "Running chainfeed_once()…")
-                chainfeed_once()
+                chainfeed_once(config, log)
                 last_chainfeed = now
             except Exception as e:
                 log("chainfeed", "❌", f"Error: {e}")
@@ -73,18 +67,18 @@ def run_orchestrator(config: dict, stop_flag):
         if enable_convexity and (now - last_convexity >= sec_convexity):
             try:
                 log("convexity", "🧠", "Running convexity_once() [SUPPRESSED OUTPUT]…")
-                convexity_once()
+                convexity_once(config, log)
                 last_convexity = now
             except Exception as e:
                 log("convexity", "❌", f"Error: {e}")
                 traceback.print_exc()
 
         # ------------------ VOLUME PROFILE WORKER --------------------
-        # New session-based VP worker — publishes to sse:volume-profile
+        # Updated: call new vp_live_worker
         if enable_volume_profile and (now - last_volume >= sec_volume_profile):
             try:
-                log("volume", "📊", "Running volume_profile_once()…")
-                volume_profile_once()
+                log("volume", "📊", "Running vp_live_once()…")
+                vp_live_once(config, log)
                 last_volume = now
             except Exception as e:
                 log("volume", "❌", f"Error: {e}")

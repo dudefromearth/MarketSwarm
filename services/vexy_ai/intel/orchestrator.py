@@ -13,6 +13,7 @@ from datetime import datetime
 from .epochs import should_speak_epoch
 from .events import get_triggered_events
 from .publisher import publish
+from .intel_feed import process_intel_articles
 
 # Redis connections
 r_system = redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
@@ -57,6 +58,7 @@ def flag(name: str, default: int = 1) -> int:
 
 ENABLE_EPOCHS = flag("epochs", 1)
 ENABLE_EVENTS = flag("events", 1)
+ENABLE_INTEL = flag("intel", 1)
 
 # Global state
 last_epoch_name = None
@@ -70,6 +72,7 @@ def run_orchestrator(svc: str, setup_info: dict, truth: dict):
     emit("config", "config", f"VEXY_MODE={VEXY_MODE}")
     emit("config", "config", f"Epochs={'YES' if ENABLE_EPOCHS else 'NO'}")
     emit("config", "config", f"Events={'YES' if ENABLE_EVENTS else 'NO'}")
+    emit("config", "config", f"Intel feed={'YES' if ENABLE_INTEL else 'NO'}")
 
     while True:
         now = datetime.now()
@@ -103,6 +106,12 @@ def run_orchestrator(svc: str, setup_info: dict, truth: dict):
                         "event_fire",
                         f"{event['commentary'][:120]}…",
                     )
+
+        # Intel articles → play-by-play commentary
+        if ENABLE_INTEL and VEXY_MODE in ["full", "intel_only", "events_only", "epochs_only"]:
+            processed = process_intel_articles(r_system, emit)
+            if processed:
+                emit("intel", "ok", f"Published {processed} intel update(s) from vexy:intake")
 
         cycle_time = time.time() - cycle_start
         emit("cycle", "cycle", f"Cycle complete in {cycle_time:.1f}s — sleeping 60s")
