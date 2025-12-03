@@ -21,20 +21,20 @@
   },
 
   "domain": {
-  "keys": {
-    "rss:index":  { "type": "ZSET",   "ttl_sec": 86400 },
-    "rss:queue":  { "type": "STREAM", "ttl_sec": 86400 },
-    "rss:seen":   { "type": "SET",    "ttl_sec": 86400 },
-    "rss:item:{uid}": { "type": "HASH", "ttl_sec": 86400 },
+    "keys": {
+      "rss:index":  { "type": "ZSET",   "ttl_sec": 86400 },
+      "rss:queue":  { "type": "STREAM", "ttl_sec": 86400 },
+      "rss:seen":   { "type": "SET",    "ttl_sec": 86400 },
+      "rss:item:{uid}": { "type": "HASH", "ttl_sec": 86400 },
 
-    "massive:chain:{uid}": { "type": "HASH", "ttl_sec": 86400 },
-    "sse:chain-feed":      { "type": "STREAM", "ttl_sec": 86400 },
+      "massive:chain:{uid}": { "type": "HASH", "ttl_sec": 86400 },
+      "sse:chain-feed":      { "type": "STREAM", "ttl_sec": 86400 },
 
-    "rss:article_enriched_index": { "type": "ZSET", "ttl_sec": 604800 },
-    "rss:article_enriched:{uid}": { "type": "HASH", "ttl_sec": 604800 },
-    "rss:article_canonical:{uid}": { "type": "HASH", "ttl_sec": 604800 }
-  }
-},
+      "rss:article_enriched_index": { "type": "ZSET", "ttl_sec": 604800 },
+      "rss:article_enriched:{uid}": { "type": "HASH", "ttl_sec": 604800 },
+      "rss:article_canonical:{uid}": { "type": "HASH", "ttl_sec": 604800 }
+    }
+  },
 
   "components": {
     "rss_agg": {
@@ -72,7 +72,7 @@
     "content_anal": {
       "meta": {
         "name": "Content Analysis Engine",
-        "description": "LLM-driven category analysis of enriched content, produces synthetic insights adapted the the original content shema."
+        "description": "LLM-driven category analysis of enriched content, produces synthetic insights adapted the original content schema."
       },
       "access_points": {
         "subscribe_to": [
@@ -99,7 +99,7 @@
     "vigil": {
       "meta": {
         "name": "Market Event Watcher",
-        "description": "Filters for market events, send to Vexy."
+        "description": "Filters for market events, sends to Vexy."
       },
       "access_points": {
         "publish_to": [
@@ -108,7 +108,7 @@
         ],
         "subscribe_to": [
           { "bus": "market-redis", "key": "sse:timeseries" },
-          { "bus": "market-redis",  "key": "sse:chain-feed" }
+          { "bus": "market-redis", "key": "sse:chain-feed" }
         ]
       },
       "heartbeat": {
@@ -122,48 +122,59 @@
 "massive": {
   "meta": {
     "name": "Massive Market Data Engine",
-    "description": "Real-time SPX market engine providing chainfeed, SPY→SPX volume profile, time-series data, and convexity digests."
+    "description": "Real-time market engine pulling options chains, preprocessing contract data, and publishing UI-ready models."
   },
   "access_points": {
     "publish_to": [
-      { "bus": "market-redis", "key": "sse:chain-full" },
-      { "bus": "market-redis", "key": "sse:chain-feed" },
-      { "bus": "market-redis", "key": "sse:volume-profile" },
-      { "bus": "market-redis", "key": "sse:timeseries" },
-      { "bus": "market-redis", "key": "sse:convexity-feed" },
+      { "bus": "market-redis", "key": "massive:model:gex" },
+      { "bus": "market-redis", "key": "massive:model:heatmap" },
+      { "bus": "market-redis", "key": "massive:model:market_mode" },
+      { "bus": "market-redis", "key": "massive:model:vix_regime" },
+      { "bus": "market-redis", "key": "massive:model:bias_fi" },
+      { "bus": "market-redis", "key": "massive:model:volume_profile" },
       { "bus": "system-redis", "key": "massive:heartbeat" }
     ],
     "subscribe_to": []
   },
   "heartbeat": {
-    "interval_hz": 2,
-    "ttl_sec": 10,
+    "interval_sec": 1,
+    "ttl_sec": 15,
     "channel": "massive:heartbeat"
   },
   "domain_keys": [
-    "massive:chain:{uid}",
-    "massive:volume_profile:{uid}",
-    "massive:timeseries:{uid}",
-    "sse:chain-feed",
-    "sse:volume-profile",
-    "sse:timeseries",
-    "sse:convexity-feed"
+    "massive:chain:{symbol}:{expiration}",
+    "massive:model:gex",
+    "massive:model:heatmap",
+    "massive:model:market_mode",
+    "massive:model:vix_regime",
+    "massive:model:bias_fi",
+    "massive:model:volume_profile"
   ],
+  "models": {
+    "produces": [
+      "massive.market.gex",
+      "massive.market.heatmap",
+      "massive.market.market_mode",
+      "massive.market.vix_regime",
+      "massive.market.bias_fi",
+      "massive.market.volume_profile"
+    ],
+    "consumes": []
+  },
   "workflow": {
-    "symbol": "SPX",
-    "spy_symbol": "SPY",
-    "api_key_env": "POLYGON_API_KEY",
-    "volume_profile": {
-      "enabled": true,
-      "spy_to_spx_scale": 10.0,
-      "bin_size_spy": 0.01,
-      "window_days": 365,
-      "dynamic_price_span": true
+    "symbols": ["I:SPX", "I:NDX", "SPY", "QQQ"],
+    "strike_ranges": {
+      "I:SPX": 100,
+      "I:NDX": 350,
+      "SPY": 10,
+      "QQQ": 20
     },
-    "publish_chainfeed": true,
-    "publish_volume_profile": true,
-    "publish_timeseries": true,
-    "publish_convexity": false
+    "num_expirations": 5,
+    "use_strict_gt_lt": false,
+    "redis_prefix": "chain",
+    "api_key_env": "MASSIVE_API_KEY",
+    "poll_interval_sec": 10,
+    "threading_enabled": true
   },
   "dependencies": []
 },
@@ -171,29 +182,144 @@
     "vexy_ai": {
       "meta": {
         "name": "Vexy AI",
-        "description": "Epoch + event-driven play-by-play voice. Consumes market and RSS streams, publishes real-time commentary."
+        "description": "Epoch + event-driven play-by-play voice. Consumes market UI models, events, and RSS content; produces human-readable commentary."
       },
-  "access_points": {
-    "subscribe_to": [
-      { "bus": "intel-redis",  "key": "vexy:intake" },
-      { "bus": "market-redis", "key": "sse:chain-feed" },
-      { "bus": "market-redis", "key": "sse:volume-profile" },
-      { "bus": "market-redis", "key": "sse:timeseries" },
-      { "bus": "market-redis", "key": "vigil:events" }
-    ],
-    "publish_to": [
-      { "bus": "system-redis", "key": "vexy_ai:heartbeat" },
-      { "bus": "market-redis", "key": "vexy:playbyplay" }
-    ]
-  },
+      "access_points": {
+        "subscribe_to": [
+          { "bus": "intel-redis",  "key": "vexy:intake" },
+          { "bus": "market-redis", "key": "vigil:events" },
+
+          { "bus": "market-redis", "key": "massive:model:gex" },
+          { "bus": "market-redis", "key": "massive:model:heatmap" },
+          { "bus": "market-redis", "key": "massive:model:market_mode" },
+          { "bus": "market-redis", "key": "massive:model:vix_regime" },
+          { "bus": "market-redis", "key": "massive:model:volume_profile" },
+          { "bus": "market-redis", "key": "massive:model:bias_fi" }
+        ],
+        "publish_to": [
+          { "bus": "system-redis", "key": "vexy_ai:heartbeat" },
+          { "bus": "market-redis", "key": "vexy:model:playbyplay" }
+        ]
+      },
       "heartbeat": {
         "interval_sec": 15,
         "ttl_sec": 45,
         "channel": "vexy_ai:heartbeat"
       },
       "restart_cmd": "/Users/ernie/MarketSwarm/scripts/ms-vexyai.sh restart",
-      "dependencies": ["rss_agg", "massive"],
-      "domain_keys": []
+      "dependencies": ["rss_agg", "massive", "vigil"],
+      "domain_keys": [
+        "vexy:model:playbyplay"
+      ],
+      "models": {
+        "produces": [
+          "vexy:model:playbyplay"
+        ],
+        "consumes": [
+          "massive:model:gex",
+          "massive:model:heatmap",
+          "massive:model:market_mode",
+          "massive:model:vix_regime",
+          "massive:model:volume_profile",
+          "massive:model:bias_fi"
+        ]
+      }
+    },
+
+    "sse": {
+      "meta": {
+        "name": "SSE UI Gateway",
+        "description": "Server-Sent Events gateway responsible for transforming backend models into live UI streams for the React client."
+      },
+      "access_points": {
+        "subscribe_to": [
+          { "bus": "market-redis", "key": "massive:model:gex" },
+          { "bus": "market-redis", "key": "massive:model:heatmap" },
+          { "bus": "market-redis", "key": "massive:model:market_mode" },
+          { "bus": "market-redis", "key": "massive:model:vix_regime" },
+          { "bus": "market-redis", "key": "massive:model:bias_fi" },
+
+          { "bus": "market-redis", "key": "rss:model:sentiment" },
+          { "bus": "market-redis", "key": "rss:model:trending" },
+
+          { "bus": "market-redis", "key": "vexy:model:playbyplay" }
+        ],
+        "publish_to": [
+          { "bus": "system-redis", "key": "sse:heartbeat" },
+          { "bus": "market-redis", "key": "ui:gex" },
+          { "bus": "market-redis", "key": "ui:heatmap" },
+          { "bus": "market-redis", "key": "ui:market_mode" },
+          { "bus": "market-redis", "key": "ui:vix_regime" },
+          { "bus": "market-redis", "key": "ui:bias_fi" },
+          { "bus": "market-redis", "key": "ui:sentiment" },
+          { "bus": "market-redis", "key": "ui:trending_news" },
+          { "bus": "market-redis", "key": "ui:playbyplay" }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15,
+        "channel": "sse:heartbeat"
+      },
+
+      "models": {
+        "produces": [],
+        "consumes": [
+          "massive:model:gex",
+          "massive:model:heatmap",
+          "massive:model:market_mode",
+          "massive:model:vix_regime",
+          "massive:model:bias_fi",
+
+          "rss:model:sentiment",
+          "rss:model:trending",
+
+          "vexy:model:playbyplay"
+        ]
+      },
+
+      "domain_keys": [
+        "massive:model:gex",
+        "massive:model:heatmap",
+        "massive:model:market_mode",
+        "massive:model:vix_regime",
+        "massive:model:bias_fi",
+
+        "rss:model:sentiment",
+        "rss:model:trending",
+
+        "vexy:model:playbyplay",
+
+        "ui:gex",
+        "ui:heatmap",
+        "ui:market_mode",
+        "ui:vix_regime",
+        "ui:bias_fi",
+        "ui:sentiment",
+        "ui:trending_news",
+        "ui:playbyplay"
+      ],
+
+      "workflow": {
+        "ui_channels": {
+          "gex": "ui:gex",
+          "heatmap": "ui:heatmap",
+          "market_mode": "ui:market_mode",
+          "vix_regime": "ui:vix_regime",
+          "bias_fi": "ui:bias_fi",
+          "sentiment": "ui:sentiment",
+          "trending_news": "ui:trending_news",
+          "playbyplay": "ui:playbyplay"
+        },
+        "buffer_ms": 50,
+        "compression": true
+      },
+
+      "dependencies": [
+        "massive",
+        "rss_agg",
+        "vexy_ai"
+      ]
     },
 
     "mesh": {
