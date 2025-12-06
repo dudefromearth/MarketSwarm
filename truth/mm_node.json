@@ -1,0 +1,36 @@
+{
+  "version": "3.1",
+  "description": "Truth: Host-based Redis topology for MarketSwarm stack. Canonical configuration for all services.",
+  "node": {
+    "name": "marketswarm-local",
+    "env": "dev"
+  },
+  "buses": {
+    "system-redis": {
+      "url": "redis://127.0.0.1:6379",
+      "role": "system",
+      "description": "Governance, truth, heartbeats, mesh, healer."
+    },
+    "market-redis": {
+      "url": "redis://127.0.0.1:6380",
+      "role": "market",
+      "description": "Market data, chains, models, vigil events."
+    },
+    "intel-redis": {
+      "url": "redis://127.0.0.1:6381",
+      "role": "intel",
+      "description": "RSS & external intel ingestion, enrichment, sentiment."
+    }
+  },
+  "components": [
+    "rss_agg",
+    "content_anal",
+    "vigil",
+    "massive",
+    "mmaker",
+    "vexy_ai",
+    "sse",
+    "mesh",
+    "healer"
+  ]
+}

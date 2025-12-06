@@ -1,0 +1,19 @@
+{
+  "id": "mesh",
+  "meta": {
+    "name": "Mesh Coordinator",
+    "description": "Maintains service registry and monitors heartbeat health."
+  },
+  "access_points": {
+    "publish_to": [
+      { "bus": "system-redis", "key": "mesh:heartbeat" },
+      { "bus": "system-redis", "key": "mesh:gossip" }
+    ],
+    "subscribe_to": []
+  },
+  "heartbeat": {
+    "interval_sec": 5,
+    "ttl_sec": 15
+  },
+  "dependencies": []
+}

@@ -1,0 +1,34 @@
+{
+  "id": "sse",
+  "meta": {
+    "name": "SSE UI Gateway",
+    "description": "Server-Sent Events gateway responsible for transforming backend models into live UI streams for the React client."
+  },
+  "access_points": {
+    "subscribe_to": [],
+    "publish_to": [
+      { "bus": "system-redis", "key": "sse:heartbeat" }
+    ]
+  },
+  "heartbeat": {
+    "interval_sec": 5,
+    "ttl_sec": 15
+  },
+  "models": {
+    "produces": [],
+    "consumes": [
+      { "bus": "market-redis", "key": "massive:model:gex" },
+      { "bus": "market-redis", "key": "massive:model:heatmap" },
+      { "bus": "market-redis", "key": "massive:model:market_mode" },
+      { "bus": "market-redis", "key": "massive:model:vix_regime" },
+      { "bus": "market-redis", "key": "massive:model:volume_profile" },
+      { "bus": "market-redis", "key": "massive:model:bias_lfi" },
+      { "bus": "market-redis", "key": "vexy:model:playbyplay" }
+    ]
+  },
+  "dependencies": [
+    "massive",
+    "rss_agg",
+    "vexy_ai"
+  ]
+}

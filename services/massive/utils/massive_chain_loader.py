@@ -1,27 +1,18 @@
 #!/usr/bin/env python3
 """
-Massive Snapshot Options Chain Loader
-=====================================
+Massive Snapshot Options Chain Loader — Analytics-Optimized Edition
+====================================================================
 
-Loads options chains for one or more symbols, storing:
+Loads options chains, storing in query-ready Redis structures:
+  gex:<symbol>:<exp> → ZSET strike → net gamma (OI * γ * 100, signed C/P)
+  dex:<symbol>:<exp> → ZSET strike → net delta
+  vex:<symbol>:<exp> → ZSET strike → net vega
+  oi:<symbol>:<exp>  → ZSET strike → total OI
+  vol:<symbol>:<exp> → ZSET strike → total volume
+  iv:<symbol>:<exp>  → ZSET strike → IV
+  opt:<symbol>:<exp>:<strike> → HASH C/P → compact JSON
 
-Per-expiration chains:
-    Key:   chain:<symbol>:<expiration>
-    Field: "<exp>:<strike>:<C|P>"
-    Value: JSON-serialized Massive contract
-
-Per-run time-keyed snapshot (for strategy manifold / timeline):
-    Key:   massive:snapshot:<symbol>:<YYYY-MM-DDTHH:MM:SS>
-    Fields:
-        symbol        → "I:SPX"
-        snapshot_ts   → "2025-12-02T23:16:09"
-        epoch         → 1733187369 (epoch seconds)
-        expirations   → JSON array of {expiration, redis_key, count}
-
-Also:
-    - massive:snapshot:<symbol>:latest → snapshot key (SET)
-    - massive:snapshot:index:<symbol>  → sorted set of snapshot keys by epoch
-    - massive:chain-feed (Redis Stream) gets an event per snapshot
+Snapshot tracks totals; stream fires for models.
 """
 
 import argparse
@@ -37,11 +28,13 @@ from massive import RESTClient
 # DEFAULT CONFIG (overridable via CLI)
 # ------------------------------------------------------------
 
-DEFAULT_API_KEY = os.getenv("MASSIVE_API_KEY", "pdjraOWSpDbg3ER_RslZYe3dmn4Y7WCC")
+# IMPORTANT:
+# - We no longer hide behind a baked-in key.
+# - DEFAULT_API_KEY will be empty unless MASSIVE_API_KEY is set in env.
+DEFAULT_API_KEY = os.getenv("MASSIVE_API_KEY", "")
 
 DEFAULT_SYMBOLS = ["I:SPX", "I:NDX", "I:VIX", "SPY", "QQQ"]
 
-DEFAULT_REDIS_PREFIX = "chain"
 DEFAULT_STRIKE_RANGE = 150            # ± around ATM
 DEFAULT_USE_STRICT_GT_LT = False      # If True → gt/lt ; If False → gte/lte
 DEFAULT_MAX_CHAIN_LIMIT = 250         # Massive's max limit for this endpoint
@@ -52,6 +45,7 @@ US_EASTERN = pytz.timezone("US/Eastern")
 # Globals initialised in main()
 client: RESTClient | None = None
 r: redis.Redis | None = None
+KEEP_RAW_BLOBS = False  # Set via --keep-raw flag
 
 # ------------------------------------------------------------
 # UTILITIES
@@ -98,6 +92,8 @@ def get_spot(symbol: str, debug_rest: bool = False) -> float | None:
 
     try:
         if symbol.startswith("I:"):
+            if debug_rest:
+                log(symbol, "🌐", "Calling client.get_snapshot_indices(...)")
             snap = client.get_snapshot_indices([symbol])
             results = getattr(snap, "results", snap)
             if not results:
@@ -107,6 +103,8 @@ def get_spot(symbol: str, debug_rest: bool = False) -> float | None:
             log(symbol, "ℹ️", f"Spot: {spot}")
             return spot
 
+        if debug_rest:
+            log(symbol, "🌐", 'Calling client.get_snapshot_ticker("stocks", symbol)')
         snap = client.get_snapshot_ticker("stocks", symbol)
         if debug_rest:
             log(symbol, "🧪", f"Equity snapshot raw: {snap}")
@@ -137,6 +135,9 @@ def get_all_expirations(symbol: str, max_chain_limit: int, debug_rest: bool = Fa
     assert client is not None
 
     try:
+        if debug_rest:
+            log(symbol, "🌐", "Calling client.list_snapshot_options_chain(...) for expirations")
+
         out = set()
         for opt in client.list_snapshot_options_chain(
             symbol, params={"limit": max_chain_limit}
@@ -223,6 +224,8 @@ def fetch_chain_slice(
 
     contracts = []
     try:
+        if debug_rest:
+            log(symbol, "🌐", "Calling client.list_snapshot_options_chain(...) for contracts")
         for opt in client.list_snapshot_options_chain(symbol, params=params):
             contracts.append(opt)
     except Exception as e:
@@ -235,63 +238,115 @@ def fetch_chain_slice(
 
 
 # ------------------------------------------------------------
-# REDIS STORAGE: PER-EXP CHAIN
+# REDIS STORAGE: ANALYTICS-OPTIMIZED (NEW)
 # ------------------------------------------------------------
 
-def store_chain(
+def store_analytics_optimized(
     symbol: str,
     expiration: str,
     contracts: list,
-    redis_prefix: str,
-) -> tuple[str, int]:
+) -> tuple[str, int, int]:
     """
-    Write to Redis using your specified format:
-        Key:   <redis_prefix>:<symbol>:<expiration>
-        Field: "<exp>:<strike>:<C|P>"
-        Value: raw JSON blob from Massive
+    Stores in sorted sets + compact hash (no more JSON blobs).
+    Returns (redis_key for compat, total_contracts, active_contracts)
     """
     assert r is not None
 
-    redis_key = f"{redis_prefix}:{symbol}:{expiration}"
-    r.delete(redis_key)
+    # Compat key (for snapshot; points to nothing now, but keeps API same)
+    compat_key = f"chain:{symbol}:{expiration}"
 
-    count = 0
+    pipe = r.pipeline()
+    total = 0
+    active = 0
+
+    raw_key = f"raw:{symbol}:{expiration}"  # Optional debug blobs
 
     for opt in contracts:
-        # Convert Massive object to JSON-serializable dict
+        total += 1
+
+        # Convert to dict (handles Massive objects)
         raw = json.loads(json.dumps(opt, default=lambda o: o.__dict__))
 
-        exp = raw["details"]["expiration_date"]
-        strike = raw["details"]["strike_price"]
-        cp = raw["details"]["contract_type"].upper()
+        # Extract using YOUR JSON format (top-level fields)
+        strike = raw.get("strike")
+        cp_full = raw.get("type", "").lower()  # "call" or "put"
+        cp = "C" if cp_full == "call" else "P" if cp_full == "put" else ""
+        oi = float(raw.get("oi") or 0)
+        volume = float(raw.get("volume") or 0)
+        iv = float(raw.get("iv") or 0)
+        delta = float(raw.get("delta") or 0)
+        gamma = float(raw.get("gamma") or 0)
+        vega = float(raw.get("vega") or 0)
+        mid = float(raw.get("mid") or 0)
 
-        field = f"{exp}:{strike}:{cp}"
+        if not cp or (oi == 0 and volume == 0):
+            continue  # Skip invalids/dead
+        active += 1
 
-        # Store entire JSON contract
-        r.hset(redis_key, field, json.dumps(raw))
-        count += 1
+        sign = 1 if cp == "C" else -1
 
-    log(symbol, "💾", f"{expiration} → {count} → {redis_key}")
-    return redis_key, count
+        # Primary surfaces (ZSETs)
+        pipe.zincrby(f"gex:{symbol}:{expiration}", strike, sign * oi * gamma * 100)
+        pipe.zincrby(f"dex:{symbol}:{expiration}", strike, sign * oi * delta * 100)
+        pipe.zincrby(f"vex:{symbol}:{expiration}", strike, sign * oi * vega)
+        pipe.zincrby(f"oi:{symbol}:{expiration}", strike, oi)
+        pipe.zincrby(f"vol:{symbol}:{expiration}", strike, volume)
+        pipe.zadd(f"iv:{symbol}:{expiration}", {strike: iv}, nx=True)
+
+        # Compact hash per strike
+        compact = {
+            "oi": int(oi),
+            "vol": int(volume),
+            "iv": round(iv, 4),
+            "delta": round(delta, 4),
+            "gamma": gamma,
+            "vega": round(vega, 4),
+            "mid": round(mid, 2),
+        }
+        pipe.hset(f"opt:{symbol}:{expiration}:{strike}", cp, json.dumps(compact))
+
+        # Optional raw blob
+        if KEEP_RAW_BLOBS:
+            field = f"{expiration}:{strike}:{cp}"
+            pipe.hset(raw_key, field, json.dumps(raw))
+
+    # TTLs: 2 weeks analytics, 1 day raw
+    analytics_keys = [f"gex:{symbol}:{expiration}", f"dex:{symbol}:{expiration}",
+                      f"vex:{symbol}:{expiration}", f"oi:{symbol}:{expiration}",
+                      f"vol:{symbol}:{expiration}", f"iv:{symbol}:{expiration}"]
+    for key in analytics_keys:
+        pipe.expire(key, 86400 * 14)
+
+    strike_set = set(c.get("strike") for c in [json.loads(json.dumps(opt, default=lambda o: o.__dict__)) for opt in contracts] if c.get("strike"))
+    for strike in strike_set:
+        pipe.expire(f"opt:{symbol}:{expiration}:{strike}", 86400 * 14)
+
+    if KEEP_RAW_BLOBS:
+        pipe.expire(raw_key, 86400)
+
+    pipe.execute()
+
+    log(symbol, "💾", f"{expiration} → {active}/{total} active → {compat_key} (optimized)")
+    return compat_key, total, active
 
 
 # ------------------------------------------------------------
-# REDIS STORAGE: TIME-KEYED SNAPSHOT
+# REDIS STORAGE: TIME-KEYED SNAPSHOT (MINOR UPDATE)
 # ------------------------------------------------------------
 
 def store_snapshot(symbol: str, per_exp_results: list[dict]) -> str | None:
     """
     Store a time-keyed snapshot for this loader run:
 
-        Key: massive:snapshot:<symbol>:<YYYY-MM-DDTHH:MM:SS>
+        Key: massive:snapshot:<symbol>:<YYYY-MM-DDTHH:MM:SS.mmm>
         Fields:
-          symbol       → <symbol>
-          snapshot_ts  → <iso-8601 second>
-          epoch        → <epoch seconds>
-          expirations  → JSON array of {expiration, redis_key, count}
+          symbol        → <symbol>
+          snapshot_ts   → <iso-8601 millis>
+          epoch         → <epoch seconds>
+          expirations   → JSON array of {expiration, redis_key, total_contracts, active_oi_contracts}
 
     Also:
-        massive:snapshot:<symbol>:latest → snapshot_key (SET)
+        massive:snapshot:<symbol>:latest → snapshot key (SET)
         massive:snapshot:index:<symbol>  → sorted set (ZADD)
         massive:chain-feed               → XADD event
     """
@@ -303,10 +358,9 @@ def store_snapshot(symbol: str, per_exp_results: list[dict]) -> str | None:
 
     now_utc = datetime.now(UTC)
 
-    # ⬇️ this is the ONLY line that has to change for ms precision
-    snapshot_ts = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]  # e.g. 2025-12-03T00:35:17.123
+    # millisecond precision
+    snapshot_ts = now_utc.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
 
-    # keep this exactly as it was
     epoch_sec = int(now_utc.timestamp())
 
     snapshot_key = f"massive:snapshot:{symbol}:{snapshot_ts}"
@@ -350,13 +404,12 @@ def store_snapshot(symbol: str, per_exp_results: list[dict]) -> str | None:
 
 
 # ------------------------------------------------------------
-# MAIN WORKFLOW
+# MAIN WORKFLOW (UPDATED CALLS)
 # ------------------------------------------------------------
 
 def load_symbol(
     symbol: str,
     strike_range: int,
-    redis_prefix: str,
     max_chain_limit: int,
     num_expirations: int,
     use_strict_gt_lt: bool,
@@ -406,8 +459,13 @@ def load_symbol(
             log(symbol, "⚠️", f"No contracts for {exp}")
             continue
 
-        key, count = store_chain(symbol, exp, contracts, redis_prefix=redis_prefix)
-        results.append({"expiration": exp, "redis_key": key, "count": count})
+        key, total, active = store_analytics_optimized(symbol, exp, contracts)
+        results.append({
+            "expiration": exp,
+            "redis_key": key,  # Compat
+            "total_contracts": total,
+            "active_oi_contracts": active
+        })
 
     # Per-run snapshot (time-keyed)
     store_snapshot(symbol, results)
@@ -418,7 +476,6 @@ def load_symbol(
 def load_all_symbols(
     symbols: list[str],
     strike_range: int,
-    redis_prefix: str,
     max_chain_limit: int,
     num_expirations: int,
     use_strict_gt_lt: bool,
@@ -429,7 +486,6 @@ def load_all_symbols(
         out[sym] = load_symbol(
             sym,
             strike_range=strike_range,
-            redis_prefix=redis_prefix,
             max_chain_limit=max_chain_limit,
             num_expirations=num_expirations,
             use_strict_gt_lt=use_strict_gt_lt,
@@ -439,18 +495,17 @@ def load_all_symbols(
 
 
 # ------------------------------------------------------------
-# EXECUTION ENTRY
+# EXECUTION ENTRY (ADDED KEY RESOLUTION + HTTP-LAYER LOGGING)
 # ------------------------------------------------------------
 
 def main() -> None:
-    global client, r
+    global client, r, KEEP_RAW_BLOBS
 
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--symbols", type=str, required=False,
                         help="Space-separated list of symbols")
     parser.add_argument("--strike-range", type=int, required=False)
-    parser.add_argument("--redis-prefix", type=str, required=False)
     parser.add_argument("--api-key", type=str, required=False)
     parser.add_argument("--strict", type=str, required=False,
                         help="true/false for strict gt/lt vs gte/lte")
@@ -458,18 +513,45 @@ def main() -> None:
     parser.add_argument("--redis-url", type=str, required=False)
     parser.add_argument("--debug-rest", action="store_true",
                         help="Enable verbose REST logging")
+    parser.add_argument("--keep-raw", action="store_true",
+                        help="Keep raw JSON blobs for 24h (debug only)")
 
     args = parser.parse_args()
 
-    # Resolve configuration with overrides
+    # --------------------------------------------------------
+    # API key resolution (explicit + debuggable)
+    # --------------------------------------------------------
+    raw_env_key = os.getenv("MASSIVE_API_KEY")
+    env_api_key = (raw_env_key or "").strip()
+    cli_api_key = (args.api_key or "").strip()
+
+    if cli_api_key:
+        api_key = cli_api_key
+        key_source = "--api-key"
+    elif env_api_key:
+        api_key = env_api_key
+        key_source = "MASSIVE_API_KEY env"
+    else:
+        api_key = DEFAULT_API_KEY.strip()
+        key_source = "DEFAULT_API_KEY constant"
+
+    if not api_key:
+        log("config", "❌", "No API key provided. Set MASSIVE_API_KEY or pass --api-key.")
+        return
+
+    # For this debugging pass, log the full key so you can 1:1 confirm.
+    log("config", "🔑", f"API key source: {key_source}")
+    log("config", "🔑", f"MASSIVE_API_KEY (raw env) = {raw_env_key!r}")
+    log("config", "🔑", f"Final API key used = {api_key!r}")
+
+    # --------------------------------------------------------
+    # Resolve rest of configuration with overrides
+    # --------------------------------------------------------
     symbols = DEFAULT_SYMBOLS
     if args.symbols:
         symbols = args.symbols.split()
 
     strike_range = args.strike_range if args.strike_range is not None else DEFAULT_STRIKE_RANGE
-    redis_prefix = args.redis_prefix if args.redis_prefix is not None else DEFAULT_REDIS_PREFIX
-
-    api_key = args.api_key or DEFAULT_API_KEY
 
     use_strict = DEFAULT_USE_STRICT_GT_LT
     if args.strict:
@@ -481,22 +563,51 @@ def main() -> None:
 
     debug_rest = bool(args.debug_rest)
 
-    # Wire Redis + Massive client
+    KEEP_RAW_BLOBS = bool(args.keep_raw)
+
+    # Wire Redis
     r = redis.Redis.from_url(redis_url, decode_responses=True)
-    client = RESTClient(api_key)
+
+    # --------------------------------------------------------
+    # Construct REST client + instrument HTTP layer
+    # --------------------------------------------------------
+    client_obj = RESTClient(api_key)
+    client = client_obj  # assign to global
+
+    log("config", "🧪", f"RESTClient type: {type(client_obj)}")
+    log("config", "🧪", f"RESTClient __dict__ keys: {list(getattr(client_obj, '__dict__', {}).keys())}")
+    log("config", "🧪", f"RESTClient __dict__: {getattr(client_obj, '__dict__', {})!r}")
+
+    # Monkey-patch _get to log path + options (where headers/api key usually live)
+    if hasattr(client_obj, "_get"):
+        original_get = client_obj._get
+
+        def logging_get(*a, _debug=debug_rest, **kw):
+            try:
+                path = kw.get("path", None)
+                options = kw.get("options", None)
+                if _debug:
+                    log("rest", "🌐", f"_get called with path={path!r}, options={options!r}")
+            except Exception as e:
+                log("rest", "⚠️", f"Failed to log _get call: {e}")
+            return original_get(*a, **kw)
+
+        client_obj._get = logging_get  # type: ignore[attr-defined]
+        log("config", "🧪", "Wrapped RESTClient._get with logging shim (path + options).")
+    else:
+        log("config", "⚠️", "RESTClient has no _get attribute; cannot log HTTP layer.")
 
     log("config", "🔧", f"Symbols:           {symbols}")
     log("config", "🔧", f"Strike range:      ±{strike_range}")
-    log("config", "🔧", f"Redis prefix:      {redis_prefix}")
     log("config", "🔧", f"Num expirations:   {num_expirations}")
     log("config", "🔧", f"Strict gt/lt:      {use_strict}")
     log("config", "🔧", f"Redis URL:         {redis_url}")
     log("config", "🔧", f"Debug REST:        {debug_rest}")
+    log("config", "🔧", f"Keep raw blobs:    {KEEP_RAW_BLOBS}")
 
     load_all_symbols(
         symbols=symbols,
         strike_range=strike_range,
-        redis_prefix=redis_prefix,
         max_chain_limit=DEFAULT_MAX_CHAIN_LIMIT,
         num_expirations=num_expirations,
         use_strict_gt_lt=use_strict,

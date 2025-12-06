@@ -1,0 +1,118 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MarketSwarm Component Definition",
+  "type": "object",
+  "additionalProperties": true,
+
+  "required": ["id", "meta", "access_points"],
+
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Canonical component identifier, must match the name used in node.components"
+    },
+
+    "meta": {
+      "type": "object",
+      "required": ["name", "description"],
+      "additionalProperties": true,
+      "properties": {
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["basic", "vexy", "mesh", "healer"],
+          "description": "Archetype of the service"
+        }
+      }
+    },
+
+    "access_points": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "publish_to": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["bus", "key"],
+            "additionalProperties": true,
+            "properties": {
+              "bus": { "type": "string" },
+              "key": { "type": "string" }
+            }
+          }
+        },
+        "subscribe_to": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["bus", "key"],
+            "additionalProperties": true,
+            "properties": {
+              "bus": { "type": "string" },
+              "key": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "domain_keys": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+
+    "models": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "produces": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["bus", "key"],
+            "additionalProperties": true,
+            "properties": {
+              "bus": { "type": "string" },
+              "key": { "type": "string" }
+            }
+          }
+        },
+        "consumes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["bus", "key"],
+            "additionalProperties": true,
+            "properties": {
+              "bus": { "type": "string" },
+              "key": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "heartbeat": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["interval_sec", "ttl_sec"],
+      "properties": {
+        "interval_sec": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ttl_sec": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+
+    "dependencies": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

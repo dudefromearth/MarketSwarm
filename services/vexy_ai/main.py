@@ -1,69 +1,102 @@
 #!/usr/bin/env python3
-import signal
-import threading
-import time
-from datetime import datetime, timezone
 
-from setup import setup_service_environment
-from intel.orchestrator import run_orchestrator
-from heartbeat import start_heartbeat
+import asyncio
+import os
+from datetime import datetime, UTC
+from typing import Any, Dict
 
-# ---------------------------------------------------------
-# Global shutdown flag
-# ---------------------------------------------------------
-stop_requested = False
+import setup          # services/vexy_ai/setup.py
+import heartbeat      # services/vexy_ai/heartbeat.py (generic async heartbeat)
+from intel import orchestrator  # services/vexy_ai/intel/orchestrator.py
+
+import logutil        # services/vexy_ai/logutil.py
 
 
-# ---------------------------------------------------------
-# Signal handler
-# ---------------------------------------------------------
-def handle_signal(sig, frame):
-    global stop_requested
-    stop_requested = True
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    print(f"[{ts}][vexy_ai|main]🛑 Received signal {sig}, shutting down…")
+SERVICE_NAME = os.getenv("SERVICE_ID", "vexy_ai")
 
 
-# ---------------------------------------------------------
-# Main
-# ---------------------------------------------------------
-def main():
-    global stop_requested
+# ------------------------------------------------------------
+# Logging helper (wraps logutil)
+# ------------------------------------------------------------
+def log(status: str, message: str, emoji: str = "", component: str = SERVICE_NAME) -> None:
+    logutil.log(component, status, emoji, message)
 
-    svc = "vexy_ai"
-    setup_info = setup_service_environment(svc)
-    truth = setup_info["truth"]
 
-    # Register signals
-    signal.signal(signal.SIGINT, handle_signal)
-    signal.signal(signal.SIGTERM, handle_signal)
+# ------------------------------------------------------------
+# Single service cycle: heartbeat + orchestrator
+# ------------------------------------------------------------
+async def run_once(config: Dict[str, Any]) -> None:
+    """
+    Start heartbeat in the background and run orchestrator once.
+    If orchestrator returns, we cancel heartbeat and return to caller.
+    """
+    log("INFO", "starting heartbeat + orchestrator", "🟢")
 
-    # Start heartbeat in background
-    hb_thread = threading.Thread(
-        target=lambda: start_heartbeat(svc, truth),
-        daemon=True
+    hb_task = asyncio.create_task(
+        heartbeat.start_heartbeat(
+            service_name=SERVICE_NAME,
+            config=config,
+        ),
+        name=f"{SERVICE_NAME}-heartbeat",
     )
-    hb_thread.start()
 
-    print(f"[vexy_ai] 🚀 Vexy AI Play-by-Play Engine starting…")
+    orch_task = asyncio.create_task(
+        orchestrator.run(config),
+        name=f"{SERVICE_NAME}-orchestrator",
+    )
 
-    # -----------------------------------------------------
-    # Run orchestrator loop until shutdown is requested
-    # -----------------------------------------------------
     try:
-        while not stop_requested:
-            run_orchestrator(svc, setup_info, truth)
-            # run_orchestrator normally loops inside,
-            # but if it ever returns, we guard here.
-            time.sleep(0.5)
+        await orch_task
+        log("INFO", "orchestrator run() returned, cancelling heartbeat", "↩️")
+    finally:
+        if not hb_task.done():
+            hb_task.cancel()
+            try:
+                await hb_task
+            except asyncio.CancelledError:
+                pass
 
-    except Exception as e:
-        ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-        print(f"[{ts}][vexy_ai|main]🔥 Fatal error in orchestrator: {e}")
 
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    print(f"[{ts}][vexy_ai|main]👋 Shutdown complete.")
+# ------------------------------------------------------------
+# Main loop
+# ------------------------------------------------------------
+async def main() -> None:
+    # 1) Setup: load Truth, resolve component, build config
+    log("INFO", "starting setup()", "⚙️")
+    config: Dict[str, Any] = setup.setup(service_name=SERVICE_NAME)
+
+    hb_cfg = config.get("heartbeat", {}) or {}
+    hb_interval = hb_cfg.get("interval_sec", 10)
+    truth_url = config.get("truth_redis_url")
+    truth_key = config.get("truth_key")
+
+    log("INFO", "setup completed, configuration ready", "✅")
+    log(
+        "OK",
+        f"configuration loaded (truth={truth_url} key={truth_key}, hb_interval={hb_interval}s)",
+        "📄",
+    )
+
+    # 2) Forever loop: run orchestrator + heartbeat, restart orchestrator when it returns
+    log("INFO", "entering service loop (Ctrl+C to exit)", "♻️")
+
+    while True:
+        try:
+            await run_once(config)
+            # Orchestrator returned; log and immediately loop again
+            log("INFO", "orchestrator cycle finished; restarting", "🔁")
+        except asyncio.CancelledError:
+            log("WARN", "service loop cancelled", "⚠️")
+            break
+        except Exception as e:
+            log("ERROR", f"unhandled error in service loop: {e}", "💥")
+            await asyncio.sleep(1)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        # Use UTC for consistency with heartbeat
+        ts = datetime.now(UTC).isoformat(timespec="seconds")
+        print(f"[{ts}][{SERVICE_NAME}][INFO] 🛑 received Ctrl+C, shutting down gracefully")

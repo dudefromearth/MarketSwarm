@@ -1,0 +1,25 @@
+{
+  "id": "rss_agg",
+  "meta": {
+    "name": "RSS Aggregator",
+    "description": "Ingests, enriches, and republishes RSS feeds."
+  },
+  "access_points": {
+    "publish_to": [
+      { "bus": "intel-redis", "key": "vexy:intake" },
+      { "bus": "system-redis", "key": "rss_agg:heartbeat" }
+    ],
+    "subscribe_to": [],
+    "index_key": "rss:index",
+    "queue_key": "rss:queue"
+  },
+  "heartbeat": {
+    "interval_sec": 5,
+    "ttl_sec": 15
+  },
+  "workflow": {
+    "interval_sec": 600,
+    "publish_dir": "/Users/ernie/Sites/feeds"
+  },
+  "dependencies": []
+}

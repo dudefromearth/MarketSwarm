@@ -1,0 +1,28 @@
+{
+  "id": "content_anal",
+  "meta": {
+    "name": "Content Analysis Engine",
+    "description": "LLM-driven category analysis of enriched content, produces synthetic insights adapted the original content schema."
+  },
+  "access_points": {
+    "subscribe_to": [
+      { "bus": "intel-redis", "key": "vexy:intake" }
+    ],
+    "publish_to": [
+      { "bus": "intel-redis", "key": "content_anal:outbox" },
+      { "bus": "system-redis", "key": "content_anal:heartbeat" }
+    ]
+  },
+  "heartbeat": {
+    "interval_sec": 15,
+    "ttl_sec": 45
+  },
+  "domain_keys": [
+    "rss:index",
+    "rss:article_enriched_index",
+    "rss:article_enriched:{uid}"
+  ],
+  "dependencies": [
+    "rss_agg"
+  ]
+}

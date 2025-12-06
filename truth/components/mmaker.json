@@ -1,0 +1,35 @@
+{
+  "id": "mmaker",
+  "meta": {
+    "name": "Redis model maker",
+    "description": "Creates models from massive uploads for the UI."
+  },
+  "access_points": {
+    "publish_to": [
+      { "bus": "system-redis", "key": "mmaker:heartbeat" }
+    ],
+    "subscribe_to": [
+      { "bus": "market-redis", "key": "massive:chain" },
+      { "bus": "market-redis", "key": "massive:timeseries" }
+    ]
+  },
+  "models": {
+    "produces": [
+      { "bus": "market-redis", "key": "massive:model:gex" },
+      { "bus": "market-redis", "key": "massive:model:heatmap" },
+      { "bus": "market-redis", "key": "massive:model:market_mode" },
+      { "bus": "market-redis", "key": "massive:model:vix_regime" },
+      { "bus": "market-redis", "key": "massive:model:volume_profile" },
+      { "bus": "market-redis", "key": "massive:model:bias_lfi" }
+    ],
+    "consumes": []
+  },
+  "heartbeat": {
+    "interval_sec": 5,
+    "ttl_sec": 15
+  },
+  "dependencies": [
+    "massive",
+    "vexy_ai"
+  ]
+}

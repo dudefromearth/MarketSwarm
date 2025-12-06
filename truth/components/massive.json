@@ -1,0 +1,38 @@
+{
+  "id": "massive",
+  "meta": {
+    "name": "Massive Market Data Engine",
+    "description": "Real-time market engine pulling options chains, preprocessing contract data, and publishing UI-ready models."
+  },
+  "access_points": {
+    "publish_to": [
+      { "bus": "market-redis", "key": "massive:chain" },
+      { "bus": "system-redis", "key": "massive:heartbeat" },
+      { "bus": "market-redis", "key": "massive:timeseries" }
+    ],
+    "subscribe_to": []
+  },
+  "heartbeat": {
+    "interval_sec": 1,
+    "ttl_sec": 15
+  },
+  "domain_keys": [
+    "massive:chain:{symbol}:{expiration}"
+  ],
+  "workflow": {
+    "symbols": ["I:SPX", "I:NDX", "SPY", "QQQ"],
+    "strike_ranges": {
+      "I:SPX": 100,
+      "I:NDX": 350,
+      "SPY": 10,
+      "QQQ": 20
+    },
+    "num_expirations": 5,
+    "use_strict_gt_lt": false,
+    "redis_prefix": "chain",
+    "api_key_env": "MASSIVE_API_KEY",
+    "poll_interval_sec": 10,
+    "threading_enabled": true
+  },
+  "dependencies": []
+}

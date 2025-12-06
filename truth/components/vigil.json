@@ -1,0 +1,22 @@
+{
+  "id": "vigil",
+  "meta": {
+    "name": "Market Event Watcher",
+    "description": "Filters for market events, sends to Vexy."
+  },
+  "access_points": {
+    "publish_to": [
+      { "bus": "market-redis", "key": "vigil:events" },
+      { "bus": "system-redis", "key": "vigil:heartbeat" }
+    ],
+    "subscribe_to": [
+      { "bus": "market-redis", "key": "massive:timeseries" },
+      { "bus": "market-redis", "key": "massive:chain" }
+    ]
+  },
+  "heartbeat": {
+    "interval_sec": 5,
+    "ttl_sec": 15
+  },
+  "dependencies": []
+}

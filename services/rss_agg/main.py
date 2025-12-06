@@ -1,153 +1,130 @@
 #!/usr/bin/env python3
 """
-main.py — Canonical entry for RSS Aggregator.
-Now fully synchronous for the pipeline,
-while keeping heartbeat async in its own background event loop.
+main.py — Canonical entry for RSS Aggregator (rss_agg).
+
+Pattern:
+  - Discover service id (SERVICE_ID or default 'rss_agg')
+  - Call setup.setup() to load Truth from Redis and build config
+  - Start heartbeat + orchestrator in a loop
+  - Log in a consistent MarketSwarm format via logutil
 """
 
-import os
-import re
-import json
-import socket
+from __future__ import annotations
+
 import asyncio
-import traceback
-from urllib.parse import urlparse
+import os
 from datetime import datetime
+from typing import Any, Dict
 
-from setup import setup_service_environment
-from intel.orchestrator import run_orchestrator
-from heartbeat import start_heartbeat
+import setup                    # services/rss_agg/setup.py
+from intel import orchestrator  # services/rss_agg/intel/orchestrator.py
+from heartbeat import start_heartbeat  # services/rss_agg/heartbeat.py
+import logutil                  # services/rss_agg/logutil.py
 
 
-# ------------------------------------------------------------
-# Logging
-# ------------------------------------------------------------
-def log(component, status, emoji, msg):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] [{component}] [{status}] {emoji} {msg}")
+SERVICE_NAME = os.getenv("SERVICE_ID", "rss_agg")
 
 
 # ------------------------------------------------------------
-# Resolve service ID
+# Logging helper (wrapper around logutil)
 # ------------------------------------------------------------
-def guess_service_id():
-    sid = os.getenv("SERVICE_ID")
-    if sid:
-        log("identity", "ok", "🆔", f"SERVICE_ID={sid}")
-        return sid
-
-    hn = os.getenv("HOSTNAME") or socket.gethostname()
-    m = re.match(r"^[^-]+-([^-]+)-\d+$", hn)
-    if m:
-        sid = m.group(1)
-        log("identity", "ok", "🆔", f"Derived service ID from hostname: {sid}")
-        return sid
-
-    log("identity", "ok", "🆔", f"Using hostname as service ID: {hn}")
-    return hn
+def log(status: str, message: str, emoji: str = "", component: str = SERVICE_NAME) -> None:
+    """
+    Standard log line:
+      [timestamp][component][STATUS] emoji message
+    """
+    # Delegate to shared logutil so all services look the same
+    logutil.log(component, status, emoji, message)
 
 
 # ------------------------------------------------------------
-# Truth Loader (RESP)
+# Single service cycle: heartbeat + orchestrator
 # ------------------------------------------------------------
-def load_truth():
-    redis_url = os.getenv("SYSTEM_REDIS_URL", "redis://127.0.0.1:6379")
-    p = urlparse(redis_url)
-    host = p.hostname or "127.0.0.1"
-    port = p.port or 6379
+async def run_once(config: Dict[str, Any]) -> None:
+    """
+    Start heartbeat in the background and run orchestrator once.
+    If orchestrator returns, we cancel heartbeat and return to caller.
+    """
+    log("INFO", "starting heartbeat + orchestrator", "🟢")
 
-    log("truth", "info", "🔌", f"Connecting to system-redis at {host}:{port}")
+    hb_task = asyncio.create_task(
+        start_heartbeat(
+            service_name=SERVICE_NAME,
+            config=config,
+        ),
+        name=f"{SERVICE_NAME}-heartbeat",
+    )
+
+    orch_task = asyncio.create_task(
+        orchestrator.run(config),
+        name=f"{SERVICE_NAME}-orchestrator",
+    )
 
     try:
-        s = socket.create_connection((host, port), timeout=2)
-        cmd = b"*2\r\n$3\r\nGET\r\n$5\r\ntruth\r\n"
-        s.sendall(cmd)
-
-        first = s.recv(1)
-        if first != b"$":
-            raise RuntimeError("Unexpected RESP response")
-
-        ln_bytes = b""
-        while not ln_bytes.endswith(b"\r\n"):
-            ln_bytes += s.recv(1)
-        ln = int(ln_bytes[:-2])   # strip CRLF
-
-        if ln < 0:
-            raise RuntimeError("Truth key missing in Redis")
-
-        data = b""
-        remaining = ln + 2
-        while remaining > 0:
-            chunk = s.recv(remaining)
-            data += chunk
-            remaining -= len(chunk)
-
-        s.close()
-        truth = json.loads(data[:-2].decode())
-
-        log("truth", "ok", "📘", "Loaded truth.json from Redis")
-        return truth
-
-    except Exception as e:
-        log("truth", "error", "❌", f"Failed to load truth: {e}")
-        traceback.print_exc()
-        return {}
+        # Wait for orchestrator to finish; heartbeat keeps pulsing until we cancel it
+        await orch_task
+        log("INFO", "orchestrator run() returned, cancelling heartbeat", "↩️")
+    finally:
+        if not hb_task.done():
+            hb_task.cancel()
+            try:
+                await hb_task
+            except asyncio.CancelledError:
+                pass
 
 
 # ------------------------------------------------------------
-# MAIN — now fully synchronous
+# Main loop
 # ------------------------------------------------------------
-def main():
-    # 1) Identity
-    svc = guess_service_id()
+async def main() -> None:
+    # 1) Setup: load Truth from Redis, resolve component, build config
+    log("INFO", "starting setup()", "⚙️")
+    config: Dict[str, Any] = setup.setup(service_name=SERVICE_NAME)
 
-    # 2) Truth
-    truth = load_truth()
-    if not truth:
-        raise SystemExit("❌ Cannot continue without truth")
+    hb_cfg = config.get("heartbeat", {}) or {}
+    hb_interval = hb_cfg.get("interval_sec", 10)
 
-    comp = truth.get("components", {}).get(svc)
-    if not comp:
-        log("truth", "error", "❌", f"No component definition for '{svc}'")
-        raise SystemExit(1)
+    # Truth location reporting – this is what was previously cosmetic-busted
+    truth_source = config.get("truth_source", {}) or {}
+    truth_path = truth_source.get("path")
+    truth_redis_url = truth_source.get("redis_url")
+    truth_key = truth_source.get("key")
 
-    log("truth", "ok", "🔎", f"Component block discovered for {svc}")
+    if truth_path:
+        truth_location = truth_path
+    elif truth_redis_url and truth_key:
+        truth_location = f"{truth_redis_url} key={truth_key}"
+    elif truth_redis_url:
+        truth_location = truth_redis_url
+    else:
+        truth_location = "unknown"
 
-    # 3) Heartbeat configuration
-    pubs = comp.get("access_points", {}).get("publish_to", [])
-    hb = next((x for x in pubs if "heartbeat" in x.get("key", "")), None)
-    if not hb:
-        log("heartbeat", "error", "❌", "No heartbeat publish_to entry found")
-        raise SystemExit(1)
+    log("INFO", "setup completed, configuration ready", "✅")
+    log(
+        "OK",
+        f"configuration loaded (truth={truth_location}, hb_interval={hb_interval}s)",
+        "📄",
+    )
 
-    log("heartbeat", "ok", "❤️",
-        f"Heartbeat channel: {hb['key']} on {hb['bus']}")
+    # 2) Forever loop: run orchestrator + heartbeat, restart orchestrator when it returns
+    log("INFO", "entering service loop (Ctrl+C to exit)", "♻️")
 
-    # 4) Setup environment
-    try:
-        log("setup", "info", "⚙️", "Running setup_service_environment()")
-        setup_info = setup_service_environment(svc)
-        log("setup", "ok", "✅", "Environment ready")
-    except Exception as e:
-        log("setup", "error", "❌", f"Setup failure: {e}")
-        raise SystemExit(1)
-
-    # 5) Start heartbeat in its own asyncio event loop STAYING ASYNC
-    log("heartbeat", "info", "💓", "Starting heartbeat loop…")
-
-    def heartbeat_runner():
-        asyncio.run(start_heartbeat(svc, truth))
-
-    import threading
-    threading.Thread(target=heartbeat_runner, daemon=True).start()
-
-    # 6) Run orchestrator (synchronous)
-    log("orchestrator", "info", "🚀", "Starting orchestrator…")
-    run_orchestrator(svc, setup_info, truth)
+    while True:
+        try:
+            await run_once(config)
+            # Orchestrator returned; log and immediately loop again
+            log("INFO", "orchestrator cycle finished; restarting", "🔁")
+        except asyncio.CancelledError:
+            log("WARN", "service loop cancelled", "⚠️")
+            break
+        except Exception as e:
+            log("ERROR", f"unhandled error in service loop: {e}", "💥")
+            # Small backoff to avoid hot-spin if something is badly wrong.
+            await asyncio.sleep(1)
 
 
 if __name__ == "__main__":
     try:
-        main()
+        asyncio.run(main())
     except KeyboardInterrupt:
-        log("system", "stop", "🛑", "Service interrupted by user")
+        log("INFO", "received Ctrl+C, shutting down gracefully", "🛑")

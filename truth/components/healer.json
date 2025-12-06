@@ -1,0 +1,26 @@
+{
+  "id": "healer",
+  "meta": {
+    "name": "Healer",
+    "description": "Watches all service heartbeats and restarts or alerts when any fail."
+  },
+  "access_points": {
+    "subscribe_to": [
+      { "bus": "system-redis", "key": "rss_agg:heartbeat" },
+      { "bus": "system-redis", "key": "massive:heartbeat" },
+      { "bus": "system-redis", "key": "vexy_ai:heartbeat" },
+      { "bus": "system-redis", "key": "mmaker:heartbeat" },
+      { "bus": "system-redis", "key": "mesh:heartbeat" },
+      { "bus": "system-redis", "key": "vigil:heartbeat" },
+      { "bus": "system-redis", "key": "content_anal:heartbeat" }
+    ],
+    "publish_to": [
+      { "bus": "system-redis", "key": "healer:alerts" }
+    ]
+  },
+  "heartbeat": {
+    "interval_sec": 10,
+    "ttl_sec": 30
+  },
+  "dependencies": []
+}

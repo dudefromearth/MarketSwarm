@@ -3,7 +3,6 @@ set -euo pipefail
 
 ###############################################
 # MarketSwarm MASSIVE – Market Data Engine
-# (Patterned after ms-vigil.sh and ms-vexyai.sh)
 ###############################################
 
 # Repo root
@@ -23,12 +22,11 @@ BREW_REDIS="/opt/homebrew/bin/redis-cli"
 ###############################################
 # Redis URLs (system / market / intel)
 ###############################################
-# Original names used elsewhere in MarketSwarm:
 export SYSTEM_REDIS_URL="${SYSTEM_REDIS_URL:-redis://127.0.0.1:6379}"
 export MARKET_REDIS_URL="${MARKET_REDIS_URL:-redis://127.0.0.1:6380}"
 export INTEL_REDIS_URL="${INTEL_REDIS_URL:-redis://127.0.0.1:6381}"
 
-# Aliases for Massive setup.py (so both spellings work)
+# Aliases used elsewhere
 export REDIS_SYSTEM_URL="$SYSTEM_REDIS_URL"
 export REDIS_MARKET_URL="$MARKET_REDIS_URL"
 
@@ -37,36 +35,36 @@ export DEBUG_MASSIVE="${DEBUG_MASSIVE:-false}"
 ###############################################
 # Symbol selection (one symbol per service)
 ###############################################
-# Default symbol; can be changed via menu or env MASSIVE_SYMBOL
 export MASSIVE_SYMBOL="${MASSIVE_SYMBOL:-I:SPX}"
 ALLOWED_SYMBOLS="I:SPX I:NDX SPY QQQ"
 
 ###############################################
-# Massive throttling controls (DTE buckets)
+# Massive throttling controls
+#
+# Mental model (one Massive per symbol):
+#   - 0DTE expirations:  depth of each snapshot
+#   - 0DTE interval:     target time between snapshot *starts*
+#                        (0 → as fast as possible)
+#   - Rest expirations:  additional expirations beyond 0DTE
+#                        (0 → disable rest lane)
+#   - Rest interval:     cadence for the rest lane
+#   - Max inflight:      max overlapping snapshot cycles
 ###############################################
-# How many expirations in the "fast" bucket (typically 0DTE only)
 export MASSIVE_0DTE_NUM_EXP="${MASSIVE_0DTE_NUM_EXP:-1}"
-
-# How often to refresh the fast bucket (seconds)
 export MASSIVE_0DTE_INTERVAL_SEC="${MASSIVE_0DTE_INTERVAL_SEC:-1}"
-
-# How many expirations total to fetch in the "rest" bucket
-# (eg 5 → today + next 4 DTEs)
 export MASSIVE_REST_NUM_EXP="${MASSIVE_REST_NUM_EXP:-5}"
-
-# How often to refresh rest bucket (seconds)
 export MASSIVE_REST_INTERVAL_SEC="${MASSIVE_REST_INTERVAL_SEC:-10}"
+export MASSIVE_MAX_INFLIGHT="${MASSIVE_MAX_INFLIGHT:-6}"
 
 # ------------------------------------------------
 # 🔥 MASSIVE API KEY — REQUIRED FOR MARKET DATA
 # ------------------------------------------------
 # truth.workflow.api_key_env = "MASSIVE_API_KEY"
-export MASSIVE_API_KEY="${MASSIVE_API_KEY:-pdjraOWSpDbg3ER_RslZYe3dmn4Y7WCC}"
+export MASSIVE_API_KEY="pdjraOWSpDbg3ER_RslZYe3dmn4Y7WCC"
 
 # ------------------------------------------------
 # Orchestrator wiring
 # ------------------------------------------------
-# Tell Massive which Python + chain loader to use
 export PYTHON_BIN="${PYTHON_BIN:-$VENV_PY}"
 export MASSIVE_CHAIN_LOADER="${MASSIVE_CHAIN_LOADER:-$CHAIN_LOADER}"
 
@@ -84,10 +82,7 @@ show_last_chainfeed() {
   echo " Last 10 Chainfeed Events (sse:chain-feed)"
   line
   echo ""
-
-  $BREW_REDIS -h 127.0.0.1 -p 6380 --raw XREVRANGE sse:chain-feed + - COUNT 10 | \
-    sed 's/^/  /'
-
+  $BREW_REDIS -h 127.0.0.1 -p 6380 --raw XREVRANGE sse:chain-feed + - COUNT 10 | sed 's/^/  /'
   echo ""
   read -n 1 -s -r -p "Press any key to return..."
 }
@@ -126,9 +121,7 @@ configure_symbol() {
         MASSIVE_SYMBOL="$SYM"
       fi
       ;;
-    "" )
-      # keep current
-      ;;
+    "" ) ;;
     * )
       echo "Invalid choice, keeping current symbol."
       sleep 1
@@ -150,11 +143,19 @@ configure_throttling() {
   echo " MASSIVE – DTE Throttling Configuration"
   line
   echo ""
+  echo "Meaning of knobs (per Massive instance):"
+  echo "  • 0DTE expirations  → expirations per snapshot (depth)"
+  echo "  • 0DTE interval     → seconds between snapshot starts (0 = as fast as possible)"
+  echo "  • Rest expirations  → extra expirations beyond 0DTE (0 = disable rest lane)"
+  echo "  • Rest interval     → seconds between rest-lane cycles"
+  echo "  • Max inflight      → max overlapping snapshot cycles"
+  echo ""
   echo "Current settings (symbol: $MASSIVE_SYMBOL):"
   echo "  0DTE expirations:      $MASSIVE_0DTE_NUM_EXP"
   echo "  0DTE interval (sec):   $MASSIVE_0DTE_INTERVAL_SEC"
   echo "  Rest expirations:      $MASSIVE_REST_NUM_EXP"
   echo "  Rest interval (sec):   $MASSIVE_REST_INTERVAL_SEC"
+  echo "  Max inflight cycles:   $MASSIVE_MAX_INFLIGHT"
   echo ""
   echo "Press ENTER to keep the current value."
   echo ""
@@ -181,6 +182,11 @@ configure_throttling() {
     MASSIVE_REST_INTERVAL_SEC="$input"
   fi
 
+  read -rp "Max inflight cycles [${MASSIVE_MAX_INFLIGHT}]: " input
+  if [[ -n "$input" ]]; then
+    MASSIVE_MAX_INFLIGHT="$input"
+  fi
+
   echo ""
   line
   echo "Updated throttling (symbol: $MASSIVE_SYMBOL):"
@@ -188,6 +194,7 @@ configure_throttling() {
   echo "  0DTE interval (sec):   $MASSIVE_0DTE_INTERVAL_SEC"
   echo "  Rest expirations:      $MASSIVE_REST_NUM_EXP"
   echo "  Rest interval (sec):   $MASSIVE_REST_INTERVAL_SEC"
+  echo "  Max inflight cycles:   $MASSIVE_MAX_INFLIGHT"
   line
   echo ""
   read -n 1 -s -r -p "Press any key to return to main menu..."
@@ -215,6 +222,7 @@ menu() {
   echo "Current throttling:"
   echo "  0DTE: ${MASSIVE_0DTE_NUM_EXP} exp(s) every ${MASSIVE_0DTE_INTERVAL_SEC}s"
   echo "  Rest: ${MASSIVE_REST_NUM_EXP} exp(s) every ${MASSIVE_REST_INTERVAL_SEC}s"
+  echo "  Max inflight cycles: ${MASSIVE_MAX_INFLIGHT}"
   echo ""
   line
   read -rp "Enter choice [1-5]: " CH
@@ -248,6 +256,16 @@ else
 fi
 
 ###############################################
+# Map menu throttling → scheduler env for setup.py
+###############################################
+export MASSIVE_FAST_NUM_EXPIRATIONS="$MASSIVE_0DTE_NUM_EXP"
+export MASSIVE_FAST_INTERVAL_SEC="$MASSIVE_0DTE_INTERVAL_SEC"
+export MASSIVE_REST_NUM_EXPIRATIONS="$MASSIVE_REST_NUM_EXP"
+export MASSIVE_REST_INTERVAL_SEC="$MASSIVE_REST_INTERVAL_SEC"
+# Max inflight directly read by setup.py
+export MASSIVE_MAX_INFLIGHT="$MASSIVE_MAX_INFLIGHT"
+
+###############################################
 # Bootstrap & Validation
 ###############################################
 line
@@ -266,9 +284,9 @@ echo "0DTE expirations:      $MASSIVE_0DTE_NUM_EXP"
 echo "0DTE interval (sec):   $MASSIVE_0DTE_INTERVAL_SEC"
 echo "Rest expirations:      $MASSIVE_REST_NUM_EXP"
 echo "Rest interval (sec):   $MASSIVE_REST_INTERVAL_SEC"
+echo "Max inflight cycles:   $MASSIVE_MAX_INFLIGHT"
 echo ""
 
-# Validate tools
 for cmd in "$BREW_PY" "$VENV_PY" "$BREW_REDIS"; do
   if [[ -x "$cmd" ]]; then
     echo "Found $cmd"
@@ -278,7 +296,6 @@ for cmd in "$BREW_PY" "$VENV_PY" "$BREW_REDIS"; do
   fi
 done
 
-# Validate truth
 HAS_TRUTH=$($BREW_REDIS -h 127.0.0.1 -p 6379 EXISTS truth)
 if [[ "$HAS_TRUTH" -eq 1 ]]; then
   echo "Truth found"

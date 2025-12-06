@@ -1,71 +1,118 @@
 #!/usr/bin/env python3
-"""
-main.py — Content_Anal Service Entrypoint
-"""
 
-import time
-import signal
-import threading
-from datetime import datetime, timezone
+import asyncio
+import os
+from datetime import datetime, UTC
+from typing import Any, Dict
 
-from setup import setup_environment
-from heartbeat import start_heartbeat
-from intel.orchestrator import run_orchestrator
+from pathlib import Path
+import sys
 
-STOP = False
+SERVICE_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(SERVICE_ROOT))
 
-
-def log(msg, emoji="🧠", stage="main"):
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    print(f"[{ts}][content_anal|{stage}]{emoji} {msg}")
+import setup                    # services/content_anal/setup.py
+import heartbeat                # services/content_anal/heartbeat.py
+from intel import orchestrator  # services/content_anal/intel/orchestrator.py
 
 
-def handle_signal(sig, frame):
-    global STOP
-    log(f"Received signal {sig}, shutting down…", "🛑")
-    STOP = True
+SERVICE_NAME = os.getenv("SERVICE_ID", "content_anal")
+
+# Read debug flag once from env
+DEBUG_ENABLED = os.getenv("DEBUG_CONTENT_ANAL", "false").lower() == "true"
 
 
-# Register shutdown handlers
-signal.signal(signal.SIGINT, handle_signal)
-signal.signal(signal.SIGTERM, handle_signal)
+# ------------------------------------------------------------
+# Logging helper
+# ------------------------------------------------------------
+def log(level: str, message: str, emoji: str = "", component: str = SERVICE_NAME) -> None:
+    """
+    Standard log line:
+      [timestamp][component][LEVEL] emoji message
+
+    DEBUG lines are suppressed unless DEBUG_CONTENT_ANAL=true.
+    """
+    if level.upper() == "DEBUG" and not DEBUG_ENABLED:
+        return
+
+    ts = datetime.now(UTC).isoformat(timespec="seconds")
+    emoji_part = f" {emoji}" if emoji else ""
+    print(f"[{ts}][{component}][{level.upper()}]{emoji_part} {message}")
 
 
-def run():
-    global STOP
+# ------------------------------------------------------------
+# Single service cycle: heartbeat + orchestrator
+# ------------------------------------------------------------
+async def run_once(config: Dict[str, Any]) -> None:
+    """
+    Start heartbeat in the background and run orchestrator once.
+    If orchestrator returns, we cancel heartbeat and return to caller.
+    """
+    log("INFO", "starting heartbeat + orchestrator", "🟢")
 
-    cfg = setup_environment()
-    r_system = cfg["r_system"]
-    SERVICE_ID = cfg["SERVICE_ID"]
-    hb_cfg = cfg["component"]["heartbeat"]
-
-    log("Content_Anal service starting…", "🚀")
-
-    # ---------------------------------------------------------
-    # Heartbeat thread (daemon, never joined — like Vigil)
-    # ---------------------------------------------------------
-    threading.Thread(
-        target=lambda: start_heartbeat(
-            r_system,
-            SERVICE_ID,
-            hb_cfg["interval_sec"],
-            hb_cfg["ttl_sec"],
-            stop_flag=lambda: STOP,
-            log=lambda step, emo, msg: log(msg, emo, "heartbeat")
+    hb_task = asyncio.create_task(
+        heartbeat.start_heartbeat(
+            service_name=SERVICE_NAME,
+            config=config,
         ),
-        daemon=True,   # CRITICAL FOR GRACEFUL SHUTDOWN
-        name="heartbeat-thread"
-    ).start()
+        name=f"{SERVICE_NAME}-heartbeat",
+    )
 
-    # ---------------------------------------------------------
-    # Main orchestrator loop — must be short & non-blocking
-    # ---------------------------------------------------------
-    while not STOP:
-        run_orchestrator(cfg)
-        time.sleep(0.5)
+    orch_task = asyncio.create_task(
+        orchestrator.run(config),
+        name=f"{SERVICE_NAME}-orchestrator",
+    )
 
-    log("Content_Anal stopped cleanly.", "🙏")
+    # Wait for orchestrator to finish; heartbeat keeps pulsing until we cancel it.
+    try:
+        await orch_task
+        log("INFO", "orchestrator run() returned, cancelling heartbeat", "↩️")
+    finally:
+        if not hb_task.done():
+            hb_task.cancel()
+            try:
+                await hb_task
+            except asyncio.CancelledError:
+                pass
+
+
+# ------------------------------------------------------------
+# Main loop
+# ------------------------------------------------------------
+async def main() -> None:
+    # 1) Setup: load Truth, resolve component, build config
+    log("INFO", "starting setup()", "⚙️")
+    config: Dict[str, Any] = setup.setup(service_name=SERVICE_NAME)
+
+    hb_cfg = config.get("heartbeat", {})
+    hb_interval = hb_cfg.get("interval_sec", 10)
+    truth_path = config.get("truth_path")
+
+    log("INFO", "setup completed, configuration ready", "✅")
+    log(
+        "OK",
+        f"configuration loaded (truth={truth_path}, hb_interval={hb_interval}s)",
+        "📄",
+    )
+
+    # 2) Forever loop: run orchestrator + heartbeat, restart orchestrator when it returns
+    log("INFO", "entering service loop (Ctrl+C to exit)", "♻️")
+
+    while True:
+        try:
+            await run_once(config)
+            # Orchestrator returned; log and immediately loop again
+            log("INFO", "orchestrator cycle finished; restarting", "🔁")
+        except asyncio.CancelledError:
+            log("WARN", "service loop cancelled", "⚠️")
+            break
+        except Exception as e:
+            log("ERROR", f"unhandled error in service loop: {e}", "💥")
+            await asyncio.sleep(1)
 
 
 if __name__ == "__main__":
-    run()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log("INFO", "received Ctrl+C, shutting down gracefully", "🛑")

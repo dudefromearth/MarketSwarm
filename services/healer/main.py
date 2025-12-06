@@ -1,70 +1,118 @@
-# ---- Tiny Truth→Heartbeat (hostname-based SERVICE_ID) ----
-import os, re, json, time, socket
-from urllib.parse import urlparse
+#!/usr/bin/env python3
 
-def parse(u):
-    p = urlparse(u or "redis://system-redis:6379")
-    return (p.hostname or "system-redis", p.port or 6379)
+import asyncio
+import os
+from datetime import datetime, UTC
+from typing import Any, Dict
 
-def guess_service_id():
-    # 1) explicit override wins
-    sid = os.getenv("SERVICE_ID")
-    if sid: return sid
-    # 2) try compose-style names: project-service-1  → service
-    hn = os.getenv("HOSTNAME") or socket.gethostname()
-    m = re.match(r"^[^-]+-([^-]+)-\d+$", hn)
-    if m: return m.group(1)
-    # 3) try cgroup hint: .../project/service/abc123
+from pathlib import Path
+import sys
+
+SERVICE_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(SERVICE_ROOT))
+
+import setup                    # services/healer/setup.py
+import heartbeat                # services/healer/heartbeat.py
+from intel import orchestrator  # services/healer/intel/orchestrator.py
+
+
+SERVICE_NAME = os.getenv("SERVICE_ID", "healer")
+
+# Read debug flag once from env
+DEBUG_ENABLED = os.getenv("DEBUG_HEALER", "false").lower() == "true"
+
+
+# ------------------------------------------------------------
+# Logging helper
+# ------------------------------------------------------------
+def log(level: str, message: str, emoji: str = "", component: str = SERVICE_NAME) -> None:
+    """
+    Standard log line:
+      [timestamp][component][LEVEL] emoji message
+
+    DEBUG lines are suppressed unless DEBUG_HEALER=true.
+    """
+    if level.upper() == "DEBUG" and not DEBUG_ENABLED:
+        return
+
+    ts = datetime.now(UTC).isoformat(timespec="seconds")
+    emoji_part = f" {emoji}" if emoji else ""
+    print(f"[{ts}][{component}][{level.upper()}]{emoji_part} {message}")
+
+
+# ------------------------------------------------------------
+# Single service cycle: heartbeat + orchestrator
+# ------------------------------------------------------------
+async def run_once(config: Dict[str, Any]) -> None:
+    """
+    Start heartbeat in the background and run orchestrator once.
+    If orchestrator returns, we cancel heartbeat and return to caller.
+    """
+    log("INFO", "starting heartbeat + orchestrator", "🟢")
+
+    hb_task = asyncio.create_task(
+        heartbeat.start_heartbeat(
+            service_name=SERVICE_NAME,
+            config=config,
+        ),
+        name=f"{SERVICE_NAME}-heartbeat",
+    )
+
+    orch_task = asyncio.create_task(
+        orchestrator.run(config),
+        name=f"{SERVICE_NAME}-orchestrator",
+    )
+
+    # Wait for orchestrator to finish; heartbeat keeps pulsing until we cancel it.
     try:
-        with open("/proc/1/cpuset") as f:
-            cp = f.read().strip()
-        m = re.search(r"/[^/]+/([^/]+)/[0-9a-f]+$", cp)
-        if m: return m.group(1)
-    except Exception:
-        pass
-    # 4) last resort: raw hostname
-    return hn
+        await orch_task
+        log("INFO", "orchestrator run() returned, cancelling heartbeat", "↩️")
+    finally:
+        if not hb_task.done():
+            hb_task.cancel()
+            try:
+                await hb_task
+            except asyncio.CancelledError:
+                pass
 
-svc = guess_service_id()
-host, port = parse(os.getenv("REDIS_URL","redis://system-redis:6379"))
 
-def send(sock,*parts):
-    enc=[(x if isinstance(x,bytes) else str(x).encode()) for x in parts]
-    buf=b"*%d\r\n"%len(enc)+b"".join([b"$%d\r\n%s\r\n"%(len(x),x) for x in enc])
-    sock.sendall(buf)
+# ------------------------------------------------------------
+# Main loop
+# ------------------------------------------------------------
+async def main() -> None:
+    # 1) Setup: load Truth, resolve component, build config
+    log("INFO", "starting setup()", "⚙️")
+    config: Dict[str, Any] = setup.setup(service_name=SERVICE_NAME)
 
-def rdline(sock):
-    b=b""
-    while not b.endswith(b"\r\n"): b+=sock.recv(1)
-    return b[:-2]
+    hb_cfg = config.get("heartbeat", {})
+    hb_interval = hb_cfg.get("interval_sec", 10)
+    truth_path = config.get("truth_path")
 
-def get_bulk(sock,key):
-    send(sock,"GET",key); assert sock.recv(1)==b"$"
-    ln=int(rdline(sock));
-    if ln<0: return None
-    data=b""
-    while len(data)<ln+2: data+=sock.recv(ln+2-len(data))
-    return data[:-2]
+    log("INFO", "setup completed, configuration ready", "✅")
+    log(
+        "OK",
+        f"configuration loaded (truth={truth_path}, hb_interval={hb_interval}s)",
+        "📄",
+    )
 
-# 1) load truth
-s=socket.create_connection((host,port),2)
-truth=json.loads((get_bulk(s,"truth:doc") or b"{}").decode() or "{}")
+    # 2) Forever loop: run orchestrator + heartbeat, restart orchestrator when it returns
+    log("INFO", "entering service loop (Ctrl+C to exit)", "♻️")
 
-# 2) find this service's heartbeat endpoint from truth.components.<svc>.access_points.publish_to
-pubs=(truth.get("components",{}).get(svc,{}).get("access_points",{}).get("publish_to",[]) or [])
-hb=next((x for x in pubs if x.get("key","").endswith(":heartbeat")), None)
-assert hb, f"no heartbeat publish_to found for {svc}"
-bus=hb.get("bus","system-redis"); ch=hb["key"]
-bh,bp={"system-redis":("system-redis",6379),"market-redis":("market-redis",6379)}.get(bus,(host,port))
-ps = s if (bh,bp)==(host,port) else socket.create_connection((bh,bp),2)
+    while True:
+        try:
+            await run_once(config)
+            # Orchestrator returned; log and immediately loop again
+            log("INFO", "orchestrator cycle finished; restarting", "🔁")
+        except asyncio.CancelledError:
+            log("WARN", "service loop cancelled", "⚠️")
+            break
+        except Exception as e:
+            log("ERROR", f"unhandled error in service loop: {e}", "💥")
+            await asyncio.sleep(1)
 
-# beats
-interval=float(os.getenv("HB_INTERVAL_SEC","5"))
-i=0
-while True:
-    i+=1
-    send(ps,"PUBLISH",ch,json.dumps({"svc":svc,"i":i,"ts":int(time.time())}))
-    rdline(ps)  # drop integer reply
-    print(f"beat {svc} #{i} -> {ch}", flush=True)
-    time.sleep(interval)
-# ---- end ----
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log("INFO", "received Ctrl+C, shutting down gracefully", "🛑")

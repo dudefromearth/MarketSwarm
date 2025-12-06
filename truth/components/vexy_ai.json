@@ -1,0 +1,39 @@
+{
+  "id": "vexy_ai",
+  "meta": {
+    "name": "Vexy AI",
+    "description": "Epoch + event-driven play-by-play voice. Consumes market UI models, events, and RSS content; produces human-readable commentary."
+  },
+  "access_points": {
+    "subscribe_to": [
+      { "bus": "intel-redis",  "key": "vexy:intake" },
+      { "bus": "market-redis", "key": "vigil:events" }
+    ],
+    "publish_to": [
+      { "bus": "system-redis", "key": "vexy_ai:heartbeat" }
+    ]
+  },
+    "models": {
+    "produces": [
+      { "bus": "market-redis", "key": "vexy:model:playbyplay" }
+    ],
+    "consumes": [
+      { "bus": "market-redis", "key": "massive:model:gex" },
+      { "bus": "market-redis", "key": "massive:model:heatmap" },
+      { "bus": "market-redis", "key": "massive:model:market_mode" },
+      { "bus": "market-redis", "key": "massive:model:vix_regime" },
+      { "bus": "market-redis", "key": "massive:model:volume_profile" },
+      { "bus": "market-redis", "key": "massive:model:bias_lfi" }
+    ]
+  },
+  "heartbeat": {
+    "interval_sec": 15,
+    "ttl_sec": 45
+  },
+  "restart_cmd": "/Users/ernie/MarketSwarm/scripts/ms-vexyai.sh restart",
+  "dependencies": [
+    "rss_agg",
+    "massive",
+    "vigil"
+  ]
+}

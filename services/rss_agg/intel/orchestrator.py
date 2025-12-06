@@ -1,213 +1,296 @@
 #!/usr/bin/env python3
 """
-MarketSwarm Orchestrator — Synchronous Pipeline with Stage Switches + Ledger Awareness
--------------------------------------------------------------------------------------
-A clean, deterministic pipeline that runs one stage at a time.
+rss_agg/intel/orchestrator.py
 
-Pipeline:
- 1. ingest feeds        (RSS → category URL sets)
- 2. canonical fetch     (URL → canonical markdown articles)
- 3. enrich              (LLM Tier-3 metadata)
- 4. publish             (RSS XML per category, transaction ledger)
- 5. stats               (system counters)
+New unified orchestrator for RSS Aggregator, adapted to the MarketSwarm
+service pattern:
 
-All stages are synchronous.
-Publisher now uses a 3-day transaction ledger to ensure correctness.
-Orchestrator reports ledger status when publishing is invoked.
+  - Async entrypoint: `async def run(config: Dict[str, Any])`
+  - Uses logutil.log for all logging
+  - Runs the existing synchronous pipeline (ingest → canonical → enrich
+    → publish → stats) in a background thread via asyncio.to_thread,
+    so heartbeat and orchestrator can coexist.
+
+Expected config keys (from setup):
+  - service_name: str               (e.g., "rss_agg")
+  - truth: dict                     (composite Truth from Redis)
+  - feeds_cfg: dict                 (parsed feeds.json)
+  - intel_redis: { "host": str, "port": int }
 """
 
+from __future__ import annotations
+
+import asyncio
 import os
 import time
+from typing import Any, Dict
+
 import redis
 
-# ----- Pipeline stage imports -----
+import logutil
 from .ingestor import ingest_feeds
 from .canonical_fetcher import canonical_fetcher_run_once
 from .article_enricher import enrich_articles_lifo
 from .publisher import generate_all_feeds
 from .stats import generate_stats
 
-# Add this near the top, after imports
-r = redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
 
+# -------------------------------------------------------------------
+# Global pipeline mode
+# -------------------------------------------------------------------
 PIPELINE_MODE = os.getenv("PIPELINE_MODE", "full").lower()
 FORCE_INGEST = os.getenv("FORCE_INGEST", "false").lower() == "true"
 
-# ------------------------------------------------------------
-# Stage switches (0 or 1)
-# ------------------------------------------------------------
-def flag(name, default=1):
+
+# -------------------------------------------------------------------
+# Stage switch helper
+# -------------------------------------------------------------------
+def _flag(r: redis.Redis, name: str, default: int = 1) -> int:
     """
-    Read pipeline stage switches:
-    1. First check Redis key: pipeline:switch:<name>
-    2. Fallback to environment variable
-    3. Final fallback to default
+    Read pipeline stage switches with this precedence:
+      1. Redis key: pipeline:switch:<name>
+      2. Env var:   PIPELINE_<NAME>
+      3. Default
+    Returns 0 or 1.
     """
     redis_key = f"pipeline:switch:{name}"
     redis_val = r.get(redis_key)
     if redis_val is not None:
-        value = int(redis_val)
-        print(f"[switch] {redis_key} = {value} (from Redis)")
-        return value
+        try:
+            value = int(redis_val)
+            return 1 if value != 0 else 0
+        except ValueError:
+            # fall through to env/default
+            pass
 
-    env_val = os.getenv(f"PIPELINE_{name.upper()}", str(default))
-    value = int(env_val.strip() == "1")
-    print(f"[switch] PIPELINE_{name.upper()} = {value} (from env, default={default})")
-    return value
+    env_name = f"PIPELINE_{name.upper()}"
+    env_val = os.getenv(env_name)
+    if env_val is not None:
+        return 1 if env_val.strip() == "1" else 0
 
-PIPELINE_INGEST     = flag("PIPELINE_INGEST",     1)
-PIPELINE_CANONICAL  = flag("PIPELINE_CANONICAL",  1)
-PIPELINE_ENRICH     = flag("PIPELINE_ENRICH",     1)
-PIPELINE_PUBLISH    = flag("PIPELINE_PUBLISH",    1)
-PIPELINE_STATS      = flag("PIPELINE_STATS",      1)
-
-def flag(name, default=1):
-    redis_val = r.get(f"pipeline:switch:{name}")
-    if redis_val is not None:
-        return int(redis_val)
-    return int(os.getenv(name, str(default)).strip() == "1")
+    return 1 if default != 0 else 0
 
 
-# ------------------------------------------------------------
-# Stage runners — all synchronous
-# ------------------------------------------------------------
-def run_ingest(feeds_cfg):
-    print("\n[INGEST] 📡 ingest_feeds()")
+# -------------------------------------------------------------------
+# Stage runners — synchronous, but log through logutil
+# -------------------------------------------------------------------
+def _run_ingest(service: str, feeds_cfg: Dict[str, Any]) -> None:
+    logutil.log(service, "INFO", "📡", "INGEST: ingest_feeds()")
     ingest_feeds(feeds_cfg)
-    print("[INGEST] ✔ complete\n")
+    logutil.log(service, "INFO", "✅", "INGEST: complete")
 
 
-def run_canonical():
-    print("[CANON] 🧱 canonical_fetcher_run_once()")
+def _run_canonical(service: str) -> None:
+    logutil.log(service, "INFO", "🧱", "CANONICAL: canonical_fetcher_run_once()")
     canonical_fetcher_run_once()
-    print("[CANON] ✔ complete\n")
+    logutil.log(service, "INFO", "✅", "CANONICAL: complete")
 
 
-def run_enrich():
-    print("[ENRICH] 🧠 enrich_articles_lifo()")
-    enrich_articles_lifo()   # fully synchronous
-    print("[ENRICH] ✔ complete\n")
+def _run_enrich(service: str) -> None:
+    logutil.log(service, "INFO", "🧠", "ENRICH: enrich_articles_lifo()")
+    enrich_articles_lifo()
+    logutil.log(service, "INFO", "✅", "ENRICH: complete")
 
 
-def run_publish(publish_dir):
-    print("[PUBLISH] 📰 generate_all_feeds() (ledger-aware)")
+def _run_publish(service: str, publish_dir: str) -> None:
+    logutil.log(service, "INFO", "📰", f"PUBLISH: generate_all_feeds() → {publish_dir}")
     generate_all_feeds(publish_dir)
-    print("[PUBLISH] ✔ complete\n")
+    logutil.log(service, "INFO", "✅", "PUBLISH: complete")
 
 
-def run_stats():
-    print("[STATS] 📊 generate_stats()")
+def _run_stats(service: str) -> None:
+    logutil.log(service, "INFO", "📊", "STATS: generate_stats()")
     generate_stats()
-    print("[STATS] ✔ complete\n")
+    logutil.log(service, "INFO", "✅", "STATS: complete")
 
 
-# ------------------------------------------------------------
-# Optional: ledger debugging helper
-# ------------------------------------------------------------
-def debug_ledger_state(redis_conn):
+# -------------------------------------------------------------------
+# Optional ledger debug (kept for future use)
+# -------------------------------------------------------------------
+def _debug_ledger_state(service: str, r: redis.Redis) -> None:
     """
     Print ledger entries so the operator can see what categories
-    have been published recently.
-
-    This is informational only — publisher performs all logic.
+    have been published recently. Informational only.
     """
-    print("[ledger] 📘 Checking publish ledgers…")
+    logutil.log(service, "INFO", "📘", "Checking publish ledgers…")
 
-    keys = redis_conn.keys("rss:publish_ledger:*")
+    keys = r.keys("rss:publish_ledger:*")
     if not keys:
-        print("[ledger] (none) no ledger keys found\n")
+        logutil.log(service, "INFO", "ℹ️", "No ledger keys found")
         return
 
     for key in keys:
-        category = key.split(":", 2)[2]
-        latest = redis_conn.zrevrange(key, 0, 0, withscores=True)
+        # rss:publish_ledger:<category>
+        parts = key.split(":", 2)
+        category = parts[2] if len(parts) >= 3 else key
+        latest = r.zrevrange(key, 0, 0, withscores=True)
         if latest:
             _, ts = latest[0]
-            print(f"[ledger] {category}: last_publish_ts={ts}")
+            logutil.log(
+                service,
+                "INFO",
+                "🧾",
+                f"ledger[{category}]: last_publish_ts={ts}",
+            )
         else:
-            print(f"[ledger] {category}: (empty ledger)")
+            logutil.log(service, "INFO", "🧾", f"ledger[{category}]: (empty)")
 
-    print("")
+    # Just informational; no return value
 
 
-# ------------------------------------------------------------
-# Orchestrator entrypoint (now with 5-minute loop)
-# ------------------------------------------------------------
-def run_orchestrator(svc: str, setup_info: dict, truth: dict):
+# -------------------------------------------------------------------
+# Synchronous pipeline core (runs in a thread)
+# -------------------------------------------------------------------
+def _run_pipeline_forever(config: Dict[str, Any]) -> None:
+    service_name = config.get("service_name", "rss_agg")
 
-    print("\n──────────────────────────────")
-    print(" Orchestrator Stage Switches")
-    print("──────────────────────────────")
-    print(f"  INGEST:     {PIPELINE_INGEST}")
-    print(f"  CANONICAL:  {PIPELINE_CANONICAL}")
-    print(f"  ENRICH:     {PIPELINE_ENRICH}")
-    print(f"  PUBLISH:    {PIPELINE_PUBLISH}")
-    print(f"  STATS:      {PIPELINE_STATS}")
-    print("──────────────────────────────\n")
+    truth: Dict[str, Any] = config.get("truth") or {}
+    feeds_cfg: Dict[str, Any] = config.get("feeds_cfg") or {}
+    intel_info: Dict[str, Any] = config.get("intel_redis") or {}
 
-    feeds_cfg = setup_info["feeds_cfg"]
-    publish_dir = truth["components"][svc]["workflow"]["publish_dir"]
+    if not truth:
+        raise RuntimeError("rss_agg orchestrator: missing 'truth' in config")
+    if not feeds_cfg:
+        raise RuntimeError("rss_agg orchestrator: missing 'feeds_cfg' in config")
+    if not intel_info:
+        raise RuntimeError("rss_agg orchestrator: missing 'intel_redis' in config")
 
-    # Validate intel-redis
-    intel_info = setup_info["intel_redis"]
+    # Resolve publish_dir from Truth: components[service].workflow.publish_dir
+    components = truth.get("components", {})
+    comp = components.get(service_name, {})
+    workflow = comp.get("workflow", {})
+    publish_dir = workflow.get("publish_dir")
+
+    if not publish_dir:
+        raise RuntimeError(
+            f"rss_agg orchestrator: no 'workflow.publish_dir' configured "
+            f"for component '{service_name}' in Truth"
+        )
+
+    # Connect to intel-redis (used both by stages & for switches)
     r = redis.Redis(
         host=intel_info["host"],
         port=intel_info["port"],
-        decode_responses=True
+        decode_responses=True,
     )
     try:
         r.ping()
-        print(f"[orchestrator] ✔ Connected to intel-redis {intel_info['host']}:{intel_info['port']}")
+        logutil.log(
+            service_name,
+            "INFO",
+            "🔌",
+            f"connected to intel-redis {intel_info['host']}:{intel_info['port']}",
+        )
     except Exception as e:
-        raise ConnectionError(f"Could not connect to intel-redis: {e}")
+        raise ConnectionError(f"Could not connect to intel-redis: {e}") from e
 
-    # --------------------------------------------------------
-    # MODE-SPECIFIC OVERRIDES (no looping)
-    # --------------------------------------------------------
+    # Stage switches
+    ingest_on = _flag(r, "INGEST", 1)
+    canonical_on = _flag(r, "CANONICAL", 1)
+    enrich_on = _flag(r, "ENRICH", 1)
+    publish_on = _flag(r, "PUBLISH", 1)
+    stats_on = _flag(r, "STATS", 1)
+
+    logutil.log(
+        service_name,
+        "INFO",
+        "⚙️",
+        (
+            "pipeline switches: "
+            f"INGEST={ingest_on} CANONICAL={canonical_on} "
+            f"ENRICH={enrich_on} PUBLISH={publish_on} STATS={stats_on}"
+        ),
+    )
+
+    # MODE-specific one-off runs
     if PIPELINE_MODE == "ingest_only":
-        run_ingest(feeds_cfg)
+        if ingest_on:
+            _run_ingest(service_name, feeds_cfg)
         return
 
     if PIPELINE_MODE == "canonical_only":
-        run_canonical()
+        if canonical_on:
+            _run_canonical(service_name)
         return
 
     if PIPELINE_MODE == "enrich_only":
-        run_enrich()
+        if enrich_on:
+            _run_enrich(service_name)
         return
 
     if PIPELINE_MODE == "publish_only":
-        run_publish(publish_dir)
+        if publish_on:
+            _run_publish(service_name, publish_dir)
         return
 
     if PIPELINE_MODE == "stats_only":
-        run_stats()
+        if stats_on:
+            _run_stats(service_name)
         return
 
-    # --------------------------------------------------------
-    # FULL PIPELINE LOOP — runs forever (5-minute interval)
-    # --------------------------------------------------------
+    # FULL LOOP: run every 300s
     while True:
-        print("\n[orchestrator] 🔥 FULL PIPELINE START\n")
-        print(f"[orchestrator] 🚀 Starting (mode={PIPELINE_MODE}, force={FORCE_INGEST})")
+        logutil.log(
+            service_name,
+            "INFO",
+            "🔥",
+            f"FULL PIPELINE START (mode={PIPELINE_MODE}, force_ingest={FORCE_INGEST})",
+        )
 
-        if PIPELINE_INGEST:
-            run_ingest(feeds_cfg)
+        if ingest_on:
+            _run_ingest(service_name, feeds_cfg)
 
-        if PIPELINE_CANONICAL:
-            run_canonical()
+        if canonical_on:
+            _run_canonical(service_name)
 
-        if PIPELINE_ENRICH:
-            run_enrich()
+        if enrich_on:
+            _run_enrich(service_name)
 
-        if PIPELINE_PUBLISH:
-            run_publish(publish_dir)
+        if publish_on:
+            # Optionally inspect ledger before publish
+            _debug_ledger_state(service_name, r)
+            _run_publish(service_name, publish_dir)
 
-        if PIPELINE_STATS:
-            run_stats()
+        if stats_on:
+            _run_stats(service_name)
 
-        print("\n[orchestrator] 🎉 FULL PIPELINE CYCLE COMPLETE\n")
-        print("[orchestrator] ⏳ Sleeping 300 seconds before next cycle...\n")
+        logutil.log(
+            service_name,
+            "INFO",
+            "🎉",
+            "FULL PIPELINE CYCLE COMPLETE",
+        )
+        logutil.log(
+            service_name,
+            "INFO",
+            "⏳",
+            "sleeping 300 seconds before next cycle",
+        )
 
-        time.sleep(300)   # <-- 5 MINUTES
+        time.sleep(300)  # 5 minutes; runs in a background thread
 
+
+# -------------------------------------------------------------------
+# Async entrypoint (called from main.py)
+# -------------------------------------------------------------------
+async def run(config: Dict[str, Any]) -> None:
+    """
+    Async orchestrator entrypoint.
+
+    - Called from main.py as: `await orchestrator.run(config)`
+    - Wraps the synchronous pipeline loop in asyncio.to_thread so that
+      heartbeat (async) and orchestrator can run concurrently.
+    """
+    service_name = config.get("service_name", "rss_agg")
+    logutil.log(service_name, "INFO", "🚀", "orchestrator starting")
+
+    try:
+        await asyncio.to_thread(_run_pipeline_forever, config)
+    except asyncio.CancelledError:
+        logutil.log(service_name, "INFO", "🛑", "orchestrator cancelled (shutdown)")
+        raise
+    except Exception as e:
+        logutil.log(service_name, "ERROR", "❌", f"orchestrator fatal error: {e}")
+        raise
+    finally:
+        logutil.log(service_name, "INFO", "✅", "orchestrator exiting")

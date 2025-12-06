@@ -1,188 +1,118 @@
 #!/usr/bin/env python3
-"""
-main.py — Massive Service Entrypoint
 
-Orchestration flow:
-- setup_environment() loads truth.json and builds cfg
-- Heartbeat thread runs in the background
-- Main loop schedules orchestrator cycles using cfg["scheduler"]:
-    - fast lane (typically 0DTE) with small interval
-    - rest lane (1–4DTE or more) with larger interval
-- 0DTE lane always has precedence when both are due.
-"""
+import asyncio
+import os
+from datetime import datetime, UTC
+from typing import Any, Dict
 
-import signal
-import threading
-import time
-from datetime import datetime, timezone
+from pathlib import Path
+import sys
 
-from setup import setup_environment
-from heartbeat import start_heartbeat
-from intel.orchestrator import run_orchestrator
+SERVICE_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(SERVICE_ROOT))
+
+import setup                    # services/massive/setup.py
+import heartbeat                # services/massive/heartbeat.py
+from intel import orchestrator  # services/massive/intel/orchestrator.py
 
 
-# Global stop flag, set by signal handler
-STOP = False
+SERVICE_NAME = os.getenv("SERVICE_ID", "massive")
+
+# Read debug flag once from env
+DEBUG_ENABLED = os.getenv("DEBUG_MASSIVE", "false").lower() == "true"
 
 
-def log(stage: str, emoji: str, msg: str) -> None:
-    ts = datetime.now(timezone.utc).strftime("%H:%M:%S")
-    print(f"[{ts}][massive|{stage}]{emoji} {msg}")
+# ------------------------------------------------------------
+# Logging helper
+# ------------------------------------------------------------
+def log(level: str, message: str, emoji: str = "", component: str = SERVICE_NAME) -> None:
+    """
+    Standard log line:
+      [timestamp][component][LEVEL] emoji message
 
-
-def handle_signal(sig, frame) -> None:
-    global STOP
-    log("main", "🛑", f"Received signal {sig}, shutting down…")
-    STOP = True
-
-
-# Register signal handlers
-signal.signal(signal.SIGINT, handle_signal)
-signal.signal(signal.SIGTERM, handle_signal)
-
-
-def run() -> None:
-    # ------------------------------------------------------------------
-    # Setup / configuration
-    # ------------------------------------------------------------------
-    try:
-        cfg = setup_environment()
-    except RuntimeError as e:
-        # Graceful startup failure with clear explanation
-        log("main", "❌", f"Setup failed — {e}")
-        log("main", "🙏", "Massive will not start until the issue above is resolved.")
+    DEBUG lines are suppressed unless DEBUG_MASSIVE=true.
+    """
+    if level.upper() == "DEBUG" and not DEBUG_ENABLED:
         return
 
-    r_system = cfg["r_system"]
-    hb = cfg["heartbeat"]
-    service_id = cfg["SERVICE_ID"]
+    ts = datetime.now(UTC).isoformat(timespec="seconds")
+    emoji_part = f" {emoji}" if emoji else ""
+    print(f"[{ts}][{component}][{level.upper()}]{emoji_part} {message}")
 
-    if not cfg.get("api_key"):
-        log(
-            "main",
-            "⚠️",
-            f"{cfg['workflow']['api_key_env']} missing — market pulls may fail until set",
-        )
 
-    log("main", "🚀", "Massive service starting (market data engine)…")
+# ------------------------------------------------------------
+# Single service cycle: heartbeat + orchestrator
+# ------------------------------------------------------------
+async def run_once(config: Dict[str, Any]) -> None:
+    """
+    Start heartbeat in the background and run orchestrator once.
+    If orchestrator returns, we cancel heartbeat and return to caller.
+    """
+    log("INFO", "starting heartbeat + orchestrator", "🟢")
 
-    # ------------------------------------------------------------------
-    # Heartbeat thread
-    # ------------------------------------------------------------------
-    threading.Thread(
-        target=lambda: start_heartbeat(
-            r_system,
-            service_id,
-            hb["interval_sec"],
-            hb["ttl_sec"],
-            stop_flag=lambda: STOP,
-            log=log,
+    hb_task = asyncio.create_task(
+        heartbeat.start_heartbeat(
+            service_name=SERVICE_NAME,
+            config=config,
         ),
-        daemon=True,
-    ).start()
-
-    # ------------------------------------------------------------------
-    # Scheduler configuration (0DTE vs rest)
-    # ------------------------------------------------------------------
-    scheduler = cfg.get("scheduler", {})
-    wf = cfg["workflow"]
-
-    fast_interval = float(
-        scheduler.get("fast_interval", wf.get("poll_interval", 10))
-    )
-    fast_num = int(
-        scheduler.get("fast_num_expirations", wf.get("num_expirations", 7))
+        name=f"{SERVICE_NAME}-heartbeat",
     )
 
-    rest_interval = float(
-        scheduler.get("rest_interval", fast_interval)
-    )
-    rest_num = int(
-        scheduler.get("rest_num_expirations", fast_num)
+    orch_task = asyncio.create_task(
+        orchestrator.run(config),
+        name=f"{SERVICE_NAME}-orchestrator",
     )
 
+    # Wait for orchestrator to finish; heartbeat keeps pulsing until we cancel it.
+    try:
+        await orch_task
+        log("INFO", "orchestrator run() returned, cancelling heartbeat", "↩️")
+    finally:
+        if not hb_task.done():
+            hb_task.cancel()
+            try:
+                await hb_task
+            except asyncio.CancelledError:
+                pass
+
+
+# ------------------------------------------------------------
+# Main loop
+# ------------------------------------------------------------
+async def main() -> None:
+    # 1) Setup: load Truth, resolve component, build config
+    log("INFO", "starting setup()", "⚙️")
+    config: Dict[str, Any] = setup.setup(service_name=SERVICE_NAME)
+
+    hb_cfg = config.get("heartbeat", {})
+    hb_interval = hb_cfg.get("interval_sec", 10)
+    truth_path = config.get("truth_path")
+
+    log("INFO", "setup completed, configuration ready", "✅")
     log(
-        "main",
-        "🧮",
-        f"Scheduler: 0DTE={fast_num} exp(s) every {fast_interval}s, "
-        f"rest={rest_num} exp(s) every {rest_interval}s",
+        "OK",
+        f"configuration loaded (truth={truth_path}, hb_interval={hb_interval}s)",
+        "📄",
     )
 
-    # ------------------------------------------------------------------
-    # Main scheduling loop — pipelined 0DTE launches
-    # ------------------------------------------------------------------
-    last_fast = 0.0
-    last_rest = 0.0
+    # 2) Forever loop: run orchestrator + heartbeat, restart orchestrator when it returns
+    log("INFO", "entering service loop (Ctrl+C to exit)", "♻️")
 
-    workers = []
-    max_inflight = int(scheduler.get("max_inflight", 6))
+    while True:
+        try:
+            await run_once(config)
+            # Orchestrator returned; log and immediately loop again
+            log("INFO", "orchestrator cycle finished; restarting", "🔁")
+        except asyncio.CancelledError:
+            log("WARN", "service loop cancelled", "⚠️")
+            break
+        except Exception as e:
+            log("ERROR", f"unhandled error in service loop: {e}", "💥")
+            await asyncio.sleep(1)
 
-    while not STOP:
-        now = time.time()
-
-        # Prune finished workers
-        alive = []
-        for t in workers:
-            if t.is_alive():
-                alive.append(t)
-        workers = alive
-        inflight = len(workers)
-
-        # 1) Fast lane — 0DTE, fire every fast_interval even if others still running
-        if now - last_fast >= fast_interval:
-            if inflight < max_inflight:
-                t = threading.Thread(
-                    target=run_orchestrator,
-                    args=(
-                        cfg,
-                        log,
-                        lambda: STOP,
-                        fast_num,
-                        "0DTE",
-                    ),
-                    daemon=True,
-                )
-                t.start()
-                workers.append(t)
-                last_fast = now
-            else:
-                log(
-                    "main",
-                    "⚠️",
-                    f"Max inflight cycles reached ({max_inflight}), "
-                    "skipping new 0DTE launch this tick.",
-                )
-
-        # 2) Rest lane — optional, likely off for pure 0DTE instance
-        if (
-            rest_num > fast_num
-            and (now - last_rest) >= rest_interval
-            and not STOP
-        ):
-            if inflight < max_inflight:
-                t = threading.Thread(
-                    target=run_orchestrator,
-                    args=(
-                        cfg,
-                        log,
-                        lambda: STOP,
-                        rest_num,
-                        "1-4DTE",
-                    ),
-                    daemon=True,
-                )
-                t.start()
-                workers.append(t)
-                last_rest = now
-            else:
-                log(
-                    "main",
-                    "⚠️",
-                    f"Max inflight cycles reached ({max_inflight}), "
-                    "skipping new 1-4DTE launch this tick.",
-                )
-
-        time.sleep(0.05)
 
 if __name__ == "__main__":
-    run()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log("INFO", "received Ctrl+C, shutting down gracefully", "🛑")
