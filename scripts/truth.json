@@ -1,0 +1,442 @@
+{
+  "version": "3.1",
+  "description": "Truth: Host-based Redis topology for MarketSwarm stack. Canonical configuration for all services.",
+  "buses": {
+    "system-redis": {
+      "url": "redis://127.0.0.1:6379",
+      "role": "system",
+      "description": "Governance, truth, heartbeats, mesh, healer."
+    },
+    "market-redis": {
+      "url": "redis://127.0.0.1:6380",
+      "role": "market",
+      "description": "Market data, chains, models, vigil events."
+    },
+    "intel-redis": {
+      "url": "redis://127.0.0.1:6381",
+      "role": "intel",
+      "description": "RSS & external intel ingestion, enrichment, sentiment."
+    }
+  },
+  "domain": {},
+  "components": {
+    "rss_agg": {
+      "id": "rss_agg",
+      "meta": {
+        "name": "RSS Aggregator",
+        "description": "Ingests, enriches, and republishes RSS feeds."
+      },
+      "access_points": {
+        "publish_to": [
+          {
+            "bus": "intel-redis",
+            "key": "vexy:intake"
+          },
+          {
+            "bus": "system-redis",
+            "key": "rss_agg:heartbeat"
+          }
+        ],
+        "subscribe_to": [],
+        "index_key": "rss:index",
+        "queue_key": "rss:queue"
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "workflow": {
+        "interval_sec": 600,
+        "publish_dir": "/Users/ernie/Sites/feeds"
+      },
+      "dependencies": []
+    },
+    "content_anal": {
+      "id": "content_anal",
+      "meta": {
+        "name": "Content Analysis Engine",
+        "description": "LLM-driven category analysis of enriched content, produces synthetic insights adapted the original content schema."
+      },
+      "access_points": {
+        "subscribe_to": [
+          {
+            "bus": "intel-redis",
+            "key": "vexy:intake"
+          }
+        ],
+        "publish_to": [
+          {
+            "bus": "intel-redis",
+            "key": "content_anal:outbox"
+          },
+          {
+            "bus": "system-redis",
+            "key": "content_anal:heartbeat"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 15,
+        "ttl_sec": 45
+      },
+      "domain_keys": [
+        "rss:index",
+        "rss:article_enriched_index",
+        "rss:article_enriched:{uid}"
+      ],
+      "dependencies": [
+        "rss_agg"
+      ]
+    },
+    "vigil": {
+      "id": "vigil",
+      "meta": {
+        "name": "Market Event Watcher",
+        "description": "Filters for market events, sends to Vexy."
+      },
+      "access_points": {
+        "publish_to": [
+          {
+            "bus": "market-redis",
+            "key": "vigil:events"
+          },
+          {
+            "bus": "system-redis",
+            "key": "vigil:heartbeat"
+          }
+        ],
+        "subscribe_to": [
+          {
+            "bus": "market-redis",
+            "key": "massive:timeseries"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:chain"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "dependencies": []
+    },
+    "massive": {
+      "id": "massive",
+      "meta": {
+        "name": "Massive Market Data Engine",
+        "description": "Real-time market engine pulling options chains, preprocessing contract data, and publishing UI-ready models."
+      },
+      "access_points": {
+        "publish_to": [
+          {
+            "bus": "market-redis",
+            "key": "massive:chain"
+          },
+          {
+            "bus": "system-redis",
+            "key": "massive:heartbeat"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:timeseries"
+          }
+        ],
+        "subscribe_to": []
+      },
+      "heartbeat": {
+        "interval_sec": 1,
+        "ttl_sec": 15
+      },
+      "domain_keys": [
+        "massive:chain:{symbol}:{expiration}"
+      ],
+      "workflow": {
+        "symbols": [
+          "I:SPX",
+          "I:NDX",
+          "SPY",
+          "QQQ"
+        ],
+        "strike_ranges": {
+          "I:SPX": 100,
+          "I:NDX": 350,
+          "SPY": 10,
+          "QQQ": 20
+        },
+        "num_expirations": 5,
+        "use_strict_gt_lt": false,
+        "redis_prefix": "chain",
+        "api_key_env": "MASSIVE_API_KEY",
+        "poll_interval_sec": 10,
+        "threading_enabled": true
+      },
+      "dependencies": []
+    },
+    "mmaker": {
+      "id": "mmaker",
+      "meta": {
+        "name": "Redis model maker",
+        "description": "Creates models from massive uploads for the UI."
+      },
+      "access_points": {
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "mmaker:heartbeat"
+          }
+        ],
+        "subscribe_to": [
+          {
+            "bus": "market-redis",
+            "key": "massive:chain"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:timeseries"
+          }
+        ]
+      },
+      "models": {
+        "produces": [
+          {
+            "bus": "market-redis",
+            "key": "massive:model:gex"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:heatmap"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:market_mode"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:vix_regime"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:volume_profile"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:bias_lfi"
+          }
+        ],
+        "consumes": []
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "dependencies": [
+        "massive",
+        "vexy_ai"
+      ]
+    },
+    "vexy_ai": {
+      "id": "vexy_ai",
+      "meta": {
+        "name": "Vexy AI",
+        "description": "Epoch + event-driven play-by-play voice. Consumes market UI models, events, and RSS content; produces human-readable commentary."
+      },
+      "access_points": {
+        "subscribe_to": [
+          {
+            "bus": "intel-redis",
+            "key": "vexy:intake"
+          },
+          {
+            "bus": "market-redis",
+            "key": "vigil:events"
+          }
+        ],
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "vexy_ai:heartbeat"
+          }
+        ]
+      },
+      "models": {
+        "produces": [
+          {
+            "bus": "market-redis",
+            "key": "vexy:model:playbyplay"
+          }
+        ],
+        "consumes": [
+          {
+            "bus": "market-redis",
+            "key": "massive:model:gex"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:heatmap"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:market_mode"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:vix_regime"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:volume_profile"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:bias_lfi"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 15,
+        "ttl_sec": 45
+      },
+      "restart_cmd": "/Users/ernie/MarketSwarm/scripts/ms-vexyai.sh restart",
+      "dependencies": [
+        "rss_agg",
+        "massive",
+        "vigil"
+      ]
+    },
+    "sse": {
+      "id": "sse",
+      "meta": {
+        "name": "SSE UI Gateway",
+        "description": "Server-Sent Events gateway responsible for transforming backend models into live UI streams for the React client."
+      },
+      "access_points": {
+        "subscribe_to": [],
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "sse:heartbeat"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "models": {
+        "produces": [],
+        "consumes": [
+          {
+            "bus": "market-redis",
+            "key": "massive:model:gex"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:heatmap"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:market_mode"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:vix_regime"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:volume_profile"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:bias_lfi"
+          },
+          {
+            "bus": "market-redis",
+            "key": "vexy:model:playbyplay"
+          }
+        ]
+      },
+      "dependencies": [
+        "massive",
+        "rss_agg",
+        "vexy_ai"
+      ]
+    },
+    "mesh": {
+      "id": "mesh",
+      "meta": {
+        "name": "Mesh Coordinator",
+        "description": "Maintains service registry and monitors heartbeat health."
+      },
+      "access_points": {
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "mesh:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "mesh:gossip"
+          }
+        ],
+        "subscribe_to": []
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "dependencies": []
+    },
+    "healer": {
+      "id": "healer",
+      "meta": {
+        "name": "Healer",
+        "description": "Watches all service heartbeats and restarts or alerts when any fail."
+      },
+      "access_points": {
+        "subscribe_to": [
+          {
+            "bus": "system-redis",
+            "key": "rss_agg:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "massive:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "vexy_ai:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "mmaker:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "mesh:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "vigil:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "content_anal:heartbeat"
+          }
+        ],
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "healer:alerts"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 10,
+        "ttl_sec": 30
+      },
+      "dependencies": []
+    }
+  }
+}
