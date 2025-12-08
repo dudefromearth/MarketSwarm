@@ -2,33 +2,16 @@
 set -euo pipefail
 
 ###############################################
-# MarketSwarm MASSIVE – Market Data Engine
+# MarketSwarm – massive (Massive Market Model)
+# Foreground dev runner (no PID, no log file)
 ###############################################
 
-# Repo root
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SERVICE="massive"
-MAIN="$ROOT/services/massive/main.py"
-
-VENV="$ROOT/.venv"
-VENV_PY="$VENV/bin/python"
-
-# Chain loader path for orchestrator
-CHAIN_LOADER="$ROOT/services/massive/utils/massive_chain_loader.py"
-
-BREW_PY="/opt/homebrew/bin/python3.14"
-BREW_REDIS="/opt/homebrew/bin/redis-cli"
-
-###############################################
-# Redis URLs (system / market / intel)
-###############################################
-export SYSTEM_REDIS_URL="${SYSTEM_REDIS_URL:-redis://127.0.0.1:6379}"
-export MARKET_REDIS_URL="${MARKET_REDIS_URL:-redis://127.0.0.1:6380}"
-export INTEL_REDIS_URL="${INTEL_REDIS_URL:-redis://127.0.0.1:6381}"
-
-# Aliases used elsewhere
-export REDIS_SYSTEM_URL="$SYSTEM_REDIS_URL"
-export REDIS_MARKET_URL="$MARKET_REDIS_URL"
+# ------------------------------------------------
+# Environment
+# ------------------------------------------------
+export SYSTEM_REDIS_URL="redis://127.0.0.1:6379"
+export MARKET_REDIS_URL="redis://127.0.0.1:6380"
+export INTEL_REDIS_URL="redis://127.0.0.1:6381"
 
 export DEBUG_MASSIVE="${DEBUG_MASSIVE:-false}"
 
@@ -37,278 +20,311 @@ export DEBUG_MASSIVE="${DEBUG_MASSIVE:-false}"
 ###############################################
 export MASSIVE_SYMBOL="${MASSIVE_SYMBOL:-I:SPX}"
 ALLOWED_SYMBOLS="I:SPX I:NDX SPY QQQ"
+export MASSIVE_API_KEY="${MASSIVE_API_KEY:-pdjraOWSpDbg3ER_RslZYe3dmn4Y7WCC}"
 
 ###############################################
-# Massive throttling controls
-#
-# Mental model (one Massive per symbol):
-#   - 0DTE expirations:  depth of each snapshot
-#   - 0DTE interval:     target time between snapshot *starts*
-#                        (0 → as fast as possible)
-#   - Rest expirations:  additional expirations beyond 0DTE
-#                        (0 → disable rest lane)
-#   - Rest interval:     cadence for the rest lane
-#   - Max inflight:      max overlapping snapshot cycles
+# Spot cadence (frequency + trail)
 ###############################################
-export MASSIVE_0DTE_NUM_EXP="${MASSIVE_0DTE_NUM_EXP:-1}"
-export MASSIVE_0DTE_INTERVAL_SEC="${MASSIVE_0DTE_INTERVAL_SEC:-1}"
-export MASSIVE_REST_NUM_EXP="${MASSIVE_REST_NUM_EXP:-5}"
-export MASSIVE_REST_INTERVAL_SEC="${MASSIVE_REST_INTERVAL_SEC:-10}"
-export MASSIVE_MAX_INFLIGHT="${MASSIVE_MAX_INFLIGHT:-6}"
+export MASSIVE_SPOT_INTERVAL_SEC="${MASSIVE_SPOT_INTERVAL_SEC:-1}"
+export MASSIVE_SPOT_TRAIL_WINDOW_SEC="${MASSIVE_SPOT_TRAIL_WINDOW_SEC:-86400}"   # 24h
+export MASSIVE_SPOT_TRAIL_TTL_SEC="${MASSIVE_SPOT_TRAIL_TTL_SEC:-172800}"       # 48h
 
-# ------------------------------------------------
-# 🔥 MASSIVE API KEY — REQUIRED FOR MARKET DATA
-# ------------------------------------------------
-# truth.workflow.api_key_env = "MASSIVE_API_KEY"
-export MASSIVE_API_KEY="pdjraOWSpDbg3ER_RslZYe3dmn4Y7WCC"
+###############################################
+# Chain cadence (frequency + range + TTL)
+###############################################
+# How often to refresh options chain (seconds)
+export MASSIVE_CHAIN_INTERVAL_SEC="${MASSIVE_CHAIN_INTERVAL_SEC:-60}"
 
-# ------------------------------------------------
-# Orchestrator wiring
-# ------------------------------------------------
-export PYTHON_BIN="${PYTHON_BIN:-$VENV_PY}"
-export MASSIVE_CHAIN_LOADER="${MASSIVE_CHAIN_LOADER:-$CHAIN_LOADER}"
+# ±points around ATM/spot to keep in the chain snapshot
+export MASSIVE_CHAIN_STRIKE_RANGE="${MASSIVE_CHAIN_STRIKE_RANGE:-150}"
 
-# SERVICE_ID used by heartbeat / logs
-export SERVICE_ID="$SERVICE"
+# How many expirations to load per cycle
+export MASSIVE_CHAIN_NUM_EXPIRATIONS="${MASSIVE_CHAIN_NUM_EXPIRATIONS:-5}"
+
+# TTL for CHAIN:...:snap:* keys
+export MASSIVE_CHAIN_SNAPSHOT_TTL_SEC="${MASSIVE_CHAIN_SNAPSHOT_TTL_SEC:-600}"
+
+# Window for CHAIN:...:trail score trimming (seconds)
+export MASSIVE_CHAIN_TRAIL_WINDOW_SEC="${MASSIVE_CHAIN_TRAIL_WINDOW_SEC:-86400}"
+
+# TTL for CHAIN:...:trail keys
+export MASSIVE_CHAIN_TRAIL_TTL_SEC="${MASSIVE_CHAIN_TRAIL_TTL_SEC:-172800}"
+
+# General orchestrator loop hints (if needed later)
+export MASSIVE_LOOP_SLEEP="${MASSIVE_LOOP_SLEEP:-1.0}"
+export MASSIVE_SNAPSHOT_INTERVAL="${MASSIVE_SNAPSHOT_INTERVAL:-10}"
+
+BREW_PY="/opt/homebrew/bin/python3.14"
+BREW_REDIS="/opt/homebrew/bin/redis-cli"
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+SERVICE="massive"
+MAIN="$ROOT/services/massive/main.py"
+
+VENV="$ROOT/.venv"
+VENV_PY="$VENV/bin/python"
 
 ###############################################
 # UI Helpers
 ###############################################
 line() { echo "──────────────────────────────────────────────"; }
 
-show_last_chainfeed() {
-  clear
-  line
-  echo " Last 10 Chainfeed Events (sse:chain-feed)"
-  line
-  echo ""
-  $BREW_REDIS -h 127.0.0.1 -p 6380 --raw XREVRANGE sse:chain-feed + - COUNT 10 | sed 's/^/  /'
-  echo ""
-  read -n 1 -s -r -p "Press any key to return..."
+check_tools() {
+  for cmd in "$BREW_PY" "$VENV_PY" "$BREW_REDIS"; do
+    if [[ -x "$cmd" ]]; then
+      echo "Found $cmd"
+    else
+      echo "WARNING: Missing $cmd"
+    fi
+  done
 }
 
-configure_symbol() {
+run_foreground() {
   clear
   line
-  echo " MASSIVE – Symbol Selection (one symbol per service)"
+  echo " Launching $SERVICE (foreground)"
+  line
+  echo "ROOT:                           $ROOT"
+  echo "SERVICE_ID:                     $SERVICE"
+  echo "VENV_PY:                        $VENV_PY"
+  echo "MAIN:                           $MAIN"
+  echo "DEBUG_MASSIVE:                  $DEBUG_MASSIVE"
+  echo "MASSIVE_SYMBOL:                 $MASSIVE_SYMBOL"
+  echo "MASSIVE_SPOT_INTERVAL_SEC:      $MASSIVE_SPOT_INTERVAL_SEC"
+  echo "MASSIVE_SPOT_TRAIL_WINDOW_SEC:  $MASSIVE_SPOT_TRAIL_WINDOW_SEC"
+  echo "MASSIVE_SPOT_TRAIL_TTL_SEC:     $MASSIVE_SPOT_TRAIL_TTL_SEC"
+  echo "MASSIVE_CHAIN_INTERVAL_SEC:     $MASSIVE_CHAIN_INTERVAL_SEC"
+  echo "MASSIVE_CHAIN_STRIKE_RANGE:     $MASSIVE_CHAIN_STRIKE_RANGE"
+  echo "MASSIVE_CHAIN_NUM_EXPIRATIONS:  $MASSIVE_CHAIN_NUM_EXPIRATIONS"
+  echo "MASSIVE_CHAIN_SNAPSHOT_TTL_SEC: $MASSIVE_CHAIN_SNAPSHOT_TTL_SEC"
+  echo "MASSIVE_CHAIN_TRAIL_WINDOW_SEC: $MASSIVE_CHAIN_TRAIL_WINDOW_SEC"
+  echo "MASSIVE_CHAIN_TRAIL_TTL_SEC:    $MASSIVE_CHAIN_TRAIL_TTL_SEC"
+  echo "MASSIVE_LOOP_SLEEP:             $MASSIVE_LOOP_SLEEP s"
+  echo "MASSIVE_SNAPSHOT_INTERVAL:      $MASSIVE_SNAPSHOT_INTERVAL s"
   line
   echo ""
-  echo "Current symbol:"
-  echo "  $MASSIVE_SYMBOL"
-  echo ""
-  echo "Available symbols:"
-  echo "  $ALLOWED_SYMBOLS"
-  echo ""
-  echo "Choose from the list or enter custom:"
-  echo "  1) I:SPX"
-  echo "  2) I:NDX"
-  echo "  3) SPY"
-  echo "  4) QQQ"
-  echo "  5) Custom input"
-  echo ""
-  echo "Press ENTER to keep the current value."
-  echo ""
-  read -rp "Choice [ENTER/1-5]: " CH
 
-  case "$CH" in
-    1) MASSIVE_SYMBOL="I:SPX" ;;
-    2) MASSIVE_SYMBOL="I:NDX" ;;
-    3) MASSIVE_SYMBOL="SPY" ;;
-    4) MASSIVE_SYMBOL="QQQ" ;;
-    5)
-      read -rp "Enter custom symbol [${MASSIVE_SYMBOL}]: " SYM
-      if [[ -n "$SYM" ]]; then
-        MASSIVE_SYMBOL="$SYM"
-      fi
-      ;;
-    "" ) ;;
-    * )
-      echo "Invalid choice, keeping current symbol."
-      sleep 1
-      ;;
-  esac
-
-  echo ""
-  line
-  echo "Updated symbol:"
-  echo "  $MASSIVE_SYMBOL"
-  line
-  echo ""
-  read -n 1 -s -r -p "Press any key to return to main menu..."
-}
-
-configure_throttling() {
-  clear
-  line
-  echo " MASSIVE – DTE Throttling Configuration"
-  line
-  echo ""
-  echo "Meaning of knobs (per Massive instance):"
-  echo "  • 0DTE expirations  → expirations per snapshot (depth)"
-  echo "  • 0DTE interval     → seconds between snapshot starts (0 = as fast as possible)"
-  echo "  • Rest expirations  → extra expirations beyond 0DTE (0 = disable rest lane)"
-  echo "  • Rest interval     → seconds between rest-lane cycles"
-  echo "  • Max inflight      → max overlapping snapshot cycles"
-  echo ""
-  echo "Current settings (symbol: $MASSIVE_SYMBOL):"
-  echo "  0DTE expirations:      $MASSIVE_0DTE_NUM_EXP"
-  echo "  0DTE interval (sec):   $MASSIVE_0DTE_INTERVAL_SEC"
-  echo "  Rest expirations:      $MASSIVE_REST_NUM_EXP"
-  echo "  Rest interval (sec):   $MASSIVE_REST_INTERVAL_SEC"
-  echo "  Max inflight cycles:   $MASSIVE_MAX_INFLIGHT"
-  echo ""
-  echo "Press ENTER to keep the current value."
-  echo ""
-
-  local input
-
-  read -rp "0DTE # of expirations [${MASSIVE_0DTE_NUM_EXP}]: " input
-  if [[ -n "$input" ]]; then
-    MASSIVE_0DTE_NUM_EXP="$input"
+  if [[ " $ALLOWED_SYMBOLS " != *" $MASSIVE_SYMBOL "* ]]; then
+    echo "WARNING: MASSIVE_SYMBOL='$MASSIVE_SYMBOL' not in allowed set: $ALLOWED_SYMBOLS"
+    echo ""
   fi
 
-  read -rp "0DTE interval seconds [${MASSIVE_0DTE_INTERVAL_SEC}]: " input
-  if [[ -n "$input" ]]; then
-    MASSIVE_0DTE_INTERVAL_SEC="$input"
-  fi
-
-  read -rp "Rest # of expirations [${MASSIVE_REST_NUM_EXP}]: " input
-  if [[ -n "$input" ]]; then
-    MASSIVE_REST_NUM_EXP="$input"
-  fi
-
-  read -rp "Rest interval seconds [${MASSIVE_REST_INTERVAL_SEC}]: " input
-  if [[ -n "$input" ]]; then
-    MASSIVE_REST_INTERVAL_SEC="$input"
-  fi
-
-  read -rp "Max inflight cycles [${MASSIVE_MAX_INFLIGHT}]: " input
-  if [[ -n "$input" ]]; then
-    MASSIVE_MAX_INFLIGHT="$input"
-  fi
-
+  check_tools
   echo ""
-  line
-  echo "Updated throttling (symbol: $MASSIVE_SYMBOL):"
-  echo "  0DTE expirations:      $MASSIVE_0DTE_NUM_EXP"
-  echo "  0DTE interval (sec):   $MASSIVE_0DTE_INTERVAL_SEC"
-  echo "  Rest expirations:      $MASSIVE_REST_NUM_EXP"
-  echo "  Rest interval (sec):   $MASSIVE_REST_INTERVAL_SEC"
-  echo "  Max inflight cycles:   $MASSIVE_MAX_INFLIGHT"
-  line
+  echo "Running $SERVICE in foreground. Ctrl+C to stop."
   echo ""
-  read -n 1 -s -r -p "Press any key to return to main menu..."
+
+  cd "$ROOT"
+  export SERVICE_ID="$SERVICE"
+  export DEBUG_MASSIVE
+  export MASSIVE_SYMBOL
+  export MASSIVE_API_KEY
+
+  export MASSIVE_SPOT_INTERVAL_SEC
+  export MASSIVE_SPOT_TRAIL_WINDOW_SEC
+  export MASSIVE_SPOT_TRAIL_TTL_SEC
+
+  export MASSIVE_CHAIN_INTERVAL_SEC
+  export MASSIVE_CHAIN_STRIKE_RANGE
+  export MASSIVE_CHAIN_NUM_EXPIRATIONS
+  export MASSIVE_CHAIN_SNAPSHOT_TTL_SEC
+  export MASSIVE_CHAIN_TRAIL_WINDOW_SEC
+  export MASSIVE_CHAIN_TRAIL_TTL_SEC
+
+  export MASSIVE_LOOP_SLEEP
+  export MASSIVE_SNAPSHOT_INTERVAL
+
+  exec "$VENV_PY" "$MAIN"
 }
 
 ###############################################
-# Main Menu
+# Menu
 ###############################################
 menu() {
-  clear
-  line
-  echo " MarketSwarm – MASSIVE Market Data Engine"
-  line
-  echo "Select Option:"
-  echo ""
-  echo "  1) RUN Massive"
-  echo "  2) View Last 10 Chainfeed Entries"
-  echo "  3) Configure Symbol"
-  echo "  4) Configure DTE Throttling"
-  echo "  5) Quit"
-  echo ""
-  echo "Current symbol:"
-  echo "  $MASSIVE_SYMBOL"
-  echo ""
-  echo "Current throttling:"
-  echo "  0DTE: ${MASSIVE_0DTE_NUM_EXP} exp(s) every ${MASSIVE_0DTE_INTERVAL_SEC}s"
-  echo "  Rest: ${MASSIVE_REST_NUM_EXP} exp(s) every ${MASSIVE_REST_INTERVAL_SEC}s"
-  echo "  Max inflight cycles: ${MASSIVE_MAX_INFLIGHT}"
-  echo ""
-  line
-  read -rp "Enter choice [1-5]: " CH
-  echo ""
+  while true; do
+    clear
+    line
+    echo " MarketSwarm – massive (Massive Market Model)"
+    line
+    echo ""
+    echo "Current configuration:"
+    echo "  DEBUG_MASSIVE                  = $DEBUG_MASSIVE"
+    echo "  MASSIVE_SYMBOL                 = $MASSIVE_SYMBOL"
+    echo "  MASSIVE_SPOT_INTERVAL_SEC      = $MASSIVE_SPOT_INTERVAL_SEC"
+    echo "  MASSIVE_SPOT_TRAIL_WINDOW_SEC  = $MASSIVE_SPOT_TRAIL_WINDOW_SEC"
+    echo "  MASSIVE_SPOT_TRAIL_TTL_SEC     = $MASSIVE_SPOT_TRAIL_TTL_SEC"
+    echo "  MASSIVE_CHAIN_INTERVAL_SEC     = $MASSIVE_CHAIN_INTERVAL_SEC"
+    echo "  MASSIVE_CHAIN_STRIKE_RANGE     = $MASSIVE_CHAIN_STRIKE_RANGE"
+    echo "  MASSIVE_CHAIN_NUM_EXPIRATIONS  = $MASSIVE_CHAIN_NUM_EXPIRATIONS"
+    echo "  MASSIVE_CHAIN_SNAPSHOT_TTL_SEC = $MASSIVE_CHAIN_SNAPSHOT_TTL_SEC"
+    echo "  MASSIVE_CHAIN_TRAIL_WINDOW_SEC = $MASSIVE_CHAIN_TRAIL_WINDOW_SEC"
+    echo "  MASSIVE_CHAIN_TRAIL_TTL_SEC    = $MASSIVE_CHAIN_TRAIL_TTL_SEC"
+    echo ""
+    echo "Select Option:"
+    echo ""
+    echo "  1) Run massive (foreground)"
+    echo "  2) Toggle DEBUG_MASSIVE"
+    echo "  3) Change MASSIVE_SYMBOL"
+    echo "  4) Change MASSIVE_SPOT_INTERVAL_SEC"
+    echo "  5) Change MASSIVE_SPOT_TRAIL_WINDOW_SEC"
+    echo "  6) Change MASSIVE_SPOT_TRAIL_TTL_SEC"
+    echo "  7) Change MASSIVE_CHAIN_INTERVAL_SEC"
+    echo "  8) Change MASSIVE_CHAIN_STRIKE_RANGE"
+    echo "  9) Change MASSIVE_CHAIN_NUM_EXPIRATIONS"
+    echo " 10) Change MASSIVE_CHAIN_SNAPSHOT_TTL_SEC"
+    echo " 11) Change MASSIVE_CHAIN_TRAIL_WINDOW_SEC"
+    echo " 12) Change MASSIVE_CHAIN_TRAIL_TTL_SEC"
+    echo " 13) Quit"
+    echo ""
+    line
+    read -rp "Enter choice [1-13]: " CH
+    echo ""
 
-  case "$CH" in
-    1)  ;; # Continue to run
-    2)  show_last_chainfeed; menu ;;
-    3)  configure_symbol; menu ;;
-    4)  configure_throttling; menu ;;
-    5)  echo "Goodbye"; exit 0 ;;
-    *)  echo "Invalid"; sleep 1; menu ;;
-  esac
+    case "$CH" in
+      1) run_foreground ;;  # exec, doesn't return
+      2)
+        if [[ "$DEBUG_MASSIVE" == "true" ]]; then
+          DEBUG_MASSIVE="false"
+        else
+          DEBUG_MASSIVE="true"
+        fi
+        export DEBUG_MASSIVE
+        echo "DEBUG_MASSIVE is now: $DEBUG_MASSIVE"
+        sleep 1
+        ;;
+      3)
+        read -rp "Enter MASSIVE_SYMBOL (current: $MASSIVE_SYMBOL): " NEW_SYM
+        if [[ -n "$NEW_SYM" ]]; then
+          MASSIVE_SYMBOL="$NEW_SYM"
+          export MASSIVE_SYMBOL
+          echo "MASSIVE_SYMBOL is now: $MASSIVE_SYMBOL"
+        else
+          echo "MASSIVE_SYMBOL unchanged."
+        fi
+        sleep 1
+        ;;
+      4)
+        read -rp "Enter MASSIVE_SPOT_INTERVAL_SEC (current: $MASSIVE_SPOT_INTERVAL_SEC): " NEW_INT
+        if [[ -n "$NEW_INT" ]]; then
+          MASSIVE_SPOT_INTERVAL_SEC="$NEW_INT"
+          export MASSIVE_SPOT_INTERVAL_SEC
+          echo "MASSIVE_SPOT_INTERVAL_SEC is now: $MASSIVE_SPOT_INTERVAL_SEC"
+        else
+          echo "MASSIVE_SPOT_INTERVAL_SEC unchanged."
+        fi
+        sleep 1
+        ;;
+      5)
+        read -rp "Enter MASSIVE_SPOT_TRAIL_WINDOW_SEC (current: $MASSIVE_SPOT_TRAIL_WINDOW_SEC): " NEW_WIN
+        if [[ -n "$NEW_WIN" ]]; then
+          MASSIVE_SPOT_TRAIL_WINDOW_SEC="$NEW_WIN"
+          export MASSIVE_SPOT_TRAIL_WINDOW_SEC
+          echo "MASSIVE_SPOT_TRAIL_WINDOW_SEC is now: $MASSIVE_SPOT_TRAIL_WINDOW_SEC"
+        else
+          echo "MASSIVE_SPOT_TRAIL_WINDOW_SEC unchanged."
+        fi
+        sleep 1
+        ;;
+      6)
+        read -rp "Enter MASSIVE_SPOT_TRAIL_TTL_SEC (current: $MASSIVE_SPOT_TRAIL_TTL_SEC): " NEW_TTL
+        if [[ -n "$NEW_TTL" ]]; then
+          MASSIVE_SPOT_TRAIL_TTL_SEC="$NEW_TTL"
+          export MASSIVE_SPOT_TRAIL_TTL_SEC
+          echo "MASSIVE_SPOT_TRAIL_TTL_SEC is now: $MASSIVE_SPOT_TRAIL_TTL_SEC"
+        else
+          echo "MASSIVE_SPOT_TRAIL_TTL_SEC unchanged."
+        fi
+        sleep 1
+        ;;
+      7)
+        read -rp "Enter MASSIVE_CHAIN_INTERVAL_SEC (current: $MASSIVE_CHAIN_INTERVAL_SEC): " NEW_INT
+        if [[ -n "$NEW_INT" ]]; then
+          MASSIVE_CHAIN_INTERVAL_SEC="$NEW_INT"
+          export MASSIVE_CHAIN_INTERVAL_SEC
+          echo "MASSIVE_CHAIN_INTERVAL_SEC is now: $MASSIVE_CHAIN_INTERVAL_SEC"
+        else
+          echo "MASSIVE_CHAIN_INTERVAL_SEC unchanged."
+        fi
+        sleep 1
+        ;;
+      8)
+        read -rp "Enter MASSIVE_CHAIN_STRIKE_RANGE (current: $MASSIVE_CHAIN_STRIKE_RANGE): " NEW_RANGE
+        if [[ -n "$NEW_RANGE" ]]; then
+          MASSIVE_CHAIN_STRIKE_RANGE="$NEW_RANGE"
+          export MASSIVE_CHAIN_STRIKE_RANGE
+          echo "MASSIVE_CHAIN_STRIKE_RANGE is now: $MASSIVE_CHAIN_STRIKE_RANGE"
+        else
+          echo "MASSIVE_CHAIN_STRIKE_RANGE unchanged."
+        fi
+        sleep 1
+        ;;
+      9)
+        read -rp "Enter MASSIVE_CHAIN_NUM_EXPIRATIONS (current: $MASSIVE_CHAIN_NUM_EXPIRATIONS): " NEW_NUM
+        if [[ -n "$NEW_NUM" ]]; then
+          MASSIVE_CHAIN_NUM_EXPIRATIONS="$NEW_NUM"
+          export MASSIVE_CHAIN_NUM_EXPIRATIONS
+          echo "MASSIVE_CHAIN_NUM_EXPIRATIONS is now: $MASSIVE_CHAIN_NUM_EXPIRATIONS"
+        else
+          echo "MASSIVE_CHAIN_NUM_EXPIRATIONS unchanged."
+        fi
+        sleep 1
+        ;;
+      10)
+        read -rp "Enter MASSIVE_CHAIN_SNAPSHOT_TTL_SEC (current: $MASSIVE_CHAIN_SNAPSHOT_TTL_SEC): " NEW_TTL
+        if [[ -n "$NEW_TTL" ]]; then
+          MASSIVE_CHAIN_SNAPSHOT_TTL_SEC="$NEW_TTL"
+          export MASSIVE_CHAIN_SNAPSHOT_TTL_SEC
+          echo "MASSIVE_CHAIN_SNAPSHOT_TTL_SEC is now: $MASSIVE_CHAIN_SNAPSHOT_TTL_SEC"
+        else
+          echo "MASSIVE_CHAIN_SNAPSHOT_TTL_SEC unchanged."
+        fi
+        sleep 1
+        ;;
+      11)
+        read -rp "Enter MASSIVE_CHAIN_TRAIL_WINDOW_SEC (current: $MASSIVE_CHAIN_TRAIL_WINDOW_SEC): " NEW_WIN
+        if [[ -n "$NEW_WIN" ]]; then
+          MASSIVE_CHAIN_TRAIL_WINDOW_SEC="$NEW_WIN"
+          export MASSIVE_CHAIN_TRAIL_WINDOW_SEC
+          echo "MASSIVE_CHAIN_TRAIL_WINDOW_SEC is now: $MASSIVE_CHAIN_TRAIL_WINDOW_SEC"
+        else
+          echo "MASSIVE_CHAIN_TRAIL_WINDOW_SEC unchanged."
+        fi
+        sleep 1
+        ;;
+      12)
+        read -rp "Enter MASSIVE_CHAIN_TRAIL_TTL_SEC (current: $MASSIVE_CHAIN_TRAIL_TTL_SEC): " NEW_TTL
+        if [[ -n "$NEW_TTL" ]]; then
+          MASSIVE_CHAIN_TRAIL_TTL_SEC="$NEW_TTL"
+          export MASSIVE_CHAIN_TRAIL_TTL_SEC
+          echo "MASSIVE_CHAIN_TRAIL_TTL_SEC is now: $MASSIVE_CHAIN_TRAIL_TTL_SEC"
+        else
+          echo "MASSIVE_CHAIN_TRAIL_TTL_SEC unchanged."
+        fi
+        sleep 1
+        ;;
+      13)
+        echo "Goodbye"
+        exit 0
+        ;;
+      *)
+        echo "Invalid choice"
+        sleep 1
+        ;;
+    esac
+  done
 }
 
 ###############################################
-# Argument override
+# CLI override
 ###############################################
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    run) ;;       # default, just run with current env
-    show) show_last_chainfeed; exit 0 ;;
-    debug) export DEBUG_MASSIVE="true" ;;
+    run) run_foreground ;;
     *)
-      echo "Usage: $0 [run|show|debug]"
+      echo "Usage: $0 [run]"
       exit 1
       ;;
   esac
 else
   menu
 fi
-
-###############################################
-# Map menu throttling → scheduler env for setup.py
-###############################################
-export MASSIVE_FAST_NUM_EXPIRATIONS="$MASSIVE_0DTE_NUM_EXP"
-export MASSIVE_FAST_INTERVAL_SEC="$MASSIVE_0DTE_INTERVAL_SEC"
-export MASSIVE_REST_NUM_EXPIRATIONS="$MASSIVE_REST_NUM_EXP"
-export MASSIVE_REST_INTERVAL_SEC="$MASSIVE_REST_INTERVAL_SEC"
-# Max inflight directly read by setup.py
-export MASSIVE_MAX_INFLIGHT="$MASSIVE_MAX_INFLIGHT"
-
-###############################################
-# Bootstrap & Validation
-###############################################
-line
-echo " MASSIVE Service Runner (Brew)"
-line
-echo "ROOT: $ROOT"
-[[ "$DEBUG_MASSIVE" == "true" ]] && echo "DEBUG: enabled"
-echo "MASSIVE_API_KEY: (set)"
-echo "MASSIVE_SYMBOL:        $MASSIVE_SYMBOL"
-echo "SYSTEM_REDIS_URL:      $SYSTEM_REDIS_URL"
-echo "MARKET_REDIS_URL:      $MARKET_REDIS_URL"
-echo "INTEL_REDIS_URL:       $INTEL_REDIS_URL"
-echo "PYTHON_BIN:            $PYTHON_BIN"
-echo "MASSIVE_CHAIN_LOADER:  $MASSIVE_CHAIN_LOADER"
-echo "0DTE expirations:      $MASSIVE_0DTE_NUM_EXP"
-echo "0DTE interval (sec):   $MASSIVE_0DTE_INTERVAL_SEC"
-echo "Rest expirations:      $MASSIVE_REST_NUM_EXP"
-echo "Rest interval (sec):   $MASSIVE_REST_INTERVAL_SEC"
-echo "Max inflight cycles:   $MASSIVE_MAX_INFLIGHT"
-echo ""
-
-for cmd in "$BREW_PY" "$VENV_PY" "$BREW_REDIS"; do
-  if [[ -x "$cmd" ]]; then
-    echo "Found $cmd"
-  else
-    echo "Missing $cmd"
-    exit 1
-  fi
-done
-
-HAS_TRUTH=$($BREW_REDIS -h 127.0.0.1 -p 6379 EXISTS truth)
-if [[ "$HAS_TRUTH" -eq 1 ]]; then
-  echo "Truth found"
-else
-  echo "Missing truth"
-  exit 1
-fi
-
-###############################################
-# Launch MASSIVE
-###############################################
-line
-echo "Launching MASSIVE for symbol: $MASSIVE_SYMBOL"
-line
-
-exec "$VENV_PY" "$MAIN"

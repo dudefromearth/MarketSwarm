@@ -19,8 +19,7 @@ from intel import orchestrator  # services/massive/intel/orchestrator.py
 SERVICE_NAME = os.getenv("SERVICE_ID", "massive")
 
 # Read debug flag once from env
-DEBUG_ENABLED = os.getenv("DEBUG_MASSIVE", "false").lower() == "true"
-
+DEBUG_ENABLED = os.getenv(f"DEBUG_{SERVICE_NAME.upper()}", "false").lower() == "true"
 
 # ------------------------------------------------------------
 # Logging helper

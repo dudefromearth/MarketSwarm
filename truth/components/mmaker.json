@@ -2,15 +2,15 @@
   "id": "mmaker",
   "meta": {
     "name": "Redis model maker",
-    "description": "Creates models from massive uploads for the UI."
+    "description": "Consumes Massive chain snapshots + websocket diffs and builds convexity and regime models for the UI and Vexy."
   },
   "access_points": {
     "publish_to": [
       { "bus": "system-redis", "key": "mmaker:heartbeat" }
     ],
     "subscribe_to": [
-      { "bus": "market-redis", "key": "massive:chain" },
-      { "bus": "market-redis", "key": "massive:timeseries" }
+      { "bus": "market-redis", "key": "massive:chain-feed" },
+      { "bus": "market-redis", "key": "massive:ws:raw" }
     ]
   },
   "models": {
@@ -22,7 +22,9 @@
       { "bus": "market-redis", "key": "massive:model:volume_profile" },
       { "bus": "market-redis", "key": "massive:model:bias_lfi" }
     ],
-    "consumes": []
+    "consumes": [
+      { "bus": "market-redis", "key": "massive:model:spot" }
+    ]
   },
   "heartbeat": {
     "interval_sec": 5,

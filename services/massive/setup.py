@@ -1,241 +1,144 @@
-#!/usr/bin/env python3
-"""
-setup.py — Massive service setup
-
-Loads Truth from system-redis, resolves the Massive component,
-and builds a config dict consumed by main.py + orchestrator.
-
-Key responsibilities:
-  - Connect to SYSTEM_REDIS_URL
-  - Load Truth from the configured key (default: "truth")
-  - Extract component["workflow"] and heartbeat
-  - Wire scheduler defaults from workflow
-  - Resolve paths for:
-      * PYTHON (venv or env override)
-      * CHAIN_LOADER (massive_chain_loader.py)
-  - Surface API key via workflow["api_key_env"]
-  - Allow dev overrides via env (e.g. MASSIVE_SYMBOL)
-"""
-
-from __future__ import annotations
+# services/massive/setup.py
 
 import json
 import os
-import sys
-from pathlib import Path
-from typing import Any, Dict
-from urllib.parse import urlparse
+from typing import Any, Dict, List
 
-import redis
-
-import logutil  # services/massive/logutil.py
+from redis import Redis  # sync client
 
 
-# -------------------------------------------------------
-# Redis helpers
-# -------------------------------------------------------
-
-def _redis_from_url(url: str) -> redis.Redis:
-    parsed = urlparse(url or "redis://127.0.0.1:6379")
-    host = parsed.hostname or "127.0.0.1"
-    port = parsed.port or 6379
-    return redis.Redis(host=host, port=port, decode_responses=True)
-
-
-def _load_truth(system_url: str, truth_key: str, service_name: str) -> Dict[str, Any]:
+def _load_truth_from_redis(service_name: str) -> Dict[str, Any]:
     """
-    Load the canonical Truth document from system-redis.
+    Load the composite Truth document from Redis.
+
+    Env:
+      TRUTH_REDIS_URL  (optional) – full redis:// URL for Truth
+      SYSTEM_REDIS_URL (fallback) – system redis URL, default redis://127.0.0.1:6379
+      TRUTH_REDIS_KEY  (optional) – key name, default "truth"
     """
-    r = _redis_from_url(system_url)
-    logutil.log(
-        service_name,
-        "INFO",
-        "📖",
-        f"Loading Truth from Redis (url={system_url}, key={truth_key})",
+    truth_url = (
+        os.getenv("TRUTH_REDIS_URL")
+        or os.getenv("SYSTEM_REDIS_URL", "redis://127.0.0.1:6379")
     )
+    truth_key = os.getenv("TRUTH_REDIS_KEY", "truth")
+
+    print(f"[setup:{service_name}] Loading Truth from Redis (url={truth_url}, key={truth_key})")
+
+    r = Redis.from_url(truth_url, decode_responses=True)
 
     raw = r.get(truth_key)
     if not raw:
-        raise RuntimeError(f"truth key '{truth_key}' not found in system-redis")
+        raise RuntimeError(
+            f"[setup:{service_name}] Truth key '{truth_key}' is empty or missing in Redis at {truth_url}"
+        )
 
     try:
-        return json.loads(raw)
+        truth = json.loads(raw)
     except Exception as e:
-        raise RuntimeError(f"failed to parse Truth JSON from key '{truth_key}': {e}")
+        raise RuntimeError(f"[setup:{service_name}] Failed to decode Truth JSON: {e}") from e
 
+    return {
+        "truth": truth,
+        "truth_url": truth_url,
+        "truth_key": truth_key,
+    }
 
-# -------------------------------------------------------
-# Main setup
-# -------------------------------------------------------
 
 def setup(service_name: str = "massive") -> Dict[str, Any]:
     """
-    Build Massive config dict from Truth + env.
+    Initialize the massive service from Truth stored in Redis.
 
-    Returns a dict consumed by main.py and orchestrator.py with keys:
-      - service_name
-      - truth_url, truth_key, truth_path, truth
-      - component
-      - heartbeat
-      - workflow
-      - scheduler
-      - redis_market_url
-      - CHAIN_LOADER
-      - PYTHON
-      - api_key
-      - debug_rest, debug_threads
+    - Loads Truth from Redis
+    - Extracts the 'massive' component definition
+    - Resolves Redis URLs for subscribe/publish endpoints
+    - Returns a config dict for the orchestrator + heartbeat
     """
-    logutil.log(service_name, "INFO", "⚙️", "Setting up environment")
+    env = _load_truth_from_redis(service_name)
+    truth: Dict[str, Any] = env["truth"]
+    truth_url: str = env["truth_url"]
+    truth_key: str = env["truth_key"]
 
-    # ---------------------------------------------------
-    # 1) Truth from system-redis
-    # ---------------------------------------------------
-    system_url = os.getenv("SYSTEM_REDIS_URL", "redis://127.0.0.1:6379")
-    truth_key = os.getenv("TRUTH_REDIS_KEY", "truth")
+    buses: Dict[str, Any] = truth.get("buses", {})
+    components: Dict[str, Any] = truth.get("components", {})
+    comp: Dict[str, Any] = components.get(service_name, {})
 
-    truth = _load_truth(system_url, truth_key, service_name)
-
-    components = truth.get("components") or {}
-    comp = components.get(service_name) or {}
     if not comp:
-        raise RuntimeError(f"component '{service_name}' not found in Truth document")
-
-    # ---------------------------------------------------
-    # 2) Heartbeat
-    # ---------------------------------------------------
-    hb_cfg = comp.get("heartbeat") or {}
-    heartbeat = {
-        "interval_sec": int(hb_cfg.get("interval_sec", 1)),
-        "ttl_sec": int(hb_cfg.get("ttl_sec", 15)),
-    }
-
-    # ---------------------------------------------------
-    # 3) Workflow & scheduler
-    # ---------------------------------------------------
-    base_workflow: Dict[str, Any] = comp.get("workflow") or {}
-
-    # DEV OVERRIDE: MASSIVE_SYMBOL → limit symbols to one (or a comma list)
-    massive_symbol_env = os.getenv("MASSIVE_SYMBOL", "").strip()
-    if massive_symbol_env:
-        # shallow copy so we don't mutate Truth
-        workflow = dict(base_workflow)
-        symbols = [s.strip() for s in massive_symbol_env.split(",") if s.strip()]
-        workflow["symbols"] = symbols
-        logutil.log(
-            service_name,
-            "INFO",
-            "🎯",
-            f"Overriding workflow.symbols from MASSIVE_SYMBOL={massive_symbol_env} → {symbols}",
+        raise RuntimeError(
+            f"[setup:{service_name}] Component '{service_name}' not found in Truth (key={truth_key})"
         )
-    else:
-        workflow = base_workflow
 
-    # Base cadence comes from Truth (poll_interval_sec, num_expirations)
-    base_interval = float(workflow.get("poll_interval_sec", 10))
-    base_exps = int(workflow.get("num_expirations", 5))
+    meta = comp.get("meta", {})
+    access_points = comp.get("access_points", {})
+    heartbeat_cfg = comp.get("heartbeat", {})
+    models_cfg = comp.get("models", {})
+    domain_keys: List[str] = comp.get("domain_keys", [])
+    dependencies: List[str] = comp.get("dependencies", [])
 
-    # Scheduler allows overriding via env.
-    # Honor legacy FAST_* / REST_* first (old dev pattern),
-    # then MASSIVE_FAST_* / MASSIVE_REST_* (shell menu),
-    # then fall back to Truth defaults.
-    fast_num_env = (
-        os.getenv("FAST_NUM_EXPIRATIONS")
-        or os.getenv("MASSIVE_FAST_NUM_EXPIRATIONS")
-        or ""
-    )
-    fast_interval_env = (
-        os.getenv("FAST_INTERVAL_SECS")
-        or os.getenv("MASSIVE_FAST_INTERVAL_SEC")
-        or ""
-    )
-    rest_num_env = (
-        os.getenv("REST_NUM_EXPIRATIONS")
-        or os.getenv("MASSIVE_REST_NUM_EXPIRATIONS")
-        or ""
-    )
-    rest_interval_env = (
-        os.getenv("REST_INTERVAL_SECS")
-        or os.getenv("MASSIVE_REST_INTERVAL_SEC")
-        or ""
-    )
+    # Resolve subscribe endpoints with Redis URLs
+    subscribe_to = access_points.get("subscribe_to", [])
+    inputs: List[Dict[str, Any]] = []
+    for sub in subscribe_to:
+        bus_name = sub.get("bus")
+        key = sub.get("key")
+        if not bus_name or not key:
+            continue
+        bus_cfg = buses.get(bus_name, {})
+        redis_url = bus_cfg.get(
+            "url",
+            os.getenv("REDIS_URL", "redis://localhost:6379"),
+        )
+        inputs.append(
+            {
+                "bus": bus_name,
+                "key": key,
+                "redis_url": redis_url,
+            }
+        )
 
-    fast_num = int(fast_num_env) if fast_num_env else base_exps
-    fast_interval = float(fast_interval_env) if fast_interval_env else base_interval
+    # Resolve publish endpoints with Redis URLs
+    publish_to = access_points.get("publish_to", [])
+    outputs: List[Dict[str, Any]] = []
+    for pub in publish_to:
+        bus_name = pub.get("bus")
+        key = pub.get("key")
+        if not bus_name or not key:
+            continue
+        bus_cfg = buses.get(bus_name, {})
+        redis_url = bus_cfg.get(
+            "url",
+            os.getenv("REDIS_URL", "redis://localhost:6379"),
+        )
+        outputs.append(
+            {
+                "bus": bus_name,
+                "key": key,
+                "redis_url": redis_url,
+            }
+        )
 
-    # If rest_* not set, mirror fast lane by default
-    rest_num = int(rest_num_env) if rest_num_env else fast_num
-    rest_interval = float(rest_interval_env) if rest_interval_env else fast_interval
-
-    max_inflight = int(os.getenv("MASSIVE_MAX_INFLIGHT", "6"))
-
-    scheduler = {
-        "fast_interval": fast_interval,
-        "fast_num_expirations": fast_num,
-        "rest_interval": rest_interval,
-        "rest_num_expirations": rest_num,
-        "max_inflight": max_inflight,
-    }
-
-    logutil.log(
-        service_name,
-        "INFO",
-        "🧮",
-        (
-            "scheduler resolved: "
-            f"0DTE={fast_num} exp(s) every {fast_interval}s, "
-            f"rest={rest_num} exp(s) every {rest_interval}s, "
-            f"max_inflight={max_inflight}"
-        ),
-    )
-
-    # ---------------------------------------------------
-    # 4) Paths (PYTHON + CHAIN_LOADER) and Redis URLs
-    # ---------------------------------------------------
-    # Project root: .../MarketSwarm
-    service_root = Path(__file__).resolve().parent          # services/massive
-    project_root = service_root.parent.parent               # MarketSwarm
-
-    # Chain loader: prefer env override, else default to utils/massive_chain_loader.py
-    default_chain_loader = project_root / "services" / "massive" / "utils" / "massive_chain_loader.py"
-    chain_loader = os.getenv("MASSIVE_CHAIN_LOADER", str(default_chain_loader))
-
-    # Python interpreter: prefer env override (shell script) else current interpreter
-    python_bin = os.getenv("PYTHON_BIN", sys.executable)
-
-    # Redis URL for market data
-    redis_market_url = os.getenv("MARKET_REDIS_URL", "redis://127.0.0.1:6380")
-
-    # ---------------------------------------------------
-    # 5) API key & debug flags
-    # ---------------------------------------------------
-    api_key_env = workflow.get("api_key_env", "MASSIVE_API_KEY")
-    api_key = os.getenv(api_key_env, "")
-
-    debug_rest = os.getenv("MASSIVE_DEBUG_REST", "false").lower() == "true"
-    debug_threads = os.getenv("MASSIVE_DEBUG_THREADS", "false").lower() == "true"
-
-    cfg: Dict[str, Any] = {
+    # Build a simple config dict for the orchestrator + heartbeat
+    config: Dict[str, Any] = {
         "service_name": service_name,
-        "truth_url": system_url,
+        "meta": {
+            "name": meta.get("name", service_name),
+            "description": meta.get("description", ""),
+        },
+        # Truth location is now Redis, not a file path
+        "truth_url": truth_url,
         "truth_key": truth_key,
-        "truth_path": system_url,
-        "truth": truth,
-        "component": comp,
-        "heartbeat": heartbeat,
-        "workflow": workflow,
-        "scheduler": scheduler,
-        "redis_market_url": redis_market_url,
-        "CHAIN_LOADER": chain_loader,
-        "PYTHON": python_bin,
-        "api_key": api_key,
-        "debug_rest": debug_rest,
-        "debug_threads": debug_threads,
+        "heartbeat": {
+            "interval_sec": heartbeat_cfg.get("interval_sec", 10),
+            "ttl_sec": heartbeat_cfg.get("ttl_sec", 30),
+        },
+        "inputs": inputs,
+        "outputs": outputs,
+        "models": {
+            "produces": models_cfg.get("produces", []),
+            "consumes": models_cfg.get("consumes", []),
+        },
+        "domain_keys": domain_keys,
+        "dependencies": dependencies,
     }
 
-    logutil.log(
-        service_name,
-        "INFO",
-        "✅",
-        f"setup() built config for service='{service_name}'",
-    )
-    return cfg
+    print(f"[setup:{service_name}] setup() built config for service='{service_name}'")
+    return config
