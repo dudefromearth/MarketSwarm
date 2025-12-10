@@ -4,7 +4,8 @@ import json
 import os
 from typing import Any, Dict, List
 
-from redis import Redis  # sync client
+from redis import Redis  # sync client for truth load
+from redis.asyncio import Redis as AsyncRedis  # async for shared use
 
 
 def _load_truth_from_redis(service_name: str) -> Dict[str, Any]:
@@ -51,6 +52,7 @@ def setup(service_name: str = "massive") -> Dict[str, Any]:
     - Loads Truth from Redis
     - Extracts the 'massive' component definition
     - Resolves Redis URLs for subscribe/publish endpoints
+    - Creates shared async Redis object for primary bus
     - Returns a config dict for the orchestrator + heartbeat
     """
     env = _load_truth_from_redis(service_name)
@@ -138,6 +140,22 @@ def setup(service_name: str = "massive") -> Dict[str, Any]:
         },
         "domain_keys": domain_keys,
         "dependencies": dependencies,
+        # All buses for flexibility (services pick what they need)
+        "all_buses": {
+            bus_name: bus_cfg.get("url", os.getenv("REDIS_URL", "redis://localhost:6379"))
+            for bus_name, bus_cfg in buses.items()
+        },
+    }
+
+    # Create shared async Redis for primary bus (first input or market fallback)
+    primary_bus_url = inputs[0]["redis_url"] if inputs else config["all_buses"].get("market-redis", os.getenv("MARKET_REDIS_URL", "redis://127.0.0.1:6380"))
+    shared_primary_redis = AsyncRedis.from_url(primary_bus_url)
+    print(f"[setup:{service_name}] Created shared primary Redis: {primary_bus_url}")
+
+    # Add shared resources to config (generic for all services)
+    config["shared_resources"] = {
+        "primary_redis": shared_primary_redis,
+        "primary_redis_url": primary_bus_url,
     }
 
     print(f"[setup:{service_name}] setup() built config for service='{service_name}'")

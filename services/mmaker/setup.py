@@ -4,59 +4,61 @@ import json
 import os
 from typing import Any, Dict, List
 
-from redis import Redis
+from redis import Redis  # sync client for truth load
+from redis.asyncio import Redis as AsyncRedis  # async for shared use
 
 
-def _log(message: str) -> None:
-    """Lightweight local logger just for setup."""
-    print(f"[setup:mmaker] {message}")
-
-
-def _load_truth_from_redis() -> Dict[str, Any]:
+def _load_truth_from_redis(service_name: str) -> Dict[str, Any]:
     """
     Load the composite Truth document from Redis.
 
     Env:
-      SYSTEM_REDIS_URL  – canonical system bus URL (preferred)
-      REDIS_URL         – fallback if SYSTEM_REDIS_URL not set
-      TRUTH_REDIS_KEY   – key where composite Truth is stored (default: 'truth')
+      TRUTH_REDIS_URL  (optional) – full redis:// URL for Truth
+      SYSTEM_REDIS_URL (fallback) – system redis URL, default redis://127.0.0.1:6379
+      TRUTH_REDIS_KEY  (optional) – key name, default "truth"
     """
-    redis_url = os.getenv("SYSTEM_REDIS_URL", os.getenv("REDIS_URL", "redis://127.0.0.1:6379"))
+    truth_url = (
+        os.getenv("TRUTH_REDIS_URL")
+        or os.getenv("SYSTEM_REDIS_URL", "redis://127.0.0.1:6379")
+    )
     truth_key = os.getenv("TRUTH_REDIS_KEY", "truth")
 
-    _log(f"Loading Truth from Redis (url={redis_url}, key={truth_key})")
+    print(f"[setup:{service_name}] Loading Truth from Redis (url={truth_url}, key={truth_key})")
 
-    r = Redis.from_url(redis_url, decode_responses=True)
+    r = Redis.from_url(truth_url, decode_responses=True)
+
     raw = r.get(truth_key)
-
     if not raw:
         raise RuntimeError(
-            f"Truth key '{truth_key}' not found or empty in Redis at {redis_url}. "
-            f"Did you run ms-truth.sh / build_truth.py to publish Truth?"
+            f"[setup:{service_name}] Truth key '{truth_key}' is empty or missing in Redis at {truth_url}"
         )
 
     try:
         truth = json.loads(raw)
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Invalid JSON in Truth key '{truth_key}' from {redis_url}: {e}") from e
+    except Exception as e:
+        raise RuntimeError(f"[setup:{service_name}] Failed to decode Truth JSON: {e}") from e
 
-    return truth
+    return {
+        "truth": truth,
+        "truth_url": truth_url,
+        "truth_key": truth_key,
+    }
 
 
-def setup(service_name: str | None = None) -> Dict[str, Any]:
+def setup(service_name: str = "mmaker") -> Dict[str, Any]:
     """
     Initialize the mmaker service from Truth stored in Redis.
 
-    - Resolves `service_name` (default from SERVICE_ID env)
-    - Loads composite Truth from system-redis
-    - Extracts this component's definition
-    - Resolves subscribe/publish endpoints into concrete Redis URLs
-    - Returns a config dict for main/orchestrator/heartbeat
+    - Loads Truth from Redis
+    - Extracts the 'mmaker' component definition
+    - Resolves Redis URLs for subscribe/publish endpoints
+    - Creates shared async Redis object for primary bus
+    - Returns a config dict for the orchestrator + heartbeat
     """
-    if service_name is None:
-        service_name = os.getenv("SERVICE_ID", "mmaker")
-
-    truth = _load_truth_from_redis()
+    env = _load_truth_from_redis(service_name)
+    truth: Dict[str, Any] = env["truth"]
+    truth_url: str = env["truth_url"]
+    truth_key: str = env["truth_key"]
 
     buses: Dict[str, Any] = truth.get("buses", {})
     components: Dict[str, Any] = truth.get("components", {})
@@ -64,8 +66,7 @@ def setup(service_name: str | None = None) -> Dict[str, Any]:
 
     if not comp:
         raise RuntimeError(
-            f"Component '{service_name}' not found in Truth "
-            f"(components.keys={list(components.keys())})"
+            f"[setup:{service_name}] Component '{service_name}' not found in Truth (key={truth_key})"
         )
 
     meta = comp.get("meta", {})
@@ -81,16 +82,20 @@ def setup(service_name: str | None = None) -> Dict[str, Any]:
     for sub in subscribe_to:
         bus_name = sub.get("bus")
         key = sub.get("key")
+        if not bus_name or not key:
+            continue
         bus_cfg = buses.get(bus_name, {})
-        redis_url = bus_cfg.get("url", os.getenv("REDIS_URL", "redis://127.0.0.1:6379"))
-        if bus_name and key:
-            inputs.append(
-                {
-                    "bus": bus_name,
-                    "key": key,
-                    "redis_url": redis_url,
-                }
-            )
+        redis_url = bus_cfg.get(
+            "url",
+            os.getenv("REDIS_URL", "redis://localhost:6379"),
+        )
+        inputs.append(
+            {
+                "bus": bus_name,
+                "key": key,
+                "redis_url": redis_url,
+            }
+        )
 
     # Resolve publish endpoints with Redis URLs
     publish_to = access_points.get("publish_to", [])
@@ -98,43 +103,60 @@ def setup(service_name: str | None = None) -> Dict[str, Any]:
     for pub in publish_to:
         bus_name = pub.get("bus")
         key = pub.get("key")
+        if not bus_name or not key:
+            continue
         bus_cfg = buses.get(bus_name, {})
-        redis_url = bus_cfg.get("url", os.getenv("REDIS_URL", "redis://127.0.0.1:6379"))
-        if bus_name and key:
-            outputs.append(
-                {
-                    "bus": bus_name,
-                    "key": key,
-                    "redis_url": redis_url,
-                }
-            )
+        redis_url = bus_cfg.get(
+            "url",
+            os.getenv("REDIS_URL", "redis://localhost:6379"),
+        )
+        outputs.append(
+            {
+                "bus": bus_name,
+                "key": key,
+                "redis_url": redis_url,
+            }
+        )
 
-    # For logging in main.py, we keep a "truth_path" string that now
-    # describes the Redis source instead of a filesystem path.
-    redis_url = os.getenv("SYSTEM_REDIS_URL", os.getenv("REDIS_URL", "redis://127.0.0.1:6379"))
-    truth_key = os.getenv("TRUTH_REDIS_KEY", "truth")
-    truth_source = f"{redis_url} key={truth_key}"
-
+    # Build a simple config dict for the orchestrator + heartbeat
     config: Dict[str, Any] = {
         "service_name": service_name,
         "meta": {
             "name": meta.get("name", service_name),
             "description": meta.get("description", ""),
         },
-        "truth_path": truth_source,
+        # Truth location is now Redis, not a file path
+        "truth_url": truth_url,
+        "truth_key": truth_key,
         "heartbeat": {
             "interval_sec": heartbeat_cfg.get("interval_sec", 10),
             "ttl_sec": heartbeat_cfg.get("ttl_sec", 30),
         },
-        "inputs": inputs,    # where mmaker reads from (e.g., massive:chain on market-redis)
-        "outputs": outputs,  # where mmaker writes heartbeats (and eventually models)
+        "inputs": inputs,
+        "outputs": outputs,
         "models": {
             "produces": models_cfg.get("produces", []),
             "consumes": models_cfg.get("consumes", []),
         },
         "domain_keys": domain_keys,
         "dependencies": dependencies,
+        # All buses for flexibility (services pick what they need)
+        "all_buses": {
+            bus_name: bus_cfg.get("url", os.getenv("REDIS_URL", "redis://localhost:6379"))
+            for bus_name, bus_cfg in buses.items()
+        },
     }
 
-    _log(f"setup() built config for service='{service_name}'")
+    # Create shared async Redis for primary bus (first input or market fallback)
+    primary_bus_url = inputs[0]["redis_url"] if inputs else config["all_buses"].get("market-redis", os.getenv("MARKET_REDIS_URL", "redis://127.0.0.1:6380"))
+    shared_primary_redis = AsyncRedis.from_url(primary_bus_url)
+    print(f"[setup:{service_name}] Created shared primary Redis: {primary_bus_url}")
+
+    # Add shared resources to config (generic for all services)
+    config["shared_resources"] = {
+        "primary_redis": shared_primary_redis,
+        "primary_redis_url": primary_bus_url,
+    }
+
+    print(f"[setup:{service_name}] setup() built config for service='{service_name}'")
     return config

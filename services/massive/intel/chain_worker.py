@@ -30,6 +30,57 @@ def _parse_iso_date(s: str) -> date:
     return datetime.fromisoformat(s).date()
 
 
+def _yyyymmdd_from_iso(exp_iso: str) -> str:
+    """
+    Convert 'YYYY-MM-DD' -> 'YYYYMMDD'.
+    """
+    return exp_iso.replace("-", "")
+
+
+def _build_ws_channels(
+    underlying: str,
+    expiry_iso: str,
+    low_strike: float,
+    high_strike: float,
+    strike_step: int,
+) -> List[str]:
+    """
+    Build Massive T.O channels for all calls + puts between low_strike and
+    high_strike (inclusive), at `strike_step` spacing.
+
+    Example channel:
+      T.O:SPXW251209C06850000
+    """
+    if strike_step <= 0:
+        raise ValueError("strike_step must be positive")
+
+    expiry_yyyymmdd = _yyyymmdd_from_iso(expiry_iso)      # '2025-12-09' -> '20251209'
+    expiry_yymmdd = expiry_yyyymmdd[2:]                   # '20251209' -> '251209'
+    underlying_prefix = f"{underlying}W"                  # 'SPX' -> 'SPXW'
+
+    # Normalize bounds to the strike grid
+    low = math.floor(low_strike / strike_step) * strike_step
+    high = math.ceil(high_strike / strike_step) * strike_step
+
+    channels: List[str] = []
+    k = float(low)
+    high_f = float(high)
+
+    # Simple loop over the strike grid
+    while k <= high_f + 1e-9:  # small epsilon for float math
+        # Massive/SPX style: strike * 1000, zero-padded to 8 digits
+        value = int(round(k * 1000))
+        strike_part = f"{value:08d}"
+
+        for right in ("C", "P"):
+            contract = f"{underlying_prefix}{expiry_yymmdd}{right}{strike_part}"
+            channels.append(f"T.O:{contract}")
+
+        k += float(strike_step)
+
+    return channels
+
+
 class ChainWorker:
     """
     Periodic full-chain snapshot worker.
@@ -44,6 +95,9 @@ class ChainWorker:
               CHAIN:{U}:EXP:{YYYY-MM-DD}:snap:{ts}
           * Update latest pointer:
               CHAIN:{U}:EXP:{YYYY-MM-DD}:latest -> snap key
+      - Derive WebSocket trade channels for each expiration and publish
+        a params string into:
+              massive:ws:params:{YYYYMMDD}
     """
 
     def __init__(self, config: Dict[str, Any]) -> None:
@@ -101,6 +155,9 @@ class ChainWorker:
             os.getenv("MASSIVE_CHAIN_STRICT_GT_LT", "false").lower() == "true"
         )
 
+        # WS strike step (used to build trade channels)
+        self.ws_strike_step: int = int(os.getenv("MASSIVE_WS_STRIKE_STEP", "5"))
+
         # Massive API client
         api_key = os.getenv("MASSIVE_API_KEY", "").strip()
         if not api_key:
@@ -126,7 +183,8 @@ class ChainWorker:
                 f"snapshot_ttl={self.snapshot_ttl_sec}s, "
                 f"trail_window={self.trail_window_sec}s, "
                 f"trail_ttl={self.trail_ttl_sec}s, "
-                f"EM_days={self.em_days}, EM_mult={self.em_mult}"
+                f"EM_days={self.em_days}, EM_mult={self.em_mult}, "
+                f"ws_strike_step={self.ws_strike_step}"
             ),
         )
 
@@ -388,6 +446,10 @@ class ChainWorker:
 
           CHAIN:{U}:EXP:{exp}:snap:{ts}   → full JSON snapshot
           CHAIN:{U}:EXP:{exp}:latest      → pointer to snapshot key
+
+        And publish WS channel params for this expiration:
+
+          massive:ws:params:{YYYYMMDD}    → comma-joined channels
         """
         r = await self._market_redis()
 
@@ -395,6 +457,43 @@ class ChainWorker:
         snap_key = f"CHAIN:{self.underlying}:EXP:{exp}:snap:{ts_iso}"
         latest_key = f"CHAIN:{self.underlying}:EXP:{exp}:latest"
 
+        # --- WS channels / params -----------------------------------------
+        ws_channels: List[str] = []
+        ws_params_key: Optional[str] = None
+
+        if strike_min is not None and strike_max is not None:
+            try:
+                ws_channels = _build_ws_channels(
+                    underlying=self.underlying,
+                    expiry_iso=exp,
+                    low_strike=strike_min,
+                    high_strike=strike_max,
+                    strike_step=self.ws_strike_step,
+                )
+                expiry_yyyymmdd = _yyyymmdd_from_iso(exp)
+                ws_params_key = f"massive:ws:params:{expiry_yyyymmdd}"
+
+                # Comma-joined string for WsWorker
+                await r.set(ws_params_key, ",".join(ws_channels))
+
+                logutil.log(
+                    self.service_name,
+                    "INFO",
+                    "📺",
+                    (
+                        f"WS params updated for {self.underlying} exp={exp} "
+                        f"({ws_params_key}, {len(ws_channels)} channels)"
+                    ),
+                )
+            except Exception as e:
+                logutil.log(
+                    self.service_name,
+                    "ERROR",
+                    "💥",
+                    f"Failed to build WS channels for exp={exp}: {e}",
+                )
+
+        # --- Snapshot model -----------------------------------------------
         model: Dict[str, Any] = {
             "symbol": self.underlying,
             "api_symbol": self.api_symbol,
@@ -409,6 +508,12 @@ class ChainWorker:
             "strike_range_points": strike_range_points,
             "count": len(contracts),
             "contracts": contracts,
+
+            # WS metadata for downstream consumers
+            "ws_params_key": ws_params_key,
+            "ws_channels": ws_channels,
+            "ws_channels_count": len(ws_channels),
+            "ws_strike_step": self.ws_strike_step,
         }
 
         payload = json.dumps(model)

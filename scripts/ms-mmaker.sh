@@ -15,8 +15,15 @@ export INTEL_REDIS_URL="redis://127.0.0.1:6381"
 
 export DEBUG_MMAKER="${DEBUG_MMAKER:-false}"
 
-BREW_PY="/opt/homebrew/bin/python3.14"
+# mmaker-specific: Stub for expiry/underlying (set in main/setup if dynamic; override via env)
+export MMAKER_EXPIRY_YYYYMMDD="${MMAKER_EXPIRY_YYYYMMDD:-20251209}"
+export MMAKER_UNDERLYING="${MMAKER_UNDERLYING:-SPX}"
+
+BREW_PY="/opt/homebrew/bin/python3.14"  # Fallback to /usr/bin/python3 on Linux if needed
+if [[ ! -x "$BREW_PY" ]]; then BREW_PY="/usr/bin/python3"; fi
+
 BREW_REDIS="/opt/homebrew/bin/redis-cli"
+if [[ ! -x "$BREW_REDIS" ]]; then BREW_REDIS="/usr/bin/redis-cli"; fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SERVICE="mmaker"
@@ -40,7 +47,26 @@ check_tools() {
   done
 }
 
+bootstrap_venv() {
+  if [[ ! -d "$VENV" ]]; then
+    echo "Creating venv at $VENV..."
+    "$BREW_PY" -m venv "$VENV"
+  fi
+  if [[ ! -f "$VENV/bin/requirements.txt" ]]; then  # Assume requirements.txt in ROOT
+    echo "Installing deps (assume requirements.txt in $ROOT)..."
+    "$VENV_PY" -m pip install --upgrade pip
+    "$VENV_PY" -m pip install -r "$ROOT/requirements.txt"  # Adjust if pip-sync
+  fi
+}
+
 run_foreground() {
+  # Early checks
+  if [[ ! -f "$MAIN" ]]; then
+    echo "ERROR: Main script missing: $MAIN"
+    exit 1
+  fi
+  bootstrap_venv
+
   clear
   line
   echo " Launching $SERVICE (foreground)"
@@ -50,6 +76,8 @@ run_foreground() {
   echo "VENV_PY:      $VENV_PY"
   echo "MAIN:         $MAIN"
   echo "DEBUG_MMAKER: $DEBUG_MMAKER"
+  echo "EXPIRY:       $MMAKER_EXPIRY_YYYYMMDD"
+  echo "UNDERLYING:   $MMAKER_UNDERLYING"
   line
   echo ""
 
@@ -61,6 +89,8 @@ run_foreground() {
   cd "$ROOT"
   export SERVICE_ID="$SERVICE"
   export DEBUG_MMAKER
+  export MMAKER_EXPIRY_YYYYMMDD
+  export MMAKER_UNDERLYING
 
   # Exec in the foreground so stdout/stderr go directly to the terminal
   exec "$VENV_PY" "$MAIN"
@@ -78,6 +108,8 @@ menu() {
     echo ""
     echo "Current configuration:"
     echo "  DEBUG_MMAKER = $DEBUG_MMAKER"
+    echo "  EXPIRY       = $MMAKER_EXPIRY_YYYYMMDD"
+    echo "  UNDERLYING   = $MMAKER_UNDERLYING"
     echo ""
     echo "Select Option:"
     echo ""
