@@ -16,7 +16,7 @@ export INTEL_REDIS_URL="redis://127.0.0.1:6381"
 export DEBUG_MMAKER="${DEBUG_MMAKER:-false}"
 
 # mmaker-specific: Stub for expiry/underlying (set in main/setup if dynamic; override via env)
-export MMAKER_EXPIRY_YYYYMMDD="${MMAKER_EXPIRY_YYYYMMDD:-20251209}"
+export MMAKER_EXPIRY_YYYYMMDD="${MMAKER_EXPIRY_YYYYMMDD:-20251211}"
 export MMAKER_UNDERLYING="${MMAKER_UNDERLYING:-SPX}"
 
 BREW_PY="/opt/homebrew/bin/python3.14"  # Fallback to /usr/bin/python3 on Linux if needed

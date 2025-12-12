@@ -1,4 +1,4 @@
-# # Healer Alerts System – User Guide
+# Healer Alerts System – User Guide
 
 This guide shows you how to run, observe, and operate the **Healer** monitoring stack (Healer + Sentinel) in MarketSwarm.
 

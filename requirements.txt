@@ -25,8 +25,7 @@ markdownify==0.*
 readability-lxml==0.*
 openai==1.*
 xmltodict==0.*
-lxml==4.*
-
+lxml>=5.2.1
 Flask~=3.1.2
 HeartBeat~=0.1.0
 websocket-client~=1.9.0
