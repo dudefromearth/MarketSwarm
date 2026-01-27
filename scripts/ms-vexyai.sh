@@ -37,14 +37,32 @@ line() { echo "─────────────────────�
 show_last_commentary() {
   clear
   line
-  echo " Last 10 Vexy Commentary Entries (vexy:playbyplay)"
+  echo " Latest Vexy Commentary"
   line
   echo ""
 
-  $BREW_REDIS -h 127.0.0.1 -p 6380 --csv XREVRANGE vexy:playbyplay + - COUNT 10 | \
-    jq -r '.[] | [.[0], (.[1] | fromjson | .kind + " → " + .text[0:120])] | join(" | ")'
+  # Epoch commentary (stored at vexy:model:playbyplay:epoch:latest)
+  echo "📅 EPOCH COMMENTARY:"
+  EPOCH_RAW=$($BREW_REDIS -h 127.0.0.1 -p 6380 GET "vexy:model:playbyplay:epoch:latest" 2>/dev/null)
+  if [[ -n "$EPOCH_RAW" && "$EPOCH_RAW" != "nil" ]]; then
+    echo "$EPOCH_RAW" | jq -r '"  [\(.ts)] \(.meta.epoch)\n  \(.text)"' 2>/dev/null || echo "  (parse error)"
+  else
+    echo "  (none)"
+  fi
 
   echo ""
+
+  # Event commentary (stored at vexy:model:playbyplay:event:latest)
+  echo "💥 EVENT COMMENTARY:"
+  EVENT_RAW=$($BREW_REDIS -h 127.0.0.1 -p 6380 GET "vexy:model:playbyplay:event:latest" 2>/dev/null)
+  if [[ -n "$EVENT_RAW" && "$EVENT_RAW" != "nil" ]]; then
+    echo "$EVENT_RAW" | jq -r '"  [\(.ts)] \(.meta.type // "event")\n  \(.text)"' 2>/dev/null || echo "  (parse error)"
+  else
+    echo "  (none)"
+  fi
+
+  echo ""
+  line
   read -n 1 -s -r -p "Press any key to return..."
 }
 
