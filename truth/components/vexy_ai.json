@@ -10,20 +10,21 @@
       { "bus": "market-redis", "key": "vigil:events" }
     ],
     "publish_to": [
-      { "bus": "system-redis", "key": "vexy_ai:heartbeat" }
+      { "bus": "system-redis", "key": "vexy_ai:heartbeat" },
+      { "bus": "system-redis", "key": "mesh:broadcast" }
     ]
   },
-    "models": {
+  "models": {
     "produces": [
       { "bus": "market-redis", "key": "vexy:model:playbyplay" }
     ],
     "consumes": [
-      { "bus": "market-redis", "key": "massive:model:gex" },
-      { "bus": "market-redis", "key": "massive:model:heatmap" },
-      { "bus": "market-redis", "key": "massive:model:market_mode" },
-      { "bus": "market-redis", "key": "massive:model:vix_regime" },
-      { "bus": "market-redis", "key": "massive:model:volume_profile" },
-      { "bus": "market-redis", "key": "massive:model:bias_lfi" }
+      { "bus": "market-redis", "key": "massive:gex:model" },
+      { "bus": "market-redis", "key": "massive:heatmap:model:{symbol}:latest" },
+      { "bus": "market-redis", "key": "massive:market_mode:model" },
+      { "bus": "market-redis", "key": "massive:vix_regime:model" },
+      { "bus": "market-redis", "key": "massive:volume_profile:model" },
+      { "bus": "market-redis", "key": "massive:bias_lfi:model" }
     ]
   },
   "heartbeat": {
@@ -35,5 +36,51 @@
     "rss_agg",
     "massive",
     "vigil"
+  ],
+  "env": {
+    "VEXY_MODE": "full",
+    "VEXY_LOOP_SLEEP_SEC": "60"
+  },
+  "epochs": [
+    {
+      "name": "Premarket",
+      "time": "08:00",
+      "context": "Pre-market session. Futures setting the tone. Watch overnight developments."
+    },
+    {
+      "name": "Post-Open",
+      "time": "09:35",
+      "context": "Opening rotation complete. Initial direction established. Volume normalizing."
+    },
+    {
+      "name": "European Close",
+      "time": "11:30",
+      "context": "European markets closing. Cross-Atlantic flows shifting. Mid-morning inflection."
+    },
+    {
+      "name": "Lunch Vol Crush",
+      "time": "13:00",
+      "context": "Lunch hour volatility compression. Low participation. Watch for mean reversion setups."
+    },
+    {
+      "name": "Commodity Shadow",
+      "time": "14:00",
+      "context": "Commodity markets closing. Energy and metals flows impacting equity correlation."
+    },
+    {
+      "name": "Power Hour Begins",
+      "time": "15:00",
+      "context": "Final hour approaching. Institutional repositioning. Volume acceleration."
+    },
+    {
+      "name": "Into the Close",
+      "time": "15:50",
+      "context": "Closing imbalances revealing. MOC orders driving final moves. Gamma intensifying."
+    },
+    {
+      "name": "Post-Close Wrap",
+      "time": "16:01",
+      "context": "Cash session closed. Reviewing the day. After-hours positioning."
+    }
   ]
 }

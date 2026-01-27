@@ -130,6 +130,11 @@ async def run(config: Dict[str, Any], logger) -> None:
 
     loop_sleep_sec = float(config.get("VEXY_LOOP_SLEEP_SEC", "60"))
 
+    # Epochs from config (externalized in truth/components/vexy_ai.json)
+    epochs = config.get("epochs", [])
+    if not epochs:
+        logger.warn("No epochs defined in config — epoch commentary disabled", emoji="⚠️")
+
     try:
         while True:
             cycle_start = time.time()
@@ -139,9 +144,9 @@ async def run(config: Dict[str, Any], logger) -> None:
             # -----------------------------
             # Epochs (with market data)
             # -----------------------------
-            if ENABLE_EPOCHS and VEXY_MODE in ["full", "epochs_only"]:
+            if ENABLE_EPOCHS and VEXY_MODE in ["full", "epochs_only"] and epochs:
                 emit("epoch", "epoch_check", "Checking epoch triggers…")
-                epoch = should_speak_epoch(current_time)
+                epoch = should_speak_epoch(current_time, epochs)
                 if epoch and epoch["name"] != last_epoch_name:
                     # Fetch current market state
                     market_state = market_reader.get_market_state()

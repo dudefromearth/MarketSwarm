@@ -4,73 +4,35 @@ epochs.py — Epoch schedule and commentary generation for Vexy AI
 
 Epochs are the canonical trading day segments that trigger scheduled commentary.
 Commentary is enriched with real-time market data from Massive.
+
+Epochs are defined in truth/components/vexy_ai.json and passed via config.
 """
 
 import os
 from datetime import datetime
-from typing import Any, Dict, Optional
-
-# =============================================================================
-# CANONICAL EPOCH SCHEDULE — THE TRUTH OF THE TRADING DAY
-# =============================================================================
-# Times are in ET. This list is sacred.
-EPOCHS = [
-    {
-        "name": "Premarket",
-        "time": "08:00",
-        "context": "Pre-market session. Futures setting the tone. Watch overnight developments.",
-    },
-    {
-        "name": "Post-Open",
-        "time": "09:35",
-        "context": "Opening rotation complete. Initial direction established. Volume normalizing.",
-    },
-    {
-        "name": "European Close",
-        "time": "11:30",
-        "context": "European markets closing. Cross-Atlantic flows shifting. Mid-morning inflection.",
-    },
-    {
-        "name": "Lunch Vol Crush",
-        "time": "13:00",
-        "context": "Lunch hour volatility compression. Low participation. Watch for mean reversion setups.",
-    },
-    {
-        "name": "Commodity Shadow",
-        "time": "14:00",
-        "context": "Commodity markets closing. Energy and metals flows impacting equity correlation.",
-    },
-    {
-        "name": "Power Hour Begins",
-        "time": "15:00",
-        "context": "Final hour approaching. Institutional repositioning. Volume acceleration.",
-    },
-    {
-        "name": "Into the Close",
-        "time": "15:50",
-        "context": "Closing imbalances revealing. MOC orders driving final moves. Gamma intensifying.",
-    },
-    {
-        "name": "Post-Close Wrap",
-        "time": "16:01",
-        "context": "Cash session closed. Reviewing the day. After-hours positioning.",
-    },
-]
+from typing import Any, Dict, List, Optional
 
 
-def should_speak_epoch(current_time: str) -> Optional[Dict[str, str]]:
+def should_speak_epoch(current_time: str, epochs: List[Dict[str, str]]) -> Optional[Dict[str, str]]:
     """
     Determine if Vexy should deliver scheduled epoch commentary.
     Returns the most recent epoch that has triggered.
+
+    Args:
+        current_time: Current time as HH:MM string (ET)
+        epochs: List of epoch definitions from config
     """
+    if not epochs:
+        return None
+
     force = os.getenv("FORCE_EPOCH", "false").lower() == "true"
 
     if force:
-        return EPOCHS[0]
+        return epochs[0]
 
     # Find the latest epoch that has triggered (reverse search)
     active_epoch = None
-    for epoch in EPOCHS:
+    for epoch in epochs:
         if current_time >= epoch["time"]:
             active_epoch = epoch
 
