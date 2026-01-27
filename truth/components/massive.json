@@ -8,15 +8,28 @@
     "subscribe_to": [],
     "publish_to": [
       { "bus": "system-redis", "key": "massive:heartbeat" },
-
-      { "bus": "market-redis", "key": "massive:chain-feed" },
-      { "bus": "market-redis", "key": "massive:ws:raw" }
+      { "bus": "market-redis", "key": "massive:chain:latest" },
+      { "bus": "market-redis", "key": "massive:ws:contracts" },
+      { "bus": "market-redis", "key": "massive:ws:stream" },
+      { "bus": "market-redis", "key": "massive:spot" },
+      { "bus": "market-redis", "key": "massive:debug" },
+      { "bus": "market-redis", "key": "massive:spot:analytics" },
+      { "bus": "market-redis", "key": "massive:ws:analytics" },
+      { "bus": "market-redis", "key": "massive:chain:analytics" },
+      { "bus": "market-redis", "key": "massive:model:analytics" },
+      { "bus": "market-redis", "key": "massive:heatmap:model:{symbol}:latest" },
+      { "bus": "market-redis", "key": "massive:heatmap:replay:{symbol}" }
     ]
   },
   "models": {
     "produces": [
-      { "bus": "market-redis", "key": "massive:model:spot" },
-      { "bus": "market-redis", "key": "massive:model:spot_trail" }
+      { "bus": "market-redis", "key": "massive:gex:model" },
+      { "bus": "market-redis", "key": "massive:heatmap:model:{symbol}:latest" },
+      { "bus": "market-redis", "key": "massive:heatmap:replay:{symbol}" },
+      { "bus": "market-redis", "key": "massive:market_mode:model" },
+      { "bus": "market-redis", "key": "massive:vix_regime:model" },
+      { "bus": "market-redis", "key": "massive:volume_profile:model" },
+      { "bus": "market-redis", "key": "massive:bias_lfi:model" }
     ],
     "consumes": []
   },
@@ -33,5 +46,50 @@
     "GEX",
     "CONVEXITY"
   ],
-  "dependencies": []
+  "dependencies": [],
+  "env": {
+    "MASSIVE_API_KEY": "pdjraOWSpDbg3ER_RslZYe3dmn4Y7WCC",
+    "MASSIVE_WS_HYDRATE_MAX_DTE": "4",
+    "MASSIVE_HEATMAP_MAX_DTE": "10",
+    "MASSIVE_EPOCH_TTL_MINUTES": "390",
+    "MASSIVE_EPOCH_SPOT_THRESHOLD_PCT": "1",
+    "MASSIVE_SPOT_SYMBOLS": "I:SPX,I:NDX,I:VIX",
+    "MASSIVE_SPOT_INDEX_TIMEOUT_SEC": "2.0",
+    "MASSIVE_SPOT_STOCK_TIMEOUT_SEC": "2.5",
+    "MASSIVE_SPOT_TICK_TIMEOUT_SEC": "5.0",
+    "MASSIVE_REDIS_OP_TIMEOUT_SEC": "1.0",
+    "MASSIVE_STOCK_SYMBOLS": "SPY, QQQ",
+    "MASSIVE_CHAIN_SYMBOLS": "I:SPX,I:NDX",
+    "MASSIVE_CHAIN_INTERVAL_SEC": "10",
+    "MASSIVE_CHAIN_NUM_EXPIRATIONS": "4",
+    "MASSIVE_CHAIN_EM_DAYS": "1",
+    "MASSIVE_CHAIN_EM_MULT": "2.25",
+    "MASSIVE_SPX_EM_MULT": "2.25",
+    "MASSIVE_NDX_EM_MULT": "3.0",
+    "MASSIVE_SPX_STRIKE_INCREMENT": "5",
+    "MASSIVE_NDX_STRIKE_INCREMENT": "25",
+    "MASSIVE_SPX_FILTER_STRIKES": "false",
+    "MASSIVE_NDX_FILTER_STRIKES": "true",
+    "MASSIVE_EPOCH_CHANGE_THRESHOLD_PCT": "15",
+    "MASSIVE_SURFACE_TTL_MINUTES": "10080",
+    "MASSIVE_CAPTURE_SURFACE": "true",
+    "MASSIVE_WS_STRIKE_STEP": "5",
+    "MASSIVE_WS_RECONNECT_DELAY_SEC": "5.0",
+    "DEBUG_MASSIVE": "false",
+    "MASSIVE_WS_URL": "wss://socket.massive.com/options",
+    "MASSIVE_WS_REPLAY": "false",
+    "MASSIVE_WS_CAPTURE": "false",
+    "MASSIVE_WS_CAPTURE_CHAIN_DIR": "/Users/ernie/MarketSwarm/ws_captures/chain",
+    "MASSIVE_WS_CAPTURE_SPOT_DIR": "/Users/ernie/MarketSwarm/ws_captures/spot",
+    "MASSIVE_WS_CAPTURE_WS_DIR": "/Users/ernie/MarketSwarm/ws_captures/ws",
+    "MASSIVE_WS_CAPTURE_UNDERLYINGS": "SPX,NDX",
+    "MASSIVE_HEATMAP_INTERVAL_MS": "200",
+    "MASSIVE_MODEL_LIVE_TTL_SEC": "259200",
+    "MASSIVE_REPLAY_TTL_SEC": "86400",
+    "MASSIVE_REPLAY_BUFFER_MINUTES": "15",
+    "MASSIVE_WIDTHS_SPX": "20,25,30,35,40,45,50",
+    "MASSIVE_WIDTHS_NDX": "50,75,100,125,150,175,200",
+    "MASSIVE_DEBUG_ENABLED": "true",
+    "MASSIVE_DEBUG_CHAIN_INTERVAL_SEC": "5"
+  }
 }
