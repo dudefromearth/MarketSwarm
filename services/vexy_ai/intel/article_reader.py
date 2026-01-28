@@ -89,7 +89,7 @@ class ArticleReader:
                 continue
 
         # Sort by published date (newest first) and limit
-        articles.sort(key=lambda x: x.get("published", ""), reverse=True)
+        articles.sort(key=lambda x: x.get("published") or "", reverse=True)
         articles = articles[:max_count]
 
         self._log(f"returning {len(articles)} recent articles for synthesis")
