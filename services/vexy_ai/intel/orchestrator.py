@@ -26,6 +26,8 @@ from .events import get_triggered_events
 from .publisher import publish
 from .intel_feed import process_intel_articles
 from .market_reader import MarketReader
+from .article_reader import ArticleReader
+from .synthesizer import Synthesizer
 
 
 # Vexy mode control
@@ -104,9 +106,16 @@ async def run(config: Dict[str, Any], logger) -> None:
 
     r_system = redis.Redis.from_url(system_url, decode_responses=True)
     r_market = redis.Redis.from_url(market_url, decode_responses=True)
+    r_intel = redis.Redis.from_url(intel_url, decode_responses=True)
 
     # Market data reader (consumes Massive models)
     market_reader = MarketReader(r_market, logger)
+
+    # Article reader (consumes RSS Agg articles)
+    article_reader = ArticleReader(r_intel, logger)
+
+    # LLM synthesizer for epoch commentary
+    synthesizer = Synthesizer(logger)
 
     # Stage switches
     ENABLE_EPOCHS = _flag(r_system, "epochs", 1)
@@ -142,7 +151,7 @@ async def run(config: Dict[str, Any], logger) -> None:
             current_time = now.strftime("%H:%M")
 
             # -----------------------------
-            # Epochs (with market data)
+            # Epochs (with market data + news synthesis)
             # -----------------------------
             if ENABLE_EPOCHS and VEXY_MODE in ["full", "epochs_only"] and epochs:
                 emit("epoch", "epoch_check", "Checking epoch triggers…")
@@ -151,12 +160,20 @@ async def run(config: Dict[str, Any], logger) -> None:
                     # Fetch current market state
                     market_state = market_reader.get_market_state()
 
-                    # Generate rich commentary
-                    commentary = generate_epoch_commentary(epoch, market_state)
+                    # Fetch recent articles for synthesis
+                    recent_articles = article_reader.get_recent_articles(max_count=8, max_age_hours=6)
+                    articles_text = article_reader.format_for_prompt(recent_articles)
+
+                    # Try LLM synthesis first, fall back to template
+                    commentary = synthesizer.synthesize(epoch, market_state, articles_text)
+                    if not commentary:
+                        emit("epoch", "warn", "LLM synthesis failed — using template fallback")
+                        commentary = generate_epoch_commentary(epoch, market_state)
 
                     publish("epoch", commentary, {
                         "epoch": epoch["name"],
                         "market_state": market_state,
+                        "articles_used": len(recent_articles),
                     })
                     last_epoch_name = epoch["name"]
                     emit("epoch", "epoch_speak", f"{commentary[:120]}…")
