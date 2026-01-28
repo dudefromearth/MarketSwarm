@@ -1,50 +1,87 @@
-# heartbeat.py
-import asyncio
-import json
-import os
+# shared/heartbeat.py
+
+import threading
 import time
-from redis.asyncio import Redis
+import json
+import redis
 
-async def start_heartbeat(service_name: str, truth_path: str = "./root/truth.json"):
-    """Start a heartbeat loop based on Truth configuration."""
-    # Load Truth
+
+def _build_redis_client(config):
+    """
+    Resolve Redis connection for heartbeat using Truth.json topology.
+    Heartbeat ALWAYS uses system-redis.
+    SetupBase projects buses into config["buses"].
+    """
     try:
-        with open(truth_path, "r") as f:
-            truth = json.load(f)
-    except Exception as e:
-        print(f"[Heartbeat:{service_name}] ⚠️ Could not load truth: {e}")
-        truth = {}
+        url = config["buses"]["system-redis"]["url"]
+    except KeyError as e:
+        raise RuntimeError(
+            "Heartbeat cannot start: config.buses['system-redis'].url not found"
+        ) from e
 
-    # Extract service definition
-    comp = truth.get("components", {}).get(service_name, {})
-    access_points = comp.get("access_points", {})
+    return redis.Redis.from_url(url)
 
-    # Find heartbeat configuration
-    publish_targets = access_points.get("publish_to", [])
-    heartbeat_entry = next(
-        (p for p in publish_targets if "heartbeat" in p.get("key", "")), None
+
+def start_heartbeat(
+    service_name,
+    config,
+    logger,
+    payload_fn=None,
+):
+    """
+    Threaded heartbeat publisher.
+    Consumes *service-local* config projected by SetupBase.
+    """
+    stop_event = threading.Event()
+
+    # Service-local heartbeat config (SetupBase projection)
+    try:
+        hb_cfg = config["heartbeat"]
+        interval = hb_cfg["interval_sec"]
+        ttl = hb_cfg["ttl_sec"]
+    except KeyError as e:
+        raise RuntimeError(
+            "Heartbeat cannot start: config['heartbeat'] missing or malformed"
+        ) from e
+
+    key = f"{service_name}:heartbeat"
+
+    redis_client = _build_redis_client(config)
+
+    def run():
+        logger.info(
+            f"🔌 heartbeat thread started "
+            f"(bus=system-redis, key={key}, interval={interval}s, ttl={ttl}s)"
+        )
+
+        while not stop_event.is_set():
+            try:
+                payload = (
+                    payload_fn() if payload_fn else
+                    {
+                        "service": service_name,
+                        "ts": time.time(),
+                    }
+                )
+
+                redis_client.set(
+                    key,
+                    json.dumps(payload),
+                    ex=ttl,
+                )
+
+            except Exception:
+                logger.exception("heartbeat publish failed")
+
+            stop_event.wait(interval)
+
+        logger.info("🔌 heartbeat thread stopped")
+
+    thread = threading.Thread(
+        target=run,
+        name=f"{service_name}-heartbeat",
+        daemon=True,
     )
+    thread.start()
 
-    redis_url = (
-        f"redis://{heartbeat_entry['bus']}:6379"
-        if heartbeat_entry
-        else os.getenv("REDIS_URL", "redis://localhost:6379")
-    )
-    heartbeat_key = (
-        heartbeat_entry["key"]
-        if heartbeat_entry
-        else f"{service_name}:heartbeat"
-    )
-
-    r = Redis.from_url(redis_url, decode_responses=True)
-    print(f"[Heartbeat:{service_name}] Connected to {redis_url}, key={heartbeat_key}")
-
-    # Pulse loop
-    while True:
-        payload = {
-            "service": service_name,
-            "ts": time.time(),
-            "status": "alive"
-        }
-        await r.publish(heartbeat_key, json.dumps(payload))
-        await asyncio.sleep(10)
+    return stop_event
