@@ -1,106 +1,97 @@
-#!/usr/bin/env python3
-"""
-logutil.py — Canonical logging utility for MarketSwarm services
-
-Provides structured logging with emoji support and config-driven behavior.
-"""
-
-import json
+from datetime import datetime, UTC
+from typing import Dict, Any
 import os
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
 
-
-class LogUtil:
-    """
-    Structured logger for MarketSwarm services.
-
-    Usage:
-        logger = LogUtil("my_service")
-        logger.info("starting up", emoji="🚀")
-        logger.configure_from_config(config)
-        logger.ok("ready to process")
-    """
-
-    # Default emoji map
-    EMOJI = {
-        "info": "ℹ️",
-        "ok": "✅",
-        "warn": "⚠️",
-        "error": "❌",
-        "debug": "🔍",
-    }
-
-    def __init__(self, service_name: str):
-        self.service_name = service_name
-        self.debug_enabled = os.getenv("DEBUG", "false").lower() == "true"
-        self.log_file: Optional[str] = None
-
-    def configure_from_config(self, config: Dict[str, Any]) -> None:
-        """
-        Configure logger from service config.
-        """
-        # Check for debug mode in config
-        if config.get("DEBUG", "false").lower() == "true":
-            self.debug_enabled = True
-
-        # Check for log file path
-        log_path = config.get("LOG_FILE")
-        if log_path:
-            self.log_file = log_path
-
-    def _format(self, level: str, message: str, emoji: str = "") -> str:
-        """Format a log message."""
-        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        if not emoji:
-            emoji = self.EMOJI.get(level.lower(), "")
-        return f"[{ts}] [{self.service_name}|{level.upper()}] {emoji} {message}"
-
-    def _emit(self, level: str, message: str, emoji: str = "") -> None:
-        """Emit a log message to stdout and optionally to file."""
-        formatted = self._format(level, message, emoji)
-        print(formatted)
-
-        if self.log_file:
-            try:
-                with open(self.log_file, "a") as f:
-                    f.write(formatted + "\n")
-            except IOError:
-                pass  # Silently fail on file write errors
-
-    def info(self, message: str, emoji: str = "") -> None:
-        """Log an info message."""
-        self._emit("info", message, emoji or self.EMOJI["info"])
-
-    def ok(self, message: str, emoji: str = "") -> None:
-        """Log a success message."""
-        self._emit("ok", message, emoji or self.EMOJI["ok"])
-
-    def warn(self, message: str, emoji: str = "") -> None:
-        """Log a warning message."""
-        self._emit("warn", message, emoji or self.EMOJI["warn"])
-
-    def error(self, message: str, emoji: str = "") -> None:
-        """Log an error message."""
-        self._emit("error", message, emoji or self.EMOJI["error"])
-
-    def debug(self, message: str, emoji: str = "") -> None:
-        """Log a debug message (only if debug mode enabled)."""
-        if self.debug_enabled:
-            self._emit("debug", message, emoji or self.EMOJI["debug"])
-
-
-# Legacy functions for backwards compatibility
 STATUS_EMOJI = {
     "INFO": "ℹ️",
     "WARN": "⚠️",
     "ERROR": "❌",
     "DEBUG": "🔍",
+    "OK": "✅",
 }
 
 
-def format_log(status: str, description: str, context: str = "") -> str:
-    """Legacy format function."""
-    ts = datetime.now(timezone.utc).isoformat() + "Z"
-    emoji = STATUS_EMOJI.get(status, "❓")
-    return f"[{ts}] {status} {emoji} {description}: {context}"
+class LogUtil:
+    """
+    Two-phase logger:
+      - Bootstrap phase: env-driven
+      - Configured phase: config-driven
+
+    Safe to use before and after SetupBase.
+    Logging must NEVER raise.
+    """
+
+    def __init__(self, service_name: str):
+        self.service_name = service_name
+
+        # Phase 1: bootstrap (env only)
+        self.debug_enabled = (
+            os.getenv("DEBUG_MASSIVE", "false").lower() == "true"
+        )
+
+        self._configured = False
+
+    # -------------------------------------------------
+    # Configuration phase
+    # -------------------------------------------------
+
+    def configure_from_config(self, config: Dict[str, Any]) -> None:
+        if self._configured:
+            return
+
+        try:
+            cfg_debug = str(
+                config.get("DEBUG_MASSIVE", "false")
+            ).lower() == "true"
+
+            self.debug_enabled = cfg_debug
+            self._configured = True
+
+            self.info(
+                f"[LOG CONFIGURED] debug={'ON' if cfg_debug else 'OFF'}",
+                emoji="🧪" if cfg_debug else "🔊",
+            )
+        except Exception:
+            # Logging must never break the process
+            pass
+
+    # -------------------------------------------------
+    # Internal formatting
+    # -------------------------------------------------
+
+    def _stamp(self, level: str, message: str, emoji: str):
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        symbol = emoji or STATUS_EMOJI.get(level, "")
+        return f"[{now}][{self.service_name}][{level}]{symbol} {message}"
+
+    def _emit(self, level: str, message: str, emoji: str = ""):
+        try:
+            if level == "DEBUG" and not self.debug_enabled:
+                return
+            print(self._stamp(level, message, emoji))
+        except Exception:
+            # Absolute last line of defense
+            pass
+
+    # -------------------------------------------------
+    # Public API
+    # -------------------------------------------------
+
+    def info(self, message: str, emoji: str = STATUS_EMOJI["INFO"]):
+        self._emit("INFO", message, emoji)
+
+    def warn(self, message: str, emoji: str = STATUS_EMOJI["WARN"]):
+        self._emit("WARN", message, emoji)
+
+    def warning(self, message: str, emoji: str = STATUS_EMOJI["WARN"]):
+        # Alias for compatibility with standard logging APIs
+        self.warn(message, emoji)
+
+    def error(self, message: str, emoji: str = STATUS_EMOJI["ERROR"]):
+        self._emit("ERROR", message, emoji)
+
+    def debug(self, message: str, emoji: str = STATUS_EMOJI["DEBUG"]):
+        self._emit("DEBUG", message, emoji)
+
+    def ok(self, message: str, emoji: str = STATUS_EMOJI["OK"]):
+        self._emit("OK", message, emoji)
