@@ -115,7 +115,7 @@ async def run(config: Dict[str, Any], logger) -> None:
     article_reader = ArticleReader(r_intel, logger)
 
     # LLM synthesizer for epoch commentary
-    synthesizer = Synthesizer(logger)
+    synthesizer = Synthesizer(config, logger)
 
     # Stage switches
     ENABLE_EPOCHS = _flag(r_system, "epochs", 1)
