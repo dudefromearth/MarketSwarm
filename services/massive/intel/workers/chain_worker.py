@@ -127,7 +127,8 @@ class ChainWorker:
         )
         return computed_range
 
-    def _list_expirations(self, underlying: str) -> List[str]:
+    def _list_expirations_sync(self, underlying: str) -> List[str]:
+        """Synchronous helper - runs in thread pool."""
         exps = set()
         for opt in self.client.list_snapshot_options_chain(
             underlying, params={"limit": 250}
@@ -137,6 +138,56 @@ class ChainWorker:
                 exps.add(exp)
         return sorted(exps)[:self.num_expirations]
 
+    async def _list_expirations(self, underlying: str) -> List[str]:
+        """Async wrapper - prevents blocking the event loop."""
+        return await asyncio.to_thread(self._list_expirations_sync, underlying)
+
+    def _fetch_chain_sync(
+        self, underlying: str, exp: str, atm: int, rng: int
+    ) -> List[tuple[str, Dict[str, Any]]]:
+        """
+        Synchronous chain fetch - runs in thread pool.
+        Returns list of (ticker, raw_payload) tuples.
+        """
+        results = []
+        params = {
+            "underlying": underlying.replace("I:", ""),
+            "expiration_date": exp,
+            "strike_price.gte": atm - rng,
+            "strike_price.lte": atm + rng,
+            "limit": 250,
+        }
+
+        sym_cfg = self.symbol_config.get(underlying, {})
+        filter_strikes = sym_cfg.get("filter_strikes", False)
+        increment = sym_cfg.get("strike_increment", 5)
+
+        for opt in self.client.list_snapshot_options_chain(underlying, params=params):
+            raw = json.loads(json.dumps(opt, default=lambda o: o.__dict__))
+            details = raw.get("details") or {}
+            ticker = details.get("ticker")
+
+            if not ticker:
+                continue
+
+            # Per-symbol strike grid filtering
+            if filter_strikes:
+                strike = _extract_strike_from_ticker(ticker)
+                if strike is not None and not _is_on_strike_grid(strike, increment):
+                    continue
+
+            results.append((ticker, raw))
+
+        return results
+
+    async def _fetch_chain(
+        self, underlying: str, exp: str, atm: int, rng: int
+    ) -> List[tuple[str, Dict[str, Any]]]:
+        """Async wrapper - prevents blocking the event loop."""
+        return await asyncio.to_thread(
+            self._fetch_chain_sync, underlying, exp, atm, rng
+        )
+
     # ============================================================
     # WS Subscription Management
     # ============================================================
@@ -144,7 +195,7 @@ class ChainWorker:
     async def _update_ws_subscriptions(self, r: Redis, contracts: Dict[str, Any]) -> None:
         """
         Update WS subscription list with 0-DTE tickers.
-        Format: T.{ticker} for trade subscription.
+        Format: Q.{ticker} for quote subscription (bid/ask updates for real-time pricing).
         """
         today = date.today().strftime("%y%m%d")
         today_long = date.today().strftime("%Y%m%d")
@@ -154,7 +205,7 @@ class ChainWorker:
         for ticker in contracts.keys():
             # Check if expiration matches today (YYMMDD or YYYYMMDD format)
             if today in ticker or today_long in ticker:
-                zero_dte_tickers.add(f"T.{ticker}")
+                zero_dte_tickers.add(f"T.{ticker}")  # T for trades
 
         if not zero_dte_tickers:
             self.logger.debug("[CHAIN] No 0-DTE tickers for WS subscription")
@@ -200,7 +251,7 @@ class ChainWorker:
 
                 atm = _round_to_nearest_5(spot)
                 rng = self._compute_range(spot, vix, underlying)
-                expirations = self._list_expirations(underlying.replace("I:", ""))
+                expirations = await self._list_expirations(underlying.replace("I:", ""))
 
                 self.logger.info(
                     f"[CHAIN RANGE] {underlying}: atm={atm} range=±{rng} ({atm-rng} to {atm+rng})",
@@ -210,38 +261,9 @@ class ChainWorker:
                 for exp in expirations:
                     self.logger.info(f"[CHAIN FETCH] {underlying} {exp}", emoji="📡")
 
-                    params = {
-                        "underlying": underlying.replace("I:", ""),
-                        "expiration_date": exp,
-                        "strike_price.gte": atm - rng,
-                        "strike_price.lte": atm + rng,
-                        "limit": 250,
-                    }
-
-                    for opt in self.client.list_snapshot_options_chain(
-                        underlying, params=params
-                    ):
-                        raw = json.loads(json.dumps(opt, default=lambda o: o.__dict__))
-
-                        details = raw.get("details") or {}
-                        ticker = details.get("ticker")
-
-                        if not ticker:
-                            self.logger.warning(
-                                "[CHAIN] Missing ticker in raw snapshot — skipping",
-                                emoji="⚠️",
-                            )
-                            continue
-
-                        # Per-symbol strike grid filtering
-                        sym_cfg = self.symbol_config.get(underlying, {})
-                        if sym_cfg.get("filter_strikes", False):
-                            strike = _extract_strike_from_ticker(ticker)
-                            increment = sym_cfg.get("strike_increment", 5)
-                            if strike is not None and not _is_on_strike_grid(strike, increment):
-                                continue  # Skip strikes not on the configured grid
-
-                        # Store raw payload verbatim
+                    # Fetch chain in thread pool to avoid blocking event loop
+                    contracts = await self._fetch_chain(underlying, exp, atm, rng)
+                    for ticker, raw in contracts:
                         all_contracts[ticker] = raw
 
             # ====================================================

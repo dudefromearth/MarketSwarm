@@ -168,6 +168,35 @@ function blackScholes(
   }
 }
 
+// Calculate actual time to expiration in years (calendar time for Black-Scholes)
+// SPX options expire at 4:00 PM ET (market close)
+function getTimeToExpiration(dte: number): number {
+  const now = new Date();
+
+  // Get current time in ET using Intl API (handles DST automatically)
+  const etTimeStr = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
+  const etTimeParts = etTimeStr.split(', ')[1]?.split(':') || ['12', '0'];
+  const etHours = parseInt(etTimeParts[0]) + parseInt(etTimeParts[1]) / 60;
+
+  // Market close is 16:00 ET (4 PM)
+  const marketCloseHour = 16;
+
+  // Calculate hours until today's market close
+  const hoursUntilClose = Math.max(0, marketCloseHour - etHours);
+
+  if (dte === 0) {
+    // 0-DTE: convert hours to calendar years
+    // T = hours / 24 / 365 (calendar time for Black-Scholes)
+    // Minimum of ~1 minute to avoid numerical issues
+    return Math.max(1 / 24 / 365, hoursUntilClose / 24 / 365);
+  }
+
+  // For DTE > 0: full calendar days plus hours until close
+  // Each DTE is a calendar day
+  const calendarDays = dte + hoursUntilClose / 24;
+  return calendarDays / 365;
+}
+
 // Calculate theoretical P&L for a strategy at given underlying price (before expiration)
 function calculateStrategyTheoreticalPnL(
   strat: { strategy: Strategy; side: Side; strike: number; width: number; debit: number | null; dte: number },
@@ -177,12 +206,17 @@ function calculateStrategyTheoreticalPnL(
 ): number {
   const debit = strat.debit ?? 0;
   const multiplier = 100;
-  const T = strat.dte / 365; // Convert DTE to years
+  const T = getTimeToExpiration(strat.dte); // Actual time to expiration in years
   const isCall = strat.side === 'call';
 
   if (strat.strategy === 'single') {
     const value = blackScholes(underlyingPrice, strat.strike, T, riskFreeRate, volatility, isCall);
-    return (value - debit) * multiplier;
+    // Single option value cannot be negative
+    const clampedValue = Math.max(0, value);
+    // P&L cannot be worse than losing the premium paid
+    const pnl = (clampedValue - debit) * multiplier;
+    const maxLoss = -debit * multiplier;
+    return Math.max(maxLoss, pnl);
   }
 
   if (strat.strategy === 'vertical') {
@@ -190,7 +224,19 @@ function calculateStrategyTheoreticalPnL(
     const shortStrike = isCall ? strat.strike + strat.width : strat.strike - strat.width;
     const longValue = blackScholes(underlyingPrice, longStrike, T, riskFreeRate, volatility, isCall);
     const shortValue = blackScholes(underlyingPrice, shortStrike, T, riskFreeRate, volatility, isCall);
-    return (longValue - shortValue - debit) * multiplier;
+
+    // Vertical spread value (debit spread)
+    const spreadValue = longValue - shortValue;
+
+    // Clamp to valid range [0, width]
+    const clampedValue = Math.max(0, Math.min(strat.width, spreadValue));
+
+    // P&L with bounds
+    const pnl = (clampedValue - debit) * multiplier;
+    const maxLoss = -debit * multiplier;
+    const maxProfit = (strat.width - debit) * multiplier;
+
+    return Math.max(maxLoss, Math.min(maxProfit, pnl));
   }
 
   if (strat.strategy === 'butterfly') {
@@ -200,7 +246,20 @@ function calculateStrategyTheoreticalPnL(
     const lowerValue = blackScholes(underlyingPrice, lowerStrike, T, riskFreeRate, volatility, isCall);
     const middleValue = blackScholes(underlyingPrice, middleStrike, T, riskFreeRate, volatility, isCall);
     const upperValue = blackScholes(underlyingPrice, upperStrike, T, riskFreeRate, volatility, isCall);
-    return (lowerValue - 2 * middleValue + upperValue - debit) * multiplier;
+
+    // Butterfly value = long lower + short 2x middle + long upper
+    const butterflyValue = lowerValue - 2 * middleValue + upperValue;
+
+    // Clamp butterfly value to valid range [0, width]
+    // A butterfly can never be worth less than 0 or more than its width
+    const clampedValue = Math.max(0, Math.min(strat.width, butterflyValue));
+
+    // P&L with bounds: cannot lose more than debit, cannot gain more than (width - debit)
+    const pnl = (clampedValue - debit) * multiplier;
+    const maxLoss = -debit * multiplier;
+    const maxProfit = (strat.width - debit) * multiplier;
+
+    return Math.max(maxLoss, Math.min(maxProfit, pnl));
   }
 
   return 0;
@@ -502,7 +561,8 @@ function App() {
       theoreticalBreakevens: [],
       fullMinPrice: 0,
       fullMaxPrice: 0,
-      theoreticalPnLAtSpot: 0
+      theoreticalPnLAtSpot: 0,
+      marketPnL: null
     };
 
     // Use VIX as volatility (convert from percentage to decimal)
@@ -614,8 +674,43 @@ function App() {
       }
     }
 
-    return { points, theoreticalPoints, minPnL, maxPnL, minPrice, maxPrice, breakevens, theoreticalBreakevens, fullMinPrice, fullMaxPrice, theoreticalPnLAtSpot };
-  }, [riskGraphStrategies, spot, panOffset]);
+    // Calculate market-based P&L using live heatmap tile prices
+    // This is more accurate for 0-DTE where theoretical = intrinsic
+    let marketPnL: number | null = null;
+    if (heatmap?.tiles && visibleStrategies.length > 0) {
+      let totalMarketPnL = 0;
+      let allFound = true;
+
+      for (const strat of visibleStrategies) {
+        // Build tile key: strategy:dte:width:strike
+        const tileKey = `${strat.strategy}:${strat.dte}:${strat.width}:${Math.round(strat.strike)}`;
+        const tile = heatmap.tiles[tileKey];
+
+        if (tile) {
+          // Get current debit from tile
+          const sideData = strat.side === 'call' ? tile.call : tile.put;
+          const currentDebit = sideData?.debit;
+          const entryDebit = strat.debit;
+
+          if (currentDebit != null && entryDebit != null) {
+            // P&L = (current value - entry cost) * multiplier
+            // For long positions: current > entry = profit
+            totalMarketPnL += (currentDebit - entryDebit) * 100;
+          } else {
+            allFound = false;
+          }
+        } else {
+          allFound = false;
+        }
+      }
+
+      if (allFound) {
+        marketPnL = totalMarketPnL;
+      }
+    }
+
+    return { points, theoreticalPoints, minPnL, maxPnL, minPrice, maxPrice, breakevens, theoreticalBreakevens, fullMinPrice, fullMaxPrice, theoreticalPnLAtSpot, marketPnL };
+  }, [riskGraphStrategies, spot, panOffset, heatmap]);
 
   // SSE connection
   useEffect(() => {
@@ -1933,9 +2028,15 @@ function App() {
                     <div className="risk-graph-stats">
                       <div className="stat highlight">
                         <span className="stat-label">Real-Time P&L</span>
-                        <span className={`stat-value ${riskGraphData.theoreticalPnLAtSpot >= 0 ? 'profit' : 'loss'}`}>
-                          ${(riskGraphData.theoreticalPnLAtSpot / 100).toFixed(2)}
-                        </span>
+                        {(() => {
+                          // Prefer market P&L (from live heatmap) over theoretical (Black-Scholes)
+                          const pnl = riskGraphData.marketPnL ?? riskGraphData.theoreticalPnLAtSpot;
+                          return (
+                            <span className={`stat-value ${pnl >= 0 ? 'profit' : 'loss'}`}>
+                              ${(pnl / 100).toFixed(2)}
+                            </span>
+                          );
+                        })()}
                       </div>
                       <div className="stat-divider" />
                       <div className="stat">
