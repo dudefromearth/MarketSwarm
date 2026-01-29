@@ -4,3 +4,6 @@ redis-data/
 /truth_secrets.json
 .env.admin
 .env
+
+# Journal service data
+services/journal/data/

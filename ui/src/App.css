@@ -2392,3 +2392,645 @@ body {
 .vix-regime-widget .vix-regime-card {
   height: 100%;
 }
+
+/* =============================================================================
+   Trade Log Panel
+   ============================================================================= */
+
+.trade-log-panel-wrapper {
+  width: 400px;
+  min-width: 400px;
+  flex-shrink: 0;
+}
+
+.trade-log-panel-wrapper .panel-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: calc(100vh - 300px);
+  overflow: hidden;
+}
+
+/* Trade Log Panel */
+.trade-log-panel {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.trade-log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #333;
+}
+
+.trade-log-header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #888;
+}
+
+.btn-add-trade {
+  background: #22c55e;
+  border: none;
+  color: #000;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.btn-add-trade:hover {
+  background: #16a34a;
+}
+
+.trade-log-filters {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #222;
+  align-items: center;
+}
+
+.trade-log-filters select {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #ccc;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.trade-log-stats {
+  margin-left: auto;
+}
+
+.stat-badge {
+  background: #1a1a1a;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  color: #888;
+}
+
+.stat-badge.open {
+  color: #fbbf24;
+}
+
+.trade-log-table-container {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 100px;
+}
+
+.trade-log-loading,
+.trade-log-error,
+.trade-log-empty {
+  padding: 24px;
+  text-align: center;
+  color: #666;
+}
+
+.trade-log-error {
+  color: #f87171;
+}
+
+.trade-log-empty .hint {
+  font-size: 10px;
+  color: #555;
+  margin-top: 8px;
+}
+
+.trade-log-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.trade-log-table thead {
+  position: sticky;
+  top: 0;
+  background: #111;
+  z-index: 1;
+}
+
+.trade-log-table th {
+  text-align: left;
+  padding: 6px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #666;
+  border-bottom: 1px solid #333;
+}
+
+.trade-log-table td {
+  padding: 6px 8px;
+  font-size: 11px;
+  border-bottom: 1px solid #222;
+}
+
+.trade-row {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.trade-row:hover {
+  background: #1a1a1a;
+}
+
+.trade-row.open {
+  background: rgba(251, 191, 36, 0.05);
+}
+
+.trade-time {
+  color: #888;
+}
+
+.trade-symbol {
+  font-weight: 600;
+}
+
+.trade-strategy {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.strategy-badge {
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.strategy-badge.butterfly {
+  background: #4c1d95;
+  color: #c4b5fd;
+}
+
+.strategy-badge.vertical {
+  background: #164e63;
+  color: #67e8f9;
+}
+
+.strategy-badge.single {
+  background: #365314;
+  color: #bef264;
+}
+
+.side-badge {
+  padding: 1px 4px;
+  border-radius: 2px;
+  font-size: 9px;
+  font-weight: 600;
+}
+
+.side-badge.call {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+
+.side-badge.put {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+}
+
+.trade-width {
+  color: #666;
+  font-size: 10px;
+}
+
+.trade-pnl {
+  font-weight: 600;
+}
+
+.trade-pnl.open {
+  color: #fbbf24;
+}
+
+.trade-pnl.profit {
+  color: #4ade80;
+}
+
+.trade-pnl.loss {
+  color: #f87171;
+}
+
+/* =============================================================================
+   Trade Entry Modal
+   ============================================================================= */
+
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.trade-entry-modal {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 8px;
+  width: 420px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid #333;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.modal-close:hover {
+  color: #fff;
+}
+
+.modal-body {
+  padding: 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-error {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid #f87171;
+  color: #f87171;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  font-size: 11px;
+}
+
+.form-row {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.form-group {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-group label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #e5e5e5;
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.form-group input:disabled,
+.form-group select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.radio-group {
+  display: flex;
+  gap: 4px;
+}
+
+.radio-option {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 8px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  color: #888;
+  transition: all 0.15s;
+}
+
+.radio-option:hover {
+  border-color: #555;
+}
+
+.radio-option.active {
+  background: #333;
+  border-color: #555;
+  color: #fff;
+}
+
+.radio-option.active.call {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: #22c55e;
+  color: #4ade80;
+}
+
+.radio-option.active.put {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #f87171;
+}
+
+.radio-option input {
+  display: none;
+}
+
+.close-trade-section {
+  background: rgba(251, 191, 36, 0.1);
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 12px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.close-preview {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.close-preview .profit {
+  color: #4ade80;
+}
+
+.close-preview .loss {
+  color: #f87171;
+}
+
+.tags-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-btn {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #888;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.tag-btn:hover {
+  border-color: #555;
+}
+
+.tag-btn.active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: #fff;
+}
+
+.tag-btn.custom {
+  background: #6366f1;
+  border-color: #6366f1;
+}
+
+.tag-input-group {
+  display: flex;
+}
+
+.tag-input {
+  width: 40px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #e5e5e5;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  text-align: center;
+}
+
+.modal-footer {
+  display: flex;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid #333;
+}
+
+.footer-spacer {
+  flex: 1;
+}
+
+.btn {
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.15s;
+}
+
+.btn-primary {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.btn-primary:hover {
+  background: #2563eb;
+}
+
+.btn-secondary {
+  background: #333;
+  color: #ccc;
+}
+
+.btn-secondary:hover {
+  background: #444;
+}
+
+.btn-success {
+  background: #22c55e;
+  color: #000;
+}
+
+.btn-success:hover {
+  background: #16a34a;
+}
+
+.btn-danger {
+  background: #ef4444;
+  color: #fff;
+}
+
+.btn-danger:hover {
+  background: #dc2626;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* =============================================================================
+   Equity Chart Widget
+   ============================================================================= */
+
+.equity-chart-widget {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 6px;
+}
+
+.equity-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 1px solid #333;
+}
+
+.equity-header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: #888;
+}
+
+.time-range-buttons {
+  display: flex;
+  gap: 4px;
+}
+
+.range-btn {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #888;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.range-btn:hover {
+  border-color: #555;
+}
+
+.range-btn.active {
+  background: #333;
+  border-color: #555;
+  color: #fff;
+}
+
+.equity-chart {
+  padding: 8px;
+}
+
+.equity-stats {
+  padding: 8px 12px;
+  border-top: 1px solid #333;
+}
+
+.equity-stats.loading,
+.equity-stats.empty {
+  text-align: center;
+  color: #666;
+  font-size: 11px;
+}
+
+.stat-row {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.stat-row.primary {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #222;
+}
+
+.stat-row.secondary {
+  font-size: 10px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-item.large .stat-value {
+  font-size: 16px;
+}
+
+.stat-label {
+  font-size: 9px;
+  color: #666;
+  text-transform: uppercase;
+}
+
+.stat-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.stat-value.profit {
+  color: #4ade80;
+}
+
+.stat-value.loss {
+  color: #f87171;
+}

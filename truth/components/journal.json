@@ -1,0 +1,31 @@
+{
+  "id": "journal",
+  "meta": {
+    "name": "Trade Journal",
+    "description": "Trade logging, journaling, and performance analytics. Standalone REST API with SQLite storage."
+  },
+  "access_points": {
+    "subscribe_to": [
+      { "bus": "market-redis", "key": "massive:spot" }
+    ],
+    "publish_to": [
+      { "bus": "system-redis", "key": "journal:heartbeat" }
+    ]
+  },
+  "heartbeat": {
+    "interval_sec": 5,
+    "ttl_sec": 15
+  },
+  "models": {
+    "produces": [],
+    "consumes": [
+      { "bus": "market-redis", "key": "massive:heatmap:model:{symbol}:latest" }
+    ]
+  },
+  "dependencies": [
+    "massive"
+  ],
+  "env": {
+    "JOURNAL_PORT": "3002"
+  }
+}

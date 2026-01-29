@@ -6,6 +6,11 @@ import type { RawSnapshot } from './components/LightweightPriceChart';
 import BiasLfiQuadrantCard from './components/BiasLfiQuadrantCard';
 import MarketModeGaugeCard from './components/MarketModeGaugeCard';
 import VixRegimeCard from './components/VixRegimeCard';
+import TradeLogPanel from './components/TradeLogPanel';
+import type { Trade } from './components/TradeLogPanel';
+import TradeEntryModal from './components/TradeEntryModal';
+import type { TradeEntryData } from './components/TradeEntryModal';
+import EquityChartWidget from './components/EquityChartWidget';
 
 const SSE_BASE = 'http://localhost:3001';
 
@@ -446,6 +451,13 @@ function App() {
   // Dealer Gravity snapshot data for LightweightPriceChart
   const [dgSnapshot, setDgSnapshot] = useState<RawSnapshot | null>(null);
 
+  // Trade Log state
+  const [tradeLogCollapsed, setTradeLogCollapsed] = useState(false);
+  const [tradeEntryOpen, setTradeEntryOpen] = useState(false);
+  const [tradeEntryPrefill, setTradeEntryPrefill] = useState<TradeEntryData | null>(null);
+  const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
+  const [tradeRefreshTrigger, setTradeRefreshTrigger] = useState(0);
+
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
   const heatmapScrollRef = useRef<HTMLDivElement>(null);
@@ -559,6 +571,29 @@ function App() {
       s.id === id ? { ...s, debit: newDebit } : s
     ));
   };
+
+  // Trade Log handlers
+  const openTradeEntry = useCallback((prefill?: TradeEntryData) => {
+    setTradeEntryPrefill(prefill || null);
+    setEditingTrade(null);
+    setTradeEntryOpen(true);
+  }, []);
+
+  const openTradeEdit = useCallback((trade: Trade) => {
+    setEditingTrade(trade);
+    setTradeEntryPrefill(null);
+    setTradeEntryOpen(true);
+  }, []);
+
+  const closeTradeEntry = useCallback(() => {
+    setTradeEntryOpen(false);
+    setTradeEntryPrefill(null);
+    setEditingTrade(null);
+  }, []);
+
+  const onTradeSaved = useCallback(() => {
+    setTradeRefreshTrigger(prev => prev + 1);
+  }, []);
 
   // Handle mouse down on risk graph chart (start drag)
   const handleChartMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
@@ -2139,6 +2174,24 @@ function App() {
             </div>
           )}
         </div>
+
+        {/* Trade Log Panel */}
+        <div className={`panel trade-log-panel-wrapper ${tradeLogCollapsed ? 'collapsed' : ''}`}>
+          <div className="panel-header" onClick={() => setTradeLogCollapsed(!tradeLogCollapsed)}>
+            <span className="panel-toggle">{tradeLogCollapsed ? '▶' : '▼'}</span>
+            <h3>Trade Log</h3>
+          </div>
+          {!tradeLogCollapsed && (
+            <div className="panel-content">
+              <EquityChartWidget refreshTrigger={tradeRefreshTrigger} />
+              <TradeLogPanel
+                onOpenTradeEntry={openTradeEntry}
+                onEditTrade={openTradeEdit}
+                refreshTrigger={tradeRefreshTrigger}
+              />
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="footer">
@@ -2233,10 +2286,40 @@ function App() {
               <button className="btn btn-secondary" onClick={addToRiskGraph}>
                 Add to Risk Graph
               </button>
+              <button
+                className="btn btn-success"
+                onClick={() => {
+                  openTradeEntry({
+                    symbol: 'SPX',
+                    underlying,
+                    strategy: selectedTile.strategy as 'single' | 'vertical' | 'butterfly',
+                    side: selectedTile.side as 'call' | 'put',
+                    strike: selectedTile.strike,
+                    width: selectedTile.width,
+                    dte: selectedTile.dte,
+                    entry_price: selectedTile.debit || undefined,
+                    entry_spot: currentSpot || undefined,
+                    source: 'heatmap'
+                  });
+                  closePopup();
+                }}
+              >
+                Log Trade
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Trade Entry Modal */}
+      <TradeEntryModal
+        isOpen={tradeEntryOpen}
+        onClose={closeTradeEntry}
+        onSaved={onTradeSaved}
+        prefillData={tradeEntryPrefill}
+        editTrade={editingTrade}
+        currentSpot={currentSpot}
+      />
     </div>
   );
 }
