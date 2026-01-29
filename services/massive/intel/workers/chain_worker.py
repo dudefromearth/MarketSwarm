@@ -18,8 +18,9 @@ from massive import RESTClient
 # Helpers
 # ============================================================
 
-def _round_to_nearest_5(x: float) -> int:
-    return int(round(x / 5.0)) * 5
+def _round_to_nearest(x: float, increment: int) -> int:
+    """Round to nearest increment."""
+    return int(round(x / increment)) * increment
 
 
 def _extract_strike_from_ticker(ticker: str) -> float | None:
@@ -75,8 +76,8 @@ class ChainWorker:
             },
             "I:NDX": {
                 "em_mult": float(config.get("MASSIVE_NDX_EM_MULT", "3.25")),
-                "strike_increment": int(config.get("MASSIVE_NDX_STRIKE_INCREMENT", "25")),
-                "filter_strikes": config.get("MASSIVE_NDX_FILTER_STRIKES", "true").lower() == "true",
+                "strike_increment": int(config.get("MASSIVE_NDX_STRIKE_INCREMENT", "10")),
+                "filter_strikes": config.get("MASSIVE_NDX_FILTER_STRIKES", "false").lower() == "true",
             },
         }
 
@@ -155,7 +156,7 @@ class ChainWorker:
             "expiration_date": exp,
             "strike_price.gte": atm - rng,
             "strike_price.lte": atm + rng,
-            "limit": 250,
+            "limit": 1000,
         }
 
         sym_cfg = self.symbol_config.get(underlying, {})
@@ -249,7 +250,9 @@ class ChainWorker:
                     self.logger.warning(f"[CHAIN SKIP] no spot for {underlying}")
                     continue
 
-                atm = _round_to_nearest_5(spot)
+                sym_cfg = self.symbol_config.get(underlying, {})
+                strike_inc = sym_cfg.get("strike_increment", 5)
+                atm = _round_to_nearest(spot, strike_inc)
                 rng = self._compute_range(spot, vix, underlying)
                 expirations = await self._list_expirations(underlying.replace("I:", ""))
 

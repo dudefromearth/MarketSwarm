@@ -6,7 +6,7 @@ const SSE_BASE = 'http://localhost:3001';
 
 type Strategy = 'single' | 'vertical' | 'butterfly';
 type GexMode = 'combined' | 'net';
-type Side = 'call' | 'put';
+type Side = 'call' | 'put' | 'both';
 
 interface SpotData {
   [symbol: string]: { value: number; ts: string; symbol: string };
@@ -61,10 +61,10 @@ interface VexyData {
   event: VexyMessage | null;
 }
 
-// Strategy details for popup/risk graph
+// Strategy details for popup/risk graph (side is always 'call' or 'put', never 'both')
 interface SelectedStrategy {
   strategy: Strategy;
-  side: Side;
+  side: 'call' | 'put';
   strike: number;
   width: number;
   dte: number;
@@ -128,15 +128,15 @@ const WIDTHS: Record<string, Record<Strategy, number[]>> = {
   },
   'I:NDX': {
     single: [0],
-    vertical: [50, 100, 150, 200, 250, 300],
-    butterfly: [50, 100, 150, 200, 250, 300],
+    vertical: [50, 100, 150, 200],
+    butterfly: [50, 100, 150, 200],
   },
 };
 
 // Strike increment per underlying
 const STRIKE_INCREMENT: Record<string, number> = {
   'I:SPX': 5,
-  'I:NDX': 25,
+  'I:NDX': 50,
 };
 
 // Standard normal CDF approximation
@@ -352,7 +352,7 @@ function App() {
   // Controls
   const [underlying, setUnderlying] = useState<'I:SPX' | 'I:NDX'>('I:SPX');
   const [strategy, setStrategy] = useState<Strategy>('butterfly');
-  const [side, setSide] = useState<Side>('call');
+  const [side, setSide] = useState<Side>('both');
   const [dte, setDte] = useState(0);
   const [gexMode, setGexMode] = useState<GexMode>('net');
   const [threshold, setThreshold] = useState(50); // % change threshold for blue/red transition
@@ -379,6 +379,11 @@ function App() {
   const [scrollLocked, setScrollLocked] = useState(true);
   const [hasScrolledToAtm, setHasScrolledToAtm] = useState(false);
   const [vpControlsExpanded, setVpControlsExpanded] = useState(false);
+  const [strategyExpanded, setStrategyExpanded] = useState(false);
+  const [sideExpanded, setSideExpanded] = useState(false);
+  const [dteExpanded, setDteExpanded] = useState(false);
+  const [gexExpanded, setGexExpanded] = useState(false);
+  const [scrollExpanded, setScrollExpanded] = useState(false);
 
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
@@ -424,10 +429,19 @@ function App() {
   };
 
   // Handle tile click
-  const handleTileClick = (strike: number, width: number, debit: number | null) => {
+  const handleTileClick = (strike: number, width: number, debit: number | null, effectiveSide?: 'call' | 'put') => {
+    // For 'both' mode, determine side based on strike vs spot
+    let tileSide: 'call' | 'put';
+    if (effectiveSide) {
+      tileSide = effectiveSide;
+    } else if (side === 'both') {
+      tileSide = strike > (currentSpot || 0) ? 'call' : 'put';
+    } else {
+      tileSide = side;
+    }
     setSelectedTile({
       strategy,
-      side,
+      side: tileSide,
       strike,
       width,
       dte,
@@ -966,6 +980,8 @@ function App() {
     }
 
     // Get heatmap data for selected strategy/DTE - ALL widths
+    const spotPrice = spot?.[underlying]?.value || 0;
+
     if (heatmap?.tiles) {
       Object.entries(heatmap.tiles).forEach(([key, tile]) => {
         // Key format: "strategy:dte:width:strike"
@@ -984,13 +1000,18 @@ function App() {
           heatmapGrid[strike] = {};
         }
 
+        // Determine effective side: for 'both', use calls above spot, puts at/below
+        const effectiveSide = side === 'both'
+          ? (strike > spotPrice ? 'call' : 'put')
+          : side;
+
         // Get value based on strategy and side
         if (strategy === 'single') {
           // For single, use mid price
-          heatmapGrid[strike][0] = tile[side]?.mid ?? null;
+          heatmapGrid[strike][0] = tile[effectiveSide]?.mid ?? null;
         } else {
           // For vertical/butterfly, use debit
-          heatmapGrid[strike][width] = tile[side]?.debit ?? null;
+          heatmapGrid[strike][width] = tile[effectiveSide]?.debit ?? null;
         }
       });
     }
@@ -1039,7 +1060,7 @@ function App() {
     }
 
     return { strikes, gexByStrike, heatmapGrid, changeGrid, maxGex, maxNetGex };
-  }, [gexCalls, gexPuts, heatmap, strategy, side, dte, underlying]);
+  }, [gexCalls, gexPuts, heatmap, strategy, side, dte, underlying, spot]);
 
   // Process volume profile with smoothing - keep full $0.10 resolution
   // vpByPrice: key is price * 10 (e.g., 60001 = $6000.10)
@@ -1564,23 +1585,30 @@ function App() {
 
       {/* Controls Row - GEX/Heatmap settings */}
       <div className="controls">
-        {/* GEX Panel controls first */}
-        <div className="control-group">
-          <label>GEX</label>
-          <div className="button-group">
-            <button
-              className={gexMode === 'net' ? 'active' : ''}
-              onClick={() => setGexMode('net')}
-            >
-              Net
-            </button>
-            <button
-              className={gexMode === 'combined' ? 'active' : ''}
-              onClick={() => setGexMode('combined')}
-            >
-              C/P
-            </button>
-          </div>
+        {/* GEX - collapsible */}
+        <div className={`control-group collapsible-control ${gexExpanded ? 'expanded' : ''}`}>
+          <button
+            className={`control-toggle ${gexExpanded ? 'active' : ''}`}
+            onClick={() => setGexExpanded(!gexExpanded)}
+          >
+            GEX
+          </button>
+          {gexExpanded && (
+            <div className="button-group">
+              <button
+                className={gexMode === 'net' ? 'active' : ''}
+                onClick={() => setGexMode('net')}
+              >
+                Net
+              </button>
+              <button
+                className={gexMode === 'combined' ? 'active' : ''}
+                onClick={() => setGexMode('combined')}
+              >
+                C/P
+              </button>
+            </div>
+          )}
         </div>
 
         <div className={`control-group vp-controls ${vpControlsExpanded ? 'expanded' : ''}`}>
@@ -1620,55 +1648,108 @@ function App() {
           )}
         </div>
 
-        {/* Heatmap controls */}
-        <div className="control-group">
-          <label>Strategy</label>
-          <div className="button-group">
-            {(['single', 'vertical', 'butterfly'] as Strategy[]).map(s => (
+        {/* Strategy - collapsible */}
+        <div className={`control-group collapsible-control ${strategyExpanded ? 'expanded' : ''}`}>
+          <button
+            className={`control-toggle ${strategyExpanded ? 'active' : ''}`}
+            onClick={() => setStrategyExpanded(!strategyExpanded)}
+          >
+            Strategy
+          </button>
+          {strategyExpanded && (
+            <div className="button-group">
+              {(['single', 'vertical', 'butterfly'] as Strategy[]).map(s => (
+                <button
+                  key={s}
+                  className={strategy === s ? 'active' : ''}
+                  onClick={() => setStrategy(s)}
+                >
+                  {s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Side - collapsible */}
+        <div className={`control-group collapsible-control ${sideExpanded ? 'expanded' : ''}`}>
+          <button
+            className={`control-toggle ${sideExpanded ? 'active' : ''}`}
+            onClick={() => setSideExpanded(!sideExpanded)}
+          >
+            Side
+          </button>
+          {sideExpanded && (
+            <div className="button-group">
               <button
-                key={s}
-                className={strategy === s ? 'active' : ''}
-                onClick={() => setStrategy(s)}
+                className={side === 'call' ? 'active' : ''}
+                onClick={() => setSide('call')}
               >
-                {s.charAt(0).toUpperCase() + s.slice(1)}
+                Call
               </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="control-group">
-          <label>Side</label>
-          <div className="button-group">
-            <button
-              className={side === 'call' ? 'active' : ''}
-              onClick={() => setSide('call')}
-            >
-              Call
-            </button>
-            <button
-              className={side === 'put' ? 'active' : ''}
-              onClick={() => setSide('put')}
-            >
-              Put
-            </button>
-          </div>
-        </div>
-
-        <div className="control-group">
-          <label>DTE</label>
-          <div className="button-group">
-            {availableDtes.map(d => (
               <button
-                key={d}
-                className={dte === d ? 'active' : ''}
-                onClick={() => setDte(d)}
+                className={side === 'put' ? 'active' : ''}
+                onClick={() => setSide('put')}
               >
-                {d}
+                Put
               </button>
-            ))}
-          </div>
+              <button
+                className={side === 'both' ? 'active' : ''}
+                onClick={() => setSide('both')}
+              >
+                Both
+              </button>
+            </div>
+          )}
         </div>
 
+        {/* DTE - collapsible */}
+        <div className={`control-group collapsible-control ${dteExpanded ? 'expanded' : ''}`}>
+          <button
+            className={`control-toggle ${dteExpanded ? 'active' : ''}`}
+            onClick={() => setDteExpanded(!dteExpanded)}
+          >
+            DTE
+          </button>
+          {dteExpanded && (
+            <div className="button-group">
+              {availableDtes.map(d => (
+                <button
+                  key={d}
+                  className={dte === d ? 'active' : ''}
+                  onClick={() => setDte(d)}
+                >
+                  {d}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Scroll - collapsible */}
+        <div className={`control-group collapsible-control ${scrollExpanded ? 'expanded' : ''}`}>
+          <button
+            className={`control-toggle ${scrollExpanded ? 'active' : ''}`}
+            onClick={() => setScrollExpanded(!scrollExpanded)}
+          >
+            Scroll
+          </button>
+          {scrollExpanded && (
+            <div className="button-group">
+              <button
+                className={scrollLocked ? 'active' : ''}
+                onClick={() => setScrollLocked(!scrollLocked)}
+              >
+                {scrollLocked ? 'Locked' : 'Unlocked'}
+              </button>
+              <button onClick={scrollToAtm}>
+                Center ATM
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Gradient - at the end */}
         <div className="control-group">
           <label>Gradient {threshold}%</label>
           <input
@@ -1679,22 +1760,6 @@ function App() {
             onChange={(e) => setThreshold(parseInt(e.target.value))}
             className="threshold-slider"
           />
-        </div>
-
-        {/* Scroll controls */}
-        <div className="control-group">
-          <label>Scroll</label>
-          <div className="button-group">
-            <button
-              className={scrollLocked ? 'active' : ''}
-              onClick={() => setScrollLocked(!scrollLocked)}
-            >
-              {scrollLocked ? 'Locked' : 'Unlocked'}
-            </button>
-            <button onClick={scrollToAtm}>
-              Center ATM
-            </button>
-          </div>
         </div>
       </div>
 
