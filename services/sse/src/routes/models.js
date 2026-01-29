@@ -36,6 +36,91 @@ router.get("/spot", async (req, res) => {
   }
 });
 
+// GET /api/models/candles/:symbol - OHLC candles for Dealer Gravity chart
+router.get("/candles/:symbol", async (req, res) => {
+  const symbol = req.params.symbol.toUpperCase();
+  try {
+    const redis = getMarketRedis();
+    const trailKey = `massive:model:spot:${symbol}:trail`;
+
+    // Get last 24 hours of trail data
+    const now = Math.floor(Date.now() / 1000);
+    const dayAgo = now - 86400;
+
+    const trailRaw = await redis.zrangebyscore(trailKey, dayAgo, now, 'WITHSCORES');
+
+    if (!trailRaw || trailRaw.length === 0) {
+      return res.status(404).json({ success: false, error: `No trail data found for ${symbol}` });
+    }
+
+    // Parse trail data
+    const trailData = [];
+    for (let i = 0; i < trailRaw.length; i += 2) {
+      const member = trailRaw[i];
+      const score = parseFloat(trailRaw[i + 1]);
+      try {
+        const data = JSON.parse(member);
+        trailData.push({
+          value: data.value,
+          ts: data.ts || new Date(score * 1000).toISOString(),
+        });
+      } catch {
+        // Skip malformed entries
+      }
+    }
+
+    if (trailData.length === 0) {
+      return res.status(404).json({ success: false, error: `No valid trail data for ${symbol}` });
+    }
+
+    // Aggregate into candles
+    const BUCKET_SIZES = { '5m': 5 * 60, '15m': 15 * 60, '1h': 60 * 60 };
+
+    function aggregateCandles(data, bucketSec) {
+      const buckets = new Map();
+      for (const point of data) {
+        const ts = Math.floor(new Date(point.ts).getTime() / 1000);
+        const value = point.value;
+        if (typeof value !== 'number' || isNaN(value)) continue;
+
+        const bucketStart = Math.floor(ts / bucketSec) * bucketSec;
+
+        if (!buckets.has(bucketStart)) {
+          buckets.set(bucketStart, { t: bucketStart, o: value, h: value, l: value, c: value });
+        } else {
+          const bucket = buckets.get(bucketStart);
+          bucket.h = Math.max(bucket.h, value);
+          bucket.l = Math.min(bucket.l, value);
+          bucket.c = value;
+        }
+      }
+      return Array.from(buckets.values()).sort((a, b) => a.t - b.t);
+    }
+
+    const candles_5m = aggregateCandles(trailData, BUCKET_SIZES['5m']);
+    const candles_15m = aggregateCandles(trailData, BUCKET_SIZES['15m']);
+    const candles_1h = aggregateCandles(trailData, BUCKET_SIZES['1h']);
+
+    const lastPoint = trailData[trailData.length - 1];
+
+    res.json({
+      success: true,
+      data: {
+        symbol,
+        spot: lastPoint.value,
+        ts: lastPoint.ts,
+        candles_5m,
+        candles_15m,
+        candles_1h,
+      },
+      ts: Date.now(),
+    });
+  } catch (err) {
+    console.error(`[models] /candles/${symbol} error:`, err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // GET /api/models/gex/:symbol - Current GEX model
 router.get("/gex/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();

@@ -1,6 +1,11 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import './App.css';
 import { Tooltip } from './Tooltip';
+import LightweightPriceChart from './components/LightweightPriceChart';
+import type { RawSnapshot } from './components/LightweightPriceChart';
+import BiasLfiQuadrantCard from './components/BiasLfiQuadrantCard';
+import MarketModeGaugeCard from './components/MarketModeGaugeCard';
+import VixRegimeCard from './components/VixRegimeCard';
 
 const SSE_BASE = 'http://localhost:3001';
 
@@ -59,6 +64,20 @@ interface VexyMessage {
 interface VexyData {
   epoch: VexyMessage | null;
   event: VexyMessage | null;
+}
+
+// Bias/LFI model data
+interface BiasLfiData {
+  directional_strength: number;
+  lfi_score: number;
+  ts?: string;
+}
+
+// Market Mode model data
+interface MarketModeData {
+  score: number;
+  mode: 'compression' | 'transition' | 'expansion';
+  ts?: string;
 }
 
 // Strategy details for popup/risk graph (side is always 'call' or 'put', never 'both')
@@ -345,12 +364,51 @@ function App() {
   const [gexCalls, setGexCalls] = useState<GexData | null>(null);
   const [gexPuts, setGexPuts] = useState<GexData | null>(null);
   const [vexy, setVexy] = useState<VexyData | null>(null);
+  const [biasLfi, setBiasLfi] = useState<BiasLfiData | null>(null);
+  const [marketMode, setMarketMode] = useState<MarketModeData | null>(null);
   const [connected, setConnected] = useState(false);
   const [updateCount, setUpdateCount] = useState(0);
   const [lastUpdateTime, setLastUpdateTime] = useState<number | null>(null);
 
   // Controls
   const [underlying, setUnderlying] = useState<'I:SPX' | 'I:NDX'>('I:SPX');
+
+  // Sync underlying to window for SSE handlers and fetch initial candles
+  useEffect(() => {
+    (window as any).__currentUnderlying = underlying;
+
+    // Fetch initial candle data for Dealer Gravity chart
+    const fetchCandles = async () => {
+      try {
+        console.log('[App] Fetching candles for', underlying);
+        const response = await fetch(`${SSE_BASE}/api/models/candles/${underlying}`);
+        console.log('[App] Candles response status:', response.status);
+        if (response.ok) {
+          const result = await response.json();
+          console.log('[App] Candles result:', result.success, 'candles_5m:', result.data?.candles_5m?.length);
+          if (result.success && result.data) {
+            const snapshot = {
+              spot: result.data.spot,
+              ts: result.data.ts,
+              _index: {
+                spot: result.data.spot,
+                ts: result.data.ts,
+                candles_5m: result.data.candles_5m,
+                candles_15m: result.data.candles_15m,
+                candles_1h: result.data.candles_1h,
+              }
+            };
+            console.log('[App] Setting dgSnapshot with', snapshot._index?.candles_5m?.length, '5m candles');
+            setDgSnapshot(snapshot);
+          }
+        }
+      } catch (err) {
+        console.error('[App] Failed to fetch initial candles:', err);
+      }
+    };
+
+    fetchCandles();
+  }, [underlying]);
   const [strategy, setStrategy] = useState<Strategy>('butterfly');
   const [side, setSide] = useState<Side>('both');
   const [dte, setDte] = useState(0);
@@ -384,6 +442,9 @@ function App() {
   const [dteExpanded, setDteExpanded] = useState(false);
   const [gexExpanded, setGexExpanded] = useState(false);
   const [scrollExpanded, setScrollExpanded] = useState(false);
+
+  // Dealer Gravity snapshot data for LightweightPriceChart
+  const [dgSnapshot, setDgSnapshot] = useState<RawSnapshot | null>(null);
 
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
@@ -759,9 +820,49 @@ function App() {
 
     es.addEventListener('spot', (e: MessageEvent) => {
       try {
-        setSpot(JSON.parse(e.data));
+        const spotData = JSON.parse(e.data);
+        setSpot(spotData);
         setUpdateCount(c => c + 1);
         setLastUpdateTime(Date.now());
+
+        // Update Dealer Gravity snapshot with current spot (for selected underlying)
+        // The component will build candles from live updates
+        const currentUnderlying = (window as any).__currentUnderlying || 'I:SPX';
+        const underlyingSpot = spotData[currentUnderlying] || spotData['I:SPX'];
+        if (underlyingSpot) {
+          setDgSnapshot(prev => ({
+            ...prev,
+            spot: underlyingSpot.value,
+            ts: underlyingSpot.ts,
+            _index: {
+              ...prev?._index,
+              spot: underlyingSpot.value,
+              ts: underlyingSpot.ts,
+            }
+          }));
+        }
+      } catch {}
+    });
+
+    // Candle data for Dealer Gravity chart
+    es.addEventListener('candles', (e: MessageEvent) => {
+      try {
+        const candleData = JSON.parse(e.data);
+        // candleData expected format: { symbol, candles_5m, candles_15m, candles_1h, spot, ts }
+        const currentUnderlying = (window as any).__currentUnderlying || 'I:SPX';
+        if (candleData.symbol === currentUnderlying || candleData.symbol === currentUnderlying.replace('I:', '')) {
+          setDgSnapshot({
+            spot: candleData.spot,
+            ts: candleData.ts,
+            _index: {
+              spot: candleData.spot,
+              ts: candleData.ts,
+              candles_5m: candleData.candles_5m,
+              candles_15m: candleData.candles_15m,
+              candles_1h: candleData.candles_1h,
+            }
+          });
+        }
       } catch {}
     });
 
@@ -806,6 +907,22 @@ function App() {
     es.addEventListener('vexy', (e: MessageEvent) => {
       try {
         setVexy(JSON.parse(e.data));
+        setUpdateCount(c => c + 1);
+        setLastUpdateTime(Date.now());
+      } catch {}
+    });
+
+    es.addEventListener('bias_lfi', (e: MessageEvent) => {
+      try {
+        setBiasLfi(JSON.parse(e.data));
+        setUpdateCount(c => c + 1);
+        setLastUpdateTime(Date.now());
+      } catch {}
+    });
+
+    es.addEventListener('market_mode', (e: MessageEvent) => {
+      try {
+        setMarketMode(JSON.parse(e.data));
         setUpdateCount(c => c + 1);
         setLastUpdateTime(Date.now());
       } catch {}
@@ -906,6 +1023,16 @@ function App() {
     fetch(`${SSE_BASE}/api/models/vexy/latest`)
       .then(r => r.json())
       .then(d => d.success && setVexy(d.data))
+      .catch(() => {});
+
+    fetch(`${SSE_BASE}/api/models/bias_lfi`)
+      .then(r => r.json())
+      .then(d => d.success && setBiasLfi(d.data))
+      .catch(() => {});
+
+    fetch(`${SSE_BASE}/api/models/market_mode`)
+      .then(r => r.json())
+      .then(d => d.success && setMarketMode(d.data))
       .catch(() => {});
 
     // Reset scroll state when underlying changes
@@ -1333,253 +1460,28 @@ function App() {
         </div>
         {/* Market Mode Score Widget */}
         <div className="widget market-mode-widget">
-          <div className="widget-header">
-            <Tooltip content="marketMode"><h4>Market Mode</h4></Tooltip>
-            <Tooltip content="marketModeBadge"><span className="mode-badge transition">Transition</span></Tooltip>
-          </div>
-          <div className="widget-content mm-content">
-            <svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" className="mm-svg">
-              <defs>
-                <linearGradient id="compressionGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#0ea5e9" />
-                  <stop offset="100%" stopColor="#06b6d4" />
-                </linearGradient>
-                <linearGradient id="transitionGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#eab308" />
-                  <stop offset="100%" stopColor="#f59e0b" />
-                </linearGradient>
-                <linearGradient id="expansionGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#f97316" />
-                  <stop offset="100%" stopColor="#ef4444" />
-                </linearGradient>
-              </defs>
-
-              {/* Background arc */}
-              <path d="M 10 75 A 40 40 0 0 1 90 75" fill="none" stroke="#1a1a1a" strokeWidth="12" />
-
-              {/* Compression segment (0-35%) */}
-              <path d="M 10 75 A 40 40 0 0 1 26.5 41" fill="none" stroke="url(#compressionGrad)" strokeWidth="10" strokeLinecap="round">
-                <title>Compression: 0-35 - Tight ranges, mean reversion favored</title>
-              </path>
-
-              {/* Transition segment (35-65%) */}
-              <path d="M 26.5 41 A 40 40 0 0 1 73.5 41" fill="none" stroke="url(#transitionGrad)" strokeWidth="10">
-                <title>Transition: 35-65 - Mixed conditions, be cautious</title>
-              </path>
-
-              {/* Expansion segment (65-100%) */}
-              <path d="M 73.5 41 A 40 40 0 0 1 90 75" fill="none" stroke="url(#expansionGrad)" strokeWidth="10" strokeLinecap="round">
-                <title>Expansion: 65-100 - Trending, breakouts favored</title>
-              </path>
-
-              {/* Needle - 59% = 59/100 * 180 = 106.2 degrees from left */}
-              <g transform="rotate(106.2, 50, 75)">
-                <line x1="50" y1="75" x2="50" y2="42" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" />
-                <circle cx="50" cy="75" r="5" fill="#1a1a1a" stroke="#333" strokeWidth="1" />
-                <circle cx="50" cy="75" r="2" fill="#f59e0b" />
-              </g>
-
-              {/* Score display */}
-              <text x="50" y="68" textAnchor="middle" fill="#fff" fontSize="18" fontWeight="700">59</text>
-              <text x="50" y="76" textAnchor="middle" fill="#555" fontSize="6">/100</text>
-
-              {/* Zone labels - minimal */}
-              <g><text x="8" y="85" fill="#0ea5e9" fontSize="5">C</text><title>Compression: Tight ranges, mean reversion</title></g>
-              <g><text x="50" y="32" textAnchor="middle" fill="#f59e0b" fontSize="5">T</text><title>Transition: Mixed conditions</title></g>
-              <g><text x="92" y="85" textAnchor="end" fill="#ef4444" fontSize="5">E</text><title>Expansion: Trending, breakouts</title></g>
-
-              {/* Scale markers */}
-              <text x="6" y="78" fill="#444" fontSize="4">0</text>
-              <text x="94" y="78" textAnchor="end" fill="#444" fontSize="4">100</text>
-            </svg>
-
-            {/* Legend bar at bottom */}
-            <div className="mm-legend">
-              <Tooltip content="marketModeCompression" position="bottom"><span className="mm-zone compression">Compression</span></Tooltip>
-              <Tooltip content="marketModeTransition" position="bottom"><span className="mm-zone transition">Transition</span></Tooltip>
-              <Tooltip content="marketModeExpansion" position="bottom"><span className="mm-zone expansion">Expansion</span></Tooltip>
-            </div>
-          </div>
+          <MarketModeGaugeCard score={marketMode?.score ?? 50} />
         </div>
 
         {/* Liquidity Intent Map Widget - Quadrant Chart */}
-        <div className="widget lim-widget">
-          <div className="widget-header">
-            <Tooltip content="liquidityIntent"><h4>Liquidity Intent</h4></Tooltip>
-            <div className="lim-header-values">
-              <Tooltip content="limBias"><span>Bias: <strong className="bias-value">+61</strong></span></Tooltip>
-              <Tooltip content="limLFI"><span>LFI: <strong className="lfi-value">31</strong></span></Tooltip>
-            </div>
-          </div>
-          <div className="widget-content lim-content">
-            <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="lim-svg">
-              {/* Quadrant backgrounds with hover titles */}
-              <g>
-                <rect x="0" y="0" width="50" height="50" fill="#0ea5e9" opacity="0.12" />
-                <title>Pin / Mean Reversion: Liquidity contains price, expect range-bound action</title>
-              </g>
-              <g>
-                <rect x="50" y="0" width="50" height="50" fill="#a855f7" opacity="0.12" />
-                <title>False Breakout Risk: Moves need confirmation, be cautious of traps</title>
-              </g>
-              <g>
-                <rect x="0" y="50" width="50" height="50" fill="#ef4444" opacity="0.12" />
-                <title>Downside Acceleration: Liquidity amplifies selling, risk of rapid drops</title>
-              </g>
-              <g>
-                <rect x="50" y="50" width="50" height="50" fill="#22c55e" opacity="0.12" />
-                <title>Air-Pocket Expansion: Price can travel quickly with little resistance</title>
-              </g>
+        <div className="widget lim-widget-container">
+          <BiasLfiQuadrantCard
+            directional_strength={biasLfi?.directional_strength ?? 0}
+            lfi_score={biasLfi?.lfi_score ?? 50}
+          />
+        </div>
 
-              {/* Grid lines */}
-              <line x1="50" y1="0" x2="50" y2="100" stroke="#333" strokeWidth="0.4" />
-              <line x1="0" y1="50" x2="100" y2="50" stroke="#333" strokeWidth="0.4" />
-
-              {/* Quadrant labels - clean and minimal */}
-              <text x="25" y="20" textAnchor="middle" fill="#0ea5e9" fontSize="4.5" fontWeight="600">Pin</text>
-              <text x="25" y="26" textAnchor="middle" fill="#555" fontSize="3">Mean Reversion</text>
-
-              <text x="75" y="20" textAnchor="middle" fill="#a855f7" fontSize="4.5" fontWeight="600">Trap</text>
-              <text x="75" y="26" textAnchor="middle" fill="#555" fontSize="3">False Breakout</text>
-
-              <text x="25" y="70" textAnchor="middle" fill="#ef4444" fontSize="4.5" fontWeight="600">Sell</text>
-              <text x="25" y="76" textAnchor="middle" fill="#555" fontSize="3">Acceleration</text>
-
-              <text x="75" y="70" textAnchor="middle" fill="#22c55e" fontSize="4.5" fontWeight="600">Run</text>
-              <text x="75" y="76" textAnchor="middle" fill="#555" fontSize="3">Air Pocket</text>
-
-              {/* Current position - Bias +61, LFI 31 */}
-              <circle cx="80.5" cy="65.5" r="10" fill="#22c55e" opacity="0.1" />
-              <circle cx="80.5" cy="65.5" r="6" fill="#22c55e" opacity="0.25" />
-              <circle cx="80.5" cy="65.5" r="3" fill="#22c55e" opacity="0.6" />
-              <circle cx="80.5" cy="65.5" r="1.5" fill="#fff" />
-
-              {/* Axis indicators - subtle */}
-              <text x="2" y="52" fill="#444" fontSize="2.5">−</text>
-              <text x="98" y="52" fill="#444" fontSize="2.5" textAnchor="end">+</text>
-              <text x="51" y="4" fill="#444" fontSize="2.5">+</text>
-              <text x="51" y="99" fill="#444" fontSize="2.5">−</text>
-            </svg>
-          </div>
+        {/* VIX Regime Widget */}
+        <div className="widget vix-regime-widget">
+          <VixRegimeCard
+            vix={spot?.['I:VIX']?.value ?? null}
+            ts={spot?.['I:VIX']?.ts}
+          />
         </div>
 
         {/* Dealer Gravity Widget - Candle Chart with Bands */}
         <div className="widget dealer-gravity-widget">
-          <div className="widget-header">
-            <Tooltip content="dealerGravity"><h4>Dealer Gravity</h4></Tooltip>
-            <div className="dg-header-right">
-              <div className="timeframe-tabs">
-                <Tooltip content="dealerGravity5m" position="bottom"><button className="tf-tab">5m</button></Tooltip>
-                <Tooltip content="dealerGravity15m" position="bottom"><button className="tf-tab active">15m</button></Tooltip>
-                <Tooltip content="dealerGravity1h" position="bottom"><button className="tf-tab">1h</button></Tooltip>
-              </div>
-            </div>
-          </div>
-          <div className="widget-content dg-content">
-            <div className="dealer-gravity-chart">
-              {/* Legend with prices */}
-              <div className="dg-price-legend">
-                <Tooltip content="dealerGravityBest"><span className="dg-price-item best"><span className="dg-line"></span>Best <strong>6983.66</strong></span></Tooltip>
-                <Tooltip content="dealerGravityHigh"><span className="dg-price-item high"><span className="dg-line"></span>High <strong>6988.92</strong></span></Tooltip>
-                <Tooltip content="dealerGravityLow"><span className="dg-price-item low"><span className="dg-line"></span>Low <strong>6978.42</strong></span></Tooltip>
-              </div>
-              <svg viewBox="0 0 380 260" className="dg-svg">
-                {/* Confidence cloud - billowy background effect */}
-                <defs>
-                  <linearGradient id="cloudGradient" x1="0%" y1="0%" x2="0%" y2="100%">
-                    <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.08" />
-                    <stop offset="30%" stopColor="#3b82f6" stopOpacity="0.15" />
-                    <stop offset="50%" stopColor="#3b82f6" stopOpacity="0.08" />
-                    <stop offset="70%" stopColor="#3b82f6" stopOpacity="0.15" />
-                    <stop offset="100%" stopColor="#3b82f6" stopOpacity="0.08" />
-                  </linearGradient>
-                  <filter id="cloudBlur" x="-20%" y="-20%" width="140%" height="140%">
-                    <feGaussianBlur in="SourceGraphic" stdDeviation="8" />
-                  </filter>
-                </defs>
-
-                {/* Confidence cloud shape */}
-                <path
-                  d="M 20 60 Q 50 45, 80 55 Q 120 70, 160 50 Q 200 35, 240 55 Q 280 70, 320 50 Q 350 40, 360 55
-                     L 360 200 Q 350 215, 320 205 Q 280 190, 240 205 Q 200 220, 160 200 Q 120 185, 80 200 Q 50 215, 20 200 Z"
-                  fill="url(#cloudGradient)"
-                  filter="url(#cloudBlur)"
-                />
-
-                {/* Y-axis price scale */}
-                <line x1="355" y1="30" x2="355" y2="230" stroke="#333" strokeWidth="1" />
-                <text x="362" y="40" fill="#555" fontSize="9">7010.00</text>
-                <text x="362" y="80" fill="#555" fontSize="9">7000.00</text>
-                <text x="362" y="120" fill="#555" fontSize="9">6990.00</text>
-                <text x="362" y="160" fill="#ef4444" fontSize="9" fontWeight="500">6983.66</text>
-                <text x="362" y="200" fill="#555" fontSize="9">6970.00</text>
-                <text x="362" y="230" fill="#555" fontSize="9">6960.00</text>
-
-                {/* High band (green dashed) */}
-                <path
-                  d="M 20 70 Q 60 60, 100 75 Q 150 85, 200 65 Q 250 50, 300 70 Q 330 80, 350 65"
-                  fill="none"
-                  stroke="#22c55e"
-                  strokeWidth="1.5"
-                  opacity="0.7"
-                />
-
-                {/* Low band (pink/red dashed) */}
-                <path
-                  d="M 20 190 Q 60 200, 100 185 Q 150 175, 200 195 Q 250 205, 300 185 Q 330 175, 350 190"
-                  fill="none"
-                  stroke="#f472b6"
-                  strokeWidth="1.5"
-                  opacity="0.7"
-                />
-
-                {/* Best guess band (cyan solid) */}
-                <path
-                  d="M 20 130 Q 60 120, 100 135 Q 150 145, 200 125 Q 250 115, 300 135 Q 330 145, 350 130"
-                  fill="none"
-                  stroke="#0ea5e9"
-                  strokeWidth="2"
-                />
-
-                {/* Current price horizontal line */}
-                <line x1="20" y1="160" x2="350" y2="160" stroke="#ef4444" strokeWidth="1" strokeDasharray="3 3" opacity="0.6" />
-
-                {/* Candlesticks */}
-                {[
-                  { x: 35, o: 145, c: 130, h: 120, l: 155 },
-                  { x: 60, o: 130, c: 140, h: 125, l: 150 },
-                  { x: 85, o: 140, c: 125, h: 115, l: 148 },
-                  { x: 110, o: 125, c: 135, h: 118, l: 142 },
-                  { x: 135, o: 135, c: 120, h: 110, l: 145 },
-                  { x: 160, o: 120, c: 130, h: 112, l: 138 },
-                  { x: 185, o: 130, c: 115, h: 105, l: 140 },
-                  { x: 210, o: 115, c: 125, h: 108, l: 132 },
-                  { x: 235, o: 125, c: 140, h: 118, l: 148 },
-                  { x: 260, o: 140, c: 155, h: 135, l: 162 },
-                  { x: 285, o: 155, c: 145, h: 140, l: 165 },
-                  { x: 310, o: 145, c: 160, h: 138, l: 168 },
-                  { x: 335, o: 160, c: 150, h: 145, l: 170 },
-                ].map((candle, i) => {
-                  const bullish = candle.c < candle.o;
-                  const color = bullish ? '#22c55e' : '#ef4444';
-                  const top = Math.min(candle.o, candle.c);
-                  const height = Math.abs(candle.o - candle.c) || 2;
-                  return (
-                    <g key={i}>
-                      <line x1={candle.x} y1={candle.h} x2={candle.x} y2={candle.l} stroke={color} strokeWidth="1" />
-                      <rect x={candle.x - 7} y={top} width="14" height={height} fill={color} rx="1" />
-                    </g>
-                  );
-                })}
-
-                {/* Time axis markers */}
-                <text x="35" y="250" fill="#444" fontSize="8" textAnchor="middle">1:30</text>
-                <text x="135" y="250" fill="#444" fontSize="8" textAnchor="middle">2:00</text>
-                <text x="235" y="250" fill="#444" fontSize="8" textAnchor="middle">2:30</text>
-                <text x="335" y="250" fill="#444" fontSize="8" textAnchor="middle">3:00</text>
-              </svg>
-            </div>
-          </div>
+          <LightweightPriceChart snap={dgSnapshot} height={280} title="Dealer Gravity" />
         </div>
       </div>
 

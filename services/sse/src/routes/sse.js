@@ -11,7 +11,10 @@ const clients = {
   spot: new Set(),
   gex: new Map(), // symbol -> Set of clients
   heatmap: new Map(), // symbol -> Set of clients
+  candles: new Map(), // symbol -> Set of clients
   vexy: new Set(),
+  bias_lfi: new Set(),
+  market_mode: new Set(),
   all: new Set(),
 };
 
@@ -20,7 +23,10 @@ const modelState = {
   spot: null,
   gex: new Map(), // symbol -> data
   heatmap: new Map(), // symbol -> data
+  candles: new Map(), // symbol -> { candles_5m, candles_15m, candles_1h, spot, ts }
   vexy: null,
+  bias_lfi: null,
+  market_mode: null,
 };
 
 // SSE helper - send event to client
@@ -121,6 +127,46 @@ router.get("/vexy", (req, res) => {
   });
 });
 
+// GET /sse/bias_lfi - Bias/LFI model updates
+router.get("/bias_lfi", (req, res) => {
+  sseHeaders(res);
+  clients.bias_lfi.add(res);
+
+  // Send current state if available
+  if (modelState.bias_lfi) {
+    sendEvent(res, "bias_lfi", modelState.bias_lfi);
+  }
+
+  sendEvent(res, "connected", { channel: "bias_lfi", ts: Date.now() });
+
+  req.on("close", () => {
+    clients.bias_lfi.delete(res);
+  });
+});
+
+// GET /sse/candles/:symbol - OHLC candles for Dealer Gravity chart
+router.get("/candles/:symbol", (req, res) => {
+  const symbol = req.params.symbol.toUpperCase();
+  sseHeaders(res);
+
+  if (!clients.candles.has(symbol)) {
+    clients.candles.set(symbol, new Set());
+  }
+  clients.candles.get(symbol).add(res);
+
+  // Send current state if available
+  const current = modelState.candles.get(symbol);
+  if (current) {
+    sendEvent(res, "candles", { symbol, ...current });
+  }
+
+  sendEvent(res, "connected", { channel: "candles", symbol, ts: Date.now() });
+
+  req.on("close", () => {
+    clients.candles.get(symbol)?.delete(res);
+  });
+});
+
 // GET /sse/all - Combined stream
 router.get("/all", (req, res) => {
   sseHeaders(res);
@@ -136,8 +182,17 @@ router.get("/all", (req, res) => {
   for (const [symbol, data] of modelState.heatmap) {
     sendEvent(res, "heatmap", { symbol, ...data });
   }
+  for (const [symbol, data] of modelState.candles) {
+    sendEvent(res, "candles", { symbol, ...data });
+  }
   if (modelState.vexy) {
     sendEvent(res, "vexy", modelState.vexy);
+  }
+  if (modelState.bias_lfi) {
+    sendEvent(res, "bias_lfi", modelState.bias_lfi);
+  }
+  if (modelState.market_mode) {
+    sendEvent(res, "market_mode", modelState.market_mode);
   }
 
   sendEvent(res, "connected", { channel: "all", ts: Date.now() });
@@ -150,7 +205,7 @@ router.get("/all", (req, res) => {
 // Broadcast to specific channel clients
 function broadcastToChannel(channel, event, data, symbol = null) {
   let targetClients;
-  if (symbol && (channel === "gex" || channel === "heatmap")) {
+  if (symbol && (channel === "gex" || channel === "heatmap" || channel === "candles")) {
     targetClients = clients[channel].get(symbol) || new Set();
   } else {
     targetClients = clients[channel];
@@ -174,8 +229,103 @@ function broadcastToChannel(channel, event, data, symbol = null) {
   }
 }
 
+// Candle aggregation helpers
+const BUCKET_SIZES = {
+  '5m': 5 * 60,
+  '15m': 15 * 60,
+  '1h': 60 * 60,
+};
+
+function aggregateCandles(trailData, bucketSec) {
+  // trailData is array of { value, ts } sorted by ts ascending
+  if (!trailData || trailData.length === 0) return [];
+
+  const buckets = new Map(); // bucketStart -> { o, h, l, c, t }
+
+  for (const point of trailData) {
+    const ts = Math.floor(new Date(point.ts).getTime() / 1000);
+    const value = point.value;
+    if (typeof value !== 'number' || isNaN(value)) continue;
+
+    const bucketStart = Math.floor(ts / bucketSec) * bucketSec;
+
+    if (!buckets.has(bucketStart)) {
+      buckets.set(bucketStart, {
+        t: bucketStart,
+        o: value,
+        h: value,
+        l: value,
+        c: value,
+      });
+    } else {
+      const bucket = buckets.get(bucketStart);
+      bucket.h = Math.max(bucket.h, value);
+      bucket.l = Math.min(bucket.l, value);
+      bucket.c = value; // Last value becomes close
+    }
+  }
+
+  // Sort by time and return
+  return Array.from(buckets.values()).sort((a, b) => a.t - b.t);
+}
+
+async function fetchAndAggregateCandles(redis, symbol) {
+  const trailKey = `massive:model:spot:${symbol}:trail`;
+
+  // Get last 24 hours of trail data (86400 seconds)
+  const now = Math.floor(Date.now() / 1000);
+  const dayAgo = now - 86400;
+
+  try {
+    // ioredis: zrangebyscore returns array with alternating [member, score, member, score...]
+    const trailRaw = await redis.zrangebyscore(trailKey, dayAgo, now, 'WITHSCORES');
+
+    if (!trailRaw || trailRaw.length === 0) {
+      return null;
+    }
+
+    // Parse trail data - ioredis returns [member1, score1, member2, score2, ...]
+    const trailData = [];
+    for (let i = 0; i < trailRaw.length; i += 2) {
+      const member = trailRaw[i];
+      const score = parseFloat(trailRaw[i + 1]);
+      try {
+        const data = JSON.parse(member);
+        trailData.push({
+          value: data.value,
+          ts: data.ts || new Date(score * 1000).toISOString(),
+        });
+      } catch {
+        // Skip malformed entries
+      }
+    }
+
+    if (trailData.length === 0) return null;
+
+    // Aggregate into different timeframes
+    const candles_5m = aggregateCandles(trailData, BUCKET_SIZES['5m']);
+    const candles_15m = aggregateCandles(trailData, BUCKET_SIZES['15m']);
+    const candles_1h = aggregateCandles(trailData, BUCKET_SIZES['1h']);
+
+    // Get current spot
+    const lastPoint = trailData[trailData.length - 1];
+
+    return {
+      spot: lastPoint.value,
+      ts: lastPoint.ts,
+      candles_5m,
+      candles_15m,
+      candles_1h,
+    };
+  } catch (err) {
+    console.error(`[sse] Candle aggregation error for ${symbol}:`, err.message);
+    return null;
+  }
+}
+
 // Polling loop for model updates (spot, gex, vexy only - heatmap is event-driven)
 let pollingInterval = null;
+let candlePollingInterval = null;
 
 // One-time initial fetch for heatmap (called at startup)
 async function fetchInitialHeatmap(redis) {
@@ -276,6 +426,34 @@ export async function startPolling(config) {
         modelState.vexy = vexyData;
         broadcastToChannel("vexy", "vexy", vexyData);
       }
+
+      // Poll bias_lfi model
+      const biasLfiRaw = await redis.get("massive:bias_lfi:model:latest");
+      if (biasLfiRaw) {
+        try {
+          const biasLfiData = JSON.parse(biasLfiRaw);
+          if (JSON.stringify(biasLfiData) !== JSON.stringify(modelState.bias_lfi)) {
+            modelState.bias_lfi = biasLfiData;
+            broadcastToChannel("bias_lfi", "bias_lfi", biasLfiData);
+          }
+        } catch {
+          // Malformed JSON, skip
+        }
+      }
+
+      // Poll market_mode model
+      const marketModeRaw = await redis.get("massive:market_mode:model:latest");
+      if (marketModeRaw) {
+        try {
+          const marketModeData = JSON.parse(marketModeRaw);
+          if (JSON.stringify(marketModeData) !== JSON.stringify(modelState.market_mode)) {
+            modelState.market_mode = marketModeData;
+            broadcastToChannel("market_mode", "market_mode", marketModeData);
+          }
+        } catch {
+          // Malformed JSON, skip
+        }
+      }
     } catch (err) {
       console.error("[sse] Polling error:", err.message);
     }
@@ -286,6 +464,39 @@ export async function startPolling(config) {
 
   // Schedule recurring polls
   pollingInterval = setInterval(poll, pollMs);
+
+  // Candle polling (less frequent - every 5 seconds)
+  const candlePollMs = config.env.SSE_CANDLE_POLL_INTERVAL_MS || 5000;
+  const candleSymbols = ['I:SPX', 'I:NDX', 'SPX', 'NDX']; // Support both formats
+
+  const pollCandles = async () => {
+    try {
+      for (const symbol of candleSymbols) {
+        const candleData = await fetchAndAggregateCandles(redis, symbol);
+        if (candleData) {
+          // Check if data changed (compare candle counts as quick check)
+          const prev = modelState.candles.get(symbol);
+          const changed = !prev ||
+            prev.candles_5m?.length !== candleData.candles_5m?.length ||
+            prev.spot !== candleData.spot;
+
+          if (changed) {
+            modelState.candles.set(symbol, candleData);
+            broadcastToChannel("candles", "candles", { symbol, ...candleData }, symbol);
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[sse] Candle polling error:", err.message);
+    }
+  };
+
+  // Initial candle poll
+  await pollCandles();
+  console.log(`[sse] Starting candle polling (interval=${candlePollMs}ms)`);
+
+  // Schedule recurring candle polls
+  candlePollingInterval = setInterval(pollCandles, candlePollMs);
 }
 
 // Subscribe to vexy:playbyplay pub/sub for real-time updates
@@ -399,6 +610,11 @@ export function stopPolling() {
     pollingInterval = null;
     console.log("[sse] Polling stopped");
   }
+  if (candlePollingInterval) {
+    clearInterval(candlePollingInterval);
+    candlePollingInterval = null;
+    console.log("[sse] Candle polling stopped");
+  }
 }
 
 export function getClientStats() {
@@ -410,15 +626,21 @@ export function getClientStats() {
   for (const set of clients.heatmap.values()) {
     heatmapCount += set.size;
   }
+  let candlesCount = 0;
+  for (const set of clients.candles.values()) {
+    candlesCount += set.size;
+  }
 
   return {
     clients: {
       spot: clients.spot.size,
       gex: gexCount,
       heatmap: heatmapCount,
+      candles: candlesCount,
       vexy: clients.vexy.size,
+      bias_lfi: clients.bias_lfi.size,
       all: clients.all.size,
-      total: clients.spot.size + gexCount + heatmapCount + clients.vexy.size + clients.all.size,
+      total: clients.spot.size + gexCount + heatmapCount + candlesCount + clients.vexy.size + clients.bias_lfi.size + clients.all.size,
     },
   };
 }

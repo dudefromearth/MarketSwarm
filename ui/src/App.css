@@ -714,10 +714,102 @@ body {
   background: #f472b6;
 }
 
-.dg-svg {
+.dg-chart-container {
   width: 100%;
-  height: auto;
+  height: 320px;
   flex: 1;
+}
+
+/* Dealer Gravity - Lightweight Charts Component */
+.dealer-gravity-lw {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.dg-lw-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 8px 12px;
+  border-bottom: 1px solid #222;
+  gap: 12px;
+}
+
+.dg-lw-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ccc;
+}
+
+.dg-lw-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.dg-lw-timeframes {
+  display: flex;
+  gap: 4px;
+}
+
+.dg-lw-tf-btn {
+  background: #222;
+  border: 1px solid #333;
+  color: #888;
+  padding: 2px 8px;
+  font-size: 11px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dg-lw-tf-btn:hover {
+  background: #333;
+  color: #aaa;
+}
+
+.dg-lw-tf-btn.active {
+  background: #0ea5e9;
+  border-color: #0ea5e9;
+  color: #fff;
+}
+
+.dg-lw-legend {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+}
+
+.dg-lw-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #888;
+}
+
+.dg-lw-legend-item .dg-lw-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.dg-lw-legend-item.best .dg-lw-dot {
+  background: rgba(56, 189, 248, 0.95);
+}
+
+.dg-lw-legend-item.high .dg-lw-dot {
+  background: rgba(34, 197, 94, 0.95);
+}
+
+.dg-lw-legend-item.low .dg-lw-dot {
+  background: rgba(244, 114, 182, 0.95);
+}
+
+.dg-lw-chart {
+  flex: 1;
+  width: 100%;
 }
 
 /* Main Content Row - Horizontal Scrollable Layout */
@@ -1620,4 +1712,683 @@ body {
   width: 1px;
   background: #333;
   margin: 0 8px;
+}
+
+/* ============================================
+   Liquidity-Intent Map (LIM) Widget - Quadrant
+   ============================================ */
+
+.lim-widget-container {
+  display: flex;
+  align-items: stretch;
+}
+
+.lim-widget {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #111;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.lim-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 10px 14px;
+  border-bottom: 1px solid #333;
+  background: #0a0a0a;
+}
+
+.lim-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lim-title-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.lim-subtitle {
+  font-size: 9px;
+  color: #555;
+}
+
+.lim-values {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: #888;
+}
+
+.lim-values span {
+  display: flex;
+  gap: 4px;
+}
+
+.lim-quadrant-container {
+  flex: 1;
+  display: flex;
+  padding: 8px;
+  min-height: 0;
+}
+
+.lim-y-label {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #555;
+}
+
+.lim-quadrant {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+.lim-y-axis {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding-right: 6px;
+  font-size: 9px;
+  color: #555;
+}
+
+.lim-y-val {
+  text-align: right;
+}
+
+.lim-y-val.top { align-self: flex-start; }
+.lim-y-val.mid { align-self: center; }
+.lim-y-val.bot { align-self: flex-end; }
+
+.lim-grid {
+  flex: 1;
+  position: relative;
+  background: #0d0d0d;
+  border: 1px solid #333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.lim-grid-bg {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    135deg,
+    rgba(14, 165, 233, 0.08) 0%,
+    rgba(168, 85, 247, 0.08) 50%,
+    rgba(239, 68, 68, 0.06) 50%,
+    rgba(34, 197, 94, 0.06) 100%
+  );
+}
+
+.lim-center-v {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #333;
+}
+
+.lim-center-h {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: #333;
+}
+
+.lim-label {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.lim-label.tl {
+  top: 12%;
+  left: 25%;
+  transform: translateX(-50%);
+}
+
+.lim-label.tr {
+  top: 12%;
+  left: 75%;
+  transform: translateX(-50%);
+}
+
+.lim-label.bl {
+  bottom: 12%;
+  left: 25%;
+  transform: translateX(-50%);
+}
+
+.lim-label.br {
+  bottom: 12%;
+  left: 75%;
+  transform: translateX(-50%);
+}
+
+.lim-label-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: #888;
+}
+
+.lim-label.tl .lim-label-title { color: #0ea5e9; }
+.lim-label.tr .lim-label-title { color: #a855f7; }
+.lim-label.bl .lim-label-title { color: #ef4444; }
+.lim-label.br .lim-label-title { color: #22c55e; }
+
+.lim-label-desc {
+  font-size: 8px;
+  color: #555;
+  max-width: 80px;
+}
+
+.lim-x-axis {
+  position: absolute;
+  bottom: 4px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 8px;
+  font-size: 9px;
+  color: #555;
+}
+
+.lim-x-val.mid {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.lim-bubble {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: left 0.3s ease-out, top 0.3s ease-out, background 0.3s, border-color 0.3s, box-shadow 0.3s;
+}
+
+/* Quadrant-specific bubble colors */
+.lim-bubble.tl {
+  /* Pin/Mean Reversion - Cyan */
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.15), transparent 60%),
+              linear-gradient(135deg, rgba(14, 165, 233, 0.4), rgba(14, 165, 233, 0.15));
+  border: 2px solid rgba(14, 165, 233, 0.6);
+  box-shadow: 0 4px 20px rgba(14, 165, 233, 0.3), inset 0 0 20px rgba(255, 255, 255, 0.1);
+}
+
+.lim-bubble.tr {
+  /* False Breakout Risk - Purple */
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.15), transparent 60%),
+              linear-gradient(135deg, rgba(168, 85, 247, 0.4), rgba(168, 85, 247, 0.15));
+  border: 2px solid rgba(168, 85, 247, 0.6);
+  box-shadow: 0 4px 20px rgba(168, 85, 247, 0.3), inset 0 0 20px rgba(255, 255, 255, 0.1);
+}
+
+.lim-bubble.bl {
+  /* Downside Acceleration - Red */
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.15), transparent 60%),
+              linear-gradient(135deg, rgba(239, 68, 68, 0.4), rgba(239, 68, 68, 0.15));
+  border: 2px solid rgba(239, 68, 68, 0.6);
+  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.3), inset 0 0 20px rgba(255, 255, 255, 0.1);
+}
+
+.lim-bubble.br {
+  /* Air-Pocket Expansion - Green */
+  background: radial-gradient(circle at 30% 30%, rgba(255, 255, 255, 0.15), transparent 60%),
+              linear-gradient(135deg, rgba(34, 197, 94, 0.4), rgba(34, 197, 94, 0.15));
+  border: 2px solid rgba(34, 197, 94, 0.6);
+  box-shadow: 0 4px 20px rgba(34, 197, 94, 0.3), inset 0 0 20px rgba(255, 255, 255, 0.1);
+}
+
+.lim-bubble-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  text-align: center;
+}
+
+.lim-bubble-label {
+  font-size: 8px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.lim-bubble-value {
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.lim-bubble-lfi {
+  font-size: 7px;
+  color: rgba(255, 255, 255, 0.8);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.lim-bottom-label {
+  text-align: center;
+  padding: 6px 8px;
+  font-size: 9px;
+  color: #555;
+  border-top: 1px solid #222;
+  background: #0a0a0a;
+}
+
+/* ============================================
+   Market Mode Gauge Widget
+   ============================================ */
+
+.mm-gauge-widget {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #111;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.mm-gauge-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 4px;
+}
+
+.mm-gauge-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mm-gauge-title-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.mm-gauge-subtitle {
+  font-size: 9px;
+  color: #555;
+}
+
+.mm-gauge-mode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.mm-gauge-mode-label {
+  font-size: 10px;
+  color: #666;
+}
+
+.mm-gauge-mode-pill {
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid;
+}
+
+.mm-gauge-mode-pill.mm-mode-compression {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.mm-gauge-mode-pill.mm-mode-transition {
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.2);
+}
+
+.mm-gauge-mode-pill.mm-mode-expansion {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.2);
+}
+
+.mm-gauge-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 8px;
+}
+
+.mm-gauge-svg {
+  width: 100%;
+  max-width: 380px;
+  height: auto;
+}
+
+.mm-gauge-legend {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.mm-gauge-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+.mm-gauge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mm-gauge-dot.compression {
+  background: #ef4444;
+  box-shadow: 0 0 8px rgba(239, 68, 68, 0.5);
+}
+
+.mm-gauge-dot.transition {
+  background: #f59e0b;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.5);
+}
+
+.mm-gauge-dot.expansion {
+  background: #22c55e;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.5);
+}
+
+.mm-gauge-legend-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: #ccc;
+  display: block;
+}
+
+.mm-gauge-legend-range {
+  font-size: 8px;
+  color: #666;
+  display: block;
+}
+
+/* =====================================================
+   VIX Regime Card Styles
+   ===================================================== */
+
+.vix-regime-card {
+  background: rgba(24, 24, 27, 0.7);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.vix-regime-header {
+  margin-bottom: 12px;
+}
+
+.vix-regime-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #a1a1aa;
+  margin-bottom: 4px;
+}
+
+.vix-regime-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f4f4f5;
+}
+
+.vix-regime-meta {
+  font-size: 11px;
+  color: #a1a1aa;
+  line-height: 1.4;
+}
+
+.vix-regime-label {
+  font-weight: 600;
+}
+
+.vix-regime-label.zombieland {
+  color: #93c5fd;
+}
+
+.vix-regime-label.goldilocks {
+  color: #fcd34d;
+}
+
+.vix-regime-label.chaos {
+  color: #f87171;
+}
+
+.vix-regime-boundary {
+  color: #71717a;
+}
+
+.vix-regime-ts {
+  font-size: 10px;
+  color: #52525b;
+  margin-top: 4px;
+}
+
+.vix-regime-content {
+  flex: 1;
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+}
+
+/* Thermometer strip */
+.vix-thermometer {
+  flex: 0 0 70px;
+  min-width: 70px;
+  max-width: 90px;
+  position: relative;
+  border-radius: 8px;
+  background: rgba(39, 39, 42, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.vix-zone {
+  flex: 1;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.2s ease;
+  opacity: 0.4;
+}
+
+.vix-zone.active {
+  opacity: 1;
+}
+
+.vix-zone.chaos {
+  background: rgba(239, 68, 68, 0.3);
+}
+
+.vix-zone.chaos.active {
+  background: rgba(239, 68, 68, 0.7);
+}
+
+.vix-zone.goldilocks {
+  background: rgba(245, 158, 11, 0.3);
+}
+
+.vix-zone.goldilocks.active {
+  background: rgba(245, 158, 11, 0.7);
+}
+
+.vix-zone.zombie {
+  background: rgba(30, 58, 138, 0.3);
+}
+
+.vix-zone.zombie.active {
+  background: rgba(30, 58, 138, 0.85);
+}
+
+.vix-zone-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #f4f4f5;
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.vix-zone-boundary {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: #06b6d4;
+}
+
+.vix-boundary-value {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  font-size: 9px;
+  font-weight: 600;
+  color: #06b6d4;
+}
+
+/* VIX marker */
+.vix-marker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+}
+
+.vix-marker-line {
+  height: 2px;
+  background: rgba(255, 255, 255, 0.8);
+  box-shadow: 0 0 6px rgba(255, 255, 255, 0.8);
+}
+
+.vix-marker-value {
+  position: absolute;
+  right: 4px;
+  top: -12px;
+  font-size: 9px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
+}
+
+/* Strategy guide */
+.vix-guide {
+  flex: 3;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.vix-guide-row {
+  border-radius: 6px;
+  padding: 8px;
+  background: rgba(24, 24, 27, 0.6);
+  border: 1px solid rgba(63, 63, 70, 0.4);
+  color: #d4d4d8;
+  font-size: 11px;
+  transition: all 0.2s ease;
+  opacity: 0.7;
+}
+
+.vix-guide-row.active {
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.25);
+  opacity: 1;
+}
+
+.vix-guide-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.vix-guide-range {
+  font-size: 10px;
+  color: #71717a;
+  font-weight: normal;
+}
+
+.vix-guide-detail {
+  margin-top: 2px;
+}
+
+.vix-guide-label {
+  color: #71717a;
+}
+
+.vix-guide-dte {
+  color: #71717a;
+}
+
+/* Color classes */
+.vix-color-chaos {
+  color: #f87171;
+}
+
+.vix-color-goldilocks {
+  color: #fcd34d;
+}
+
+.vix-color-zombie {
+  color: #93c5fd;
+}
+
+/* VIX Regime widget sizing */
+.vix-regime-widget {
+  width: 380px;
+  min-width: 380px;
+}
+
+.vix-regime-widget .vix-regime-card {
+  height: 100%;
 }
