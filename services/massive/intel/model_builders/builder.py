@@ -63,7 +63,7 @@ class Builder:
 
         # Read widths from config (comma-separated strings)
         spx_widths_str = config.get("MASSIVE_WIDTHS_SPX", "20,25,30,35,40,45,50")
-        ndx_widths_str = config.get("MASSIVE_WIDTHS_NDX", "25,50,75,100,125,150,175,200")
+        ndx_widths_str = config.get("MASSIVE_WIDTHS_NDX", "50,100,150,200,250,300")
 
         self.widths_map = {
             "I:SPX": [int(w.strip()) for w in spx_widths_str.split(",") if w.strip()],

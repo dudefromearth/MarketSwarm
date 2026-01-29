@@ -74,7 +74,7 @@ class ChainWorker:
                 "filter_strikes": config.get("MASSIVE_SPX_FILTER_STRIKES", "false").lower() == "true",
             },
             "I:NDX": {
-                "em_mult": float(config.get("MASSIVE_NDX_EM_MULT", "3.0")),
+                "em_mult": float(config.get("MASSIVE_NDX_EM_MULT", "3.25")),
                 "strike_increment": int(config.get("MASSIVE_NDX_STRIKE_INCREMENT", "25")),
                 "filter_strikes": config.get("MASSIVE_NDX_FILTER_STRIKES", "true").lower() == "true",
             },

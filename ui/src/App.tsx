@@ -119,11 +119,24 @@ function gaussianSmooth(data: number[], kernelSize: number = 5): number[] {
   return result;
 }
 
-// Width options per strategy
-const WIDTHS: Record<Strategy, number[]> = {
-  single: [0],
-  vertical: [20, 25, 30, 35, 40, 45, 50],
-  butterfly: [20, 25, 30, 35, 40, 45, 50],
+// Width options per strategy, per underlying
+const WIDTHS: Record<string, Record<Strategy, number[]>> = {
+  'I:SPX': {
+    single: [0],
+    vertical: [20, 25, 30, 35, 40, 45, 50],
+    butterfly: [20, 25, 30, 35, 40, 45, 50],
+  },
+  'I:NDX': {
+    single: [0],
+    vertical: [50, 100, 150, 200, 250, 300],
+    butterfly: [50, 100, 150, 200, 250, 300],
+  },
+};
+
+// Strike increment per underlying
+const STRIKE_INCREMENT: Record<string, number> = {
+  'I:SPX': 5,
+  'I:NDX': 25,
 };
 
 // Standard normal CDF approximation
@@ -337,6 +350,7 @@ function App() {
   const [lastUpdateTime, setLastUpdateTime] = useState<number | null>(null);
 
   // Controls
+  const [underlying, setUnderlying] = useState<'I:SPX' | 'I:NDX'>('I:SPX');
   const [strategy, setStrategy] = useState<Strategy>('butterfly');
   const [side, setSide] = useState<Side>('call');
   const [dte, setDte] = useState(0);
@@ -349,6 +363,7 @@ function App() {
   // Popup and Risk Graph state
   const [selectedTile, setSelectedTile] = useState<SelectedStrategy | null>(null);
   const [riskGraphStrategies, setRiskGraphStrategies] = useState<RiskGraphStrategy[]>([]);
+  const [tosCopied, setTosCopied] = useState(false);
   const [crosshairPos, setCrosshairPos] = useState<{ x: number; price: number; pnl: number } | null>(null);
 
   // Risk graph panning state
@@ -426,6 +441,8 @@ function App() {
     if (!selectedTile) return;
     const script = generateTosScript(selectedTile);
     await navigator.clipboard.writeText(script);
+    setTosCopied(true);
+    setTimeout(() => setTosCopied(false), 2000);
   };
 
   // Add strategy to risk graph list
@@ -666,15 +683,15 @@ function App() {
 
     // Calculate theoretical P&L at current spot price (interpolate from theoreticalPoints)
     let theoreticalPnLAtSpot = 0;
-    const currentSpot = spot?.['I:SPX']?.value || 0;
-    if (currentSpot > 0 && theoreticalPoints.length > 1) {
+    const spotPrice = spot?.[underlying]?.value || 0;
+    if (spotPrice > 0 && theoreticalPoints.length > 1) {
       // Find the two points surrounding the spot price
       for (let i = 1; i < theoreticalPoints.length; i++) {
         const prev = theoreticalPoints[i - 1];
         const curr = theoreticalPoints[i];
-        if (prev.price <= currentSpot && curr.price >= currentSpot) {
+        if (prev.price <= spotPrice && curr.price >= spotPrice) {
           // Linear interpolation
-          const t = (currentSpot - prev.price) / (curr.price - prev.price);
+          const t = (spotPrice - prev.price) / (curr.price - prev.price);
           theoreticalPnLAtSpot = prev.pnl + t * (curr.pnl - prev.pnl);
           break;
         }
@@ -717,7 +734,7 @@ function App() {
     }
 
     return { points, theoreticalPoints, minPnL, maxPnL, minPrice, maxPrice, breakevens, theoreticalBreakevens, fullMinPrice, fullMaxPrice, theoreticalPnLAtSpot, marketPnL };
-  }, [riskGraphStrategies, spot, panOffset, heatmap]);
+  }, [riskGraphStrategies, spot, panOffset, heatmap, underlying]);
 
   // SSE connection
   useEffect(() => {
@@ -737,14 +754,12 @@ function App() {
     es.addEventListener('gex', (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.symbol === 'I:SPX') {
-          if (data.calls) {
-            setGexCalls(data.calls);
-          }
-          if (data.puts) {
-            setGexPuts(data.puts);
-          }
+        // Store in window for underlying switching
+        (window as any).__gexCache = (window as any).__gexCache || {};
+        if (data.symbol) {
+          (window as any).__gexCache[data.symbol] = data;
         }
+        window.dispatchEvent(new CustomEvent('gex-update', { detail: data }));
         setUpdateCount(c => c + 1);
         setLastUpdateTime(Date.now());
       } catch {}
@@ -752,7 +767,13 @@ function App() {
 
     es.addEventListener('heatmap', (e: MessageEvent) => {
       try {
-        setHeatmap(JSON.parse(e.data));
+        const data = JSON.parse(e.data);
+        // Cache heatmap by symbol
+        (window as any).__heatmapCache = (window as any).__heatmapCache || {};
+        if (data.symbol) {
+          (window as any).__heatmapCache[data.symbol] = data;
+        }
+        window.dispatchEvent(new CustomEvent('heatmap-update', { detail: data }));
         setUpdateCount(c => c + 1);
         setLastUpdateTime(Date.now());
       } catch {}
@@ -761,35 +782,8 @@ function App() {
     es.addEventListener('heatmap_diff', (e: MessageEvent) => {
       try {
         const diff = JSON.parse(e.data);
-        console.log(`[UI] heatmap_diff received: changed=${Object.keys(diff.changed || {}).length} v=${diff.version}`);
-        setHeatmap(prev => {
-          if (prev?.version && diff.version && diff.version <= prev.version) {
-            console.log(`[UI] Skipping stale diff: ${diff.version} <= ${prev.version}`);
-            return prev;
-          }
-
-          const updatedTiles = { ...(prev?.tiles || {}) };
-
-          if (diff.changed) {
-            Object.entries(diff.changed).forEach(([key, tile]) => {
-              updatedTiles[key] = tile as HeatmapTile;
-            });
-          }
-
-          if (diff.removed) {
-            diff.removed.forEach((key: string) => {
-              delete updatedTiles[key];
-            });
-          }
-
-          return {
-            ts: diff.ts,
-            symbol: diff.symbol || prev?.symbol || 'I:SPX',
-            version: diff.version,
-            dtes_available: diff.dtes_available || prev?.dtes_available,
-            tiles: updatedTiles,
-          };
-        });
+        // Dispatch for underlying-aware handling
+        window.dispatchEvent(new CustomEvent('heatmap-diff-update', { detail: diff }));
         setUpdateCount(c => c + 1);
         setLastUpdateTime(Date.now());
       } catch {}
@@ -806,19 +800,82 @@ function App() {
     return () => es.close();
   }, []);
 
-  // Fetch initial data via REST
+  // Handle SSE updates filtered by selected underlying
+  useEffect(() => {
+    const handleGexUpdate = (e: CustomEvent) => {
+      const data = e.detail;
+      if (data.symbol === underlying) {
+        if (data.calls) setGexCalls(data.calls);
+        if (data.puts) setGexPuts(data.puts);
+      }
+    };
+
+    const handleHeatmapUpdate = (e: CustomEvent) => {
+      const data = e.detail;
+      if (data.symbol === underlying) {
+        setHeatmap(data);
+      }
+    };
+
+    const handleHeatmapDiffUpdate = (e: CustomEvent) => {
+      const diff = e.detail;
+      if (diff.symbol !== underlying) return;
+
+      console.log(`[UI] heatmap_diff received: changed=${Object.keys(diff.changed || {}).length} v=${diff.version}`);
+      setHeatmap(prev => {
+        if (prev?.version && diff.version && diff.version <= prev.version) {
+          console.log(`[UI] Skipping stale diff: ${diff.version} <= ${prev.version}`);
+          return prev;
+        }
+
+        const updatedTiles = { ...(prev?.tiles || {}) };
+
+        if (diff.changed) {
+          Object.entries(diff.changed).forEach(([key, tile]) => {
+            updatedTiles[key] = tile as HeatmapTile;
+          });
+        }
+
+        if (diff.removed) {
+          diff.removed.forEach((key: string) => {
+            delete updatedTiles[key];
+          });
+        }
+
+        return {
+          ts: diff.ts,
+          symbol: diff.symbol || prev?.symbol || underlying,
+          version: diff.version,
+          dtes_available: diff.dtes_available || prev?.dtes_available,
+          tiles: updatedTiles,
+        };
+      });
+    };
+
+    window.addEventListener('gex-update', handleGexUpdate as EventListener);
+    window.addEventListener('heatmap-update', handleHeatmapUpdate as EventListener);
+    window.addEventListener('heatmap-diff-update', handleHeatmapDiffUpdate as EventListener);
+
+    return () => {
+      window.removeEventListener('gex-update', handleGexUpdate as EventListener);
+      window.removeEventListener('heatmap-update', handleHeatmapUpdate as EventListener);
+      window.removeEventListener('heatmap-diff-update', handleHeatmapDiffUpdate as EventListener);
+    };
+  }, [underlying]);
+
+  // Fetch initial data via REST (refetch when underlying changes)
   useEffect(() => {
     fetch(`${SSE_BASE}/api/models/spot`)
       .then(r => r.json())
       .then(d => d.success && setSpot(d.data))
       .catch(() => {});
 
-    fetch(`${SSE_BASE}/api/models/heatmap/I:SPX`)
+    fetch(`${SSE_BASE}/api/models/heatmap/${underlying}`)
       .then(r => r.json())
       .then(d => d.success && setHeatmap(d.data))
       .catch(() => {});
 
-    fetch(`${SSE_BASE}/api/models/gex/I:SPX`)
+    fetch(`${SSE_BASE}/api/models/gex/${underlying}`)
       .then(r => r.json())
       .then(d => {
         if (d.success && d.data) {
@@ -836,15 +893,23 @@ function App() {
       .then(r => r.json())
       .then(d => d.success && setVexy(d.data))
       .catch(() => {});
-  }, []);
 
-  // Fetch volume profile based on spot price (±300 points)
+    // Reset scroll state when underlying changes
+    setHasScrolledToAtm(false);
+  }, [underlying]);
+
+  // Fetch volume profile based on spot price (±300 points) - SPX only for now
   useEffect(() => {
-    const spxPrice = spot?.['I:SPX']?.value;
-    if (!spxPrice) return;
+    if (underlying !== 'I:SPX') {
+      setVolumeProfile(null);
+      return;
+    }
 
-    const minPrice = Math.floor(spxPrice - 300);
-    const maxPrice = Math.ceil(spxPrice + 300);
+    const spotPrice = spot?.[underlying]?.value;
+    if (!spotPrice) return;
+
+    const minPrice = Math.floor(spotPrice - 300);
+    const maxPrice = Math.ceil(spotPrice + 300);
 
     fetch(`${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}`)
       .then(r => r.json())
@@ -868,10 +933,10 @@ function App() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [spot?.['I:SPX']?.value]);
+  }, [underlying, spot?.[underlying]?.value]);
 
-  const spxSpot = spot?.['I:SPX']?.value || null;
-  const widths = WIDTHS[strategy];
+  const currentSpot = spot?.[underlying]?.value || null;
+  const widths = WIDTHS[underlying][strategy];
 
   // Process data for the grid view - all widths as columns
   const { strikes, gexByStrike, heatmapGrid, changeGrid, maxGex, maxNetGex } = useMemo(() => {
@@ -959,7 +1024,8 @@ function App() {
       const currentData = heatmapGrid[strike] || {};
       const prevData = prevStrike ? (heatmapGrid[prevStrike] || {}) : {};
 
-      for (const w of (strategy === 'single' ? [0] : [20, 25, 30, 35, 40, 45, 50])) {
+      const widthsForCalc = WIDTHS[underlying][strategy];
+      for (const w of widthsForCalc) {
         const curr = currentData[w];
         const prev = prevData[w];
 
@@ -973,7 +1039,7 @@ function App() {
     }
 
     return { strikes, gexByStrike, heatmapGrid, changeGrid, maxGex, maxNetGex };
-  }, [gexCalls, gexPuts, heatmap, strategy, side, dte]);
+  }, [gexCalls, gexPuts, heatmap, strategy, side, dte, underlying]);
 
   // Process volume profile with smoothing - keep full $0.10 resolution
   // vpByPrice: key is price * 10 (e.g., 60001 = $6000.10)
@@ -1026,30 +1092,33 @@ function App() {
   };
 
   // Filter strikes around ATM
+  const strikeIncrement = STRIKE_INCREMENT[underlying];
   const visibleStrikes = useMemo(() => {
     if (strikes.length > 0) {
-      if (!spxSpot) return strikes.slice(0, 50);
+      if (!currentSpot) return strikes.slice(0, 50);
 
-      const atmIndex = strikes.findIndex(s => s <= spxSpot);
+      const atmIndex = strikes.findIndex(s => s <= currentSpot);
       const rangeStart = Math.max(0, atmIndex - 25);
       const rangeEnd = Math.min(strikes.length, atmIndex + 25);
       return strikes.slice(rangeStart, rangeEnd);
     }
 
-    const basePrice = spxSpot || 6000;
-    const roundedBase = Math.round(basePrice / 5) * 5;
+    // Fallback placeholder strikes when no data
+    const defaultSpot = underlying === 'I:NDX' ? 21000 : 6000;
+    const basePrice = currentSpot || defaultSpot;
+    const roundedBase = Math.round(basePrice / strikeIncrement) * strikeIncrement;
     const placeholderStrikes: number[] = [];
     for (let i = 25; i >= -25; i--) {
-      placeholderStrikes.push(roundedBase + i * 5);
+      placeholderStrikes.push(roundedBase + i * strikeIncrement);
     }
     return placeholderStrikes;
-  }, [strikes, spxSpot]);
+  }, [strikes, currentSpot, underlying, strikeIncrement]);
 
   // Scroll to ATM function
   const scrollToAtm = useCallback(() => {
-    if (!spxSpot || visibleStrikes.length === 0) return;
+    if (!currentSpot || visibleStrikes.length === 0) return;
 
-    const atmIndex = visibleStrikes.findIndex(s => s <= spxSpot);
+    const atmIndex = visibleStrikes.findIndex(s => s <= currentSpot);
     if (atmIndex === -1) return;
 
     const rowHeight = 24; // Height of each row in pixels
@@ -1065,11 +1134,11 @@ function App() {
     if (heatmapScrollRef.current) {
       heatmapScrollRef.current.scrollTop = centeredPosition;
     }
-  }, [spxSpot, visibleStrikes]);
+  }, [currentSpot, visibleStrikes]);
 
   // Scroll to ATM on first load only
   useEffect(() => {
-    if (!hasScrolledToAtm && spxSpot && visibleStrikes.length > 0) {
+    if (!hasScrolledToAtm && currentSpot && visibleStrikes.length > 0) {
       // Delay to ensure layout is fully rendered
       const timer = setTimeout(() => {
         scrollToAtm();
@@ -1077,7 +1146,7 @@ function App() {
       }, 300);
       return () => clearTimeout(timer);
     }
-  }, [hasScrolledToAtm, spxSpot, visibleStrikes, scrollToAtm]);
+  }, [hasScrolledToAtm, currentSpot, visibleStrikes, scrollToAtm]);
 
   // Re-center when window resizes (row height changes)
   useEffect(() => {
@@ -1159,11 +1228,25 @@ function App() {
     <div className="app">
       <header className="app-header">
         <div className="header-left">
-          <h1>MarketSwarm - SPX</h1>
+          <h1>MarketSwarm</h1>
+          <div className="underlying-selector">
+            <button
+              className={`underlying-btn${underlying === 'I:SPX' ? ' active' : ''}`}
+              onClick={() => setUnderlying('I:SPX')}
+            >
+              SPX
+            </button>
+            <button
+              className={`underlying-btn${underlying === 'I:NDX' ? ' active' : ''}`}
+              onClick={() => setUnderlying('I:NDX')}
+            >
+              NDX
+            </button>
+          </div>
           <div className="spot-display">
-            {spot?.['I:SPX'] && (
+            {spot?.[underlying] && (
               <span className="spot-price">
-                SPX {spot['I:SPX'].value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                {underlying.replace('I:', '')} {spot[underlying].value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
               </span>
             )}
             {spot?.['I:VIX'] && (
@@ -1639,7 +1722,7 @@ function App() {
                 {visibleStrikes.map(strike => {
                   const gex = gexByStrike[strike] || { calls: 0, puts: 0 };
                   const netGex = gex.calls - gex.puts;
-                  const isAtm = spxSpot && Math.abs(strike - spxSpot) < 5;
+                  const isAtm = currentSpot && Math.abs(strike - currentSpot) < 5;
 
                   return (
                     <div key={strike} className={`gex-row ${isAtm ? 'atm' : ''}`}>
@@ -1739,7 +1822,7 @@ function App() {
                 onScroll={handleHeatmapScroll}
               >
                 {visibleStrikes.map(strike => {
-                    const isAtm = spxSpot && Math.abs(strike - spxSpot) < 5;
+                    const isAtm = currentSpot && Math.abs(strike - currentSpot) < 5;
                     const strikeData = heatmapGrid[strike] || {};
 
                     return (
@@ -1755,7 +1838,7 @@ function App() {
                                 style={{ backgroundColor: debitColor(val, changeGrid[strike]?.[0] ?? 0) }}
                                 onClick={isValid ? () => handleTileClick(strike, 0, val) : undefined}
                               >
-                                {val === null ? '-' : val > 0 ? val.toFixed(2) : 'NA'}
+                                {isValid ? val.toFixed(2) : 'NA'}
                               </div>
                             );
                           })()
@@ -1771,7 +1854,7 @@ function App() {
                                 style={{ backgroundColor: debitColor(val, pctChange) }}
                                 onClick={isValid ? () => handleTileClick(strike, w, val) : undefined}
                               >
-                                {val === null ? '-' : val > 0 ? val.toFixed(2) : 'NA'}
+                                {isValid ? val.toFixed(2) : 'NA'}
                               </div>
                             );
                           })
@@ -1888,11 +1971,11 @@ function App() {
                   )}
 
                   {/* Current spot price - thin dashed line */}
-                  {spxSpot && spxSpot >= riskGraphData.minPrice && spxSpot <= riskGraphData.maxPrice && (
+                  {currentSpot && currentSpot >= riskGraphData.minPrice && currentSpot <= riskGraphData.maxPrice && (
                     <line
-                      x1={50 + ((spxSpot - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530}
+                      x1={50 + ((currentSpot - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530}
                       y1="20"
-                      x2={50 + ((spxSpot - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530}
+                      x2={50 + ((currentSpot - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530}
                       y2="280"
                       stroke="#fbbf24"
                       strokeWidth="1"
@@ -2076,10 +2159,10 @@ function App() {
                         <span className="stat-label">Breakevens (RT)</span>
                         <span className="stat-value">{riskGraphData.theoreticalBreakevens.map(b => b.toFixed(0)).join(', ') || '-'}</span>
                       </div>
-                      {spxSpot && (
+                      {currentSpot && (
                         <div className="stat">
                           <span className="stat-label">Spot</span>
-                          <span className="stat-value">{spxSpot.toFixed(2)}</span>
+                          <span className="stat-value">{currentSpot.toFixed(2)}</span>
                         </div>
                       )}
                     </div>
@@ -2174,8 +2257,11 @@ function App() {
             </div>
 
             <div className="popup-actions">
-              <button className="btn btn-primary" onClick={copyTosScript}>
-                Copy TOS Script
+              <button
+                className={`btn btn-primary${tosCopied ? ' copied' : ''}`}
+                onClick={copyTosScript}
+              >
+                {tosCopied ? 'Copied!' : 'Copy TOS Script'}
               </button>
               <button className="btn btn-secondary" onClick={addToRiskGraph}>
                 Add to Risk Graph
