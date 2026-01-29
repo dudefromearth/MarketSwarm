@@ -461,6 +461,13 @@ function App() {
     setRiskGraphStrategies([]);
   };
 
+  // Update strategy debit (for when actual fill differs from quoted price)
+  const updateStrategyDebit = (id: string, newDebit: number | null) => {
+    setRiskGraphStrategies(prev => prev.map(s =>
+      s.id === id ? { ...s, debit: newDebit } : s
+    ));
+  };
+
   // Handle mouse down on risk graph chart (start drag)
   const handleChartMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
     setIsDragging(true);
@@ -1822,7 +1829,18 @@ function App() {
                           <div className="strategy-row">
                             <span className="strategy-dte">DTE {strat.dte}</span>
                             <span className="strategy-debit">
-                              {strat.debit !== null ? `$${strat.debit.toFixed(2)}` : '-'}
+                              $<input
+                                type="number"
+                                className="debit-input"
+                                value={strat.debit !== null ? strat.debit.toFixed(2) : ''}
+                                step="0.01"
+                                min="0"
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  updateStrategyDebit(strat.id, isNaN(val) ? null : val);
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                              />
                             </span>
                           </div>
                         </div>
