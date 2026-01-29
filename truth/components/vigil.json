@@ -10,8 +10,8 @@
       { "bus": "system-redis", "key": "vigil:heartbeat" }
     ],
     "subscribe_to": [
-      { "bus": "market-redis", "key": "massive:timeseries" },
-      { "bus": "market-redis", "key": "massive:chain" }
+      { "bus": "market-redis", "key": "massive:spot" },
+      { "bus": "market-redis", "key": "massive:chain:latest" }
     ]
   },
   "heartbeat": {

@@ -9,7 +9,6 @@
       { "bus": "system-redis", "key": "rss_agg:heartbeat" },
       { "bus": "system-redis", "key": "massive:heartbeat" },
       { "bus": "system-redis", "key": "vexy_ai:heartbeat" },
-      { "bus": "system-redis", "key": "mmaker:heartbeat" },
       { "bus": "system-redis", "key": "mesh:heartbeat" },
       { "bus": "system-redis", "key": "vigil:heartbeat" },
       { "bus": "system-redis", "key": "content_anal:heartbeat" }

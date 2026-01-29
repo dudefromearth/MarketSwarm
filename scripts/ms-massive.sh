@@ -3,142 +3,236 @@ set -euo pipefail
 
 ###############################################
 # MarketSwarm – massive (Massive Market Model)
-# Foreground dev runner (no PID, no log file)
-#
-# Always:
-#   - MASSIVE_WS_ENABLED=true
-#   - WS expiry = today (UTC, YYYYMMDD)
-#   - All params hard-coded here; edit in this file.
+# Foreground dev runner with interactive menu
 ###############################################
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SERVICE="massive"
-MAIN="$ROOT/services/massive/main.py"
+
+MAIN_DIRECT="$ROOT/services/massive/main.py"
+MAIN_SUPERVISED="$ROOT/services/massive/supervised_main.py"
 
 VENV="$ROOT/.venv"
 VENV_PY="$VENV/bin/python"
 
-###############################################
-# Core Redis endpoints
-###############################################
-export SYSTEM_REDIS_URL="redis://127.0.0.1:6379"
-export MARKET_REDIS_URL="redis://127.0.0.1:6380"
-export INTEL_REDIS_URL="redis://127.0.0.1:6381"
+# Capture locations (must match truth.json)
+CAPTURE_ROOT="$ROOT/ws_captures"
+CHAIN_DIR="$CAPTURE_ROOT/chain"
 
 ###############################################
-# Debug
+# Defaults
 ###############################################
-export DEBUG_MASSIVE="false"      # flip to "false" if you want less noise
+RUN_MODE="direct"   # direct | supervised
 
 ###############################################
-# Symbol / underlying selection
-# (edit these if you want a different underlyer)
+# Helpers
 ###############################################
-export MASSIVE_SYMBOL="I:SPX"    # I:SPX, I:NDX, SPY, QQQ
-export MASSIVE_UNDERLYING="SPX"  # SPX, NDX, SPY, QQQ
+set_primary_mode() {
+  : "${MASSIVE_WS_ENABLED:=true}"
+  export MASSIVE_WS_CAPTURE="false"
+  export MASSIVE_WS_REPLAY="false"
+  unset MASSIVE_REPLAY_SESSION
+}
 
-# Strike step for WS channels (SPX=5, NDX=10, SPY/QQQ=1, etc.)
-export MASSIVE_WS_STRIKE_STEP=5
+set_capture_mode() {
+  export MASSIVE_WS_ENABLED="true"
+  export MASSIVE_WS_CAPTURE="true"
+  export MASSIVE_WS_REPLAY="false"
+  unset MASSIVE_REPLAY_SESSION
+}
 
-# Massive API key
-export MASSIVE_API_KEY="pdjraOWSpDbg3ER_RslZYe3dmn4Y7WCC"  # change to your real key
+set_replay_mode() {
+  export MASSIVE_WS_ENABLED="false"
+  export MASSIVE_WS_CAPTURE="false"
+  export MASSIVE_WS_REPLAY="true"
+}
+
+toggle_ws() {
+  if [[ "${MASSIVE_WS_ENABLED:-false}" == "true" ]]; then
+    export MASSIVE_WS_ENABLED="false"
+  else
+    export MASSIVE_WS_ENABLED="true"
+  fi
+}
+
+set_debug_on() {
+  export DEBUG_MASSIVE="true"
+}
+
+set_debug_off() {
+  export DEBUG_MASSIVE="false"
+}
+
+toggle_debug() {
+  if [[ "${DEBUG_MASSIVE:-false}" == "true" ]]; then
+    set_debug_off
+  else
+    set_debug_on
+  fi
+}
+
+toggle_run_mode() {
+  if [[ "$RUN_MODE" == "direct" ]]; then
+    RUN_MODE="supervised"
+  else
+    RUN_MODE="direct"
+  fi
+}
+
+show_mode() {
+  echo "Resolved mode:"
+  echo "  RUN_MODE   : ${RUN_MODE}"
+  echo "  WS_ENABLED : ${MASSIVE_WS_ENABLED} $( [[ "${MASSIVE_WS_ENABLED}" == "true" ]] && echo "🟢" || echo "🔴" )"
+  echo "  WS_CAPTURE : ${MASSIVE_WS_CAPTURE}"
+  echo "  WS_REPLAY  : ${MASSIVE_WS_REPLAY}"
+  echo "  DEBUG      : ${DEBUG_MASSIVE:-false}"
+  if [[ "${MASSIVE_WS_REPLAY}" == "true" ]]; then
+    echo "  REPLAY_SESSION : ${MASSIVE_REPLAY_SESSION:-<not selected>}"
+  fi
+}
 
 ###############################################
-# Spot cadence (frequency + trail)
+# Replay session discovery
 ###############################################
-export MASSIVE_SPOT_INTERVAL_SEC=1
-export MASSIVE_SPOT_TRAIL_WINDOW_SEC=86400     # 24h
-export MASSIVE_SPOT_TRAIL_TTL_SEC=172800       # 48h
+select_replay_session() {
+  if [[ ! -d "$CHAIN_DIR" ]]; then
+    echo "Replay capture directory not found:"
+    echo "  $CHAIN_DIR"
+    sleep 2
+    return 1
+  fi
+
+  mapfile -t SESSIONS < <(
+    ls "$CHAIN_DIR"/chain_*.jsonl 2>/dev/null \
+      | sed -E 's/.*chain_([0-9]{8}_[0-9]{6})\.jsonl/\1/' \
+      | sort -r
+  )
+
+  if [[ ${#SESSIONS[@]} -eq 0 ]]; then
+    echo "No replay sessions found."
+    sleep 2
+    return 1
+  fi
+
+  echo ""
+  echo "Available Replay Sessions:"
+  echo "──────────────────────────"
+  for i in "${!SESSIONS[@]}"; do
+    printf "  %2d) %s\n" "$((i+1))" "${SESSIONS[$i]}"
+  done
+  echo ""
+
+  read -rp "Select replay session [1-${#SESSIONS[@]}]: " idx
+
+  if ! [[ "$idx" =~ ^[0-9]+$ ]] || (( idx < 1 || idx > ${#SESSIONS[@]} )); then
+    echo "Invalid selection"
+    sleep 1
+    return 1
+  fi
+
+  export MASSIVE_REPLAY_SESSION="${SESSIONS[$((idx-1))]}"
+  echo "Selected replay session: $MASSIVE_REPLAY_SESSION"
+  sleep 1
+}
 
 ###############################################
-# Chain cadence (frequency + range + TTL)
+# Interactive Menu
 ###############################################
-export MASSIVE_CHAIN_INTERVAL_SEC=60           # refresh full chain every 60s
-export MASSIVE_CHAIN_STRIKE_RANGE=150          # ± points around ATM
-export MASSIVE_CHAIN_NUM_EXPIRATIONS=5         # how many expiries to snapshot
-export MASSIVE_CHAIN_SNAPSHOT_TTL_SEC=600      # chain snapshot TTL
-export MASSIVE_CHAIN_TRAIL_WINDOW_SEC=86400
-export MASSIVE_CHAIN_TRAIL_TTL_SEC=172800
+menu() {
+  set_primary_mode
+  set_debug_off
+  RUN_MODE="direct"
+
+  while true; do
+    clear
+    echo "──────────────────────────────────────────────"
+    echo " MarketSwarm – massive (Mode Selector)"
+    echo "──────────────────────────────────────────────"
+    echo ""
+    show_mode
+    echo ""
+    echo "Modes:"
+    echo "  1) Primary (live)"
+    echo "  2) Capture (live + record)"
+    echo "  3) Replay (disk → redis)"
+    echo ""
+    echo "Run Control:"
+    echo "  s) Toggle Supervisor (direct ↔ supervised)"
+    echo "  w) Toggle WebSocket (on ↔ off)"
+    echo ""
+    echo "Debug:"
+    echo "  d) Toggle DEBUG_MASSIVE"
+    echo ""
+    echo "Actions:"
+    echo "  r) Run Massive"
+    echo "  q) Quit"
+    echo ""
+    echo "──────────────────────────────────────────────"
+    read -rp "Choose [1,2,3,s,w,d,r,q]: " choice
+    echo ""
+
+    case "$choice" in
+      1)
+        set_primary_mode
+        ;;
+      2)
+        set_capture_mode
+        ;;
+      3)
+        if select_replay_session; then
+          set_replay_mode
+        fi
+        ;;
+      s|S)
+        toggle_run_mode
+        ;;
+      w|W)
+        toggle_ws
+        ;;
+      d|D)
+        toggle_debug
+        ;;
+      r|R)
+        run_foreground
+        ;;
+      q|Q)
+        echo "Goodbye"
+        exit 0
+        ;;
+      *)
+        echo "Invalid choice"
+        sleep 1
+        ;;
+    esac
+  done
+}
 
 ###############################################
-# WebSocket config – always ON
-###############################################
-export MASSIVE_WS_ENABLED="true"
-export MASSIVE_WS_URL="wss://socket.massive.com/options"
-export MASSIVE_WS_RECONNECT_DELAY_SEC=5.0
-
-# Dynamically choose today (UTC) as WS expiry: YYYYMMDD
-export MASSIVE_WS_EXPIRY_YYYYMMDD="$(date -u +%Y%m%d)"
-
-# Legacy / unused but harmless
-export MASSIVE_WS_PARAMS=""
-
-###############################################
-# Orchestrator hints (used by some runners)
-###############################################
-export MASSIVE_LOOP_SLEEP=1.0
-export MASSIVE_SNAPSHOT_INTERVAL=10
-
-###############################################
-# Run massive in foreground
+# Run foreground
 ###############################################
 run_foreground() {
   clear
+  echo "Launching Massive with mode:"
+  show_mode
   echo "──────────────────────────────────────────────"
-  echo " MarketSwarm – massive (foreground runner)"
-  echo "──────────────────────────────────────────────"
-  echo "ROOT:                           $ROOT"
-  echo "SERVICE_ID:                     $SERVICE"
-  echo "VENV_PY:                        $VENV_PY"
-  echo "MAIN:                           $MAIN"
-  echo
-  echo "DEBUG_MASSIVE:                  $DEBUG_MASSIVE"
-  echo "MASSIVE_SYMBOL:                 $MASSIVE_SYMBOL"
-  echo "MASSIVE_UNDERLYING:             $MASSIVE_UNDERLYING"
-  echo
-  echo "MASSIVE_SPOT_INTERVAL_SEC:      $MASSIVE_SPOT_INTERVAL_SEC"
-  echo "MASSIVE_SPOT_TRAIL_WINDOW_SEC:  $MASSIVE_SPOT_TRAIL_WINDOW_SEC"
-  echo "MASSIVE_SPOT_TRAIL_TTL_SEC:     $MASSIVE_SPOT_TRAIL_TTL_SEC"
-  echo
-  echo "MASSIVE_CHAIN_INTERVAL_SEC:     $MASSIVE_CHAIN_INTERVAL_SEC"
-  echo "MASSIVE_CHAIN_STRIKE_RANGE:     $MASSIVE_CHAIN_STRIKE_RANGE"
-  echo "MASSIVE_CHAIN_NUM_EXPIRATIONS:  $MASSIVE_CHAIN_NUM_EXPIRATIONS"
-  echo "MASSIVE_CHAIN_SNAPSHOT_TTL_SEC: $MASSIVE_CHAIN_SNAPSHOT_TTL_SEC"
-  echo "MASSIVE_CHAIN_TRAIL_WINDOW_SEC: $MASSIVE_CHAIN_TRAIL_WINDOW_SEC"
-  echo "MASSIVE_CHAIN_TRAIL_TTL_SEC:    $MASSIVE_CHAIN_TRAIL_TTL_SEC"
-  echo
-  echo "MASSIVE_WS_ENABLED:             $MASSIVE_WS_ENABLED"
-  echo "MASSIVE_WS_URL:                 $MASSIVE_WS_URL"
-  echo "MASSIVE_WS_STRIKE_STEP:         $MASSIVE_WS_STRIKE_STEP"
-  echo "MASSIVE_WS_EXPIRY_YYYYMMDD:     $MASSIVE_WS_EXPIRY_YYYYMMDD"
-  echo "MASSIVE_WS_RECONNECT_DELAY_SEC: $MASSIVE_WS_RECONNECT_DELAY_SEC"
-  echo
-  echo "MASSIVE_LOOP_SLEEP:             $MASSIVE_LOOP_SLEEP s"
-  echo "MASSIVE_SNAPSHOT_INTERVAL:      $MASSIVE_SNAPSHOT_INTERVAL s"
-  echo "──────────────────────────────────────────────"
-  echo
-  echo "Running massive in foreground. Ctrl+C to stop."
-  echo
+  echo ""
 
   cd "$ROOT"
   export SERVICE_ID="$SERVICE"
 
-  exec "$VENV_PY" "$MAIN"
+  if [[ "$RUN_MODE" == "supervised" ]]; then
+    exec "$VENV_PY" "$MAIN_SUPERVISED"
+  else
+    exec "$VENV_PY" "$MAIN_DIRECT"
+  fi
 }
 
-###############################################
-# Optional trivial help
-###############################################
-if [[ "${1:-}" == "help" || "${1:-}" == "-h" ]]; then
-  echo "Usage: $(basename "$0")"
-  echo
-  echo "Runs the Massive service in foreground with:"
-  echo "  - WS enabled"
-  echo "  - WS expiry = today (UTC)"
-  echo "  - All params hard-coded inside this script."
-  echo
-  echo "Edit ms-massive.sh to change symbols, cadences, etc."
-  exit 0
+# If no args, show menu; if "run", go straight
+if [[ $# -gt 0 && "$1" == "run" ]]; then
+  set_primary_mode
+  set_debug_off
+  RUN_MODE="direct"
+  run_foreground
+else
+  menu
 fi
-
-run_foreground

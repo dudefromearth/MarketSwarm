@@ -156,7 +156,7 @@ class ChainWorker:
             "expiration_date": exp,
             "strike_price.gte": atm - rng,
             "strike_price.lte": atm + rng,
-            "limit": 1000,
+            "limit": 250,
         }
 
         sym_cfg = self.symbol_config.get(underlying, {})

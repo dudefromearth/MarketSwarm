@@ -15,6 +15,7 @@ inside a supervisor loop that can restart it.
 """
 
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -73,10 +74,17 @@ async def main():
 
     # -------------------------------------------------
     # Start background shared services (heartbeat)
+    # (THREAD — NOT ASYNC, same as main.py)
     # -------------------------------------------------
-    hb_task = asyncio.create_task(
-        start_heartbeat(SERVICE_NAME, config, logger),
-        name=f"{SERVICE_NAME}-heartbeat",
+    hb_stop = start_heartbeat(
+        SERVICE_NAME,
+        config,
+        logger,
+        payload_fn=lambda: {
+            "service": SERVICE_NAME,
+            "pid": os.getpid(),
+            "status": "running",
+        },
     )
 
     # -------------------------------------------------
@@ -102,11 +110,9 @@ async def main():
         raise RuntimeError("Massive supervisor exited")
 
     finally:
-        hb_task.cancel()
-        try:
-            await hb_task
-        except asyncio.CancelledError:
-            pass
+        # Signal heartbeat thread to stop
+        hb_stop.set()
+        logger.info("heartbeat stop signaled", emoji="🛑")
 
 
 if __name__ == "__main__":
