@@ -1739,25 +1739,32 @@ function App() {
                       <div key={strike} className={`heatmap-row ${isAtm ? 'atm' : ''}`}>
                         <div className={`strike-cell ${isAtm ? 'atm' : ''}`}>{strike}</div>
                         {strategy === 'single' ? (
-                          <div
-                            className="width-cell clickable"
-                            style={{ backgroundColor: debitColor(strikeData[0] ?? null, changeGrid[strike]?.[0] ?? 0) }}
-                            onClick={() => handleTileClick(strike, 0, strikeData[0] ?? null)}
-                          >
-                            {strikeData[0]?.toFixed(2) ?? '-'}
-                          </div>
+                          (() => {
+                            const val = strikeData[0] ?? null;
+                            const isValid = val !== null && val > 0;
+                            return (
+                              <div
+                                className={`width-cell ${isValid ? 'clickable' : ''}`}
+                                style={{ backgroundColor: debitColor(val, changeGrid[strike]?.[0] ?? 0) }}
+                                onClick={isValid ? () => handleTileClick(strike, 0, val) : undefined}
+                              >
+                                {val === null ? '-' : val > 0 ? val.toFixed(2) : 'NA'}
+                              </div>
+                            );
+                          })()
                         ) : (
                           widths.map(w => {
                             const val = strikeData[w] ?? null;
                             const pctChange = changeGrid[strike]?.[w] ?? 0;
+                            const isValid = val !== null && val > 0;
                             return (
                               <div
                                 key={w}
-                                className="width-cell clickable"
+                                className={`width-cell ${isValid ? 'clickable' : ''}`}
                                 style={{ backgroundColor: debitColor(val, pctChange) }}
-                                onClick={() => handleTileClick(strike, w, val)}
+                                onClick={isValid ? () => handleTileClick(strike, w, val) : undefined}
                               >
-                                {val !== null ? val.toFixed(2) : '-'}
+                                {val === null ? '-' : val > 0 ? val.toFixed(2) : 'NA'}
                               </div>
                             );
                           })
