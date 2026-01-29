@@ -17,12 +17,14 @@
   "models": {
     "produces": [],
     "consumes": [
-      { "bus": "market-redis", "key": "massive:model:gex" },
-      { "bus": "market-redis", "key": "massive:model:heatmap" },
-      { "bus": "market-redis", "key": "massive:model:market_mode" },
-      { "bus": "market-redis", "key": "massive:model:vix_regime" },
-      { "bus": "market-redis", "key": "massive:model:volume_profile" },
-      { "bus": "market-redis", "key": "massive:model:bias_lfi" },
+      { "bus": "market-redis", "key": "massive:model:spot" },
+      { "bus": "market-redis", "key": "massive:gex:model" },
+      { "bus": "market-redis", "key": "massive:heatmap:model:{symbol}:latest" },
+      { "bus": "market-redis", "key": "massive:heatmap:replay:{symbol}" },
+      { "bus": "market-redis", "key": "massive:market_mode:model" },
+      { "bus": "market-redis", "key": "massive:vix_regime:model" },
+      { "bus": "market-redis", "key": "massive:volume_profile:model" },
+      { "bus": "market-redis", "key": "massive:bias_lfi:model" },
       { "bus": "market-redis", "key": "vexy:model:playbyplay" }
     ]
   },

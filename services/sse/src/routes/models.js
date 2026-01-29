@@ -3,6 +3,7 @@
 
 import { Router } from "express";
 import { getMarketRedis } from "../redis.js";
+import { getKeys } from "../keys.js";
 
 const router = Router();
 
@@ -10,9 +11,10 @@ const router = Router();
 router.get("/spot", async (req, res) => {
   try {
     const redis = getMarketRedis();
-    const keys = await redis.keys("massive:model:spot:*");
+    const keys = getKeys();
+    const spotKeys = await redis.keys(keys.spotPattern());
     // Filter out :trail keys
-    const filteredKeys = keys.filter((k) => !k.endsWith(":trail"));
+    const filteredKeys = spotKeys.filter((k) => !k.endsWith(":trail"));
     const result = {};
 
     for (const key of filteredKeys) {
@@ -41,7 +43,8 @@ router.get("/candles/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   try {
     const redis = getMarketRedis();
-    const trailKey = `massive:model:spot:${symbol}:trail`;
+    const keys = getKeys();
+    const trailKey = keys.spotTrailKey(symbol);
 
     // Get last 24 hours of trail data
     const now = Math.floor(Date.now() / 1000);
@@ -126,11 +129,12 @@ router.get("/gex/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
   try {
     const redis = getMarketRedis();
+    const keys = getKeys();
 
     // GEX models are stored as massive:gex:model:SYMBOL:calls and :puts
     const [callsRaw, putsRaw] = await Promise.all([
-      redis.get(`massive:gex:model:${symbol}:calls`),
-      redis.get(`massive:gex:model:${symbol}:puts`),
+      redis.get(keys.gexCallsKey(symbol)),
+      redis.get(keys.gexPutsKey(symbol)),
     ]);
 
     if (!callsRaw && !putsRaw) {
@@ -156,12 +160,13 @@ router.get("/heatmap/:symbol/:strategy?", async (req, res) => {
   const strategy = req.params.strategy || "latest";
   try {
     const redis = getMarketRedis();
-    const key = `massive:heatmap:model:${symbol}:${strategy}`;
+    const keys = getKeys();
+    const key = keys.heatmapKey(symbol, strategy);
     const data = await redis.get(key);
 
     if (!data) {
-      // Try without strategy suffix
-      const fallbackKey = `massive:heatmap:model:${symbol}:latest`;
+      // Try latest as fallback
+      const fallbackKey = keys.heatmapLatestKey(symbol);
       const fallbackData = await redis.get(fallbackKey);
       if (!fallbackData) {
         return res.status(404).json({
@@ -183,9 +188,10 @@ router.get("/heatmap/:symbol/:strategy?", async (req, res) => {
 router.get("/vexy/latest", async (req, res) => {
   try {
     const redis = getMarketRedis();
+    const keys = getKeys();
     const [epochRaw, eventRaw] = await Promise.all([
-      redis.get("vexy:model:playbyplay:epoch:latest"),
-      redis.get("vexy:model:playbyplay:event:latest"),
+      redis.get(keys.vexyEpochKey()),
+      redis.get(keys.vexyEventKey()),
     ]);
 
     const data = {
@@ -204,7 +210,8 @@ router.get("/vexy/latest", async (req, res) => {
 router.get("/market_mode", async (req, res) => {
   try {
     const redis = getMarketRedis();
-    const data = await redis.get("massive:market_mode:model:latest");
+    const keys = getKeys();
+    const data = await redis.get(keys.marketModeKey());
 
     if (!data) {
       return res.status(404).json({ success: false, error: "No market mode model found" });
@@ -221,7 +228,8 @@ router.get("/market_mode", async (req, res) => {
 router.get("/vix_regime", async (req, res) => {
   try {
     const redis = getMarketRedis();
-    const data = await redis.get("massive:vix_regime:model:latest");
+    const keys = getKeys();
+    const data = await redis.get(keys.vixRegimeKey());
 
     if (!data) {
       return res.status(404).json({ success: false, error: "No VIX regime model found" });
@@ -239,10 +247,11 @@ router.get("/vix_regime", async (req, res) => {
 router.get("/volume_profile", async (req, res) => {
   try {
     const redis = getMarketRedis();
+    const keys = getKeys();
 
     // Get all price levels from hash
-    const profileData = await redis.hgetall("massive:volume_profile:spx");
-    const metaData = await redis.hgetall("massive:volume_profile:spx:meta");
+    const profileData = await redis.hgetall(keys.volumeProfileKey());
+    const metaData = await redis.hgetall(keys.volumeProfileMetaKey());
 
     if (!profileData || Object.keys(profileData).length === 0) {
       return res.status(404).json({ success: false, error: "No volume profile data found" });
@@ -292,7 +301,8 @@ router.get("/volume_profile", async (req, res) => {
 router.get("/bias_lfi", async (req, res) => {
   try {
     const redis = getMarketRedis();
-    const data = await redis.get("massive:bias_lfi:model:latest");
+    const keys = getKeys();
+    const data = await redis.get(keys.biasLfiKey());
 
     if (!data) {
       return res.status(404).json({ success: false, error: "No bias/LFI model found" });

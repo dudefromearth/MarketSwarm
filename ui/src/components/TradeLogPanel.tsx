@@ -34,7 +34,7 @@ export interface Trade {
 }
 
 interface TradeLogPanelProps {
-  onOpenTradeEntry: (prefill?: Partial<Trade>) => void;
+  onOpenTradeEntry: () => void;
   onEditTrade: (trade: Trade) => void;
   refreshTrigger?: number;
 }

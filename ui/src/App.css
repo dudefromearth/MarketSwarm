@@ -3034,3 +3034,207 @@ body {
 .stat-value.loss {
   color: #f87171;
 }
+
+/* Trade Log Overlay */
+.trade-log-toggle {
+  background: #2563eb;
+  color: white;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-left: auto;
+}
+
+.trade-log-toggle:hover {
+  background: #1d4ed8;
+}
+
+.trade-log-overlay {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 480px;
+  height: 100vh;
+  background: #0d0d0d;
+  border-left: 1px solid #333;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
+}
+
+.trade-log-overlay-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #333;
+  background: #111;
+}
+
+.trade-log-overlay-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.trade-log-overlay-header .close-btn {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.trade-log-overlay-header .close-btn:hover {
+  color: #e5e5e5;
+}
+
+.trade-log-overlay-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+}
+
+/* Trade Log Edge Bar */
+.trade-log-edge-bar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 24px;
+  height: 100vh;
+  background: linear-gradient(to right, #1a1a1a, #252525);
+  border-left: 1px solid #333;
+  cursor: pointer;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, width 0.2s;
+}
+
+.trade-log-edge-bar:hover {
+  background: linear-gradient(to right, #252525, #333);
+  width: 28px;
+}
+
+.trade-log-edge-bar.open {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.edge-bar-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 11px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.trade-log-edge-bar:hover .edge-bar-label {
+  color: #888;
+}
+
+/* Trade Log Overlay - slide animation */
+.trade-log-overlay {
+  position: fixed;
+  top: 0;
+  right: -480px;
+  width: 480px;
+  height: 100vh;
+  background: #0d0d0d;
+  border-left: 1px solid #333;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.5);
+  transition: right 0.3s ease;
+}
+
+.trade-log-overlay.open {
+  right: 0;
+}
+
+/* Override - thinner edge bar */
+.trade-log-edge-bar {
+  width: 16px;
+}
+
+.trade-log-edge-bar:hover {
+  width: 18px;
+}
+
+.edge-bar-label {
+  font-size: 9px;
+  letter-spacing: 0.5px;
+}
+
+/* Trade Log Close Bar */
+.trade-log-close-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 16px;
+  height: 100%;
+  background: linear-gradient(to left, #1a1a1a, #252525);
+  border-right: 1px solid #333;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, width 0.2s;
+}
+
+.trade-log-close-bar:hover {
+  background: linear-gradient(to left, #252525, #333);
+  width: 18px;
+}
+
+.close-bar-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 9px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.trade-log-close-bar:hover .close-bar-label {
+  color: #888;
+}
+
+.trade-log-panel-inner {
+  margin-left: 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.trade-log-overlay-header .close-btn {
+  display: none;
+}
+
+/* Fix close bar positioning */
+.trade-log-overlay {
+  position: fixed;
+}
+
+.trade-log-close-bar {
+  z-index: 10;
+}
+
+/* Make close bar more visible */
+.trade-log-close-bar {
+  background: #2a2a2a;
+  border-right: 2px solid #444;
+}

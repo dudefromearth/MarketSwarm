@@ -6,6 +6,7 @@ import cors from "cors";
 import { loadConfig, getFallbackConfig } from "./config.js";
 import { initRedis, closeRedis } from "./redis.js";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
+import { setConfig as setKeyConfig } from "./keys.js";
 import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, stopPolling, getClientStats } from "./routes/sse.js";
 import modelsRoutes from "./routes/models.js";
 
@@ -66,6 +67,9 @@ async function main() {
     console.warn("[sse] Using fallback configuration");
     config = getFallbackConfig();
   }
+
+  // Initialize key resolver from config
+  setKeyConfig(config);
 
   // Initialize Redis connections
   initRedis(config);

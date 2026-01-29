@@ -452,7 +452,7 @@ function App() {
   const [dgSnapshot, setDgSnapshot] = useState<RawSnapshot | null>(null);
 
   // Trade Log state
-  const [tradeLogCollapsed, setTradeLogCollapsed] = useState(false);
+  const [tradeLogCollapsed, setTradeLogCollapsed] = useState(true);
   const [tradeEntryOpen, setTradeEntryOpen] = useState(false);
   const [tradeEntryPrefill, setTradeEntryPrefill] = useState<TradeEntryData | null>(null);
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
@@ -2175,23 +2175,6 @@ function App() {
           )}
         </div>
 
-        {/* Trade Log Panel */}
-        <div className={`panel trade-log-panel-wrapper ${tradeLogCollapsed ? 'collapsed' : ''}`}>
-          <div className="panel-header" onClick={() => setTradeLogCollapsed(!tradeLogCollapsed)}>
-            <span className="panel-toggle">{tradeLogCollapsed ? '▶' : '▼'}</span>
-            <h3>Trade Log</h3>
-          </div>
-          {!tradeLogCollapsed && (
-            <div className="panel-content">
-              <EquityChartWidget refreshTrigger={tradeRefreshTrigger} />
-              <TradeLogPanel
-                onOpenTradeEntry={openTradeEntry}
-                onEditTrade={openTradeEdit}
-                refreshTrigger={tradeRefreshTrigger}
-              />
-            </div>
-          )}
-        </div>
       </div>
 
       <div className="footer">
@@ -2199,6 +2182,40 @@ function App() {
         <span>GEX: {gexCalls?.ts ? new Date(gexCalls.ts * 1000).toLocaleTimeString() : '-'}</span>
         <span>Tiles: {Object.keys(heatmap?.tiles || {}).length}</span>
         <span>v{heatmap?.version || '-'}</span>
+      </div>
+
+      {/* Trade Log Edge Bar + Overlay */}
+      <div
+        className={`trade-log-edge-bar ${!tradeLogCollapsed ? 'open' : ''}`}
+        onClick={() => setTradeLogCollapsed(!tradeLogCollapsed)}
+      >
+        <span className="edge-bar-label">Trade Log</span>
+      </div>
+
+      <div className={`trade-log-overlay ${!tradeLogCollapsed ? 'open' : ''}`}>
+        <div
+          className="trade-log-close-bar"
+          onClick={() => setTradeLogCollapsed(true)}
+        >
+          <span className="close-bar-label">Close</span>
+        </div>
+        <div className="trade-log-panel-inner">
+          <div className="trade-log-overlay-header">
+            <h2>Trade Log</h2>
+          </div>
+          <div className="trade-log-overlay-content">
+          {!tradeLogCollapsed && (
+            <>
+              <EquityChartWidget refreshTrigger={tradeRefreshTrigger} />
+              <TradeLogPanel
+                onOpenTradeEntry={openTradeEntry}
+                onEditTrade={openTradeEdit}
+                refreshTrigger={tradeRefreshTrigger}
+              />
+            </>
+          )}
+          </div>
+        </div>
       </div>
 
       {/* Strategy Popup Modal */}

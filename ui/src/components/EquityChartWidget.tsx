@@ -83,61 +83,68 @@ export default function EquityChartWidget({ refreshTrigger = 0 }: EquityChartWid
   useEffect(() => {
     if (!containerRef.current || chartRef.current) return;
 
-    const chart = createChart(containerRef.current, {
-      height: 200,
-      layout: {
-        background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: 'rgba(148,163,184,1)',
-      },
-      grid: {
-        vertLines: { color: 'rgba(51,65,85,0.3)' },
-        horzLines: { color: 'rgba(51,65,85,0.3)' },
-      },
-      rightPriceScale: {
-        borderColor: 'rgba(30,41,59,1)',
-        scaleMargins: { top: 0.1, bottom: 0.1 },
-      },
-      timeScale: {
-        borderColor: 'rgba(30,41,59,1)',
-        timeVisible: true,
-        secondsVisible: false,
-      },
-      crosshair: { mode: 1 },
-    });
+    try {
+      const chart = createChart(containerRef.current, {
+        height: 200,
+        layout: {
+          background: { type: ColorType.Solid, color: 'transparent' },
+          textColor: 'rgba(148,163,184,1)',
+        },
+        grid: {
+          vertLines: { color: 'rgba(51,65,85,0.3)' },
+          horzLines: { color: 'rgba(51,65,85,0.3)' },
+        },
+        rightPriceScale: {
+          borderColor: 'rgba(30,41,59,1)',
+          scaleMargins: { top: 0.1, bottom: 0.1 },
+        },
+        timeScale: {
+          borderColor: 'rgba(30,41,59,1)',
+          timeVisible: true,
+          secondsVisible: false,
+        },
+        crosshair: { mode: 1 },
+      });
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const series = (chart as any).addSeries(AreaSeries, {
-      lineColor: 'rgba(74,222,128,1)',
-      topColor: 'rgba(74,222,128,0.4)',
-      bottomColor: 'rgba(74,222,128,0.05)',
-      lineWidth: 2,
-      priceLineVisible: true,
-      lastValueVisible: true,
-    });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (typeof (chart as any).addSeries === 'function') {
+        const series = (chart as any).addSeries(AreaSeries, {
+          lineColor: 'rgba(74,222,128,1)',
+          topColor: 'rgba(74,222,128,0.4)',
+          bottomColor: 'rgba(74,222,128,0.05)',
+          lineWidth: 2,
+          priceLineVisible: true,
+          lastValueVisible: true,
+        });
+        seriesRef.current = series;
+      }
 
-    seriesRef.current = series;
-    chartRef.current = chart;
+      chartRef.current = chart;
 
-    const handleResize = () => {
-      if (!containerRef.current || !chartRef.current) return;
-      const { width } = containerRef.current.getBoundingClientRect();
-      chartRef.current.applyOptions({ width });
-    };
+      const handleResize = () => {
+        if (!containerRef.current || !chartRef.current) return;
+        const { width } = containerRef.current.getBoundingClientRect();
+        chartRef.current.applyOptions({ width });
+      };
 
-    handleResize();
-    window.addEventListener('resize', handleResize);
+      handleResize();
+      window.addEventListener('resize', handleResize);
 
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      if (chartRef.current) chartRef.current.remove();
-      chartRef.current = null;
-      seriesRef.current = null;
-    };
+      return () => {
+        window.removeEventListener('resize', handleResize);
+        if (chartRef.current) chartRef.current.remove();
+        chartRef.current = null;
+        seriesRef.current = null;
+      };
+    } catch (err) {
+      console.error('EquityChartWidget chart creation error:', err);
+    }
   }, []);
 
   // Update chart data when equity data or time range changes
   useEffect(() => {
     if (!seriesRef.current || !chartRef.current || equityData.length === 0) return;
+    try {
 
     // Filter by time range
     const now = new Date();
@@ -187,6 +194,9 @@ export default function EquityChartWidget({ refreshTrigger = 0 }: EquityChartWid
 
     seriesRef.current.setData(chartData);
     chartRef.current.timeScale().fitContent();
+    } catch (err) {
+      console.error('EquityChartWidget data update error:', err);
+    }
   }, [equityData, timeRange]);
 
   const formatCurrency = (value: number) => {

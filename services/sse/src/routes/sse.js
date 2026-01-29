@@ -3,6 +3,7 @@
 
 import { Router } from "express";
 import { getMarketRedis, getMarketRedisSub } from "../redis.js";
+import { getKeys } from "../keys.js";
 
 const router = Router();
 
@@ -270,7 +271,8 @@ function aggregateCandles(trailData, bucketSec) {
 }
 
 async function fetchAndAggregateCandles(redis, symbol) {
-  const trailKey = `massive:model:spot:${symbol}:trail`;
+  const keys = getKeys();
+  const trailKey = keys.spotTrailKey(symbol);
 
   // Get last 24 hours of trail data (86400 seconds)
   const now = Math.floor(Date.now() / 1000);
@@ -329,9 +331,10 @@ let candlePollingInterval = null;
 
 // One-time initial fetch for heatmap (called at startup)
 async function fetchInitialHeatmap(redis) {
+  const keys = getKeys();
   console.log("[sse] Fetching initial heatmap state...");
   try {
-    const heatmapKeys = await redis.keys("massive:heatmap:model:*:latest");
+    const heatmapKeys = await redis.keys(keys.heatmapPattern());
     for (const key of heatmapKeys) {
       const val = await redis.get(key);
       if (val) {
@@ -363,9 +366,10 @@ export async function startPolling(config) {
   console.log(`[sse] Heatmap is event-driven via pub/sub (no polling)`);
 
   const poll = async () => {
+    const keys = getKeys();
     try {
       // Poll spot prices (massive:model:spot:SYMBOL, not :trail keys)
-      const spotKeys = await redis.keys("massive:model:spot:*");
+      const spotKeys = await redis.keys(keys.spotPattern());
       const filteredSpotKeys = spotKeys.filter((k) => !k.endsWith(":trail"));
       if (filteredSpotKeys.length > 0) {
         const spotData = {};
@@ -388,7 +392,7 @@ export async function startPolling(config) {
       }
 
       // Poll GEX models (per symbol) - keys like massive:gex:model:I:SPX:calls
-      const gexKeys = await redis.keys("massive:gex:model:*");
+      const gexKeys = await redis.keys(keys.gexPattern());
       const gexBySymbol = new Map();
       for (const key of gexKeys) {
         const val = await redis.get(key);
@@ -416,8 +420,8 @@ export async function startPolling(config) {
       }
 
       // Poll vexy latest (epoch + event)
-      const vexyEpoch = await redis.get("vexy:model:playbyplay:epoch:latest");
-      const vexyEvent = await redis.get("vexy:model:playbyplay:event:latest");
+      const vexyEpoch = await redis.get(keys.vexyEpochKey());
+      const vexyEvent = await redis.get(keys.vexyEventKey());
       const vexyData = {
         epoch: vexyEpoch ? JSON.parse(vexyEpoch) : null,
         event: vexyEvent ? JSON.parse(vexyEvent) : null,
@@ -428,7 +432,7 @@ export async function startPolling(config) {
       }
 
       // Poll bias_lfi model
-      const biasLfiRaw = await redis.get("massive:bias_lfi:model:latest");
+      const biasLfiRaw = await redis.get(keys.biasLfiKey());
       if (biasLfiRaw) {
         try {
           const biasLfiData = JSON.parse(biasLfiRaw);
@@ -442,7 +446,7 @@ export async function startPolling(config) {
       }
 
       // Poll market_mode model
-      const marketModeRaw = await redis.get("massive:market_mode:model:latest");
+      const marketModeRaw = await redis.get(keys.marketModeKey());
       if (marketModeRaw) {
         try {
           const marketModeData = JSON.parse(marketModeRaw);
@@ -502,17 +506,19 @@ export async function startPolling(config) {
 // Subscribe to vexy:playbyplay pub/sub for real-time updates
 export function subscribeVexyPubSub() {
   const sub = getMarketRedisSub();
+  const keys = getKeys();
+  const vexyChannel = keys.vexyChannel();
 
-  sub.subscribe("vexy:playbyplay", (err) => {
+  sub.subscribe(vexyChannel, (err) => {
     if (err) {
-      console.error("[sse] Failed to subscribe to vexy:playbyplay:", err.message);
+      console.error(`[sse] Failed to subscribe to ${vexyChannel}:`, err.message);
     } else {
-      console.log("[sse] Subscribed to vexy:playbyplay");
+      console.log(`[sse] Subscribed to ${vexyChannel}`);
     }
   });
 
   sub.on("message", (channel, message) => {
-    if (channel === "vexy:playbyplay") {
+    if (channel === vexyChannel) {
       try {
         const data = JSON.parse(message);
         // Update state and broadcast
@@ -548,8 +554,9 @@ setInterval(() => {
 // Subscribe to heatmap diffs for real-time updates
 export function subscribeHeatmapDiffs(symbols = ["I:SPX", "I:NDX"]) {
   const sub = getMarketRedisSub();
+  const keys = getKeys();
 
-  const channels = symbols.map((s) => `massive:heatmap:diff:${s}`);
+  const channels = symbols.map((s) => keys.heatmapDiffChannel(s));
 
   sub.subscribe(...channels, (err, count) => {
     if (err) {
