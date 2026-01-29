@@ -281,6 +281,387 @@ body {
   overflow: hidden;
 }
 
+/* Vexy Widget Styles */
+.vexy-widget .widget-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.widget-timestamp {
+  font-size: 10px;
+  color: #555;
+  font-weight: normal;
+}
+
+.vexy-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.vexy-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vexy-epoch,
+.vexy-event-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vexy-icon {
+  font-size: 14px;
+}
+
+.vexy-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.vexy-epoch-name {
+  font-size: 11px;
+  color: #3b82f6;
+  font-weight: 500;
+}
+
+.vexy-event-time {
+  font-size: 10px;
+  color: #555;
+  margin-left: auto;
+}
+
+.vexy-text {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #ccc;
+}
+
+.epoch-text {
+  color: #e5e5e5;
+  font-weight: 500;
+}
+
+.event-text {
+  color: #f59e0b;
+  font-style: italic;
+}
+
+.event-section {
+  padding-top: 10px;
+  border-top: 1px solid #333;
+}
+
+.vexy-empty {
+  color: #444;
+  font-size: 11px;
+  text-align: center;
+  padding: 20px;
+}
+
+/* Tooltip Component Styles */
+.tooltip-trigger {
+  cursor: help;
+  display: inline-flex;
+  align-items: center;
+}
+
+.tooltip-popup {
+  position: fixed;
+  z-index: 10000;
+  padding: 14px 18px;
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  max-width: 320px;
+  min-width: 200px;
+  pointer-events: auto;
+  animation: tooltipFadeIn 0.15s ease-out;
+}
+
+@keyframes tooltipFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.tooltip-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #333;
+}
+
+.tooltip-description {
+  font-size: 13px;
+  font-weight: 400;
+  color: #ccc;
+  line-height: 1.6;
+}
+
+.tooltip-link {
+  display: inline-block;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #333;
+  font-size: 12px;
+  color: #3b82f6;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.15s;
+}
+
+.tooltip-link:hover {
+  color: #60a5fa;
+  text-decoration: underline;
+}
+
+/* Widget Header with Title Group */
+.widget-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.widget-subtitle {
+  font-size: 9px;
+  color: #555;
+  font-weight: normal;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* Market Mode Widget */
+.market-mode-widget .widget-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.mode-badge {
+  font-size: 10px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.mode-badge.compression {
+  background: rgba(14, 165, 233, 0.2);
+  color: #0ea5e9;
+}
+
+.mode-badge.transition {
+  background: rgba(234, 179, 8, 0.2);
+  color: #eab308;
+}
+
+.mode-badge.expansion {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.mm-content {
+  padding: 0 !important;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.mm-svg {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+}
+
+.mm-legend {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid #222;
+  flex-shrink: 0;
+}
+
+.mm-zone {
+  font-size: 9px;
+  padding: 2px 8px;
+  border-radius: 3px;
+}
+
+.mm-zone.compression {
+  color: #0ea5e9;
+  background: rgba(14, 165, 233, 0.1);
+}
+
+.mm-zone.transition {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.mm-zone.expansion {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* Liquidity Intent Map Widget */
+.lim-widget .widget-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.lim-header-values {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  color: #888;
+}
+
+.lim-header-values strong {
+  font-weight: 600;
+}
+
+.bias-value {
+  color: #22c55e;
+}
+
+.lfi-value {
+  color: #0ea5e9;
+}
+
+.lim-content {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.lim-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Dealer Gravity Widget */
+.dealer-gravity-widget .widget-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dg-header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.timeframe-tabs {
+  display: flex;
+  gap: 2px;
+}
+
+.tf-tab {
+  background: transparent;
+  border: 1px solid #333;
+  color: #666;
+  padding: 3px 10px;
+  font-size: 10px;
+  cursor: pointer;
+  border-radius: 3px;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+
+.tf-tab:hover {
+  border-color: #444;
+  color: #888;
+}
+
+.tf-tab.active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: #fff;
+}
+
+.dg-content {
+  padding: 0 !important;
+}
+
+.dealer-gravity-chart {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.dg-price-legend {
+  display: flex;
+  justify-content: flex-end;
+  gap: 16px;
+  padding: 4px 8px;
+  font-size: 10px;
+}
+
+.dg-price-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #888;
+}
+
+.dg-price-item strong {
+  font-weight: 500;
+}
+
+.dg-price-item.best {
+  color: #0ea5e9;
+}
+
+.dg-price-item.high {
+  color: #22c55e;
+}
+
+.dg-price-item.low {
+  color: #f472b6;
+}
+
+.dg-line {
+  width: 16px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.dg-price-item.best .dg-line {
+  background: #0ea5e9;
+}
+
+.dg-price-item.high .dg-line {
+  background: #22c55e;
+}
+
+.dg-price-item.low .dg-line {
+  background: #f472b6;
+}
+
+.dg-svg {
+  width: 100%;
+  height: auto;
+  flex: 1;
+}
+
 /* Main Content Row - Horizontal Scrollable Layout */
 .main-content-row {
   display: flex;
