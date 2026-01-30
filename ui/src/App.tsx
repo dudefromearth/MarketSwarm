@@ -1970,6 +1970,26 @@ function App() {
                             </span>
                           </div>
                         </div>
+                        <button
+                          className="btn-log-trade"
+                          onClick={() => {
+                            openTradeEntry({
+                              symbol: underlying === 'I:SPX' ? 'SPX' : 'NDX',
+                              underlying,
+                              strategy: strat.strategy as 'single' | 'vertical' | 'butterfly',
+                              side: strat.side as 'call' | 'put',
+                              strike: strat.strike,
+                              width: strat.width,
+                              dte: strat.dte,
+                              entry_price: strat.debit || undefined,
+                              entry_spot: currentSpot || undefined,
+                              source: 'risk_graph'
+                            });
+                          }}
+                          title="Log this trade"
+                        >
+                          Log
+                        </button>
                         <button className="btn-remove" onClick={() => removeFromRiskGraph(strat.id)}>&times;</button>
                       </div>
                     ))}
