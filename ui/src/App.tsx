@@ -567,6 +567,7 @@ function App() {
   const [timeMachineEnabled, setTimeMachineEnabled] = useState(false);
   const [simTimeOffsetHours, setSimTimeOffsetHours] = useState(0); // Hours forward from now toward expiration
   const [simVolatilityOffset, setSimVolatilityOffset] = useState(0); // Percentage points offset from current VIX
+  const [simSpotOffset, setSimSpotOffset] = useState(0); // Points offset from current spot price
 
   // Close context menus on outside click
   useEffect(() => {
@@ -1437,7 +1438,12 @@ function App() {
 
   const currentSpot = spot?.[underlying]?.value || null;
 
-  // Check alerts against current spot price
+  // Simulated spot for Time Machine (actual spot + offset when enabled)
+  const simulatedSpot = currentSpot && timeMachineEnabled
+    ? currentSpot + simSpotOffset
+    : currentSpot;
+
+  // Check alerts against current spot price (use simulated if time machine enabled)
   useEffect(() => {
     if (!currentSpot) return;
 
@@ -1506,14 +1512,18 @@ function App() {
         } else if (alert.type === 'ai_theta_gamma') {
           // AI Theta/Gamma: Dynamic zone that appears when profit exceeds threshold
           // Zone edges = trigger levels. If price exits zone, risk is too high to stay in position.
-          if (strategy && currentSpot) {
+          // Uses simulated values when Time Machine is enabled
+          const effectiveSpot = simulatedSpot || currentSpot;
+          if (strategy && effectiveSpot) {
             const entryDebit = alert.entryDebit || strategy.debit || 1;
 
             // Calculate current P&L using Black-Scholes theoretical value
-            // This works regardless of when trade was entered - uses current spot and VIX
+            // Uses Time Machine settings when enabled (simulated spot, volatility, time)
             const vix = spot?.['I:VIX']?.value || 20;
-            const volatility = vix / 100;
-            const theoreticalPnL = calculateStrategyTheoreticalPnL(strategy, currentSpot, volatility);
+            const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
+            const volatility = Math.max(0.05, adjustedVix) / 100;
+            const timeOffset = timeMachineEnabled ? simTimeOffsetHours : 0;
+            const theoreticalPnL = calculateStrategyTheoreticalPnL(strategy, effectiveSpot, volatility, 0.05, timeOffset);
 
             // theoreticalPnL is in cents, entryDebit is in dollars
             // Profit = current P&L (already accounts for entry debit in the function)
@@ -1549,9 +1559,9 @@ function App() {
             const zoneExpansion = Math.max(0, newHwmProfit / entryDebit) * 15;
             const finalZoneWidth = zoneHalfWidth + zoneExpansion;
 
-            // Calculate zone bounds centered on current spot
-            const newZoneLow = currentSpot - finalZoneWidth;
-            const newZoneHigh = currentSpot + finalZoneWidth;
+            // Calculate zone bounds centered on effective spot (simulated or real)
+            const newZoneLow = effectiveSpot - finalZoneWidth;
+            const newZoneHigh = effectiveSpot + finalZoneWidth;
 
             if (profitThresholdMet) {
               // Profit threshold met - zone is active
@@ -1560,7 +1570,7 @@ function App() {
               const currentZoneHigh = wasActive ? alert.zoneHigh! : newZoneHigh;
 
               // Check if price is within zone
-              const inZone = currentSpot >= currentZoneLow && currentSpot <= currentZoneHigh;
+              const inZone = effectiveSpot >= currentZoneLow && effectiveSpot <= currentZoneHigh;
 
               // Trigger alert if price exits zone - risk too high to remain in position
               if (!inZone) {
@@ -1653,7 +1663,7 @@ function App() {
         setRiskGraphAlerts(prev => prev.filter(a => !alertsToRemove.includes(a.id)));
       }, 100);
     }
-  }, [currentSpot, riskGraphStrategies, spot]);
+  }, [currentSpot, simulatedSpot, riskGraphStrategies, spot, timeMachineEnabled, simTimeOffsetHours, simVolatilityOffset]);
 
   const widths = WIDTHS[underlying][strategy];
 
@@ -2937,18 +2947,29 @@ function App() {
                     />
                   )}
 
-                  {/* Current spot price - thin dashed line */}
-                  {currentSpot && currentSpot >= riskGraphData.minPrice && currentSpot <= riskGraphData.maxPrice && (
-                    <line
-                      x1={50 + ((currentSpot - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530}
-                      y1="20"
-                      x2={50 + ((currentSpot - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530}
-                      y2="280"
-                      stroke="#fbbf24"
-                      strokeWidth="1"
-                      strokeDasharray="4,4"
-                    />
-                  )}
+                  {/* Current/Simulated spot price line */}
+                  {(() => {
+                    const spotToShow = simulatedSpot || currentSpot;
+                    const isSimulated = timeMachineEnabled && simSpotOffset !== 0;
+                    if (!spotToShow || spotToShow < riskGraphData.minPrice || spotToShow > riskGraphData.maxPrice) return null;
+                    const x = 50 + ((spotToShow - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
+                    return (
+                      <g>
+                        <line
+                          x1={x}
+                          y1="20"
+                          x2={x}
+                          y2="280"
+                          stroke={isSimulated ? "#f97316" : "#fbbf24"}
+                          strokeWidth="1"
+                          strokeDasharray={isSimulated ? "2,2" : "4,4"}
+                        />
+                        {isSimulated && (
+                          <text x={x} y="15" textAnchor="middle" fill="#f97316" fontSize="8">SIM</text>
+                        )}
+                      </g>
+                    );
+                  })()}
 
                   {/* Expiration P&L Line (blue) */}
                   <path
@@ -3417,6 +3438,7 @@ function App() {
                             onClick={() => {
                               setSimTimeOffsetHours(0);
                               setSimVolatilityOffset(0);
+                              setSimSpotOffset(0);
                             }}
                           >
                             Reset
@@ -3489,6 +3511,30 @@ function App() {
                               <span>-15</span>
                               <span>0</span>
                               <span>+30</span>
+                            </div>
+                          </div>
+                          <div className="control-group spot-control">
+                            <label>
+                              Spot Price: <span className="control-value">
+                                {simSpotOffset >= 0 ? '+' : ''}{simSpotOffset.toFixed(0)}
+                              </span>
+                              <span className="control-detail">
+                                ({simulatedSpot?.toFixed(0) || '-'})
+                              </span>
+                            </label>
+                            <input
+                              type="range"
+                              min="-150"
+                              max="150"
+                              step="1"
+                              value={simSpotOffset}
+                              onChange={(e) => setSimSpotOffset(parseFloat(e.target.value))}
+                              className="spot-slider"
+                            />
+                            <div className="slider-labels">
+                              <span>-150</span>
+                              <span>0</span>
+                              <span>+150</span>
                             </div>
                           </div>
                         </div>

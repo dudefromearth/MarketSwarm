@@ -2506,6 +2506,14 @@ body {
   flex: 1 !important;
 }
 
+.spot-control {
+  flex: 1 !important;
+}
+
+.spot-control .control-value {
+  color: #f97316;
+}
+
 .risk-graph-stats {
   display: flex;
   flex-wrap: wrap;
