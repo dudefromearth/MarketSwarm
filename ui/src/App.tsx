@@ -1428,11 +1428,17 @@ function App() {
     let alertsToRemove: string[] = [];
 
     setRiskGraphAlerts(prev => {
+      // DEBUG: Log all alerts being processed
+      console.log('Processing alerts:', prev.map(a => ({ id: a.id, type: a.type, enabled: a.enabled, strategyId: a.strategyId })));
+
       let hasChanges = false;
       const updated = prev.map(alert => {
         if (!alert.enabled) return alert;
 
         const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
+
+        // DEBUG: Log each alert being processed
+        console.log('Alert check:', { type: alert.type, enabled: alert.enabled, strategyFound: !!strategy, currentSpot });
         let conditionMet = false;
         let isOnOtherSide = false;
         let updatedAlert = alert;
