@@ -1488,8 +1488,8 @@ function App() {
             isOnOtherSide = strategy.debit < currentHwm + alert.targetValue * 0.5;
           }
         } else if (alert.type === 'ai_theta_gamma') {
-          // AI Theta/Gamma: Dynamic zone based on gamma risk and volatility
-          // Zone is ALWAYS visible - profit threshold only controls when it can TRIGGER
+          // AI Theta/Gamma: Dynamic zone that appears when profit exceeds threshold
+          // Zone edges = trigger levels. If price exits zone, risk is too high to stay in position.
           if (strategy && currentSpot) {
             const entryDebit = alert.entryDebit || strategy.debit || 1;
             const currentDebit = strategy.debit || entryDebit;
@@ -1497,21 +1497,21 @@ function App() {
             const profitPercent = entryDebit > 0 ? currentProfit / entryDebit : 0;
             const minProfitThreshold = alert.minProfitThreshold || 0.5;
 
-            // Zone is always active for display, profit threshold only affects triggering
-            const canTriggerAlert = profitPercent >= minProfitThreshold;
+            // Zone only appears when profit threshold is met
+            const profitThresholdMet = profitPercent >= minProfitThreshold;
 
             // Calculate dynamic zone width based on:
             // - DTE (more time = wider zone due to theta decay buffer)
             // - Profit level (higher profit = can afford wider zone)
             // - Strategy type (butterflies have narrower profit range)
             const daysToExpiry = strategy.dte || 0;
-            const thetaFactor = Math.max(1.5, Math.sqrt(daysToExpiry + 1) * 1.2); // More DTE = wider zone, generous base
-            const profitFactor = 1 + Math.max(0, profitPercent) * 0.5; // Any profit expands zone
+            const thetaFactor = Math.max(1.5, Math.sqrt(daysToExpiry + 1) * 1.2);
+            const profitFactor = 1 + Math.max(0, profitPercent) * 0.5;
             const gammaFactor = strategy.strategy === 'butterfly' ? 0.7 : strategy.strategy === 'vertical' ? 0.85 : 1.0;
 
             // Base zone width: 15 points for SPX-scale, scaled by factors
             const baseWidth = 15 * thetaFactor * profitFactor * gammaFactor;
-            const zoneHalfWidth = Math.min(80, Math.max(10, baseWidth)); // More generous bounds
+            const zoneHalfWidth = Math.min(80, Math.max(10, baseWidth));
 
             // Track high water mark profit
             const hwmProfit = alert.highWaterMarkProfit || 0;
@@ -1529,44 +1529,62 @@ function App() {
             const newZoneLow = currentSpot - finalZoneWidth;
             const newZoneHigh = currentSpot + finalZoneWidth;
 
-            // Check if price is in zone (for triggering)
-            const currentZoneLow = alert.zoneLow || newZoneLow;
-            const currentZoneHigh = alert.zoneHigh || newZoneHigh;
-            const inZone = currentSpot >= currentZoneLow && currentSpot <= currentZoneHigh;
+            if (profitThresholdMet) {
+              // Profit threshold met - zone is active
+              const wasActive = alert.isZoneActive;
+              const currentZoneLow = wasActive ? alert.zoneLow! : newZoneLow;
+              const currentZoneHigh = wasActive ? alert.zoneHigh! : newZoneHigh;
 
-            // Only trigger if profit threshold met AND price exits zone
-            if (canTriggerAlert && !inZone) {
-              conditionMet = true;
-              isOnOtherSide = false;
-            } else {
-              isOnOtherSide = inZone;
-            }
+              // Check if price is within zone
+              const inZone = currentSpot >= currentZoneLow && currentSpot <= currentZoneHigh;
 
-            // Always update zone bounds - zone follows price, expands with profit
-            const wasActive = alert.isZoneActive;
-            if (!wasActive) {
-              // First update - initialize zone
-              updatedAlert = {
-                ...updatedAlert,
-                isZoneActive: true,
-                zoneLow: newZoneLow,
-                zoneHigh: newZoneHigh,
-                highWaterMarkProfit: newHwmProfit,
-              };
-              hasChanges = true;
-            } else {
-              // Zone active - expand zone as price moves (zone follows favorable movement)
-              const expandedZoneLow = Math.min(currentZoneLow, newZoneLow);
-              const expandedZoneHigh = Math.max(currentZoneHigh, newZoneHigh);
-              if (expandedZoneLow !== alert.zoneLow || expandedZoneHigh !== alert.zoneHigh || newHwmProfit !== hwmProfit) {
+              // Trigger alert if price exits zone - risk too high to remain in position
+              if (!inZone) {
+                conditionMet = true;
+                isOnOtherSide = false;
+              } else {
+                isOnOtherSide = true;
+              }
+
+              if (!wasActive) {
+                // First time crossing threshold - initialize zone
                 updatedAlert = {
                   ...updatedAlert,
-                  zoneLow: expandedZoneLow,
-                  zoneHigh: expandedZoneHigh,
+                  isZoneActive: true,
+                  zoneLow: newZoneLow,
+                  zoneHigh: newZoneHigh,
                   highWaterMarkProfit: newHwmProfit,
                 };
                 hasChanges = true;
+              } else {
+                // Zone active - expand zone as price moves favorably
+                const expandedZoneLow = Math.min(currentZoneLow, newZoneLow);
+                const expandedZoneHigh = Math.max(currentZoneHigh, newZoneHigh);
+                if (expandedZoneLow !== alert.zoneLow || expandedZoneHigh !== alert.zoneHigh || newHwmProfit !== hwmProfit) {
+                  updatedAlert = {
+                    ...updatedAlert,
+                    zoneLow: expandedZoneLow,
+                    zoneHigh: expandedZoneHigh,
+                    highWaterMarkProfit: newHwmProfit,
+                  };
+                  hasChanges = true;
+                }
               }
+            } else {
+              // Profit below threshold - zone not active, but track HWM
+              if (alert.isZoneActive) {
+                // Was active, now profit dropped below threshold - deactivate zone
+                updatedAlert = {
+                  ...updatedAlert,
+                  isZoneActive: false,
+                };
+                hasChanges = true;
+              }
+              if (newHwmProfit !== hwmProfit) {
+                updatedAlert = { ...updatedAlert, highWaterMarkProfit: newHwmProfit };
+                hasChanges = true;
+              }
+              isOnOtherSide = true; // Not in triggerable state
             }
           }
         }
@@ -2645,8 +2663,8 @@ function App() {
                                   {alert.type === 'ai_theta_gamma' && (() => {
                                     const profit = ((alert.highWaterMarkProfit || 0) / (alert.entryDebit || 1) * 100);
                                     const threshold = (alert.minProfitThreshold || 0.5) * 100;
-                                    const isArmed = profit >= threshold;
-                                    return `AI θ/γ ${profit >= 0 ? '+' : ''}${profit.toFixed(0)}% ${isArmed ? '(armed)' : `(${threshold.toFixed(0)}% to arm)`}`;
+                                    const isActive = alert.isZoneActive;
+                                    return `AI θ/γ ${isActive ? `+${profit.toFixed(0)}% (zone active)` : `${profit >= 0 ? '+' : ''}${profit.toFixed(0)}% (need ${threshold.toFixed(0)}%)`}`;
                                   })()}
                                 </span>
                               </div>
@@ -3130,7 +3148,7 @@ function App() {
                     );
                   })}
 
-                  {/* AI Theta/Gamma zone visualization */}
+                  {/* AI Theta/Gamma zone visualization - only shows when profit threshold met */}
                   {riskGraphAlerts.filter(a => a.enabled && a.type === 'ai_theta_gamma' && a.isZoneActive).map((alert) => {
                     const zoneLow = alert.zoneLow || 0;
                     const zoneHigh = alert.zoneHigh || 0;
@@ -3147,30 +3165,27 @@ function App() {
                     const profitPercent = alert.highWaterMarkProfit && alert.entryDebit
                       ? (alert.highWaterMarkProfit / alert.entryDebit) * 100
                       : 0;
-                    const threshold = (alert.minProfitThreshold || 0.5) * 100;
-                    const isArmed = profitPercent >= threshold;
 
                     return (
                       <g key={alert.id} className="ai-theta-gamma-zone">
-                        {/* Shaded safe zone - brighter when armed */}
+                        {/* Shaded safe zone */}
                         <rect
                           x={clampedXLow}
                           y="20"
                           width={width}
                           height="260"
                           fill={alert.color || ALERT_COLORS[4]}
-                          opacity={isArmed ? 0.2 : 0.1}
+                          opacity={0.15}
                         />
-                        {/* Zone boundary lines - solid when armed, dashed when pending */}
+                        {/* Zone boundary lines - trigger levels */}
                         <line
                           x1={clampedXLow}
                           y1="20"
                           x2={clampedXLow}
                           y2="280"
                           stroke={alert.color || ALERT_COLORS[4]}
-                          strokeWidth="1"
-                          strokeDasharray={isArmed ? "none" : "3,3"}
-                          opacity={isArmed ? 0.8 : 0.5}
+                          strokeWidth="1.5"
+                          opacity={0.8}
                         />
                         <line
                           x1={clampedXHigh}
@@ -3178,9 +3193,8 @@ function App() {
                           x2={clampedXHigh}
                           y2="280"
                           stroke={alert.color || ALERT_COLORS[4]}
-                          strokeWidth="1"
-                          strokeDasharray={isArmed ? "none" : "3,3"}
-                          opacity={isArmed ? 0.8 : 0.5}
+                          strokeWidth="1.5"
+                          opacity={0.8}
                         />
                         {/* Zone label at top */}
                         <g transform={`translate(${(clampedXLow + clampedXHigh) / 2}, 15)`}>
@@ -3191,7 +3205,7 @@ function App() {
                             height="14"
                             fill={alert.color || ALERT_COLORS[4]}
                             rx="2"
-                            opacity={isArmed ? 0.95 : 0.7}
+                            opacity={0.95}
                           />
                           <text
                             x="0"
@@ -3201,7 +3215,7 @@ function App() {
                             fontSize="8"
                             fontWeight="bold"
                           >
-                            {isArmed ? `AI ${profitPercent >= 0 ? '+' : ''}${profitPercent.toFixed(0)}%` : `AI (${threshold.toFixed(0)}%)`}
+                            {`AI +${profitPercent.toFixed(0)}%`}
                           </text>
                         </g>
                       </g>
