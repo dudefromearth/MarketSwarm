@@ -1706,6 +1706,13 @@ function App() {
       <header className="app-header">
         <div className="header-left">
           <h1>MarketSwarm</h1>
+          <button
+            className="header-settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+          >
+            ⚙️
+          </button>
           <div className="underlying-selector">
             <button
               className={`underlying-btn${underlying === 'I:SPX' ? ' active' : ''}`}
