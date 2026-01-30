@@ -437,7 +437,133 @@
         "massive"
       ],
       "env": {
-        "JOURNAL_PORT": "3002"
+        "JOURNAL_PORT": "3002",
+        "JOURNAL_MYSQL_HOST": "127.0.0.1",
+        "JOURNAL_MYSQL_PORT": "3306",
+        "JOURNAL_MYSQL_USER": "fotw_app",
+        "JOURNAL_MYSQL_PASSWORD": "PfedKtaTaAa2iV21QTZp",
+        "JOURNAL_MYSQL_DATABASE": "fotw_app",
+        "APP_SESSION_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0"
+      }
+    },
+    "copilot": {
+      "id": "copilot",
+      "meta": {
+        "name": "AI Copilot",
+        "description": "MEL (Model Effectiveness Layer), ADI (AI Data Interface), and Commentary services. Provides model validity scoring, canonical data export for AI assistants, and one-way market observations."
+      },
+      "access_points": {
+        "subscribe_to": [
+          {
+            "bus": "market-redis",
+            "key": "massive:spot",
+            "description": "Live spot prices for SPX/NDX/VIX"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:model:{symbol}:latest",
+            "description": "Heatmap tile data"
+          }
+        ],
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "copilot:heartbeat",
+            "description": "Service heartbeat"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:mel:snapshot",
+            "description": "MEL effectiveness scores for all models"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:mel:history",
+            "description": "Historical MEL snapshots"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:adi:snapshot",
+            "description": "Canonical AI data interface export"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:commentary:message",
+            "description": "AI commentary messages"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "models": {
+        "produces": [
+          {
+            "bus": "market-redis",
+            "key": "copilot:mel:snapshot",
+            "description": "MEL effectiveness scores"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:adi:snapshot",
+            "description": "Canonical AI data export"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:commentary:message",
+            "description": "AI market commentary"
+          }
+        ],
+        "consumes": [
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:model:{symbol}:latest"
+          }
+        ]
+      },
+      "dependencies": [
+        "massive"
+      ],
+      "env": {
+        "COPILOT_PORT": "8095",
+        "COPILOT_MEL_ENABLED": "true",
+        "COPILOT_ADI_ENABLED": "true",
+        "COPILOT_COMMENTARY_ENABLED": "false",
+        "COPILOT_MEL_INTERVAL_MS": "5000",
+        "COPILOT_MEL_THRESHOLD_VALID": "70",
+        "COPILOT_MEL_THRESHOLD_DEGRADED": "50",
+        "COPILOT_ADI_INTERVAL_MS": "5000",
+        "COPILOT_COMMENTARY_RATE_LIMIT": "10",
+        "DEBUG_COPILOT": "false"
+      },
+      "mel": {
+        "weights": {
+          "gamma": 0.3,
+          "volume_profile": 0.25,
+          "liquidity": 0.2,
+          "volatility": 0.15,
+          "session": 0.1
+        },
+        "coherenceMultipliers": {
+          "STABLE": 1.0,
+          "MIXED": 0.85,
+          "COLLAPSING": 0.6,
+          "RECOVERED": 0.9
+        }
+      },
+      "adi": {
+        "schemaVersion": "gamma_snapshot_v1.0",
+        "exportFormats": [
+          "json",
+          "csv",
+          "text"
+        ]
+      },
+      "commentary": {
+        "mode": "one-way",
+        "provider": "openai",
+        "rateLimitPerMinute": 10
       }
     },
     "sse": {
@@ -497,13 +623,22 @@
           {
             "bus": "market-redis",
             "key": "vexy:model:playbyplay"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:mel:snapshot"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:commentary:message"
           }
         ]
       },
       "dependencies": [
         "massive",
         "rss_agg",
-        "vexy_ai"
+        "vexy_ai",
+        "copilot"
       ],
       "env": {
         "SSE_PORT": "3001",

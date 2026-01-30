@@ -1,16 +1,24 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import './App.css';
-import { Tooltip } from './Tooltip';
+import './styles/mel.css';
+import './styles/commentary.css';
 import LightweightPriceChart from './components/LightweightPriceChart';
+import MELStatusBar from './components/MELStatusBar';
+import CommentaryPanel from './components/CommentaryPanel';
+import { useMEL } from './hooks/useMEL';
 import type { RawSnapshot } from './components/LightweightPriceChart';
 import BiasLfiQuadrantCard from './components/BiasLfiQuadrantCard';
 import MarketModeGaugeCard from './components/MarketModeGaugeCard';
 import VixRegimeCard from './components/VixRegimeCard';
 import TradeLogPanel from './components/TradeLogPanel';
 import type { Trade } from './components/TradeLogPanel';
+import type { TradeLog } from './components/LogSelector';
 import TradeEntryModal from './components/TradeEntryModal';
 import type { TradeEntryData } from './components/TradeEntryModal';
-import EquityChartWidget from './components/EquityChartWidget';
+import LogManagerModal from './components/LogManagerModal';
+import TradeDetailModal from './components/TradeDetailModal';
+import ReportingView from './components/ReportingView';
+import SettingsModal from './components/SettingsModal';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -101,6 +109,42 @@ interface RiskGraphStrategy extends SelectedStrategy {
   addedAt: number;
   visible: boolean;
 }
+
+interface RiskGraphAlert {
+  id: string;
+  strategyId: string;
+  type: 'price' | 'debit' | 'profit_target' | 'trailing_stop';
+  condition: 'above' | 'below' | 'at';
+  targetValue: number;
+  enabled: boolean;
+  triggered: boolean;
+  triggeredAt?: number;
+  createdAt: number;
+  // Snapshot of strategy info for display
+  strategyLabel: string;
+  // For trailing stop
+  highWaterMark?: number;
+}
+
+// Visual price alert line on risk graph
+interface PriceAlertLine {
+  id: string;
+  price: number;
+  color: string;
+  label?: string;
+  createdAt: number;
+}
+
+const ALERT_COLORS = [
+  '#ef4444', // red
+  '#f97316', // orange
+  '#eab308', // yellow
+  '#22c55e', // green
+  '#06b6d4', // cyan
+  '#3b82f6', // blue
+  '#8b5cf6', // purple
+  '#ec4899', // pink
+];
 
 // Gaussian smoothing for volume profile
 function gaussianSmooth(data: number[], kernelSize: number = 5): number[] {
@@ -417,6 +461,10 @@ function App() {
   const [strategy, setStrategy] = useState<Strategy>('butterfly');
   const [side, setSide] = useState<Side>('both');
   const [dte, setDte] = useState(0);
+
+  // MEL (Model Effectiveness Layer) - uses selected DTE
+  const mel = useMEL(dte);
+
   const [gexMode, setGexMode] = useState<GexMode>('net');
   const [threshold, setThreshold] = useState(50); // % change threshold for blue/red transition
   const [volumeProfile, setVolumeProfile] = useState<VolumeProfileData | null>(null);
@@ -425,7 +473,23 @@ function App() {
 
   // Popup and Risk Graph state
   const [selectedTile, setSelectedTile] = useState<SelectedStrategy | null>(null);
-  const [riskGraphStrategies, setRiskGraphStrategies] = useState<RiskGraphStrategy[]>([]);
+  const [riskGraphStrategies, setRiskGraphStrategies] = useState<RiskGraphStrategy[]>(() => {
+    try {
+      const saved = localStorage.getItem('riskGraphStrategies');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [riskGraphAlerts, setRiskGraphAlerts] = useState<RiskGraphAlert[]>(() => {
+    try {
+      const saved = localStorage.getItem('riskGraphAlerts');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showAlertForm, setShowAlertForm] = useState<string | null>(null); // strategyId or null
   const [tosCopied, setTosCopied] = useState(false);
   const [crosshairPos, setCrosshairPos] = useState<{ x: number; price: number; pnl: number } | null>(null);
 
@@ -439,6 +503,28 @@ function App() {
   const [gexCollapsed, setGexCollapsed] = useState(false);
   const [heatmapCollapsed, setHeatmapCollapsed] = useState(false);
   const [riskGraphCollapsed, setRiskGraphCollapsed] = useState(false);
+  const [priceAlertLines, setPriceAlertLines] = useState<PriceAlertLine[]>(() => {
+    try {
+      const saved = localStorage.getItem('priceAlertLines');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [alertContextMenu, setAlertContextMenu] = useState<{ x: number; y: number; price: number } | null>(null);
+  const [alertLineContextMenu, setAlertLineContextMenu] = useState<{ x: number; y: number; alertId: string } | null>(null);
+
+  // Close context menus on outside click
+  useEffect(() => {
+    if (!alertContextMenu && !alertLineContextMenu) return;
+    const handleClick = () => {
+      setAlertContextMenu(null);
+      setAlertLineContextMenu(null);
+    };
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, [alertContextMenu, alertLineContextMenu]);
+
   const [scrollLocked, setScrollLocked] = useState(true);
   const [hasScrolledToAtm, setHasScrolledToAtm] = useState(false);
   const [vpControlsExpanded, setVpControlsExpanded] = useState(false);
@@ -457,6 +543,16 @@ function App() {
   const [tradeEntryPrefill, setTradeEntryPrefill] = useState<TradeEntryData | null>(null);
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
   const [tradeRefreshTrigger, setTradeRefreshTrigger] = useState(0);
+
+  // FOTW Trade Log v2 state
+  const [selectedLog, setSelectedLog] = useState<TradeLog | null>(null);
+  const [logManagerOpen, setLogManagerOpen] = useState(false);
+  const [tradeDetailTrade, setTradeDetailTrade] = useState<Trade | null>(null);
+  const [reportingLogId, setReportingLogId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Commentary panel state
+  const [commentaryCollapsed, setCommentaryCollapsed] = useState(true);
 
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
@@ -565,6 +661,77 @@ function App() {
     setRiskGraphStrategies([]);
   };
 
+  // Persist risk graph strategies to localStorage
+  useEffect(() => {
+    localStorage.setItem('riskGraphStrategies', JSON.stringify(riskGraphStrategies));
+  }, [riskGraphStrategies]);
+
+  // Persist risk graph alerts to localStorage
+  useEffect(() => {
+    localStorage.setItem('riskGraphAlerts', JSON.stringify(riskGraphAlerts));
+  }, [riskGraphAlerts]);
+
+  // Persist price alert lines to localStorage
+  useEffect(() => {
+    localStorage.setItem('priceAlertLines', JSON.stringify(priceAlertLines));
+  }, [priceAlertLines]);
+
+  // Price alert line management
+  const updatePriceAlertColor = (alertId: string, color: string) => {
+    setPriceAlertLines(prev => prev.map(a =>
+      a.id === alertId ? { ...a, color } : a
+    ));
+  };
+
+  const deletePriceAlertLine = (alertId: string) => {
+    setPriceAlertLines(prev => prev.filter(a => a.id !== alertId));
+  };
+
+  // Alert management functions
+  const createAlert = (strategyId: string, type: 'price' | 'debit' | 'profit_target' | 'trailing_stop', condition: 'above' | 'below' | 'at', targetValue: number) => {
+    const strategy = riskGraphStrategies.find(s => s.id === strategyId);
+    if (!strategy) return;
+
+    const strategyLabel = `${strategy.strategy === 'butterfly' ? 'BF' : strategy.strategy === 'vertical' ? 'VS' : 'SGL'} ${strategy.strike}${strategy.width > 0 ? '/' + strategy.width : ''} ${strategy.side.charAt(0).toUpperCase()}`;
+
+    const newAlert: RiskGraphAlert = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      strategyId,
+      type,
+      condition,
+      targetValue,
+      enabled: true,
+      triggered: false,
+      createdAt: Date.now(),
+      strategyLabel,
+      // For trailing stop, initialize high water mark with current debit
+      highWaterMark: type === 'trailing_stop' && strategy.debit ? strategy.debit : undefined,
+    };
+
+    setRiskGraphAlerts(prev => [...prev, newAlert]);
+    setShowAlertForm(null);
+  };
+
+  const deleteAlert = (alertId: string) => {
+    setRiskGraphAlerts(prev => prev.filter(a => a.id !== alertId));
+  };
+
+  const toggleAlert = (alertId: string) => {
+    setRiskGraphAlerts(prev => prev.map(a =>
+      a.id === alertId ? { ...a, enabled: !a.enabled } : a
+    ));
+  };
+
+  const dismissAlert = (alertId: string) => {
+    setRiskGraphAlerts(prev => prev.map(a =>
+      a.id === alertId ? { ...a, triggered: false } : a
+    ));
+  };
+
+  const clearTriggeredAlerts = () => {
+    setRiskGraphAlerts(prev => prev.map(a => ({ ...a, triggered: false })));
+  };
+
   // Update strategy debit (for when actual fill differs from quoted price)
   const updateStrategyDebit = (id: string, newDebit: number | null) => {
     setRiskGraphStrategies(prev => prev.map(s =>
@@ -573,16 +740,21 @@ function App() {
   };
 
   // Trade Log handlers
-  const openTradeEntry = useCallback((prefill?: TradeEntryData) => {
-    setTradeEntryPrefill(prefill || null);
+  const openTradeEntry = useCallback((logIdOrPrefill?: string | TradeEntryData) => {
+    if (typeof logIdOrPrefill === 'string') {
+      // Called with logId from TradeLogPanel
+      setTradeEntryPrefill(null);
+    } else {
+      // Called with prefill data from heatmap
+      setTradeEntryPrefill(logIdOrPrefill || null);
+    }
     setEditingTrade(null);
     setTradeEntryOpen(true);
   }, []);
 
   const openTradeEdit = useCallback((trade: Trade) => {
-    setEditingTrade(trade);
-    setTradeEntryPrefill(null);
-    setTradeEntryOpen(true);
+    // Open trade detail modal instead of entry modal for editing
+    setTradeDetailTrade(trade);
   }, []);
 
   const closeTradeEntry = useCallback(() => {
@@ -595,8 +767,34 @@ function App() {
     setTradeRefreshTrigger(prev => prev + 1);
   }, []);
 
+  // Log management handlers
+  const handleSelectLog = useCallback((log: TradeLog) => {
+    setSelectedLog(log);
+  }, []);
+
+  const handleManageLogs = useCallback(() => {
+    setLogManagerOpen(true);
+  }, []);
+
+  const handleViewReporting = useCallback((logId: string) => {
+    setReportingLogId(logId);
+  }, []);
+
+  const handleCloseReporting = useCallback(() => {
+    setReportingLogId(null);
+  }, []);
+
+  const handleTradeDetailClose = useCallback(() => {
+    setTradeDetailTrade(null);
+  }, []);
+
+  const handleLogCreated = useCallback(() => {
+    setTradeRefreshTrigger(prev => prev + 1);
+  }, []);
+
   // Handle mouse down on risk graph chart (start drag)
   const handleChartMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+    // Deselect alert when clicking elsewhere (will re-select if clicking on an alert)
     setIsDragging(true);
     setDragStartX(e.clientX);
     setDragStartOffset(panOffset);
@@ -651,6 +849,22 @@ function App() {
   // Handle mouse up on risk graph chart (end drag)
   const handleChartMouseUp = () => {
     setIsDragging(false);
+  };
+
+  // Handle right-click on risk graph chart to add alert
+  const handleChartContextMenu = (e: React.MouseEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const svgX = ((e.clientX - rect.left) / rect.width) * 600;
+
+    // Only show context menu if clicking within the chart area (x: 50-580)
+    if (svgX >= 50 && svgX <= 580) {
+      const chartX = svgX - 50;
+      const priceRange = riskGraphData.maxPrice - riskGraphData.minPrice;
+      const price = riskGraphData.minPrice + (chartX / 530) * priceRange;
+      setAlertContextMenu({ x: e.clientX, y: e.clientY, price });
+    }
   };
 
   const handleChartMouseLeave = () => {
@@ -1112,6 +1326,86 @@ function App() {
   }, [underlying, spot?.[underlying]?.value]);
 
   const currentSpot = spot?.[underlying]?.value || null;
+
+  // Check alerts against current spot price
+  useEffect(() => {
+    if (!currentSpot) return;
+
+    setRiskGraphAlerts(prev => {
+      let hasChanges = false;
+      const updated = prev.map(alert => {
+        if (!alert.enabled || alert.triggered) return alert;
+
+        const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
+        let shouldTrigger = false;
+        let updatedAlert = alert;
+
+        if (alert.type === 'price') {
+          switch (alert.condition) {
+            case 'above':
+              shouldTrigger = currentSpot >= alert.targetValue;
+              break;
+            case 'below':
+              shouldTrigger = currentSpot <= alert.targetValue;
+              break;
+            case 'at':
+              shouldTrigger = Math.abs(currentSpot - alert.targetValue) < 1;
+              break;
+          }
+        } else if (alert.type === 'debit') {
+          if (strategy && strategy.debit !== null) {
+            switch (alert.condition) {
+              case 'above':
+                shouldTrigger = strategy.debit >= alert.targetValue;
+                break;
+              case 'below':
+                shouldTrigger = strategy.debit <= alert.targetValue;
+                break;
+              case 'at':
+                shouldTrigger = Math.abs(strategy.debit - alert.targetValue) < 0.05;
+                break;
+            }
+          }
+        } else if (alert.type === 'profit_target') {
+          // Profit target: alert when current profit reaches target
+          // Profit = (current debit - entry debit) for long positions
+          if (strategy && strategy.debit !== null) {
+            const entryDebit = alert.highWaterMark || strategy.debit;
+            const currentProfit = entryDebit - strategy.debit; // Positive when debit decreased
+            shouldTrigger = currentProfit >= alert.targetValue;
+          }
+        } else if (alert.type === 'trailing_stop') {
+          // Trailing stop: track high water mark (lowest debit), alert if debit rises above threshold from HWM
+          if (strategy && strategy.debit !== null) {
+            const hwm = alert.highWaterMark || strategy.debit;
+            // Update high water mark if debit is lower (more profitable)
+            if (strategy.debit < hwm) {
+              updatedAlert = { ...alert, highWaterMark: strategy.debit };
+              hasChanges = true;
+            }
+            // Trigger if debit rises above HWM + trailing amount
+            const currentHwm = updatedAlert.highWaterMark || hwm;
+            shouldTrigger = strategy.debit >= currentHwm + alert.targetValue;
+          }
+        }
+
+        if (shouldTrigger) {
+          hasChanges = true;
+          // Play alert sound
+          try {
+            const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleQA6s+DZpGgLJJPo7bN1');
+            audio.volume = 0.3;
+            audio.play().catch(() => {});
+          } catch {}
+          return { ...updatedAlert, triggered: true, triggeredAt: Date.now() };
+        }
+        return updatedAlert;
+      });
+
+      return hasChanges ? updated : prev;
+    });
+  }, [currentSpot, riskGraphStrategies]);
+
   const widths = WIDTHS[underlying][strategy];
 
   // Process data for the grid view - all widths as columns
@@ -1438,6 +1732,9 @@ function App() {
               </span>
             )}
           </div>
+        </div>
+        <div className="header-center">
+          <MELStatusBar snapshot={mel.snapshot} connected={mel.connected} />
         </div>
         <div className="connection-status">
           <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
@@ -1878,6 +2175,11 @@ function App() {
               {panOffset !== 0 && (
                 <button className="btn-small" onClick={resetPan}>Reset View</button>
               )}
+              {priceAlertLines.length > 0 && (
+                <button className="btn-small" onClick={() => setPriceAlertLines([])}>
+                  Clear Alerts ({priceAlertLines.length})
+                </button>
+              )}
               {riskGraphStrategies.length > 0 && (
                 <button className="btn-small btn-danger" onClick={clearRiskGraph}>Clear</button>
               )}
@@ -1892,46 +2194,240 @@ function App() {
                 </div>
               ) : (
                 <div className="risk-graph-content">
-                  {/* Strategy List - Left Side */}
-                  <div className="risk-graph-strategies">
-                    {riskGraphStrategies.map(strat => (
-                      <div key={strat.id} className={`risk-graph-strategy-item ${!strat.visible ? 'hidden-strategy' : ''}`}>
-                        <input
-                          type="checkbox"
-                          className="strategy-checkbox"
-                          checked={strat.visible}
-                          onChange={() => toggleStrategyVisibility(strat.id)}
-                        />
-                        <div className="strategy-info">
-                          <div className="strategy-row">
-                            <span className="strategy-type">
-                              {strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL'}
-                            </span>
-                            <span className="strategy-details">
-                              {strat.strike} {strat.width > 0 && `w${strat.width}`} {strat.side.toUpperCase()}
-                            </span>
-                          </div>
-                          <div className="strategy-row">
-                            <span className="strategy-dte">DTE {strat.dte}</span>
-                            <span className="strategy-debit">
-                              $<input
-                                type="number"
-                                className="debit-input"
-                                value={strat.debit !== null ? strat.debit.toFixed(2) : ''}
-                                step="0.01"
-                                min="0"
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  updateStrategyDebit(strat.id, isNaN(val) ? null : val);
+                  {/* Strategy & Alerts Column - Left Side */}
+                  <div className="risk-graph-left-column">
+                    {/* Strategy List */}
+                    <div className="risk-graph-strategies">
+                      <div className="section-header">Strategies</div>
+                      {riskGraphStrategies.map(strat => (
+                        <div key={strat.id} className={`risk-graph-strategy-item ${!strat.visible ? 'hidden-strategy' : ''}`}>
+                          <div className="strategy-content">
+                            <div className="strategy-row-top">
+                              <span className="strategy-type">
+                                {strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL'}
+                              </span>
+                              <span className="strategy-strike">
+                                {strat.strike}{strat.width > 0 ? `/${strat.width}` : ''}
+                              </span>
+                              <span className={`strategy-side ${strat.side}`}>
+                                {strat.side}
+                              </span>
+                              <span className="strategy-dte">{strat.dte} DTE</span>
+                              <span className="strategy-debit">
+                                $<input
+                                  type="number"
+                                  className="debit-input"
+                                  value={strat.debit !== null ? strat.debit.toFixed(2) : ''}
+                                  step="0.01"
+                                  min="0"
+                                  onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    updateStrategyDebit(strat.id, isNaN(val) ? null : val);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </span>
+                            </div>
+                            <div className="strategy-row-bottom">
+                              <button
+                                className={`btn-toggle-visibility ${strat.visible ? 'visible' : 'hidden'}`}
+                                onClick={() => toggleStrategyVisibility(strat.id)}
+                              >
+                                {strat.visible ? 'Hide' : 'Show'}
+                              </button>
+                              <button
+                                className="btn-alert"
+                                onClick={() => setShowAlertForm(showAlertForm === strat.id ? null : strat.id)}
+                                title="Set price alert"
+                              >
+                                Alert
+                              </button>
+                              <button className="btn-remove" onClick={() => removeFromRiskGraph(strat.id)}>Remove</button>
+                              <button
+                                className="btn-log-trade"
+                                onClick={() => {
+                                  openTradeEntry({
+                                    symbol: underlying === 'I:SPX' ? 'SPX' : 'NDX',
+                                    underlying,
+                                    strategy: strat.strategy as 'single' | 'vertical' | 'butterfly',
+                                    side: strat.side as 'call' | 'put',
+                                    strike: strat.strike,
+                                    width: strat.width,
+                                    dte: strat.dte,
+                                    entry_price: strat.debit || undefined,
+                                    entry_spot: currentSpot || undefined,
+                                    source: 'risk_graph'
+                                  });
                                 }}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </span>
+                                title="Log this trade"
+                              >
+                                Log Trade
+                              </button>
+                            </div>
+                            {/* Inline Alert Form */}
+                            {showAlertForm === strat.id && (
+                              <div className="alert-form">
+                                <div className="alert-form-row">
+                                  <select id={`alert-type-${strat.id}`} defaultValue="price">
+                                    <option value="price">Spot Price</option>
+                                    <option value="debit">Debit</option>
+                                    <option value="profit_target">Profit Target</option>
+                                    <option value="trailing_stop">Trailing Stop</option>
+                                  </select>
+                                  <select id={`alert-condition-${strat.id}`} defaultValue="below">
+                                    <option value="above">≥</option>
+                                    <option value="below">≤</option>
+                                    <option value="at">≈</option>
+                                  </select>
+                                  <input
+                                    type="number"
+                                    id={`alert-value-${strat.id}`}
+                                    placeholder={currentSpot?.toFixed(0) || '0'}
+                                    step="0.01"
+                                    className="alert-value-input"
+                                  />
+                                </div>
+                                <div className="alert-form-actions">
+                                  <button
+                                    className="btn-create-alert"
+                                    onClick={() => {
+                                      const typeEl = document.getElementById(`alert-type-${strat.id}`) as HTMLSelectElement;
+                                      const condEl = document.getElementById(`alert-condition-${strat.id}`) as HTMLSelectElement;
+                                      const valEl = document.getElementById(`alert-value-${strat.id}`) as HTMLInputElement;
+                                      const value = parseFloat(valEl.value);
+                                      if (!isNaN(value)) {
+                                        createAlert(
+                                          strat.id,
+                                          typeEl.value as 'price' | 'debit' | 'profit_target' | 'trailing_stop',
+                                          condEl.value as 'above' | 'below' | 'at',
+                                          value
+                                        );
+                                      }
+                                    }}
+                                  >
+                                    Create
+                                  </button>
+                                  <button className="btn-cancel-alert" onClick={() => setShowAlertForm(null)}>
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
-                        <button className="btn-remove" onClick={() => removeFromRiskGraph(strat.id)}>&times;</button>
+                      ))}
+                    </div>
+
+                    {/* Alerts Section */}
+                    <div className="risk-graph-alerts">
+                      <div className="section-header">
+                        Alerts
+                        {riskGraphAlerts.filter(a => a.triggered).length > 0 && (
+                          <button className="btn-clear-triggered" onClick={clearTriggeredAlerts}>
+                            Clear
+                          </button>
+                        )}
                       </div>
-                    ))}
+                      {riskGraphAlerts.length === 0 && priceAlertLines.length === 0 ? (
+                        <div className="alerts-empty">No alerts set<br/><span className="hint">Right-click chart to add price line</span></div>
+                      ) : (
+                        <div className="alerts-list">
+                          {/* Strategy Alerts */}
+                          {riskGraphAlerts.map(alert => (
+                            <div
+                              key={alert.id}
+                              className={`alert-item ${alert.triggered ? 'triggered' : ''} ${!alert.enabled ? 'disabled' : ''}`}
+                            >
+                              <div className="alert-info">
+                                <span className="alert-strategy">{alert.strategyLabel}</span>
+                                <span className="alert-condition">
+                                  {alert.type === 'price' && `Spot ${alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} ${alert.targetValue.toFixed(0)}`}
+                                  {alert.type === 'debit' && `Debit ${alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} $${alert.targetValue.toFixed(2)}`}
+                                  {alert.type === 'profit_target' && `Profit ≥ $${alert.targetValue.toFixed(2)}`}
+                                  {alert.type === 'trailing_stop' && `Trail $${alert.targetValue.toFixed(2)}${alert.highWaterMark ? ` (HWM: $${alert.highWaterMark.toFixed(2)})` : ''}`}
+                                </span>
+                              </div>
+                              <div className="alert-actions">
+                                {alert.triggered && (
+                                  <button
+                                    className="btn-alert-action"
+                                    onClick={() => {
+                                      const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
+                                      if (strategy) {
+                                        openTradeEntry({
+                                          symbol: underlying === 'I:SPX' ? 'SPX' : 'NDX',
+                                          underlying,
+                                          strategy: strategy.strategy as 'single' | 'vertical' | 'butterfly',
+                                          side: strategy.side as 'call' | 'put',
+                                          strike: strategy.strike,
+                                          width: strategy.width,
+                                          dte: strategy.dte,
+                                          entry_price: strategy.debit || undefined,
+                                          entry_spot: currentSpot || undefined,
+                                          source: 'risk_graph'
+                                        });
+                                      }
+                                      dismissAlert(alert.id);
+                                    }}
+                                    title="Log trade"
+                                  >
+                                    Log
+                                  </button>
+                                )}
+                                <button
+                                  className={`btn-toggle-alert ${alert.enabled ? 'on' : 'off'}`}
+                                  onClick={() => toggleAlert(alert.id)}
+                                  title={alert.enabled ? 'Disable' : 'Enable'}
+                                >
+                                  {alert.enabled ? 'On' : 'Off'}
+                                </button>
+                                <button
+                                  className="btn-delete-alert"
+                                  onClick={() => deleteAlert(alert.id)}
+                                  title="Delete alert"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+
+                          {/* Price Line Alerts */}
+                          {priceAlertLines.map(alert => (
+                            <div key={alert.id} className="alert-item price-line-alert">
+                              <div className="alert-info">
+                                <div
+                                  className="price-line-color"
+                                  style={{ backgroundColor: alert.color }}
+                                />
+                                <span className="alert-condition">
+                                  Price Line @ {alert.price.toFixed(0)}
+                                </span>
+                              </div>
+                              <div className="alert-actions">
+                                <div className="color-picker-inline">
+                                  {ALERT_COLORS.map(color => (
+                                    <button
+                                      key={color}
+                                      className={`color-dot ${alert.color === color ? 'selected' : ''}`}
+                                      style={{ backgroundColor: color }}
+                                      onClick={() => updatePriceAlertColor(alert.id, color)}
+                                    />
+                                  ))}
+                                </div>
+                                <button
+                                  className="btn-delete-alert"
+                                  onClick={() => deletePriceAlertLine(alert.id)}
+                                  title="Delete price line"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* P&L Chart - Right Side */}
@@ -1944,6 +2440,7 @@ function App() {
                   onMouseMove={handleChartMouseMove}
                   onMouseUp={handleChartMouseUp}
                   onMouseLeave={handleChartMouseLeave}
+                  onContextMenu={handleChartContextMenu}
                   style={{ cursor: isDragging ? 'grabbing' : 'crosshair' }}
                 >
                   {/* Background */}
@@ -2053,6 +2550,67 @@ function App() {
                     );
                   })}
 
+                  {/* User-defined price alert lines */}
+                  {priceAlertLines.map((alert) => {
+                    const x = 50 + ((alert.price - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
+                    const isInView = alert.price >= riskGraphData.minPrice && alert.price <= riskGraphData.maxPrice;
+
+                    if (!isInView) return null;
+
+                    return (
+                      <g
+                        key={alert.id}
+                        className="alert-line-group"
+                        style={{ cursor: 'pointer' }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setAlertLineContextMenu({ x: e.clientX, y: e.clientY, alertId: alert.id });
+                        }}
+                      >
+                        {/* Invisible wider hit area for easier right-click */}
+                        <line
+                          x1={x}
+                          y1="20"
+                          x2={x}
+                          y2="280"
+                          stroke="transparent"
+                          strokeWidth="12"
+                        />
+                        {/* Alert line */}
+                        <line
+                          x1={x}
+                          y1="20"
+                          x2={x}
+                          y2="280"
+                          stroke={alert.color}
+                          strokeWidth="2"
+                        />
+                        {/* Price label at top */}
+                        <g transform={`translate(${x}, 15)`}>
+                          <rect
+                            x="-22"
+                            y="-10"
+                            width="44"
+                            height="14"
+                            fill={alert.color}
+                            rx="2"
+                          />
+                          <text
+                            x="0"
+                            y="1"
+                            textAnchor="middle"
+                            fill="#fff"
+                            fontSize="9"
+                            fontWeight="bold"
+                          >
+                            {alert.price.toFixed(0)}
+                          </text>
+                        </g>
+                      </g>
+                    );
+                  })}
+
                   {/* Interactive crosshair */}
                   {crosshairPos && (
                     <g className="crosshair">
@@ -2132,6 +2690,79 @@ function App() {
                   <text x="40" y="25" fill="#666" fontSize="10" textAnchor="end">${(riskGraphData.maxPnL / 100).toFixed(2)}</text>
                   <text x="40" y="280" fill="#666" fontSize="10" textAnchor="end">${(riskGraphData.minPnL / 100).toFixed(2)}</text>
                 </svg>
+
+                {/* Right-click context menu for adding alerts */}
+                {alertContextMenu && (
+                  <div
+                    className="alert-context-menu"
+                    style={{
+                      position: 'fixed',
+                      left: alertContextMenu.x,
+                      top: alertContextMenu.y,
+                      zIndex: 1000,
+                    }}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <div className="context-menu-header">
+                      Add Alert at {alertContextMenu.price.toFixed(0)}
+                    </div>
+                    <div className="context-menu-colors">
+                      {ALERT_COLORS.map(color => (
+                        <button
+                          key={color}
+                          className="color-swatch"
+                          style={{ backgroundColor: color }}
+                          onClick={() => {
+                            const newAlert: PriceAlertLine = {
+                              id: `alert_${Date.now()}`,
+                              price: alertContextMenu.price,
+                              color,
+                              createdAt: Date.now(),
+                            };
+                            setPriceAlertLines(prev => [...prev, newAlert]);
+                            setAlertContextMenu(null);
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      className="context-menu-cancel"
+                      onClick={() => setAlertContextMenu(null)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
+                {/* Right-click context menu for alert lines */}
+                {alertLineContextMenu && (
+                  <div
+                    className="alert-context-menu"
+                    style={{
+                      position: 'fixed',
+                      left: alertLineContextMenu.x,
+                      top: alertLineContextMenu.y,
+                      zIndex: 1000,
+                    }}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <button
+                      className="context-menu-delete"
+                      onClick={() => {
+                        setPriceAlertLines(prev => prev.filter(a => a.id !== alertLineContextMenu.alertId));
+                        setAlertLineContextMenu(null);
+                      }}
+                    >
+                      Delete Alert
+                    </button>
+                    <button
+                      className="context-menu-cancel"
+                      onClick={() => setAlertLineContextMenu(null)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
                 </div>
 
                     {/* Summary Stats */}
@@ -2168,6 +2799,7 @@ function App() {
                         </div>
                       )}
                     </div>
+
                   </div>
                 </div>
               )}
@@ -2182,6 +2814,29 @@ function App() {
         <span>GEX: {gexCalls?.ts ? new Date(gexCalls.ts * 1000).toLocaleTimeString() : '-'}</span>
         <span>Tiles: {Object.keys(heatmap?.tiles || {}).length}</span>
         <span>v{heatmap?.version || '-'}</span>
+      </div>
+
+      {/* Commentary Panel (Left Edge) */}
+      <div
+        className={`commentary-edge-bar ${!commentaryCollapsed ? 'open' : ''}`}
+        onClick={() => setCommentaryCollapsed(!commentaryCollapsed)}
+      >
+        <span className="edge-bar-label">💬 Observer</span>
+      </div>
+
+      <div className={`commentary-overlay ${!commentaryCollapsed ? 'open' : ''}`}>
+        <div
+          className="commentary-close-bar"
+          onClick={() => setCommentaryCollapsed(true)}
+        >
+          <span className="close-bar-label">Close</span>
+        </div>
+        <div className="commentary-panel-inner">
+          <CommentaryPanel
+            collapsed={false}
+            onToggleCollapse={() => setCommentaryCollapsed(true)}
+          />
+        </div>
       </div>
 
       {/* Trade Log Edge Bar + Overlay */}
@@ -2200,23 +2855,56 @@ function App() {
           <span className="close-bar-label">Close</span>
         </div>
         <div className="trade-log-panel-inner">
-          <div className="trade-log-overlay-header">
-            <h2>Trade Log</h2>
-          </div>
-          <div className="trade-log-overlay-content">
-          {!tradeLogCollapsed && (
+          {reportingLogId ? (
+            <ReportingView
+              logId={reportingLogId}
+              logName={selectedLog?.name || 'Trade Log'}
+              onClose={handleCloseReporting}
+            />
+          ) : (
             <>
-              <EquityChartWidget refreshTrigger={tradeRefreshTrigger} />
-              <TradeLogPanel
-                onOpenTradeEntry={openTradeEntry}
-                onEditTrade={openTradeEdit}
-                refreshTrigger={tradeRefreshTrigger}
-              />
+              <div className="trade-log-overlay-content">
+              {!tradeLogCollapsed && (
+                <>
+                  <TradeLogPanel
+                    onOpenTradeEntry={openTradeEntry}
+                    onEditTrade={openTradeEdit}
+                    onViewReporting={handleViewReporting}
+                    onManageLogs={handleManageLogs}
+                    onOpenSettings={() => setSettingsOpen(true)}
+                    selectedLogId={selectedLog?.id || null}
+                    onSelectLog={handleSelectLog}
+                    refreshTrigger={tradeRefreshTrigger}
+                  />
+                </>
+              )}
+              </div>
             </>
           )}
-          </div>
         </div>
       </div>
+
+      {/* Log Manager Modal */}
+      <LogManagerModal
+        isOpen={logManagerOpen}
+        onClose={() => setLogManagerOpen(false)}
+        selectedLogId={selectedLog?.id || null}
+        onSelectLog={handleSelectLog}
+        onLogCreated={handleLogCreated}
+      />
+
+      {/* Trade Detail Modal */}
+      <TradeDetailModal
+        trade={tradeDetailTrade}
+        isOpen={tradeDetailTrade !== null}
+        onClose={handleTradeDetailClose}
+        onTradeUpdated={onTradeSaved}
+      />
+
+      {/* Settings Modal */}
+      {settingsOpen && (
+        <SettingsModal onClose={() => setSettingsOpen(false)} />
+      )}
 
       {/* Strategy Popup Modal */}
       {selectedTile && (

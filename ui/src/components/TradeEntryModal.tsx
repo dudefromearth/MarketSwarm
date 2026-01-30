@@ -78,7 +78,7 @@ export default function TradeEntryModal({
       setStrategy(editTrade.strategy as Strategy);
       setSide(editTrade.side as Side);
       setStrike(editTrade.strike.toString());
-      setWidth(editTrade.width.toString());
+      setWidth(editTrade.width?.toString() || '0');
       setDte(editTrade.dte?.toString() || '0');
       setEntryPrice(editTrade.entry_price.toString());
       setQuantity(editTrade.quantity.toString());

@@ -1,0 +1,360 @@
+/**
+ * MEL Styles - Model Effectiveness Layer UI components.
+ */
+
+/* ========== MEL Status Bar ========== */
+.mel-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  font-size: 11px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mel-status-bar:hover {
+  background: #222;
+  border-color: #444;
+}
+
+.mel-status-bar.mel-valid {
+  border-color: #22c55e33;
+}
+
+.mel-status-bar.mel-degraded {
+  border-color: #f59e0b33;
+}
+
+.mel-status-bar.mel-revoked {
+  border-color: #ef444433;
+}
+
+.mel-status-bar.mel-disconnected {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.mel-label {
+  color: #888;
+  font-weight: 500;
+}
+
+.mel-value {
+  font-weight: 600;
+}
+
+.mel-offline {
+  color: #666;
+}
+
+.mel-separator {
+  color: #444;
+}
+
+.mel-global {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mel-model {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.mel-model-label {
+  color: #888;
+}
+
+.mel-model-value {
+  font-weight: 600;
+}
+
+.mel-model-indicator {
+  font-size: 10px;
+}
+
+.mel-model-trend {
+  color: #666;
+  font-size: 10px;
+}
+
+.mel-coherence {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+
+.mel-coherence-collapsing {
+  background: #ef444433;
+  color: #ef4444;
+}
+
+.mel-coherence-mixed {
+  background: #f59e0b33;
+  color: #f59e0b;
+}
+
+.mel-coherence-recovered {
+  background: #3b82f633;
+  color: #3b82f6;
+}
+
+.mel-events {
+  color: #fbbf24;
+  font-weight: 500;
+}
+
+/* ========== MEL Dashboard ========== */
+.mel-dashboard-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.mel-dashboard {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 700px;
+  max-height: 90vh;
+  overflow: auto;
+  font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+.mel-dashboard-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid #333;
+  position: relative;
+}
+
+.mel-dashboard-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+  letter-spacing: 1px;
+}
+
+.mel-dashboard-subtitle {
+  color: #666;
+  font-size: 11px;
+}
+
+.mel-dashboard-close {
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.mel-dashboard-close:hover {
+  color: #fff;
+}
+
+.mel-dashboard-question {
+  padding: 12px 20px;
+  color: #888;
+  font-size: 12px;
+  text-align: center;
+  border-bottom: 1px solid #333;
+}
+
+.mel-dashboard-content {
+  padding: 20px;
+}
+
+.mel-models-section {
+  margin-bottom: 24px;
+}
+
+.mel-model-row {
+  display: grid;
+  grid-template-columns: 200px 1fr 50px 80px 24px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid #222;
+}
+
+.mel-model-row:last-child {
+  border-bottom: none;
+}
+
+.mel-model-name {
+  color: #ccc;
+  font-size: 11px;
+}
+
+.mel-model-bar-container {
+  height: 8px;
+  background: #333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mel-model-bar {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.mel-model-pct {
+  font-weight: 600;
+  font-size: 12px;
+  text-align: right;
+}
+
+.mel-model-state {
+  font-size: 10px;
+  font-weight: 500;
+  text-align: center;
+}
+
+.mel-model-trend {
+  color: #666;
+  text-align: center;
+}
+
+/* Global Integrity Gauge */
+.mel-global-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 0;
+}
+
+.mel-global-gauge {
+  margin-bottom: 16px;
+}
+
+.mel-global-circle {
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+.mel-global-inner {
+  width: 110px;
+  height: 110px;
+  background: #1a1a1a;
+  border-radius: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.mel-global-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.mel-global-label {
+  font-size: 9px;
+  color: #666;
+  text-align: center;
+  line-height: 1.3;
+  margin-top: 4px;
+}
+
+.mel-interpretation {
+  text-align: center;
+  font-size: 12px;
+}
+
+.mel-interp-valid {
+  color: #22c55e;
+}
+
+.mel-interp-degraded {
+  color: #f59e0b;
+}
+
+.mel-interp-revoked {
+  color: #ef4444;
+}
+
+/* Footer */
+.mel-dashboard-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  border-top: 1px solid #333;
+  font-size: 10px;
+  color: #666;
+}
+
+.mel-footer-events {
+  color: #fbbf24;
+}
+
+/* ========== Visual De-Emphasis for DEGRADED/REVOKED ========== */
+.widget.mel-degraded {
+  opacity: 0.85;
+  border-color: #f59e0b !important;
+}
+
+.widget.mel-degraded::before {
+  content: '⚠ DEGRADED';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 9px;
+  color: #f59e0b;
+  background: #f59e0b22;
+  padding: 2px 6px;
+  border-radius: 2px;
+  z-index: 10;
+}
+
+.widget.mel-revoked {
+  opacity: 0.5;
+  border-color: #ef4444 !important;
+  filter: grayscale(30%);
+}
+
+.widget.mel-revoked::before {
+  content: '✗ REVOKED';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  font-size: 9px;
+  color: #ef4444;
+  background: #ef444422;
+  padding: 2px 6px;
+  border-radius: 2px;
+  z-index: 10;
+}
+
+/* Make widgets position relative for ::before */
+.widget {
+  position: relative;
+}

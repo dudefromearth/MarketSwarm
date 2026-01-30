@@ -23,6 +23,10 @@ class SetupBase:
         "workflow",
         "domain_keys",
         "epochs",
+        # copilot service
+        "mel",
+        "adi",
+        "commentary",
         # future extensions:
         # "tiles",
         # "campaigns",
