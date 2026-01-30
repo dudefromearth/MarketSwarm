@@ -93,6 +93,11 @@ interface MarketModeData {
   ts?: string;
 }
 
+// User profile for header greeting
+interface UserProfile {
+  display_name: string;
+}
+
 // Strategy details for popup/risk graph (side is always 'call' or 'put', never 'both')
 interface SelectedStrategy {
   strategy: Strategy;
@@ -471,6 +476,9 @@ function App() {
   const [vpSmoothing, setVpSmoothing] = useState(5); // Gaussian kernel size (3, 5, 7, 9)
   const [vpOpacity, setVpOpacity] = useState(0.4); // Volume profile opacity
 
+  // User profile for header
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
   // Popup and Risk Graph state
   const [selectedTile, setSelectedTile] = useState<SelectedStrategy | null>(null);
   const [riskGraphStrategies, setRiskGraphStrategies] = useState<RiskGraphStrategy[]>(() => {
@@ -675,6 +683,18 @@ function App() {
   useEffect(() => {
     localStorage.setItem('priceAlertLines', JSON.stringify(priceAlertLines));
   }, [priceAlertLines]);
+
+  // Fetch user profile for header greeting
+  useEffect(() => {
+    fetch('/api/profile/me', { credentials: 'include' })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.display_name) {
+          setUserProfile({ display_name: data.display_name });
+        }
+      })
+      .catch(err => console.error('Failed to fetch user profile:', err));
+  }, []);
 
   // Price alert line management
   const updatePriceAlertColor = (alertId: string, color: string) => {
@@ -1703,6 +1723,66 @@ function App() {
 
   return (
     <div className="app">
+      <header className="app-header">
+        <div className="header-left">
+          <span className="header-greeting">
+            Hi, {userProfile?.display_name || 'User'}
+          </span>
+          <button
+            className="header-account-btn"
+            onClick={() => setSettingsOpen(true)}
+            title="My Account"
+          >
+            My Account
+          </button>
+          <button
+            className="header-settings-btn"
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+          >
+            ⚙️
+          </button>
+        </div>
+        <div className="header-center">
+          <div className="underlying-selector">
+            <button
+              className={`underlying-btn${underlying === 'I:SPX' ? ' active' : ''}`}
+              onClick={() => setUnderlying('I:SPX')}
+            >
+              SPX
+            </button>
+            <button
+              className={`underlying-btn${underlying === 'I:NDX' ? ' active' : ''}`}
+              onClick={() => setUnderlying('I:NDX')}
+            >
+              NDX
+            </button>
+          </div>
+          <div className="spot-display">
+            {spot?.[underlying] && (
+              <span className="spot-price">
+                {underlying.replace('I:', '')} {spot[underlying].value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              </span>
+            )}
+            {spot?.['I:VIX'] && (
+              <span className="vix-price">
+                VIX {spot['I:VIX'].value.toFixed(2)}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="connection-status">
+          <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
+          <span>{connected ? 'Live' : 'Disconnected'}</span>
+          <span className="update-count">#{updateCount}</span>
+          {lastUpdateTime && (
+            <span className="last-update">
+              {new Date(lastUpdateTime).toLocaleTimeString()}
+            </span>
+          )}
+        </div>
+      </header>
+
       {/* Widget Row - Indicator Widgets */}
       <div className="widget-row">
         <div className="widget vexy-widget">
