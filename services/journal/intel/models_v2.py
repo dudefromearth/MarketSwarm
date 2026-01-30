@@ -279,3 +279,58 @@ class DrawdownPoint:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass
+class Symbol:
+    """A tradeable symbol with its multiplier/Big Point Value."""
+    symbol: str  # Ticker symbol (SPX, ES, AAPL)
+    name: str  # Full name (S&P 500 Index)
+    asset_type: str  # index_option, future, stock, etf_option
+    multiplier: int  # Contract multiplier / Big Point Value
+    enabled: bool = True
+    is_default: bool = False  # True for built-in symbols
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'Symbol':
+        d = dict(d)
+        # Handle SQLite integer booleans
+        if 'enabled' in d:
+            d['enabled'] = bool(d['enabled'])
+        if 'is_default' in d:
+            d['is_default'] = bool(d['is_default'])
+        return cls(**d)
+
+
+@dataclass
+class Setting:
+    """A configuration setting with category and scope."""
+    key: str  # Setting key (e.g., 'default_risk_per_trade')
+    value: str  # JSON-encoded value
+    category: str  # symbols, user, ai, display, trading
+    scope: str = 'global'  # global or log_id for per-log settings
+    description: Optional[str] = None
+    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'Setting':
+        d = dict(d)
+        return cls(**d)
+
+    def get_value(self):
+        """Parse the JSON value."""
+        try:
+            return json.loads(self.value)
+        except (json.JSONDecodeError, TypeError):
+            return self.value
+
+    def set_value(self, val):
+        """Encode value as JSON."""
+        self.value = json.dumps(val)

@@ -9,7 +9,7 @@ from datetime import datetime
 from aiohttp import web
 
 from .db_v2 import JournalDBv2
-from .models_v2 import TradeLog, Trade, TradeEvent
+from .models_v2 import TradeLog, Trade, TradeEvent, Symbol, Setting
 from .analytics_v2 import AnalyticsV2
 
 
@@ -494,6 +494,231 @@ class JournalOrchestrator:
             self.logger.error(f"get_return_distribution error: {e}")
             return self._error_response(str(e), 500)
 
+    # ==================== Symbols ====================
+
+    async def list_symbols(self, request: web.Request) -> web.Response:
+        """GET /api/symbols - List all symbols."""
+        try:
+            params = request.query
+            include_disabled = params.get('include_disabled', '').lower() == 'true'
+            asset_type = params.get('asset_type')
+
+            symbols = self.db.list_symbols(include_disabled=include_disabled)
+
+            if asset_type:
+                symbols = [s for s in symbols if s.asset_type == asset_type]
+
+            return self._json_response({
+                'success': True,
+                'data': [s.to_dict() for s in symbols],
+                'count': len(symbols)
+            })
+        except Exception as e:
+            self.logger.error(f"list_symbols error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_symbol(self, request: web.Request) -> web.Response:
+        """GET /api/symbols/:symbol - Get a single symbol."""
+        try:
+            symbol = request.match_info['symbol']
+            sym = self.db.get_symbol(symbol)
+
+            if not sym:
+                return self._error_response(f"Symbol {symbol} not found", 404)
+
+            return self._json_response({
+                'success': True,
+                'data': sym.to_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"get_symbol error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def add_symbol(self, request: web.Request) -> web.Response:
+        """POST /api/symbols - Add a new symbol."""
+        try:
+            body = await request.json()
+
+            required = ['symbol', 'name', 'asset_type', 'multiplier']
+            for field in required:
+                if field not in body:
+                    return self._error_response(f"Missing required field: {field}", 400)
+
+            # Check if symbol already exists
+            existing = self.db.get_symbol(body['symbol'])
+            if existing:
+                return self._error_response(f"Symbol {body['symbol']} already exists", 409)
+
+            symbol = Symbol(
+                symbol=body['symbol'].upper(),
+                name=body['name'],
+                asset_type=body['asset_type'],
+                multiplier=int(body['multiplier']),
+                enabled=body.get('enabled', True)
+            )
+
+            created = self.db.add_symbol(symbol)
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_dict()
+            }, 201)
+        except Exception as e:
+            self.logger.error(f"add_symbol error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def update_symbol(self, request: web.Request) -> web.Response:
+        """PUT /api/symbols/:symbol - Update a symbol."""
+        try:
+            symbol = request.match_info['symbol']
+            body = await request.json()
+
+            updated = self.db.update_symbol(symbol, body)
+            if not updated:
+                return self._error_response(f"Symbol {symbol} not found", 404)
+
+            return self._json_response({
+                'success': True,
+                'data': updated.to_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"update_symbol error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def delete_symbol(self, request: web.Request) -> web.Response:
+        """DELETE /api/symbols/:symbol - Delete a user-added symbol."""
+        try:
+            symbol = request.match_info['symbol']
+
+            # Check if it's a default symbol
+            sym = self.db.get_symbol(symbol)
+            if sym and sym.is_default:
+                return self._error_response("Cannot delete default symbols", 403)
+
+            deleted = self.db.delete_symbol(symbol)
+            if not deleted:
+                return self._error_response(f"Symbol {symbol} not found or is a default", 404)
+
+            return self._json_response({
+                'success': True,
+                'message': f"Symbol {symbol} deleted"
+            })
+        except Exception as e:
+            self.logger.error(f"delete_symbol error: {e}")
+            return self._error_response(str(e), 500)
+
+    # ==================== Settings ====================
+
+    async def get_settings(self, request: web.Request) -> web.Response:
+        """GET /api/settings - Get all settings."""
+        try:
+            params = request.query
+            scope = params.get('scope', 'global')
+            category = params.get('category')
+
+            if category:
+                settings = self.db.get_settings_by_category(category, scope)
+                data = {s.key: s.get_value() for s in settings}
+            else:
+                data = self.db.get_all_settings(scope)
+
+            return self._json_response({
+                'success': True,
+                'data': data,
+                'scope': scope
+            })
+        except Exception as e:
+            self.logger.error(f"get_settings error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_setting(self, request: web.Request) -> web.Response:
+        """GET /api/settings/:key - Get a single setting."""
+        try:
+            key = request.match_info['key']
+            params = request.query
+            scope = params.get('scope', 'global')
+            log_id = params.get('log_id')
+
+            # If log_id provided, get effective setting (with per-log override)
+            if log_id:
+                value = self.db.get_effective_setting(key, log_id)
+                return self._json_response({
+                    'success': True,
+                    'data': {'key': key, 'value': value, 'effective': True}
+                })
+
+            setting = self.db.get_setting(key, scope)
+            if not setting:
+                return self._error_response(f"Setting {key} not found", 404)
+
+            return self._json_response({
+                'success': True,
+                'data': {
+                    'key': setting.key,
+                    'value': setting.get_value(),
+                    'category': setting.category,
+                    'scope': setting.scope,
+                    'description': setting.description
+                }
+            })
+        except Exception as e:
+            self.logger.error(f"get_setting error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def set_setting(self, request: web.Request) -> web.Response:
+        """PUT /api/settings/:key - Set a setting value."""
+        try:
+            key = request.match_info['key']
+            body = await request.json()
+
+            if 'value' not in body:
+                return self._error_response("Missing required field: value", 400)
+            if 'category' not in body:
+                return self._error_response("Missing required field: category", 400)
+
+            scope = body.get('scope', 'global')
+            description = body.get('description')
+
+            setting = self.db.set_setting(
+                key=key,
+                value=body['value'],
+                category=body['category'],
+                scope=scope,
+                description=description
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': {
+                    'key': setting.key,
+                    'value': setting.get_value(),
+                    'category': setting.category,
+                    'scope': setting.scope
+                }
+            })
+        except Exception as e:
+            self.logger.error(f"set_setting error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def delete_setting(self, request: web.Request) -> web.Response:
+        """DELETE /api/settings/:key - Delete a setting."""
+        try:
+            key = request.match_info['key']
+            params = request.query
+            scope = params.get('scope', 'global')
+
+            deleted = self.db.delete_setting(key, scope)
+            if not deleted:
+                return self._error_response(f"Setting {key} not found", 404)
+
+            return self._json_response({
+                'success': True,
+                'message': f"Setting {key} deleted"
+            })
+        except Exception as e:
+            self.logger.error(f"delete_setting error: {e}")
+            return self._error_response(str(e), 500)
+
     # ==================== Legacy Endpoints (for backwards compatibility) ====================
 
     async def legacy_list_trades(self, request: web.Request) -> web.Response:
@@ -642,6 +867,19 @@ class JournalOrchestrator:
         app.router.add_get('/api/logs/{logId}/equity', self.get_log_equity)
         app.router.add_get('/api/logs/{logId}/drawdown', self.get_log_drawdown)
         app.router.add_get('/api/logs/{logId}/distribution', self.get_return_distribution)
+
+        # Symbols registry
+        app.router.add_get('/api/symbols', self.list_symbols)
+        app.router.add_get('/api/symbols/{symbol}', self.get_symbol)
+        app.router.add_post('/api/symbols', self.add_symbol)
+        app.router.add_put('/api/symbols/{symbol}', self.update_symbol)
+        app.router.add_delete('/api/symbols/{symbol}', self.delete_symbol)
+
+        # Settings
+        app.router.add_get('/api/settings', self.get_settings)
+        app.router.add_get('/api/settings/{key}', self.get_setting)
+        app.router.add_put('/api/settings/{key}', self.set_setting)
+        app.router.add_delete('/api/settings/{key}', self.delete_setting)
 
         # Legacy endpoints (backwards compatibility)
         app.router.add_get('/api/trades', self.legacy_list_trades)

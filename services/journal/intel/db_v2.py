@@ -3,17 +3,51 @@
 
 import sqlite3
 import os
+import json
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from .models_v2 import TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint
+from .models_v2 import TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint, Symbol, Setting
 
 
 class JournalDBv2:
     """SQLite database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
+
+    # Default symbols with multipliers
+    DEFAULT_SYMBOLS = [
+        # Index Options
+        {'symbol': 'SPX', 'name': 'S&P 500 Index', 'asset_type': 'index_option', 'multiplier': 100},
+        {'symbol': 'NDX', 'name': 'Nasdaq 100 Index', 'asset_type': 'index_option', 'multiplier': 100},
+        {'symbol': 'RUT', 'name': 'Russell 2000 Index', 'asset_type': 'index_option', 'multiplier': 100},
+        {'symbol': 'XSP', 'name': 'Mini-SPX', 'asset_type': 'index_option', 'multiplier': 100},
+        {'symbol': 'VIX', 'name': 'CBOE Volatility Index', 'asset_type': 'index_option', 'multiplier': 100},
+        # ETF Options
+        {'symbol': 'SPY', 'name': 'SPDR S&P 500 ETF', 'asset_type': 'etf_option', 'multiplier': 100},
+        {'symbol': 'QQQ', 'name': 'Invesco QQQ Trust', 'asset_type': 'etf_option', 'multiplier': 100},
+        {'symbol': 'IWM', 'name': 'iShares Russell 2000', 'asset_type': 'etf_option', 'multiplier': 100},
+        {'symbol': 'DIA', 'name': 'SPDR Dow Jones', 'asset_type': 'etf_option', 'multiplier': 100},
+        # Futures
+        {'symbol': 'ES', 'name': 'E-mini S&P 500', 'asset_type': 'future', 'multiplier': 50},
+        {'symbol': 'MES', 'name': 'Micro E-mini S&P 500', 'asset_type': 'future', 'multiplier': 5},
+        {'symbol': 'NQ', 'name': 'E-mini Nasdaq 100', 'asset_type': 'future', 'multiplier': 20},
+        {'symbol': 'MNQ', 'name': 'Micro E-mini Nasdaq', 'asset_type': 'future', 'multiplier': 2},
+        {'symbol': 'RTY', 'name': 'E-mini Russell 2000', 'asset_type': 'future', 'multiplier': 50},
+        {'symbol': 'YM', 'name': 'E-mini Dow', 'asset_type': 'future', 'multiplier': 5},
+        {'symbol': 'CL', 'name': 'Crude Oil', 'asset_type': 'future', 'multiplier': 1000},
+        {'symbol': 'GC', 'name': 'Gold', 'asset_type': 'future', 'multiplier': 100},
+        # Common Stocks (placeholder - users can add more)
+        {'symbol': 'AAPL', 'name': 'Apple Inc', 'asset_type': 'stock', 'multiplier': 100},
+        {'symbol': 'TSLA', 'name': 'Tesla Inc', 'asset_type': 'stock', 'multiplier': 100},
+        {'symbol': 'NVDA', 'name': 'NVIDIA Corp', 'asset_type': 'stock', 'multiplier': 100},
+        {'symbol': 'AMD', 'name': 'Advanced Micro Devices', 'asset_type': 'stock', 'multiplier': 100},
+        {'symbol': 'AMZN', 'name': 'Amazon.com Inc', 'asset_type': 'stock', 'multiplier': 100},
+        {'symbol': 'GOOGL', 'name': 'Alphabet Inc', 'asset_type': 'stock', 'multiplier': 100},
+        {'symbol': 'META', 'name': 'Meta Platforms', 'asset_type': 'stock', 'multiplier': 100},
+        {'symbol': 'MSFT', 'name': 'Microsoft Corp', 'asset_type': 'stock', 'multiplier': 100},
+    ]
 
     def __init__(self, db_path: Optional[str] = None):
         if db_path is None:
@@ -57,6 +91,9 @@ class JournalDBv2:
 
             if current_version < 2:
                 self._migrate_to_v2(conn)
+
+            if current_version < 3:
+                self._migrate_to_v3(conn)
 
             conn.commit()
         finally:
@@ -294,6 +331,51 @@ class JournalDBv2:
 
         # Drop old table
         conn.execute("DROP TABLE trades_v1")
+
+    def _migrate_to_v3(self, conn: sqlite3.Connection):
+        """Migrate to v3: Add symbols and settings tables."""
+        # Check if symbols table already exists
+        symbols_exist = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='symbols'"
+        ).fetchone() is not None
+
+        if not symbols_exist:
+            conn.executescript("""
+                -- Symbols registry (user-added symbols)
+                CREATE TABLE IF NOT EXISTS symbols (
+                    symbol TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    asset_type TEXT NOT NULL,
+                    multiplier INTEGER NOT NULL,
+                    enabled INTEGER DEFAULT 1,
+                    is_default INTEGER DEFAULT 0,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
+
+                -- Global and per-log settings
+                CREATE TABLE IF NOT EXISTS settings (
+                    key TEXT NOT NULL,
+                    value TEXT,
+                    category TEXT NOT NULL,
+                    scope TEXT DEFAULT 'global',
+                    description TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (key, scope)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_settings_category ON settings(category);
+                CREATE INDEX IF NOT EXISTS idx_settings_scope ON settings(scope);
+            """)
+
+            # Insert default symbols
+            now = datetime.utcnow().isoformat()
+            for sym in self.DEFAULT_SYMBOLS:
+                conn.execute("""
+                    INSERT OR IGNORE INTO symbols (symbol, name, asset_type, multiplier, enabled, is_default, created_at)
+                    VALUES (?, ?, ?, ?, 1, 1, ?)
+                """, (sym['symbol'], sym['name'], sym['asset_type'], sym['multiplier'], now))
+
+        self._set_schema_version(conn, 3)
 
     # ==================== Trade Log CRUD ====================
 
@@ -698,6 +780,196 @@ class JournalDBv2:
             return [TradeEvent.from_dict(dict(row)) for row in rows]
         finally:
             conn.close()
+
+    # ==================== Symbols ====================
+
+    def list_symbols(self, include_disabled: bool = False) -> List[Symbol]:
+        """List all symbols (default + user-added)."""
+        conn = self._get_conn()
+        try:
+            query = "SELECT * FROM symbols"
+            if not include_disabled:
+                query += " WHERE enabled = 1"
+            query += " ORDER BY asset_type, symbol"
+
+            rows = conn.execute(query).fetchall()
+            return [Symbol.from_dict(dict(row)) for row in rows]
+        finally:
+            conn.close()
+
+    def get_symbol(self, symbol: str) -> Optional[Symbol]:
+        """Get a symbol by its ticker."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM symbols WHERE symbol = ?",
+                (symbol.upper(),)
+            ).fetchone()
+            if row:
+                return Symbol.from_dict(dict(row))
+            return None
+        finally:
+            conn.close()
+
+    def get_multiplier(self, symbol: str) -> int:
+        """Get multiplier for a symbol, with fallback to defaults."""
+        sym = self.get_symbol(symbol)
+        if sym:
+            return sym.multiplier
+        # Fallback to hardcoded defaults
+        return self._get_multiplier(symbol)
+
+    def add_symbol(self, symbol: Symbol) -> Symbol:
+        """Add a new user symbol."""
+        conn = self._get_conn()
+        try:
+            symbol.symbol = symbol.symbol.upper()
+            symbol.is_default = False
+            conn.execute("""
+                INSERT INTO symbols (symbol, name, asset_type, multiplier, enabled, is_default, created_at)
+                VALUES (?, ?, ?, ?, ?, 0, ?)
+            """, (symbol.symbol, symbol.name, symbol.asset_type, symbol.multiplier,
+                  1 if symbol.enabled else 0, symbol.created_at))
+            conn.commit()
+            return symbol
+        finally:
+            conn.close()
+
+    def update_symbol(self, symbol: str, updates: Dict[str, Any]) -> Optional[Symbol]:
+        """Update a symbol (only user-added symbols can be fully edited)."""
+        conn = self._get_conn()
+        try:
+            symbol = symbol.upper()
+            # Prevent editing symbol key
+            updates.pop('symbol', None)
+            updates.pop('is_default', None)
+
+            if not updates:
+                return self.get_symbol(symbol)
+
+            set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
+            params = list(updates.values()) + [symbol]
+
+            conn.execute(
+                f"UPDATE symbols SET {set_clause} WHERE symbol = ?",
+                params
+            )
+            conn.commit()
+            return self.get_symbol(symbol)
+        finally:
+            conn.close()
+
+    def delete_symbol(self, symbol: str) -> bool:
+        """Delete a user-added symbol (cannot delete default symbols)."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM symbols WHERE symbol = ? AND is_default = 0",
+                (symbol.upper(),)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    # ==================== Settings ====================
+
+    def get_setting(self, key: str, scope: str = 'global') -> Optional[Setting]:
+        """Get a setting by key and scope."""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM settings WHERE key = ? AND scope = ?",
+                (key, scope)
+            ).fetchone()
+            if row:
+                return Setting.from_dict(dict(row))
+            return None
+        finally:
+            conn.close()
+
+    def get_settings_by_category(self, category: str, scope: str = 'global') -> List[Setting]:
+        """Get all settings in a category."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM settings WHERE category = ? AND scope = ?",
+                (category, scope)
+            ).fetchall()
+            return [Setting.from_dict(dict(row)) for row in rows]
+        finally:
+            conn.close()
+
+    def get_all_settings(self, scope: str = 'global') -> Dict[str, Dict[str, Any]]:
+        """Get all settings organized by category."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM settings WHERE scope = ?",
+                (scope,)
+            ).fetchall()
+
+            result: Dict[str, Dict[str, Any]] = {}
+            for row in rows:
+                s = Setting.from_dict(dict(row))
+                if s.category not in result:
+                    result[s.category] = {}
+                result[s.category][s.key] = s.get_value()
+            return result
+        finally:
+            conn.close()
+
+    def set_setting(self, key: str, value: Any, category: str, scope: str = 'global',
+                    description: Optional[str] = None) -> Setting:
+        """Set a setting value (insert or update)."""
+        conn = self._get_conn()
+        try:
+            now = datetime.utcnow().isoformat()
+            value_json = json.dumps(value) if not isinstance(value, str) else value
+
+            conn.execute("""
+                INSERT INTO settings (key, value, category, scope, description, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(key, scope) DO UPDATE SET
+                    value = excluded.value,
+                    category = excluded.category,
+                    description = COALESCE(excluded.description, settings.description),
+                    updated_at = excluded.updated_at
+            """, (key, value_json, category, scope, description, now))
+            conn.commit()
+
+            return Setting(key=key, value=value_json, category=category, scope=scope,
+                          description=description, updated_at=now)
+        finally:
+            conn.close()
+
+    def delete_setting(self, key: str, scope: str = 'global') -> bool:
+        """Delete a setting."""
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM settings WHERE key = ? AND scope = ?",
+                (key, scope)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def get_effective_setting(self, key: str, log_id: Optional[str] = None) -> Any:
+        """Get effective setting value with per-log override support."""
+        # First check for per-log setting
+        if log_id:
+            setting = self.get_setting(key, scope=log_id)
+            if setting:
+                return setting.get_value()
+
+        # Fall back to global setting
+        setting = self.get_setting(key, scope='global')
+        if setting:
+            return setting.get_value()
+
+        return None
 
     # ==================== Analytics Helpers ====================
 
