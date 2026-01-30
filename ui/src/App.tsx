@@ -318,15 +318,20 @@ function getTimeToExpiration(dte: number): number {
 }
 
 // Calculate theoretical P&L for a strategy at given underlying price (before expiration)
+// timeOffsetHours: optional hours forward from now (for time machine simulation)
 function calculateStrategyTheoreticalPnL(
   strat: { strategy: Strategy; side: Side; strike: number; width: number; debit: number | null; dte: number },
   underlyingPrice: number,
   volatility: number,
-  riskFreeRate: number = 0.05
+  riskFreeRate: number = 0.05,
+  timeOffsetHours: number = 0
 ): number {
   const debit = strat.debit ?? 0;
   const multiplier = 100;
-  const T = getTimeToExpiration(strat.dte); // Actual time to expiration in years
+  // Get base time to expiration, then subtract simulated hours
+  const baseT = getTimeToExpiration(strat.dte);
+  const offsetYears = timeOffsetHours / (24 * 365);
+  const T = Math.max(0.0001, baseT - offsetYears); // Don't go below ~1 minute
   const isCall = strat.side === 'call';
 
   if (strat.strategy === 'single') {
@@ -557,6 +562,11 @@ function App() {
   });
   const [alertContextMenu, setAlertContextMenu] = useState<{ x: number; y: number; price: number } | null>(null);
   const [alertLineContextMenu, setAlertLineContextMenu] = useState<{ x: number; y: number; alertId: string } | null>(null);
+
+  // Time Machine controls for theta decay analysis
+  const [timeMachineEnabled, setTimeMachineEnabled] = useState(false);
+  const [simTimeOffsetHours, setSimTimeOffsetHours] = useState(0); // Hours forward from now toward expiration
+  const [simVolatilityOffset, setSimVolatilityOffset] = useState(0); // Percentage points offset from current VIX
 
   // Close context menus on outside click
   useEffect(() => {
@@ -1008,8 +1018,13 @@ function App() {
     };
 
     // Use VIX as volatility (convert from percentage to decimal)
+    // Apply time machine volatility offset if enabled
     const vix = spot?.['I:VIX']?.value || 20;
-    const volatility = vix / 100;
+    const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
+    const volatility = Math.max(0.05, adjustedVix) / 100; // Min 5% vol
+
+    // Time offset for time machine (hours forward)
+    const timeOffset = timeMachineEnabled ? simTimeOffsetHours : 0;
 
     // Determine base price range based on visible strategies
     const allStrikes = visibleStrategies.flatMap(s => {
@@ -1058,9 +1073,10 @@ function App() {
       points.push({ price, pnl: totalPnL });
 
       // Theoretical (real-time) P&L using Black-Scholes
+      // Pass time offset for time machine simulation
       let theoreticalPnL = 0;
       for (const strat of visibleStrategies) {
-        theoreticalPnL += calculateStrategyTheoreticalPnL(strat, price, volatility);
+        theoreticalPnL += calculateStrategyTheoreticalPnL(strat, price, volatility, 0.05, timeOffset);
       }
       theoreticalPoints.push({ price, pnl: theoreticalPnL });
 
@@ -1152,7 +1168,7 @@ function App() {
     }
 
     return { points, theoreticalPoints, minPnL, maxPnL, minPrice, maxPrice, breakevens, theoreticalBreakevens, fullMinPrice, fullMaxPrice, theoreticalPnLAtSpot, marketPnL };
-  }, [riskGraphStrategies, spot, panOffset, heatmap, underlying]);
+  }, [riskGraphStrategies, spot, panOffset, heatmap, underlying, timeMachineEnabled, simTimeOffsetHours, simVolatilityOffset]);
 
   // SSE connection
   useEffect(() => {
@@ -3383,6 +3399,101 @@ function App() {
                   </div>
                 )}
                 </div>
+
+                    {/* Time Machine Controls */}
+                    <div className="time-machine-panel">
+                      <div className="time-machine-header">
+                        <label className="time-machine-toggle">
+                          <input
+                            type="checkbox"
+                            checked={timeMachineEnabled}
+                            onChange={(e) => setTimeMachineEnabled(e.target.checked)}
+                          />
+                          <span className="toggle-label">⏱ Time Machine</span>
+                        </label>
+                        {timeMachineEnabled && (
+                          <button
+                            className="btn-reset"
+                            onClick={() => {
+                              setSimTimeOffsetHours(0);
+                              setSimVolatilityOffset(0);
+                            }}
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                      {timeMachineEnabled && (
+                        <div className="time-machine-controls">
+                          <div className="control-group time-control">
+                            <label>
+                              Time Forward: <span className="control-value">{
+                                simTimeOffsetHours < 24
+                                  ? `${simTimeOffsetHours.toFixed(simTimeOffsetHours >= 1 ? 1 : 2)}h`
+                                  : `${(simTimeOffsetHours / 24).toFixed(1)}d`
+                              }</span>
+                            </label>
+                            {(() => {
+                              // Calculate max hours based on minimum DTE of visible strategies
+                              const visibleStrategies = riskGraphStrategies.filter(s => s.visible);
+                              const minDTE = visibleStrategies.length > 0
+                                ? Math.min(...visibleStrategies.map(s => s.dte))
+                                : 1;
+                              // Max hours = DTE * 24, with some buffer for 0-DTE
+                              const maxHours = Math.max(1, minDTE) * 24;
+
+                              // Determine step size based on current position
+                              // Near expiration (last 4 hours): 15 min increments
+                              // Otherwise: 1 hour increments
+                              const hoursRemaining = maxHours - simTimeOffsetHours;
+                              const stepSize = hoursRemaining <= 4 ? 0.25 : 1;
+
+                              return (
+                                <>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max={maxHours}
+                                    step={stepSize}
+                                    value={simTimeOffsetHours}
+                                    onChange={(e) => setSimTimeOffsetHours(parseFloat(e.target.value))}
+                                    className="time-slider"
+                                  />
+                                  <div className="slider-labels">
+                                    <span>Now</span>
+                                    <span>Expiration</span>
+                                  </div>
+                                </>
+                              );
+                            })()}
+                          </div>
+                          <div className="control-group vol-control">
+                            <label>
+                              Volatility Adj: <span className="control-value">
+                                {simVolatilityOffset >= 0 ? '+' : ''}{simVolatilityOffset.toFixed(1)}
+                              </span>
+                              <span className="control-detail">
+                                (VIX: {((spot?.['I:VIX']?.value || 20) + simVolatilityOffset).toFixed(1)})
+                              </span>
+                            </label>
+                            <input
+                              type="range"
+                              min="-15"
+                              max="30"
+                              step="0.5"
+                              value={simVolatilityOffset}
+                              onChange={(e) => setSimVolatilityOffset(parseFloat(e.target.value))}
+                              className="vol-slider"
+                            />
+                            <div className="slider-labels">
+                              <span>-15</span>
+                              <span>0</span>
+                              <span>+30</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
 
                     {/* Summary Stats */}
                     <div className="risk-graph-stats">
