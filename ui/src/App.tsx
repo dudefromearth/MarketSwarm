@@ -12,7 +12,7 @@ import TradeEntryModal from './components/TradeEntryModal';
 import type { TradeEntryData } from './components/TradeEntryModal';
 import EquityChartWidget from './components/EquityChartWidget';
 
-const SSE_BASE = 'http://localhost:3001';
+const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
 type Strategy = 'single' | 'vertical' | 'butterfly';
 type GexMode = 'combined' | 'net';
