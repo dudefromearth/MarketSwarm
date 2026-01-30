@@ -115,6 +115,9 @@ interface RiskGraphStrategy extends SelectedStrategy {
   visible: boolean;
 }
 
+// Alert behavior when triggered
+type AlertBehavior = 'remove_on_hit' | 'once_only' | 'repeat';
+
 interface RiskGraphAlert {
   id: string;
   strategyId: string;
@@ -131,6 +134,10 @@ interface RiskGraphAlert {
   highWaterMark?: number;
   // Visual customization
   color: string;
+  // Behavior when triggered
+  behavior: AlertBehavior;
+  // Track if price was previously on the other side (for repeat alerts)
+  wasOnOtherSide?: boolean;
 }
 
 // Draft alert for entry mode
@@ -140,6 +147,7 @@ interface AlertDraft {
   condition: 'above' | 'below' | 'at';
   targetValue: string;
   color: string;
+  behavior: AlertBehavior;
 }
 
 // Visual price alert line on risk graph
@@ -725,7 +733,7 @@ function App() {
   };
 
   // Alert management functions
-  const createAlert = (strategyId: string, type: 'price' | 'debit' | 'profit_target' | 'trailing_stop', condition: 'above' | 'below' | 'at', targetValue: number, color: string) => {
+  const createAlert = (strategyId: string, type: 'price' | 'debit' | 'profit_target' | 'trailing_stop', condition: 'above' | 'below' | 'at', targetValue: number, color: string, behavior: AlertBehavior) => {
     const strategy = riskGraphStrategies.find(s => s.id === strategyId);
     if (!strategy) return;
 
@@ -744,6 +752,8 @@ function App() {
       // For trailing stop, initialize high water mark with current debit
       highWaterMark: type === 'trailing_stop' && strategy.debit ? strategy.debit : undefined,
       color,
+      behavior,
+      wasOnOtherSide: false,
     };
 
     setRiskGraphAlerts(prev => [...prev, newAlert]);
@@ -773,6 +783,7 @@ function App() {
       condition: 'below',
       targetValue: currentSpot?.toFixed(0) || '',
       color: ALERT_COLORS[0],
+      behavior: 'once_only',
     });
     setEditingAlertId(null); // Clear any editing
   };
@@ -1396,65 +1407,81 @@ function App() {
   useEffect(() => {
     if (!currentSpot) return;
 
+    let alertsToRemove: string[] = [];
+
     setRiskGraphAlerts(prev => {
       let hasChanges = false;
       const updated = prev.map(alert => {
-        if (!alert.enabled || alert.triggered) return alert;
+        if (!alert.enabled) return alert;
 
         const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
-        let shouldTrigger = false;
+        let conditionMet = false;
+        let isOnOtherSide = false;
         let updatedAlert = alert;
 
         if (alert.type === 'price') {
           switch (alert.condition) {
             case 'above':
-              shouldTrigger = currentSpot >= alert.targetValue;
+              conditionMet = currentSpot >= alert.targetValue;
+              isOnOtherSide = currentSpot < alert.targetValue;
               break;
             case 'below':
-              shouldTrigger = currentSpot <= alert.targetValue;
+              conditionMet = currentSpot <= alert.targetValue;
+              isOnOtherSide = currentSpot > alert.targetValue;
               break;
             case 'at':
-              shouldTrigger = Math.abs(currentSpot - alert.targetValue) < 1;
+              conditionMet = Math.abs(currentSpot - alert.targetValue) < 1;
+              isOnOtherSide = Math.abs(currentSpot - alert.targetValue) >= 5;
               break;
           }
         } else if (alert.type === 'debit') {
           if (strategy && strategy.debit !== null) {
             switch (alert.condition) {
               case 'above':
-                shouldTrigger = strategy.debit >= alert.targetValue;
+                conditionMet = strategy.debit >= alert.targetValue;
+                isOnOtherSide = strategy.debit < alert.targetValue;
                 break;
               case 'below':
-                shouldTrigger = strategy.debit <= alert.targetValue;
+                conditionMet = strategy.debit <= alert.targetValue;
+                isOnOtherSide = strategy.debit > alert.targetValue;
                 break;
               case 'at':
-                shouldTrigger = Math.abs(strategy.debit - alert.targetValue) < 0.05;
+                conditionMet = Math.abs(strategy.debit - alert.targetValue) < 0.05;
+                isOnOtherSide = Math.abs(strategy.debit - alert.targetValue) >= 0.2;
                 break;
             }
           }
         } else if (alert.type === 'profit_target') {
-          // Profit target: alert when current profit reaches target
-          // Profit = (current debit - entry debit) for long positions
           if (strategy && strategy.debit !== null) {
             const entryDebit = alert.highWaterMark || strategy.debit;
-            const currentProfit = entryDebit - strategy.debit; // Positive when debit decreased
-            shouldTrigger = currentProfit >= alert.targetValue;
+            const currentProfit = entryDebit - strategy.debit;
+            conditionMet = currentProfit >= alert.targetValue;
+            isOnOtherSide = currentProfit < alert.targetValue * 0.5;
           }
         } else if (alert.type === 'trailing_stop') {
-          // Trailing stop: track high water mark (lowest debit), alert if debit rises above threshold from HWM
           if (strategy && strategy.debit !== null) {
             const hwm = alert.highWaterMark || strategy.debit;
-            // Update high water mark if debit is lower (more profitable)
             if (strategy.debit < hwm) {
               updatedAlert = { ...alert, highWaterMark: strategy.debit };
               hasChanges = true;
             }
-            // Trigger if debit rises above HWM + trailing amount
             const currentHwm = updatedAlert.highWaterMark || hwm;
-            shouldTrigger = strategy.debit >= currentHwm + alert.targetValue;
+            conditionMet = strategy.debit >= currentHwm + alert.targetValue;
+            isOnOtherSide = strategy.debit < currentHwm + alert.targetValue * 0.5;
           }
         }
 
-        if (shouldTrigger) {
+        // Handle "repeat" behavior - reset triggered when price crosses back
+        const behavior = alert.behavior || 'once_only';
+        if (behavior === 'repeat' && alert.triggered && isOnOtherSide) {
+          hasChanges = true;
+          updatedAlert = { ...updatedAlert, triggered: false, wasOnOtherSide: true };
+        }
+
+        // Check if should trigger
+        const canTrigger = !alert.triggered || (behavior === 'repeat' && alert.wasOnOtherSide);
+
+        if (conditionMet && canTrigger) {
           hasChanges = true;
           // Play alert sound
           try {
@@ -1462,13 +1489,28 @@ function App() {
             audio.volume = 0.3;
             audio.play().catch(() => {});
           } catch {}
-          return { ...updatedAlert, triggered: true, triggeredAt: Date.now() };
+
+          // Handle based on behavior
+          if (behavior === 'remove_on_hit') {
+            alertsToRemove.push(alert.id);
+            return updatedAlert; // Will be removed after
+          }
+
+          return { ...updatedAlert, triggered: true, triggeredAt: Date.now(), wasOnOtherSide: false };
         }
+
         return updatedAlert;
       });
 
       return hasChanges ? updated : prev;
     });
+
+    // Remove alerts that should be removed after hit
+    if (alertsToRemove.length > 0) {
+      setTimeout(() => {
+        setRiskGraphAlerts(prev => prev.filter(a => !alertsToRemove.includes(a.id)));
+      }, 100);
+    }
   }, [currentSpot, riskGraphStrategies]);
 
   const widths = WIDTHS[underlying][strategy];
@@ -2429,6 +2471,23 @@ function App() {
                                     ))}
                                   </div>
                                 </div>
+                                <div className="alert-form-row">
+                                  <span className="color-label">On trigger:</span>
+                                  <select
+                                    value={alert.behavior || 'once_only'}
+                                    onChange={(e) => {
+                                      const newBehavior = e.target.value as AlertBehavior;
+                                      setRiskGraphAlerts(prev => prev.map(a =>
+                                        a.id === alert.id ? { ...a, behavior: newBehavior } : a
+                                      ));
+                                    }}
+                                    className="behavior-select"
+                                  >
+                                    <option value="remove_on_hit">Remove after hit</option>
+                                    <option value="once_only">Alert once, keep</option>
+                                    <option value="repeat">Alert every cross</option>
+                                  </select>
+                                </div>
                                 <div className="alert-form-actions">
                                   <button className="btn-save-alert" onClick={() => setEditingAlertId(null)}>
                                     Save
@@ -2594,6 +2653,18 @@ function App() {
                                   ))}
                                 </div>
                               </div>
+                              <div className="alert-form-row">
+                                <span className="color-label">On trigger:</span>
+                                <select
+                                  value={alertDraft.behavior}
+                                  onChange={(e) => setAlertDraft({ ...alertDraft, behavior: e.target.value as AlertBehavior })}
+                                  className="behavior-select"
+                                >
+                                  <option value="remove_on_hit">Remove after hit</option>
+                                  <option value="once_only">Alert once, keep</option>
+                                  <option value="repeat">Alert every cross</option>
+                                </select>
+                              </div>
                               <div className="alert-form-actions">
                                 <button
                                   className="btn-save-alert"
@@ -2605,7 +2676,8 @@ function App() {
                                         alertDraft.type,
                                         alertDraft.condition,
                                         value,
-                                        alertDraft.color
+                                        alertDraft.color,
+                                        alertDraft.behavior
                                       );
                                     }
                                   }}

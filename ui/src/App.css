@@ -2057,6 +2057,11 @@ body {
   color: #888;
 }
 
+.behavior-select {
+  flex: 1;
+  max-width: 150px;
+}
+
 .color-picker-inline {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
