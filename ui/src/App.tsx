@@ -14,6 +14,7 @@ import EquityChartWidget from './components/EquityChartWidget';
 import LogManagerModal from './components/LogManagerModal';
 import TradeDetailModal from './components/TradeDetailModal';
 import ReportingView from './components/ReportingView';
+import SettingsModal from './components/SettingsModal';
 
 const SSE_BASE = 'http://localhost:3001';
 
@@ -466,6 +467,7 @@ function App() {
   const [logManagerOpen, setLogManagerOpen] = useState(false);
   const [tradeDetailTrade, setTradeDetailTrade] = useState<Trade | null>(null);
   const [reportingLogId, setReportingLogId] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
@@ -2256,6 +2258,7 @@ function App() {
                     onEditTrade={openTradeEdit}
                     onViewReporting={handleViewReporting}
                     onManageLogs={handleManageLogs}
+                    onOpenSettings={() => setSettingsOpen(true)}
                     selectedLogId={selectedLog?.id || null}
                     onSelectLog={handleSelectLog}
                     refreshTrigger={tradeRefreshTrigger}
@@ -2284,6 +2287,11 @@ function App() {
         onClose={handleTradeDetailClose}
         onTradeUpdated={onTradeSaved}
       />
+
+      {/* Settings Modal */}
+      {settingsOpen && (
+        <SettingsModal onClose={() => setSettingsOpen(false)} />
+      )}
 
       {/* Strategy Popup Modal */}
       {selectedTile && (

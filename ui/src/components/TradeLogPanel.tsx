@@ -62,6 +62,7 @@ interface TradeLogPanelProps {
   onEditTrade: (trade: Trade) => void;
   onViewReporting: (logId: string) => void;
   onManageLogs: () => void;
+  onOpenSettings: () => void;
   selectedLogId: string | null;
   onSelectLog: (log: TradeLog) => void;
   refreshTrigger?: number;
@@ -76,6 +77,7 @@ export default function TradeLogPanel({
   onEditTrade,
   onViewReporting,
   onManageLogs,
+  onOpenSettings,
   selectedLogId,
   onSelectLog,
   refreshTrigger = 0
@@ -239,6 +241,13 @@ export default function TradeLogPanel({
           refreshTrigger={refreshTrigger}
         />
         <div className="trade-log-actions">
+          <button
+            className="btn-settings"
+            onClick={onOpenSettings}
+            title="Settings"
+          >
+            Settings
+          </button>
           {selectedLogId && (
             <button
               className="btn-reporting"
