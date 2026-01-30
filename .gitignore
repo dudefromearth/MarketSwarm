@@ -22,6 +22,9 @@ node_modules/
 data/
 redis/*/data/
 
+# Logs
+logs/
+
 # PDFs and images (local docs)
 *.pdf
 *.png
