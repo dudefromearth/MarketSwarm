@@ -1,6 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import './App.css';
-import { Tooltip } from './Tooltip';
 import LightweightPriceChart from './components/LightweightPriceChart';
 import type { RawSnapshot } from './components/LightweightPriceChart';
 import BiasLfiQuadrantCard from './components/BiasLfiQuadrantCard';

@@ -1,6 +1,7 @@
 // src/components/TradeLogPanel.tsx
 import { useState, useEffect, useCallback } from 'react';
-import LogSelector, { TradeLog } from './LogSelector';
+import LogSelector from './LogSelector';
+import type { TradeLog } from './LogSelector';
 
 const JOURNAL_API = 'http://localhost:3002';
 
