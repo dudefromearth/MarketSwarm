@@ -1742,6 +1742,8 @@ function App() {
           >
             ⚙️
           </button>
+        </div>
+        <div className="header-center">
           <div className="underlying-selector">
             <button
               className={`underlying-btn${underlying === 'I:SPX' ? ' active' : ''}`}
@@ -1768,9 +1770,6 @@ function App() {
               </span>
             )}
           </div>
-        </div>
-        <div className="header-center">
-          {/* MEL moved to control bar */}
         </div>
         <div className="connection-status">
           <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
