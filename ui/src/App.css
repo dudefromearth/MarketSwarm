@@ -157,6 +157,13 @@ body {
   letter-spacing: 0.5px;
 }
 
+.control-separator {
+  width: 1px;
+  height: 24px;
+  background: #444;
+  margin: 0 8px;
+}
+
 .button-group {
   display: flex;
   gap: 2px;
@@ -4846,6 +4853,137 @@ body {
 .btn-settings:hover {
   background: rgba(255, 255, 255, 0.05);
   color: #e2e8f0;
+}
+
+/* Profile Tab Styles */
+.settings-profile {
+  padding: 8px 0;
+}
+
+.profile-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding-bottom: 20px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid #333;
+}
+
+.profile-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3b82f6, #2563eb);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 600;
+  color: white;
+  flex-shrink: 0;
+}
+
+.profile-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.profile-name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.profile-email {
+  font-size: 13px;
+  color: #64748b;
+}
+
+.profile-info-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.profile-info-row:last-child {
+  border-bottom: none;
+}
+
+.profile-label {
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.profile-value {
+  font-size: 13px;
+  color: #e2e8f0;
+  font-weight: 500;
+}
+
+.profile-value.subscription-tier {
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.profile-value.subscription-tier.free {
+  background: #374151;
+  color: #9ca3af;
+}
+
+.profile-value.subscription-tier.pro,
+.profile-value.subscription-tier.premium {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #000;
+}
+
+.profile-value.admin-badge {
+  color: #f59e0b;
+}
+
+.profile-actions {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid #333;
+}
+
+.btn-logout {
+  background: transparent;
+  border: 1px solid #ef4444;
+  color: #ef4444;
+  padding: 10px 24px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-logout:hover {
+  background: #ef4444;
+  color: white;
+}
+
+.profile-error {
+  text-align: center;
+  padding: 40px 20px;
+  color: #94a3b8;
+}
+
+.profile-error button {
+  margin-top: 16px;
+  background: #3b82f6;
+  border: none;
+  color: white;
+  padding: 8px 20px;
+  border-radius: 4px;
+  cursor: pointer;
 }
 
 /* Commentary Edge Bar (Left Side) */

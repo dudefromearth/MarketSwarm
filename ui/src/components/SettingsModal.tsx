@@ -16,14 +16,28 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-type SettingsTab = 'symbols' | 'trading' | 'user' | 'display' | 'alerts';
+type SettingsTab = 'profile' | 'symbols' | 'trading' | 'user' | 'display' | 'alerts';
+
+interface Profile {
+  display_name: string;
+  email: string;
+  issuer: string;
+  wp_user_id: number;
+  is_admin: boolean;
+  roles: string[];
+  subscription_tier: string | null;
+  last_login_at: string;
+  created_at: string;
+}
 type AssetTypeFilter = 'all' | 'index_option' | 'etf_option' | 'future' | 'stock';
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('symbols');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [symbols, setSymbols] = useState<Symbol[]>([]);
   const [loading, setLoading] = useState(true);
   const [assetFilter, setAssetFilter] = useState<AssetTypeFilter>('all');
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
 
   // New symbol form
   const [showAddSymbol, setShowAddSymbol] = useState(false);
@@ -64,14 +78,29 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     }
   }, []);
 
+  const fetchProfile = useCallback(async () => {
+    setProfileLoading(true);
+    try {
+      const res = await fetch('/api/profile/me', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        setProfile(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch profile:', err);
+    } finally {
+      setProfileLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
-      await Promise.all([fetchSymbols(), fetchSettings()]);
+      await Promise.all([fetchSymbols(), fetchSettings(), fetchProfile()]);
       setLoading(false);
     };
     loadData();
-  }, [fetchSymbols, fetchSettings]);
+  }, [fetchSymbols, fetchSettings, fetchProfile]);
 
   const handleAddSymbol = async () => {
     setAddError(null);
@@ -179,6 +208,12 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
         <div className="settings-tabs">
           <button
+            className={`settings-tab ${activeTab === 'profile' ? 'active' : ''}`}
+            onClick={() => setActiveTab('profile')}
+          >
+            Profile
+          </button>
+          <button
             className={`settings-tab ${activeTab === 'symbols' ? 'active' : ''}`}
             onClick={() => setActiveTab('symbols')}
           >
@@ -215,6 +250,88 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             <div className="settings-loading">Loading...</div>
           ) : (
             <>
+              {activeTab === 'profile' && (
+                <div className="settings-profile">
+                  {profileLoading ? (
+                    <div className="settings-loading">Loading profile...</div>
+                  ) : profile ? (
+                    <>
+                      <div className="profile-header">
+                        <div className="profile-avatar">
+                          {profile.display_name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="profile-identity">
+                          <h3 className="profile-name">{profile.display_name}</h3>
+                          <span className="profile-email">{profile.email}</span>
+                        </div>
+                      </div>
+
+                      <div className="settings-group">
+                        <h4>Account</h4>
+                        <div className="profile-info-row">
+                          <span className="profile-label">Platform</span>
+                          <span className="profile-value">{profile.issuer}</span>
+                        </div>
+                        <div className="profile-info-row">
+                          <span className="profile-label">Subscription</span>
+                          <span className={`profile-value subscription-tier ${profile.subscription_tier || 'free'}`}>
+                            {profile.subscription_tier || 'Free'}
+                          </span>
+                        </div>
+                        {profile.is_admin && (
+                          <div className="profile-info-row">
+                            <span className="profile-label">Role</span>
+                            <span className="profile-value admin-badge">Administrator</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="settings-group">
+                        <h4>Activity</h4>
+                        <div className="profile-info-row">
+                          <span className="profile-label">Member Since</span>
+                          <span className="profile-value">
+                            {new Date(profile.created_at).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric'
+                            })}
+                          </span>
+                        </div>
+                        <div className="profile-info-row">
+                          <span className="profile-label">Last Login</span>
+                          <span className="profile-value">
+                            {new Date(profile.last_login_at).toLocaleDateString('en-US', {
+                              year: 'numeric',
+                              month: 'short',
+                              day: 'numeric',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            })}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="profile-actions">
+                        <button
+                          className="btn-logout"
+                          onClick={() => {
+                            window.location.href = '/api/logout';
+                          }}
+                        >
+                          Sign Out
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="profile-error">
+                      <p>Unable to load profile</p>
+                      <button onClick={fetchProfile}>Retry</button>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {activeTab === 'symbols' && (
                 <div className="settings-symbols">
                   <div className="symbols-toolbar">
