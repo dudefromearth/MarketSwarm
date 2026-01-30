@@ -1493,21 +1493,15 @@ function App() {
           if (strategy && currentSpot) {
             const entryDebit = alert.entryDebit || strategy.debit || 1;
 
-            // Look up current market value from heatmap tiles
-            let currentDebit = entryDebit; // fallback to entry if no live data
-            if (heatmap?.tiles) {
-              const tileKey = `${strategy.strategy}:${strategy.dte}:${strategy.width}:${Math.round(strategy.strike)}`;
-              const tile = heatmap.tiles[tileKey];
-              if (tile) {
-                const sideData = strategy.side === 'call' ? tile.call : tile.put;
-                if (sideData?.debit != null) {
-                  currentDebit = sideData.debit;
-                }
-              }
-            }
+            // Calculate current P&L using Black-Scholes theoretical value
+            // This works regardless of when trade was entered - uses current spot and VIX
+            const vix = spot?.['I:VIX']?.value || 20;
+            const volatility = vix / 100;
+            const theoreticalPnL = calculateStrategyTheoreticalPnL(strategy, currentSpot, volatility);
 
-            // P&L = current value - entry cost (for long positions, higher current = profit)
-            const currentProfit = currentDebit - entryDebit; // in dollars per share
+            // theoreticalPnL is in cents, entryDebit is in dollars
+            // Profit = current P&L (already accounts for entry debit in the function)
+            const currentProfit = theoreticalPnL / 100; // convert to dollars
             const profitPercent = entryDebit > 0 ? currentProfit / entryDebit : 0;
             const minProfitThreshold = alert.minProfitThreshold || 0.5;
 
@@ -1643,7 +1637,7 @@ function App() {
         setRiskGraphAlerts(prev => prev.filter(a => !alertsToRemove.includes(a.id)));
       }, 100);
     }
-  }, [currentSpot, riskGraphStrategies, heatmap]);
+  }, [currentSpot, riskGraphStrategies, spot]);
 
   const widths = WIDTHS[underlying][strategy];
 
