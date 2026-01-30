@@ -2058,26 +2058,29 @@ body {
 }
 
 .color-picker-inline {
-  display: flex;
-  gap: 4px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  width: 50px;
 }
 
 .color-dot {
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  border: 2px solid transparent;
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
   cursor: pointer;
   transition: transform 0.1s;
 }
 
 .color-dot:hover {
-  transform: scale(1.15);
+  transform: scale(1.1);
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 .color-dot.selected {
   border-color: #fff;
-  box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.6);
 }
 
 .alert-edit-form .alert-form-actions {
