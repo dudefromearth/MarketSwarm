@@ -1423,6 +1423,7 @@ function App() {
 
   // Check alerts against current spot price
   useEffect(() => {
+    console.log('Alert useEffect running:', { currentSpot, alertCount: riskGraphAlerts.length });
     if (!currentSpot) return;
 
     let alertsToRemove: string[] = [];
