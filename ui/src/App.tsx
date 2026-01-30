@@ -118,10 +118,13 @@ interface RiskGraphStrategy extends SelectedStrategy {
 // Alert behavior when triggered
 type AlertBehavior = 'remove_on_hit' | 'once_only' | 'repeat';
 
+// Alert types including AI Theta/Gamma
+type AlertType = 'price' | 'debit' | 'profit_target' | 'trailing_stop' | 'ai_theta_gamma';
+
 interface RiskGraphAlert {
   id: string;
   strategyId: string;
-  type: 'price' | 'debit' | 'profit_target' | 'trailing_stop';
+  type: AlertType;
   condition: 'above' | 'below' | 'at';
   targetValue: number;
   enabled: boolean;
@@ -138,16 +141,24 @@ interface RiskGraphAlert {
   behavior: AlertBehavior;
   // Track if price was previously on the other side (for repeat alerts)
   wasOnOtherSide?: boolean;
+  // AI Theta/Gamma specific fields
+  minProfitThreshold?: number;  // Default 0.5 (50% of debit)
+  entryDebit?: number;          // Debit when alert was created
+  highWaterMarkProfit?: number; // Highest profit achieved
+  zoneLow?: number;             // Current safe zone lower bound (price)
+  zoneHigh?: number;            // Current safe zone upper bound (price)
+  isZoneActive?: boolean;       // Whether minimum profit threshold was met
 }
 
 // Draft alert for entry mode
 interface AlertDraft {
   strategyId: string;
-  type: 'price' | 'debit' | 'profit_target' | 'trailing_stop';
+  type: AlertType;
   condition: 'above' | 'below' | 'at';
   targetValue: string;
   color: string;
   behavior: AlertBehavior;
+  minProfitThreshold?: string;  // For AI Theta/Gamma
 }
 
 // Visual price alert line on risk graph
@@ -733,7 +744,7 @@ function App() {
   };
 
   // Alert management functions
-  const createAlert = (strategyId: string, type: 'price' | 'debit' | 'profit_target' | 'trailing_stop', condition: 'above' | 'below' | 'at', targetValue: number, color: string, behavior: AlertBehavior) => {
+  const createAlert = (strategyId: string, type: AlertType, condition: 'above' | 'below' | 'at', targetValue: number, color: string, behavior: AlertBehavior, minProfitThreshold?: number) => {
     const strategy = riskGraphStrategies.find(s => s.id === strategyId);
     if (!strategy) return;
 
@@ -754,6 +765,13 @@ function App() {
       color,
       behavior,
       wasOnOtherSide: false,
+      // AI Theta/Gamma initialization
+      minProfitThreshold: type === 'ai_theta_gamma' ? (minProfitThreshold || 0.5) : undefined,
+      entryDebit: type === 'ai_theta_gamma' && strategy.debit ? strategy.debit : undefined,
+      highWaterMarkProfit: type === 'ai_theta_gamma' ? 0 : undefined,
+      zoneLow: type === 'ai_theta_gamma' && currentSpot ? currentSpot - 20 : undefined,
+      zoneHigh: type === 'ai_theta_gamma' && currentSpot ? currentSpot + 20 : undefined,
+      isZoneActive: false,
     };
 
     setRiskGraphAlerts(prev => [...prev, newAlert]);
@@ -1468,6 +1486,81 @@ function App() {
             const currentHwm = updatedAlert.highWaterMark || hwm;
             conditionMet = strategy.debit >= currentHwm + alert.targetValue;
             isOnOtherSide = strategy.debit < currentHwm + alert.targetValue * 0.5;
+          }
+        } else if (alert.type === 'ai_theta_gamma') {
+          // AI Theta/Gamma: Dynamic zone based on gamma risk and volatility
+          if (strategy && strategy.debit !== null && currentSpot) {
+            const entryDebit = alert.entryDebit || strategy.debit;
+            const currentProfit = entryDebit - strategy.debit;
+            const profitPercent = currentProfit / entryDebit;
+            const minProfitThreshold = alert.minProfitThreshold || 0.5;
+
+            // Check if minimum profit threshold is met to activate zone
+            const wasActive = alert.isZoneActive;
+            const isNowActive = profitPercent >= minProfitThreshold;
+
+            // Calculate dynamic zone width based on:
+            // - DTE (more time = wider zone due to theta decay buffer)
+            // - Profit level (higher profit = can afford wider zone)
+            // - Strategy type (butterflies have narrower profit range)
+            const daysToExpiry = strategy.dte || 0;
+            const thetaFactor = Math.max(1, Math.sqrt(daysToExpiry + 1)); // More DTE = wider zone
+            const profitFactor = 1 + Math.max(0, profitPercent - minProfitThreshold); // Higher profit = wider zone
+            const gammaFactor = strategy.strategy === 'butterfly' ? 0.6 : strategy.strategy === 'vertical' ? 0.8 : 1.0;
+
+            // Base zone width: 10 points, scaled by factors
+            const baseWidth = 10 * thetaFactor * profitFactor * gammaFactor;
+            const zoneHalfWidth = Math.min(50, Math.max(5, baseWidth));
+
+            // Track high water mark profit and expand zone accordingly
+            const hwmProfit = alert.highWaterMarkProfit || 0;
+            let newHwmProfit = hwmProfit;
+            if (isNowActive && currentProfit > hwmProfit) {
+              newHwmProfit = currentProfit;
+              hasChanges = true;
+            }
+
+            // Zone expands as profit increases (locked gains concept)
+            const zoneExpansion = Math.max(0, (newHwmProfit / entryDebit) - minProfitThreshold) * 20;
+            const finalZoneWidth = zoneHalfWidth + zoneExpansion;
+
+            // Calculate zone bounds
+            const newZoneLow = currentSpot - finalZoneWidth;
+            const newZoneHigh = currentSpot + finalZoneWidth;
+
+            // Only trigger if zone is active and price exits the zone
+            if (isNowActive) {
+              const inZone = currentSpot >= (alert.zoneLow || newZoneLow) &&
+                            currentSpot <= (alert.zoneHigh || newZoneHigh);
+              conditionMet = !inZone;
+              isOnOtherSide = inZone;
+            }
+
+            // Update zone bounds (zone follows price but never shrinks when profitable)
+            if (isNowActive && !wasActive) {
+              // Just activated - set initial zone
+              updatedAlert = {
+                ...updatedAlert,
+                isZoneActive: true,
+                zoneLow: newZoneLow,
+                zoneHigh: newZoneHigh,
+                highWaterMarkProfit: newHwmProfit,
+              };
+              hasChanges = true;
+            } else if (isNowActive) {
+              // Zone active - expand zone if price moved favorably
+              const expandedZoneLow = Math.min(alert.zoneLow || newZoneLow, newZoneLow);
+              const expandedZoneHigh = Math.max(alert.zoneHigh || newZoneHigh, newZoneHigh);
+              if (expandedZoneLow !== alert.zoneLow || expandedZoneHigh !== alert.zoneHigh || newHwmProfit !== hwmProfit) {
+                updatedAlert = {
+                  ...updatedAlert,
+                  zoneLow: expandedZoneLow,
+                  zoneHigh: expandedZoneHigh,
+                  highWaterMarkProfit: newHwmProfit,
+                };
+                hasChanges = true;
+              }
+            }
           }
         }
 
@@ -2427,35 +2520,62 @@ function App() {
                                     <option value="debit">Debit</option>
                                     <option value="profit_target">Profit Target</option>
                                     <option value="trailing_stop">Trailing Stop</option>
+                                    <option value="ai_theta_gamma">AI Theta/Gamma</option>
                                   </select>
-                                  <select
-                                    defaultValue={alert.condition}
-                                    onChange={(e) => {
-                                      const newCondition = e.target.value as RiskGraphAlert['condition'];
-                                      setRiskGraphAlerts(prev => prev.map(a =>
-                                        a.id === alert.id ? { ...a, condition: newCondition } : a
-                                      ));
-                                    }}
-                                  >
-                                    <option value="above">≥</option>
-                                    <option value="below">≤</option>
-                                    <option value="at">≈</option>
-                                  </select>
-                                  <input
-                                    type="number"
-                                    defaultValue={alert.targetValue}
-                                    step="0.01"
-                                    className="alert-value-input"
-                                    onChange={(e) => {
-                                      const val = parseFloat(e.target.value);
-                                      if (!isNaN(val)) {
-                                        setRiskGraphAlerts(prev => prev.map(a =>
-                                          a.id === alert.id ? { ...a, targetValue: val } : a
-                                        ));
-                                      }
-                                    }}
-                                  />
+                                  {alert.type !== 'ai_theta_gamma' && (
+                                    <>
+                                      <select
+                                        defaultValue={alert.condition}
+                                        onChange={(e) => {
+                                          const newCondition = e.target.value as RiskGraphAlert['condition'];
+                                          setRiskGraphAlerts(prev => prev.map(a =>
+                                            a.id === alert.id ? { ...a, condition: newCondition } : a
+                                          ));
+                                        }}
+                                      >
+                                        <option value="above">≥</option>
+                                        <option value="below">≤</option>
+                                        <option value="at">≈</option>
+                                      </select>
+                                      <input
+                                        type="number"
+                                        defaultValue={alert.targetValue}
+                                        step="0.01"
+                                        className="alert-value-input"
+                                        onChange={(e) => {
+                                          const val = parseFloat(e.target.value);
+                                          if (!isNaN(val)) {
+                                            setRiskGraphAlerts(prev => prev.map(a =>
+                                              a.id === alert.id ? { ...a, targetValue: val } : a
+                                            ));
+                                          }
+                                        }}
+                                      />
+                                    </>
+                                  )}
                                 </div>
+                                {alert.type === 'ai_theta_gamma' && (
+                                  <div className="alert-form-row ai-alert-row">
+                                    <span className="color-label">Min profit:</span>
+                                    <input
+                                      type="number"
+                                      defaultValue={(alert.minProfitThreshold || 0.5) * 100}
+                                      step="5"
+                                      min="10"
+                                      max="200"
+                                      className="alert-value-input"
+                                      onChange={(e) => {
+                                        const val = parseFloat(e.target.value) / 100;
+                                        if (!isNaN(val)) {
+                                          setRiskGraphAlerts(prev => prev.map(a =>
+                                            a.id === alert.id ? { ...a, minProfitThreshold: val } : a
+                                          ));
+                                        }
+                                      }}
+                                    />
+                                    <span className="color-label">% of debit to activate</span>
+                                  </div>
+                                )}
                                 <div className="alert-form-row">
                                   <span className="color-label">Color:</span>
                                   <div className="color-picker-inline">
@@ -2515,6 +2635,7 @@ function App() {
                                   {alert.type === 'debit' && `Debit ${alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} $${alert.targetValue.toFixed(2)}`}
                                   {alert.type === 'profit_target' && `Profit ≥ $${alert.targetValue.toFixed(2)}`}
                                   {alert.type === 'trailing_stop' && `Trail $${alert.targetValue.toFixed(2)}${alert.highWaterMark ? ` (HWM: $${alert.highWaterMark.toFixed(2)})` : ''}`}
+                                  {alert.type === 'ai_theta_gamma' && `AI θ/γ ${alert.isZoneActive ? `+${((alert.highWaterMarkProfit || 0) / (alert.entryDebit || 1) * 100).toFixed(0)}%` : `(${((alert.minProfitThreshold || 0.5) * 100).toFixed(0)}% to activate)`}`}
                                 </span>
                               </div>
                               <div className="alert-actions">
@@ -2622,24 +2743,44 @@ function App() {
                                   <option value="debit">Debit</option>
                                   <option value="profit_target">Profit Target</option>
                                   <option value="trailing_stop">Trailing Stop</option>
+                                  <option value="ai_theta_gamma">AI Theta/Gamma</option>
                                 </select>
-                                <select
-                                  value={alertDraft.condition}
-                                  onChange={(e) => setAlertDraft({ ...alertDraft, condition: e.target.value as AlertDraft['condition'] })}
-                                >
-                                  <option value="above">≥</option>
-                                  <option value="below">≤</option>
-                                  <option value="at">≈</option>
-                                </select>
-                                <input
-                                  type="number"
-                                  value={alertDraft.targetValue}
-                                  placeholder={currentSpot?.toFixed(0) || '0'}
-                                  step="0.01"
-                                  className="alert-value-input"
-                                  onChange={(e) => setAlertDraft({ ...alertDraft, targetValue: e.target.value })}
-                                />
+                                {alertDraft.type !== 'ai_theta_gamma' && (
+                                  <>
+                                    <select
+                                      value={alertDraft.condition}
+                                      onChange={(e) => setAlertDraft({ ...alertDraft, condition: e.target.value as AlertDraft['condition'] })}
+                                    >
+                                      <option value="above">≥</option>
+                                      <option value="below">≤</option>
+                                      <option value="at">≈</option>
+                                    </select>
+                                    <input
+                                      type="number"
+                                      value={alertDraft.targetValue}
+                                      placeholder={currentSpot?.toFixed(0) || '0'}
+                                      step="0.01"
+                                      className="alert-value-input"
+                                      onChange={(e) => setAlertDraft({ ...alertDraft, targetValue: e.target.value })}
+                                    />
+                                  </>
+                                )}
                               </div>
+                              {alertDraft.type === 'ai_theta_gamma' && (
+                                <div className="alert-form-row ai-alert-row">
+                                  <span className="color-label">Min profit:</span>
+                                  <input
+                                    type="number"
+                                    value={alertDraft.minProfitThreshold || '50'}
+                                    step="5"
+                                    min="10"
+                                    max="200"
+                                    className="alert-value-input"
+                                    onChange={(e) => setAlertDraft({ ...alertDraft, minProfitThreshold: e.target.value })}
+                                  />
+                                  <span className="color-label">% of debit to activate</span>
+                                </div>
+                              )}
                               <div className="alert-form-row">
                                 <span className="color-label">Color:</span>
                                 <div className="color-picker-inline">
@@ -2669,15 +2810,19 @@ function App() {
                                 <button
                                   className="btn-save-alert"
                                   onClick={() => {
-                                    const value = parseFloat(alertDraft.targetValue);
-                                    if (!isNaN(value)) {
+                                    const value = alertDraft.type === 'ai_theta_gamma' ? 0 : parseFloat(alertDraft.targetValue);
+                                    if (alertDraft.type === 'ai_theta_gamma' || !isNaN(value)) {
+                                      const minProfitThreshold = alertDraft.type === 'ai_theta_gamma'
+                                        ? parseFloat(alertDraft.minProfitThreshold || '50') / 100
+                                        : undefined;
                                       createAlert(
                                         alertDraft.strategyId,
                                         alertDraft.type,
                                         alertDraft.condition,
                                         value,
                                         alertDraft.color,
-                                        alertDraft.behavior
+                                        alertDraft.behavior,
+                                        minProfitThreshold
                                       );
                                     }
                                   }}
@@ -2969,6 +3114,83 @@ function App() {
                             </g>
                           </>
                         )}
+                      </g>
+                    );
+                  })}
+
+                  {/* AI Theta/Gamma zone visualization */}
+                  {riskGraphAlerts.filter(a => a.enabled && a.type === 'ai_theta_gamma' && a.isZoneActive).map((alert) => {
+                    const zoneLow = alert.zoneLow || 0;
+                    const zoneHigh = alert.zoneHigh || 0;
+                    const xLow = 50 + ((zoneLow - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
+                    const xHigh = 50 + ((zoneHigh - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
+
+                    // Clamp to visible area
+                    const clampedXLow = Math.max(50, Math.min(580, xLow));
+                    const clampedXHigh = Math.max(50, Math.min(580, xHigh));
+                    const width = clampedXHigh - clampedXLow;
+
+                    if (width <= 0) return null;
+
+                    const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
+                    const profitPercent = alert.highWaterMarkProfit && alert.entryDebit
+                      ? ((alert.highWaterMarkProfit / alert.entryDebit) * 100).toFixed(0)
+                      : '0';
+
+                    return (
+                      <g key={alert.id} className="ai-theta-gamma-zone">
+                        {/* Shaded safe zone */}
+                        <rect
+                          x={clampedXLow}
+                          y="20"
+                          width={width}
+                          height="260"
+                          fill={alert.color || ALERT_COLORS[4]}
+                          opacity="0.15"
+                        />
+                        {/* Zone boundary lines */}
+                        <line
+                          x1={clampedXLow}
+                          y1="20"
+                          x2={clampedXLow}
+                          y2="280"
+                          stroke={alert.color || ALERT_COLORS[4]}
+                          strokeWidth="1"
+                          strokeDasharray="3,3"
+                          opacity="0.6"
+                        />
+                        <line
+                          x1={clampedXHigh}
+                          y1="20"
+                          x2={clampedXHigh}
+                          y2="280"
+                          stroke={alert.color || ALERT_COLORS[4]}
+                          strokeWidth="1"
+                          strokeDasharray="3,3"
+                          opacity="0.6"
+                        />
+                        {/* Zone label at top */}
+                        <g transform={`translate(${(clampedXLow + clampedXHigh) / 2}, 15)`}>
+                          <rect
+                            x="-28"
+                            y="-10"
+                            width="56"
+                            height="14"
+                            fill={alert.color || ALERT_COLORS[4]}
+                            rx="2"
+                            opacity="0.9"
+                          />
+                          <text
+                            x="0"
+                            y="1"
+                            textAnchor="middle"
+                            fill="#fff"
+                            fontSize="8"
+                            fontWeight="bold"
+                          >
+                            AI +{profitPercent}%
+                          </text>
+                        </g>
                       </g>
                     );
                   })}
