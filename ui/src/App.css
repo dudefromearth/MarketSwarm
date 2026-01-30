@@ -2549,8 +2549,18 @@ body {
   background: rgba(251, 191, 36, 0.05);
 }
 
-.trade-time {
+.trade-log-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.trade-log-table th.sortable:hover {
+  color: #e5e5e5;
+}
+
+.trade-datetime {
   color: #888;
+  white-space: nowrap;
 }
 
 .trade-symbol {
@@ -2621,6 +2631,82 @@ body {
 
 .trade-pnl.loss {
   color: #f87171;
+}
+
+/* Trade Log Pagination */
+.trade-log-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 8px;
+  border-top: 1px solid #333;
+  background: #111;
+  font-size: 11px;
+}
+
+.pagination-info {
+  color: #666;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pagination-btn {
+  background: #222;
+  border: 1px solid #444;
+  color: #999;
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  min-width: 28px;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background: #333;
+  color: #e5e5e5;
+}
+
+.pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pagination-current {
+  color: #888;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.pagination-size {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #666;
+}
+
+.size-btn {
+  background: transparent;
+  border: 1px solid #333;
+  color: #888;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.size-btn:hover {
+  background: #222;
+  color: #e5e5e5;
+}
+
+.size-btn.active {
+  background: #333;
+  border-color: #555;
+  color: #e5e5e5;
 }
 
 /* =============================================================================

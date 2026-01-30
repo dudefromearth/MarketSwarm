@@ -68,6 +68,8 @@ interface TradeLogPanelProps {
 }
 
 type StatusFilter = 'all' | 'open' | 'closed';
+type PageSize = 10 | 25 | 50;
+type SortOrder = 'recent' | 'oldest';
 
 export default function TradeLogPanel({
   onOpenTradeEntry,
@@ -85,6 +87,11 @@ export default function TradeLogPanel({
   // Filters
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<PageSize>(25);
+  const [sortOrder, setSortOrder] = useState<SortOrder>('recent');
+
   // Counts
   const [openCount, setOpenCount] = useState(0);
   const [closedCount, setClosedCount] = useState(0);
@@ -101,6 +108,7 @@ export default function TradeLogPanel({
 
     try {
       const params = new URLSearchParams();
+      params.set('limit', '10000'); // Fetch all trades for client-side pagination
       if (statusFilter !== 'all') {
         params.set('status', statusFilter);
       }
@@ -129,6 +137,35 @@ export default function TradeLogPanel({
     }
   }, [selectedLogId, statusFilter]);
 
+  // Reset to page 1 when filter or log changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [statusFilter, selectedLogId]);
+
+  // Sort and paginate trades
+  const sortedTrades = [...trades].sort((a, b) => {
+    const dateA = new Date(a.entry_time).getTime();
+    const dateB = new Date(b.entry_time).getTime();
+    return sortOrder === 'recent' ? dateB - dateA : dateA - dateB;
+  });
+
+  const totalTrades = sortedTrades.length;
+  const totalPages = Math.ceil(totalTrades / pageSize);
+  const startIndex = (currentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedTrades = sortedTrades.slice(startIndex, endIndex);
+
+  const handlePageSizeChange = (newSize: PageSize) => {
+    setPageSize(newSize);
+    setCurrentPage(1);
+  };
+
+  const goToPage = (page: number) => {
+    if (page >= 1 && page <= totalPages) {
+      setCurrentPage(page);
+    }
+  };
+
   useEffect(() => {
     fetchTrades();
   }, [fetchTrades, refreshTrigger]);
@@ -139,9 +176,12 @@ export default function TradeLogPanel({
     return () => clearInterval(interval);
   }, [fetchTrades]);
 
-  const formatTime = (isoString: string) => {
+  const formatDateTime = (isoString: string) => {
     const date = new Date(isoString);
-    return date.toLocaleTimeString('en-US', {
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
       hour12: false
@@ -233,60 +273,121 @@ export default function TradeLogPanel({
             <p className="hint">Click "+ Add Trade" or log from heatmap tiles.</p>
           </div>
         ) : (
-          <table className="trade-log-table">
-            <thead>
-              <tr>
-                <th>Time</th>
-                <th>Symbol</th>
-                <th>Strategy</th>
-                <th>Strike</th>
-                <th>Entry</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trades.map(trade => (
-                <tr
-                  key={trade.id}
-                  className={`trade-row ${trade.status}`}
-                  onClick={() => onEditTrade(trade)}
-                >
-                  <td className="trade-time">{formatTime(trade.entry_time)}</td>
-                  <td className="trade-symbol">{trade.symbol}</td>
-                  <td className="trade-strategy">
-                    <span className={`strategy-badge ${trade.strategy}`}>
-                      {getStrategyLabel(trade.strategy)}
-                    </span>
-                    <span className={`side-badge ${trade.side}`}>
-                      {trade.side.charAt(0).toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="trade-strike">
-                    {trade.strike}
-                    {trade.width && trade.width > 0 && (
-                      <span className="trade-width">/{trade.width}</span>
-                    )}
-                  </td>
-                  <td className="trade-entry">
-                    ${(trade.entry_price / 100).toFixed(2)}
-                  </td>
-                  <td className={`trade-status ${
-                    trade.status === 'open'
-                      ? 'open'
-                      : trade.pnl && trade.pnl >= 0
-                        ? 'profit'
-                        : 'loss'
-                  }`}>
-                    {trade.status === 'open' ? (
-                      <span className="status-open">OPEN</span>
-                    ) : (
-                      formatPnL(trade.pnl)
-                    )}
-                  </td>
+          <>
+            <table className="trade-log-table">
+              <thead>
+                <tr>
+                  <th className="sortable" onClick={() => setSortOrder(sortOrder === 'recent' ? 'oldest' : 'recent')}>
+                    Date/Time {sortOrder === 'recent' ? '↓' : '↑'}
+                  </th>
+                  <th>Symbol</th>
+                  <th>Strategy</th>
+                  <th>Strike</th>
+                  <th>Entry</th>
+                  <th>Status</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {paginatedTrades.map(trade => (
+                  <tr
+                    key={trade.id}
+                    className={`trade-row ${trade.status}`}
+                    onClick={() => onEditTrade(trade)}
+                  >
+                    <td className="trade-datetime">{formatDateTime(trade.entry_time)}</td>
+                    <td className="trade-symbol">{trade.symbol}</td>
+                    <td className="trade-strategy">
+                      <span className={`strategy-badge ${trade.strategy}`}>
+                        {getStrategyLabel(trade.strategy)}
+                      </span>
+                      <span className={`side-badge ${trade.side}`}>
+                        {trade.side.charAt(0).toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="trade-strike">
+                      {trade.strike}
+                      {trade.width && trade.width > 0 && (
+                        <span className="trade-width">/{trade.width}</span>
+                      )}
+                    </td>
+                    <td className="trade-entry">
+                      ${(trade.entry_price / 100).toFixed(2)}
+                    </td>
+                    <td className={`trade-status ${
+                      trade.status === 'open'
+                        ? 'open'
+                        : trade.pnl && trade.pnl >= 0
+                          ? 'profit'
+                          : 'loss'
+                    }`}>
+                      {trade.status === 'open' ? (
+                        <span className="status-open">OPEN</span>
+                      ) : (
+                        formatPnL(trade.pnl)
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div className="trade-log-pagination">
+              <div className="pagination-info">
+                Showing {startIndex + 1}-{Math.min(endIndex, totalTrades)} of {totalTrades}
+              </div>
+
+              <div className="pagination-controls">
+                <button
+                  className="pagination-btn"
+                  onClick={() => goToPage(1)}
+                  disabled={currentPage === 1}
+                  title="First page"
+                >
+                  &laquo;
+                </button>
+                <button
+                  className="pagination-btn"
+                  onClick={() => goToPage(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  title="Previous page"
+                >
+                  &lsaquo;
+                </button>
+                <span className="pagination-current">
+                  Page {currentPage} of {totalPages}
+                </span>
+                <button
+                  className="pagination-btn"
+                  onClick={() => goToPage(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  title="Next page"
+                >
+                  &rsaquo;
+                </button>
+                <button
+                  className="pagination-btn"
+                  onClick={() => goToPage(totalPages)}
+                  disabled={currentPage === totalPages}
+                  title="Last page"
+                >
+                  &raquo;
+                </button>
+              </div>
+
+              <div className="pagination-size">
+                <span>Per page:</span>
+                {([10, 25, 50] as PageSize[]).map(size => (
+                  <button
+                    key={size}
+                    className={`size-btn ${pageSize === size ? 'active' : ''}`}
+                    onClick={() => handlePageSizeChange(size)}
+                  >
+                    {size}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </>
         )}
       </div>
     </div>
