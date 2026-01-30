@@ -27,10 +27,11 @@
   ],
   "env": {
     "JOURNAL_PORT": "3002",
-    "JOURNAL_MYSQL_HOST": "localhost",
+    "JOURNAL_MYSQL_HOST": "127.0.0.1",
     "JOURNAL_MYSQL_PORT": "3306",
-    "JOURNAL_MYSQL_USER": "journal",
-    "JOURNAL_MYSQL_PASSWORD": "",
-    "JOURNAL_MYSQL_DATABASE": "journal"
+    "JOURNAL_MYSQL_USER": "fotw_app",
+    "JOURNAL_MYSQL_PASSWORD": "PfedKtaTaAa2iV21QTZp",
+    "JOURNAL_MYSQL_DATABASE": "fotw_app",
+    "APP_SESSION_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0"
   }
 }

@@ -13,6 +13,7 @@ class TradeLog:
     """A trade log container with immutable starting parameters."""
     id: str
     name: str
+    user_id: int  # Foreign key to users.id
 
     # Immutable Starting Parameters (frozen at creation)
     starting_capital: int  # cents

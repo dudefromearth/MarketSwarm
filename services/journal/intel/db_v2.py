@@ -13,7 +13,7 @@ from .models_v2 import TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint, 
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 3
+    SCHEMA_VERSION = 4
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -132,6 +132,9 @@ class JournalDBv2:
 
             if current_version < 3:
                 self._migrate_to_v3(conn)
+
+            if current_version < 4:
+                self._migrate_to_v4(conn)
 
             conn.commit()
         finally:
@@ -286,6 +289,38 @@ class JournalDBv2:
         finally:
             cursor.close()
 
+    def _migrate_to_v4(self, conn):
+        """Migrate to v4: Add user_id to trade_logs for multi-user support."""
+        cursor = conn.cursor()
+        try:
+            # Check if user_id column already exists
+            cursor.execute("""
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                AND table_name = 'trade_logs'
+                AND column_name = 'user_id'
+            """)
+            if cursor.fetchone()[0] > 0:
+                # Already migrated
+                self._set_schema_version(conn, 4)
+                return
+
+            # Add user_id column (nullable initially for existing data)
+            cursor.execute("""
+                ALTER TABLE trade_logs
+                ADD COLUMN user_id INT NULL AFTER id,
+                ADD INDEX idx_trade_logs_user (user_id)
+            """)
+
+            # Note: Foreign key to users table is not enforced here
+            # since users table is managed by the auth system.
+            # The constraint can be added later if needed:
+            # ADD FOREIGN KEY (user_id) REFERENCES users(id)
+
+            self._set_schema_version(conn, 4)
+        finally:
+            cursor.close()
+
     # ==================== Trade Log CRUD ====================
 
     def create_log(self, log: TradeLog) -> TradeLog:
@@ -307,15 +342,21 @@ class JournalDBv2:
             cursor.close()
             conn.close()
 
-    def get_log(self, log_id: str) -> Optional[TradeLog]:
-        """Get a single trade log by ID."""
+    def get_log(self, log_id: str, user_id: Optional[int] = None) -> Optional[TradeLog]:
+        """Get a single trade log by ID, optionally filtered by user."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
-            cursor.execute(
-                "SELECT * FROM trade_logs WHERE id = %s AND is_active = 1",
-                (log_id,)
-            )
+            if user_id is not None:
+                cursor.execute(
+                    "SELECT * FROM trade_logs WHERE id = %s AND user_id = %s AND is_active = 1",
+                    (log_id, user_id)
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM trade_logs WHERE id = %s AND is_active = 1",
+                    (log_id,)
+                )
             row = cursor.fetchone()
 
             if row:
@@ -325,72 +366,92 @@ class JournalDBv2:
             cursor.close()
             conn.close()
 
-    def list_logs(self, include_inactive: bool = False) -> List[TradeLog]:
-        """List all trade logs."""
+    def list_logs(self, user_id: Optional[int] = None, include_inactive: bool = False) -> List[TradeLog]:
+        """List trade logs, optionally filtered by user."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
-            query = "SELECT * FROM trade_logs"
+            query = "SELECT * FROM trade_logs WHERE 1=1"
+            params = []
+
+            if user_id is not None:
+                query += " AND user_id = %s"
+                params.append(user_id)
+
             if not include_inactive:
-                query += " WHERE is_active = 1"
+                query += " AND is_active = 1"
+
             query += " ORDER BY created_at DESC"
 
-            cursor.execute(query)
+            cursor.execute(query, params)
             rows = cursor.fetchall()
             return [TradeLog.from_dict(self._row_to_dict(cursor, row)) for row in rows]
         finally:
             cursor.close()
             conn.close()
 
-    def update_log(self, log_id: str, updates: Dict[str, Any]) -> Optional[TradeLog]:
+    def update_log(self, log_id: str, updates: Dict[str, Any], user_id: Optional[int] = None) -> Optional[TradeLog]:
         """Update a trade log (metadata only, not starting params)."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
             # Prevent updating immutable fields
-            immutable = {'starting_capital', 'risk_per_trade', 'max_position_size', 'id', 'created_at'}
+            immutable = {'starting_capital', 'risk_per_trade', 'max_position_size', 'id', 'user_id', 'created_at'}
             updates = {k: v for k, v in updates.items() if k not in immutable}
 
             if not updates:
-                return self.get_log(log_id)
+                return self.get_log(log_id, user_id)
 
             updates['updated_at'] = datetime.utcnow().isoformat()
 
             set_clause = ', '.join(f"{k} = %s" for k in updates.keys())
-            params = list(updates.values()) + [log_id]
 
-            cursor.execute(
-                f"UPDATE trade_logs SET {set_clause} WHERE id = %s",
-                params
-            )
+            if user_id is not None:
+                params = list(updates.values()) + [log_id, user_id]
+                cursor.execute(
+                    f"UPDATE trade_logs SET {set_clause} WHERE id = %s AND user_id = %s",
+                    params
+                )
+            else:
+                params = list(updates.values()) + [log_id]
+                cursor.execute(
+                    f"UPDATE trade_logs SET {set_clause} WHERE id = %s",
+                    params
+                )
             conn.commit()
 
-            return self.get_log(log_id)
+            return self.get_log(log_id, user_id)
         finally:
             cursor.close()
             conn.close()
 
-    def delete_log(self, log_id: str) -> bool:
+    def delete_log(self, log_id: str, user_id: Optional[int] = None) -> bool:
         """Soft delete a trade log."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
-            cursor.execute(
-                "UPDATE trade_logs SET is_active = 0, updated_at = %s WHERE id = %s",
-                (datetime.utcnow().isoformat(), log_id)
-            )
+            if user_id is not None:
+                cursor.execute(
+                    "UPDATE trade_logs SET is_active = 0, updated_at = %s WHERE id = %s AND user_id = %s",
+                    (datetime.utcnow().isoformat(), log_id, user_id)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE trade_logs SET is_active = 0, updated_at = %s WHERE id = %s",
+                    (datetime.utcnow().isoformat(), log_id)
+                )
             conn.commit()
             return cursor.rowcount > 0
         finally:
             cursor.close()
             conn.close()
 
-    def get_log_summary(self, log_id: str) -> Dict[str, Any]:
+    def get_log_summary(self, log_id: str, user_id: Optional[int] = None) -> Dict[str, Any]:
         """Get a log with trade counts."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
-            log = self.get_log(log_id)
+            log = self.get_log(log_id, user_id)
             if not log:
                 return {}
 
@@ -417,6 +478,20 @@ class JournalDBv2:
             conn.close()
 
     # ==================== Trade CRUD ====================
+
+    def verify_log_ownership(self, log_id: str, user_id: int) -> bool:
+        """Verify that a log belongs to a user."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) FROM trade_logs WHERE id = %s AND user_id = %s AND is_active = 1",
+                (log_id, user_id)
+            )
+            return cursor.fetchone()[0] > 0
+        finally:
+            cursor.close()
+            conn.close()
 
     def create_trade(self, trade: Trade) -> Trade:
         """Create a new trade and auto-create OPEN event."""
@@ -947,6 +1022,7 @@ class JournalDBv2:
     def get_closed_trades_for_equity(
         self,
         log_id: str,
+        user_id: Optional[int] = None,
         from_date: Optional[str] = None,
         to_date: Optional[str] = None
     ) -> List[Trade]:
@@ -977,12 +1053,12 @@ class JournalDBv2:
             cursor.close()
             conn.close()
 
-    def get_log_stats(self, log_id: str) -> Dict[str, Any]:
+    def get_log_stats(self, log_id: str, user_id: Optional[int] = None) -> Dict[str, Any]:
         """Get basic statistics for a log."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
-            log = self.get_log(log_id)
+            log = self.get_log(log_id, user_id)
             if not log:
                 return {}
 

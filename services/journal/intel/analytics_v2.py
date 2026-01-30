@@ -14,7 +14,7 @@ class AnalyticsV2:
     def __init__(self, db: JournalDBv2):
         self.db = db
 
-    def get_full_analytics(self, log_id: str) -> Optional[LogAnalytics]:
+    def get_full_analytics(self, log_id: str, user_id: Optional[int] = None) -> Optional[LogAnalytics]:
         """
         Calculate full performance analytics for a trade log.
 
@@ -25,11 +25,11 @@ class AnalyticsV2:
         4. Risk & Asymmetry
         5. System Health
         """
-        log = self.db.get_log(log_id)
+        log = self.db.get_log(log_id, user_id)
         if not log:
             return None
 
-        stats = self.db.get_log_stats(log_id)
+        stats = self.db.get_log_stats(log_id, user_id)
         if not stats:
             return LogAnalytics(log_id=log_id, log_name=log.name)
 
@@ -201,15 +201,16 @@ class AnalyticsV2:
     def get_equity_curve(
         self,
         log_id: str,
+        user_id: Optional[int] = None,
         from_date: Optional[str] = None,
         to_date: Optional[str] = None
     ) -> List[EquityPoint]:
         """Generate equity curve data points for a log."""
-        log = self.db.get_log(log_id)
+        log = self.db.get_log(log_id, user_id)
         if not log:
             return []
 
-        trades = self.db.get_closed_trades_for_equity(log_id, from_date, to_date)
+        trades = self.db.get_closed_trades_for_equity(log_id, user_id, from_date, to_date)
 
         if not trades:
             return []
@@ -236,15 +237,16 @@ class AnalyticsV2:
     def get_drawdown_curve(
         self,
         log_id: str,
+        user_id: Optional[int] = None,
         from_date: Optional[str] = None,
         to_date: Optional[str] = None
     ) -> List[DrawdownPoint]:
         """Generate drawdown curve data points for a log."""
-        log = self.db.get_log(log_id)
+        log = self.db.get_log(log_id, user_id)
         if not log:
             return []
 
-        trades = self.db.get_closed_trades_for_equity(log_id, from_date, to_date)
+        trades = self.db.get_closed_trades_for_equity(log_id, user_id, from_date, to_date)
 
         if not trades:
             return []

@@ -15,6 +15,7 @@ from openpyxl.utils import get_column_letter
 from .db_v2 import JournalDBv2
 from .models_v2 import TradeLog, Trade, TradeEvent, Symbol, Setting
 from .analytics_v2 import AnalyticsV2
+from .auth import JournalAuth, require_auth, optional_auth
 
 
 class JournalOrchestrator:
@@ -26,6 +27,7 @@ class JournalOrchestrator:
         self.port = int(config.get('JOURNAL_PORT', 3002))
         self.db = JournalDBv2(config)
         self.analytics = AnalyticsV2(self.db)
+        self.auth = JournalAuth(config, self.db._pool)
 
     def _json_response(self, data: Any, status: int = 200) -> web.Response:
         """Create a JSON response with CORS headers."""
@@ -36,7 +38,7 @@ class JournalOrchestrator:
             headers={
                 'Access-Control-Allow-Origin': '*',
                 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization',
             }
         )
 
@@ -51,22 +53,26 @@ class JournalOrchestrator:
             headers={
                 'Access-Control-Allow-Origin': '*',
                 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-                'Access-Control-Allow-Headers': 'Content-Type',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization',
             }
         )
 
     # ==================== Trade Log Endpoints ====================
 
     async def list_logs(self, request: web.Request) -> web.Response:
-        """GET /api/logs - List all trade logs."""
+        """GET /api/logs - List trade logs for authenticated user."""
         try:
+            # Get authenticated user (optional - returns all if no auth)
+            user = await self.auth.get_request_user(request)
+            user_id = user['id'] if user else None
+
             include_inactive = request.query.get('include_inactive', 'false') == 'true'
-            logs = self.db.list_logs(include_inactive=include_inactive)
+            logs = self.db.list_logs(user_id=user_id, include_inactive=include_inactive)
 
             # Get summaries for each log
             log_data = []
             for log in logs:
-                summary = self.db.get_log_summary(log.id)
+                summary = self.db.get_log_summary(log.id, user_id)
                 log_data.append(summary)
 
             return self._json_response({
@@ -82,7 +88,12 @@ class JournalOrchestrator:
         """GET /api/logs/:id - Get a single trade log with summary."""
         try:
             log_id = request.match_info['id']
-            summary = self.db.get_log_summary(log_id)
+
+            # Get authenticated user (optional)
+            user = await self.auth.get_request_user(request)
+            user_id = user['id'] if user else None
+
+            summary = self.db.get_log_summary(log_id, user_id)
 
             if not summary:
                 return self._error_response('Trade log not found', 404)
@@ -98,6 +109,11 @@ class JournalOrchestrator:
     async def create_log(self, request: web.Request) -> web.Response:
         """POST /api/logs - Create a new trade log."""
         try:
+            # Require authentication for creating logs
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
             body = await request.json()
 
             if 'name' not in body:
@@ -118,6 +134,7 @@ class JournalOrchestrator:
             log = TradeLog(
                 id=TradeLog.new_id(),
                 name=body['name'],
+                user_id=user['id'],  # Set owner from authenticated user
                 starting_capital=starting_capital,
                 risk_per_trade=risk_per_trade,
                 max_position_size=body.get('max_position_size'),
@@ -128,7 +145,7 @@ class JournalOrchestrator:
             )
 
             created = self.db.create_log(log)
-            self.logger.info(f"Created trade log '{created.name}' with ${starting_capital/100:.2f} capital", emoji="📒")
+            self.logger.info(f"Created trade log '{created.name}' for user {user['id']} with ${starting_capital/100:.2f} capital", emoji="📒")
 
             return self._json_response({
                 'success': True,
