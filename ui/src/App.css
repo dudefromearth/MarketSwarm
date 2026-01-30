@@ -1976,12 +1976,184 @@ body {
   padding: 16px;
   background: #0a0a0a;
   min-height: 300px;
+  position: relative;
 }
 
 .risk-graph-chart svg {
   width: 100%;
   height: 100%;
   min-height: 280px;
+}
+
+/* Alert Context Menu */
+.alert-context-menu {
+  background: #1a1a1a;
+  border: 1px solid #444;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  min-width: 180px;
+}
+
+.context-menu-header {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.context-menu-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin-bottom: 10px;
+}
+
+.context-menu-colors .color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.1s, border-color 0.1s;
+}
+
+.context-menu-colors .color-swatch:hover {
+  transform: scale(1.1);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.context-menu-cancel {
+  width: 100%;
+  padding: 6px 12px;
+  background: #333;
+  border: none;
+  border-radius: 4px;
+  color: #888;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.context-menu-cancel:hover {
+  background: #444;
+  color: #aaa;
+}
+
+.context-menu-delete {
+  width: 100%;
+  padding: 8px 12px;
+  background: #7f1d1d;
+  border: none;
+  border-radius: 4px;
+  color: #fecaca;
+  font-size: 12px;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.context-menu-delete:hover {
+  background: #991b1b;
+  color: #fff;
+}
+
+/* Price Alert List */
+.price-alert-list {
+  padding: 12px 16px;
+  background: #0d0d0d;
+  border-top: 1px solid #222;
+}
+
+.alert-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 11px;
+}
+
+.alert-list-header > span:first-child {
+  color: #888;
+  font-weight: 500;
+}
+
+.alert-hint {
+  color: #555;
+  font-size: 10px;
+}
+
+.alert-list-items {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.alert-list-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #1a1a1a;
+  border-radius: 4px;
+}
+
+.alert-color-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.alert-price {
+  font-size: 13px;
+  font-weight: 600;
+  color: #ddd;
+  min-width: 50px;
+}
+
+.alert-actions {
+  display: flex;
+  gap: 3px;
+  margin-left: auto;
+  align-items: center;
+}
+
+.alert-color-btn {
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.1s, transform 0.1s;
+}
+
+.alert-color-btn:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.alert-color-btn.selected {
+  opacity: 1;
+  border-color: #fff;
+}
+
+.alert-delete-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+  color: #666;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+}
+
+.alert-delete-btn:hover {
+  color: #ef4444;
 }
 
 /* Risk Graph Stats */

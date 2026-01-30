@@ -126,6 +126,26 @@ interface RiskGraphAlert {
   highWaterMark?: number;
 }
 
+// Visual price alert line on risk graph
+interface PriceAlertLine {
+  id: string;
+  price: number;
+  color: string;
+  label?: string;
+  createdAt: number;
+}
+
+const ALERT_COLORS = [
+  '#ef4444', // red
+  '#f97316', // orange
+  '#eab308', // yellow
+  '#22c55e', // green
+  '#06b6d4', // cyan
+  '#3b82f6', // blue
+  '#8b5cf6', // purple
+  '#ec4899', // pink
+];
+
 // Gaussian smoothing for volume profile
 function gaussianSmooth(data: number[], kernelSize: number = 5): number[] {
   if (data.length === 0) return data;
@@ -483,6 +503,28 @@ function App() {
   const [gexCollapsed, setGexCollapsed] = useState(false);
   const [heatmapCollapsed, setHeatmapCollapsed] = useState(false);
   const [riskGraphCollapsed, setRiskGraphCollapsed] = useState(false);
+  const [priceAlertLines, setPriceAlertLines] = useState<PriceAlertLine[]>(() => {
+    try {
+      const saved = localStorage.getItem('priceAlertLines');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [alertContextMenu, setAlertContextMenu] = useState<{ x: number; y: number; price: number } | null>(null);
+  const [alertLineContextMenu, setAlertLineContextMenu] = useState<{ x: number; y: number; alertId: string } | null>(null);
+
+  // Close context menus on outside click
+  useEffect(() => {
+    if (!alertContextMenu && !alertLineContextMenu) return;
+    const handleClick = () => {
+      setAlertContextMenu(null);
+      setAlertLineContextMenu(null);
+    };
+    document.addEventListener('click', handleClick);
+    return () => document.removeEventListener('click', handleClick);
+  }, [alertContextMenu, alertLineContextMenu]);
+
   const [scrollLocked, setScrollLocked] = useState(true);
   const [hasScrolledToAtm, setHasScrolledToAtm] = useState(false);
   const [vpControlsExpanded, setVpControlsExpanded] = useState(false);
@@ -629,6 +671,22 @@ function App() {
     localStorage.setItem('riskGraphAlerts', JSON.stringify(riskGraphAlerts));
   }, [riskGraphAlerts]);
 
+  // Persist price alert lines to localStorage
+  useEffect(() => {
+    localStorage.setItem('priceAlertLines', JSON.stringify(priceAlertLines));
+  }, [priceAlertLines]);
+
+  // Price alert line management
+  const updatePriceAlertColor = (alertId: string, color: string) => {
+    setPriceAlertLines(prev => prev.map(a =>
+      a.id === alertId ? { ...a, color } : a
+    ));
+  };
+
+  const deletePriceAlertLine = (alertId: string) => {
+    setPriceAlertLines(prev => prev.filter(a => a.id !== alertId));
+  };
+
   // Alert management functions
   const createAlert = (strategyId: string, type: 'price' | 'debit' | 'profit_target' | 'trailing_stop', condition: 'above' | 'below' | 'at', targetValue: number) => {
     const strategy = riskGraphStrategies.find(s => s.id === strategyId);
@@ -736,6 +794,7 @@ function App() {
 
   // Handle mouse down on risk graph chart (start drag)
   const handleChartMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
+    // Deselect alert when clicking elsewhere (will re-select if clicking on an alert)
     setIsDragging(true);
     setDragStartX(e.clientX);
     setDragStartOffset(panOffset);
@@ -790,6 +849,22 @@ function App() {
   // Handle mouse up on risk graph chart (end drag)
   const handleChartMouseUp = () => {
     setIsDragging(false);
+  };
+
+  // Handle right-click on risk graph chart to add alert
+  const handleChartContextMenu = (e: React.MouseEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const svg = e.currentTarget;
+    const rect = svg.getBoundingClientRect();
+    const svgX = ((e.clientX - rect.left) / rect.width) * 600;
+
+    // Only show context menu if clicking within the chart area (x: 50-580)
+    if (svgX >= 50 && svgX <= 580) {
+      const chartX = svgX - 50;
+      const priceRange = riskGraphData.maxPrice - riskGraphData.minPrice;
+      const price = riskGraphData.minPrice + (chartX / 530) * priceRange;
+      setAlertContextMenu({ x: e.clientX, y: e.clientY, price });
+    }
   };
 
   const handleChartMouseLeave = () => {
@@ -2100,6 +2175,11 @@ function App() {
               {panOffset !== 0 && (
                 <button className="btn-small" onClick={resetPan}>Reset View</button>
               )}
+              {priceAlertLines.length > 0 && (
+                <button className="btn-small" onClick={() => setPriceAlertLines([])}>
+                  Clear Alerts ({priceAlertLines.length})
+                </button>
+              )}
               {riskGraphStrategies.length > 0 && (
                 <button className="btn-small btn-danger" onClick={clearRiskGraph}>Clear</button>
               )}
@@ -2248,10 +2328,11 @@ function App() {
                           </button>
                         )}
                       </div>
-                      {riskGraphAlerts.length === 0 ? (
-                        <div className="alerts-empty">No alerts set</div>
+                      {riskGraphAlerts.length === 0 && priceAlertLines.length === 0 ? (
+                        <div className="alerts-empty">No alerts set<br/><span className="hint">Right-click chart to add price line</span></div>
                       ) : (
                         <div className="alerts-list">
+                          {/* Strategy Alerts */}
                           {riskGraphAlerts.map(alert => (
                             <div
                               key={alert.id}
@@ -2310,6 +2391,40 @@ function App() {
                               </div>
                             </div>
                           ))}
+
+                          {/* Price Line Alerts */}
+                          {priceAlertLines.map(alert => (
+                            <div key={alert.id} className="alert-item price-line-alert">
+                              <div className="alert-info">
+                                <div
+                                  className="price-line-color"
+                                  style={{ backgroundColor: alert.color }}
+                                />
+                                <span className="alert-condition">
+                                  Price Line @ {alert.price.toFixed(0)}
+                                </span>
+                              </div>
+                              <div className="alert-actions">
+                                <div className="color-picker-inline">
+                                  {ALERT_COLORS.map(color => (
+                                    <button
+                                      key={color}
+                                      className={`color-dot ${alert.color === color ? 'selected' : ''}`}
+                                      style={{ backgroundColor: color }}
+                                      onClick={() => updatePriceAlertColor(alert.id, color)}
+                                    />
+                                  ))}
+                                </div>
+                                <button
+                                  className="btn-delete-alert"
+                                  onClick={() => deletePriceAlertLine(alert.id)}
+                                  title="Delete price line"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       )}
                     </div>
@@ -2325,6 +2440,7 @@ function App() {
                   onMouseMove={handleChartMouseMove}
                   onMouseUp={handleChartMouseUp}
                   onMouseLeave={handleChartMouseLeave}
+                  onContextMenu={handleChartContextMenu}
                   style={{ cursor: isDragging ? 'grabbing' : 'crosshair' }}
                 >
                   {/* Background */}
@@ -2434,6 +2550,67 @@ function App() {
                     );
                   })}
 
+                  {/* User-defined price alert lines */}
+                  {priceAlertLines.map((alert) => {
+                    const x = 50 + ((alert.price - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
+                    const isInView = alert.price >= riskGraphData.minPrice && alert.price <= riskGraphData.maxPrice;
+
+                    if (!isInView) return null;
+
+                    return (
+                      <g
+                        key={alert.id}
+                        className="alert-line-group"
+                        style={{ cursor: 'pointer' }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setAlertLineContextMenu({ x: e.clientX, y: e.clientY, alertId: alert.id });
+                        }}
+                      >
+                        {/* Invisible wider hit area for easier right-click */}
+                        <line
+                          x1={x}
+                          y1="20"
+                          x2={x}
+                          y2="280"
+                          stroke="transparent"
+                          strokeWidth="12"
+                        />
+                        {/* Alert line */}
+                        <line
+                          x1={x}
+                          y1="20"
+                          x2={x}
+                          y2="280"
+                          stroke={alert.color}
+                          strokeWidth="2"
+                        />
+                        {/* Price label at top */}
+                        <g transform={`translate(${x}, 15)`}>
+                          <rect
+                            x="-22"
+                            y="-10"
+                            width="44"
+                            height="14"
+                            fill={alert.color}
+                            rx="2"
+                          />
+                          <text
+                            x="0"
+                            y="1"
+                            textAnchor="middle"
+                            fill="#fff"
+                            fontSize="9"
+                            fontWeight="bold"
+                          >
+                            {alert.price.toFixed(0)}
+                          </text>
+                        </g>
+                      </g>
+                    );
+                  })}
+
                   {/* Interactive crosshair */}
                   {crosshairPos && (
                     <g className="crosshair">
@@ -2513,6 +2690,79 @@ function App() {
                   <text x="40" y="25" fill="#666" fontSize="10" textAnchor="end">${(riskGraphData.maxPnL / 100).toFixed(2)}</text>
                   <text x="40" y="280" fill="#666" fontSize="10" textAnchor="end">${(riskGraphData.minPnL / 100).toFixed(2)}</text>
                 </svg>
+
+                {/* Right-click context menu for adding alerts */}
+                {alertContextMenu && (
+                  <div
+                    className="alert-context-menu"
+                    style={{
+                      position: 'fixed',
+                      left: alertContextMenu.x,
+                      top: alertContextMenu.y,
+                      zIndex: 1000,
+                    }}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <div className="context-menu-header">
+                      Add Alert at {alertContextMenu.price.toFixed(0)}
+                    </div>
+                    <div className="context-menu-colors">
+                      {ALERT_COLORS.map(color => (
+                        <button
+                          key={color}
+                          className="color-swatch"
+                          style={{ backgroundColor: color }}
+                          onClick={() => {
+                            const newAlert: PriceAlertLine = {
+                              id: `alert_${Date.now()}`,
+                              price: alertContextMenu.price,
+                              color,
+                              createdAt: Date.now(),
+                            };
+                            setPriceAlertLines(prev => [...prev, newAlert]);
+                            setAlertContextMenu(null);
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <button
+                      className="context-menu-cancel"
+                      onClick={() => setAlertContextMenu(null)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
+
+                {/* Right-click context menu for alert lines */}
+                {alertLineContextMenu && (
+                  <div
+                    className="alert-context-menu"
+                    style={{
+                      position: 'fixed',
+                      left: alertLineContextMenu.x,
+                      top: alertLineContextMenu.y,
+                      zIndex: 1000,
+                    }}
+                    onClick={e => e.stopPropagation()}
+                  >
+                    <button
+                      className="context-menu-delete"
+                      onClick={() => {
+                        setPriceAlertLines(prev => prev.filter(a => a.id !== alertLineContextMenu.alertId));
+                        setAlertLineContextMenu(null);
+                      }}
+                    >
+                      Delete Alert
+                    </button>
+                    <button
+                      className="context-menu-cancel"
+                      onClick={() => setAlertLineContextMenu(null)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
                 </div>
 
                     {/* Summary Stats */}
@@ -2549,6 +2799,7 @@ function App() {
                         </div>
                       )}
                     </div>
+
                   </div>
                 </div>
               )}
