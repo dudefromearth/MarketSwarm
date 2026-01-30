@@ -82,10 +82,18 @@ class AnalyticsV2:
         gross_profit = stats['gross_profit']
         gross_loss = stats['gross_loss']
 
+        # Store gross profit/loss
+        analytics.gross_profit = gross_profit
+        analytics.gross_loss = gross_loss
+
         if gross_profit > 0 and analytics.largest_win:
             analytics.largest_win_pct_gross = (analytics.largest_win / gross_profit) * 100
         if gross_loss > 0 and analytics.largest_loss:
             analytics.largest_loss_pct_gross = (abs(analytics.largest_loss) / gross_loss) * 100
+
+        # Average net profit per trade
+        if analytics.closed_trades > 0:
+            analytics.avg_net_profit = int(analytics.net_profit / analytics.closed_trades)
 
         # 5. System Health
         if gross_loss > 0:
@@ -95,6 +103,10 @@ class AnalyticsV2:
 
         # Calculate max drawdown from equity curve
         analytics.max_drawdown_pct = self._calculate_max_drawdown(log_id, log.starting_capital)
+
+        # Calculate average R2R and Sharpe ratio
+        analytics.avg_r2r = self._calculate_avg_r2r(log_id)
+        analytics.sharpe_ratio = self._calculate_sharpe_ratio(log_id, log.starting_capital)
 
         return analytics
 
@@ -119,6 +131,72 @@ class AnalyticsV2:
                         max_dd_pct = dd_pct
 
         return max_dd_pct
+
+    def _calculate_avg_r2r(self, log_id: str) -> float:
+        """Calculate average reward-to-risk ratio (max_profit / entry_cost)."""
+        trades = self.db.list_trades(log_id=log_id, limit=10000)
+        if not trades:
+            return 0.0
+
+        # Multiplier lookup
+        multipliers = {
+            'SPX': 100, 'NDX': 100, 'XSP': 100, 'SPY': 100,
+            'ES': 50, 'MES': 50, 'NQ': 20, 'MNQ': 20,
+        }
+
+        r2r_values = []
+        for trade in trades:
+            if trade.max_profit and trade.max_profit > 0 and trade.entry_price > 0:
+                multiplier = multipliers.get(trade.symbol.upper(), 100)
+                cost = trade.entry_price * multiplier * trade.quantity
+                if cost > 0:
+                    r2r = trade.max_profit / cost
+                    r2r_values.append(r2r)
+
+        if not r2r_values:
+            return 0.0
+
+        return sum(r2r_values) / len(r2r_values)
+
+    def _calculate_sharpe_ratio(self, log_id: str, starting_capital: int) -> float:
+        """
+        Calculate Sharpe ratio.
+        Sharpe = mean(returns) / std(returns) * sqrt(252) for daily returns
+        We'll use per-trade returns for simplicity.
+        """
+        import math
+
+        trades = self.db.list_trades(log_id=log_id, status='closed', limit=10000)
+        if len(trades) < 2:
+            return 0.0
+
+        # Calculate per-trade returns as percentage of starting capital
+        returns = []
+        for trade in trades:
+            if trade.pnl is not None and starting_capital > 0:
+                ret = trade.pnl / starting_capital
+                returns.append(ret)
+
+        if len(returns) < 2:
+            return 0.0
+
+        # Mean return
+        mean_ret = sum(returns) / len(returns)
+
+        # Standard deviation
+        variance = sum((r - mean_ret) ** 2 for r in returns) / len(returns)
+        std_ret = math.sqrt(variance)
+
+        if std_ret == 0:
+            return 0.0
+
+        # Annualize: assume ~252 trading days, estimate trades per day
+        # For simplicity, use sqrt(trades_per_year) approximation
+        # A typical active trader might do 1-5 trades per day
+        # We'll use a simple annualization factor
+        sharpe = (mean_ret / std_ret) * math.sqrt(len(returns))
+
+        return sharpe
 
     def get_equity_curve(
         self,

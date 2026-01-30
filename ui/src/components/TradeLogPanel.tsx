@@ -191,8 +191,7 @@ export default function TradeLogPanel({
   const formatPnL = (pnl: number | null) => {
     if (pnl === null) return '-';
     const dollars = pnl / 100;
-    const formatted = Math.abs(dollars).toFixed(2);
-    return dollars >= 0 ? `+$${formatted}` : `-$${formatted}`;
+    return `$${Math.abs(dollars).toFixed(2)}`;
   };
 
   const getStrategyLabel = (strategy: string) => {
@@ -203,6 +202,31 @@ export default function TradeLogPanel({
       case 'iron_condor': return 'IC';
       default: return strategy.toUpperCase().slice(0, 3);
     }
+  };
+
+  const getMultiplier = (symbol: string): number => {
+    const multipliers: Record<string, number> = {
+      'SPX': 100,
+      'NDX': 100,
+      'XSP': 100,
+      'SPY': 100,
+      'ES': 50,
+      'MES': 50,
+      'NQ': 20,
+      'MNQ': 20,
+    };
+    return multipliers[symbol.toUpperCase()] || 100;
+  };
+
+  const formatR2R = (trade: Trade): string => {
+    if (trade.max_profit === null || trade.max_profit === 0) return '-';
+    if (trade.entry_price === 0) return '-';
+
+    const multiplier = getMultiplier(trade.symbol);
+    const cost = trade.entry_price * multiplier * trade.quantity;
+    const r2r = trade.max_profit / cost;
+
+    return r2r.toFixed(1);
   };
 
   return (
@@ -282,9 +306,11 @@ export default function TradeLogPanel({
                   </th>
                   <th>Symbol</th>
                   <th>Strategy</th>
-                  <th>Strike</th>
+                  <th>Qty</th>
                   <th>Entry</th>
-                  <th>Status</th>
+                  <th>Exit</th>
+                  <th>P&L</th>
+                  <th>R2R</th>
                 </tr>
               </thead>
               <tbody>
@@ -304,16 +330,17 @@ export default function TradeLogPanel({
                         {trade.side.charAt(0).toUpperCase()}
                       </span>
                     </td>
-                    <td className="trade-strike">
-                      {trade.strike}
-                      {trade.width && trade.width > 0 && (
-                        <span className="trade-width">/{trade.width}</span>
-                      )}
-                    </td>
+                    <td className="trade-qty">{trade.quantity}</td>
                     <td className="trade-entry">
-                      ${(trade.entry_price / 100).toFixed(2)}
+                      {(trade.entry_price / 100).toFixed(2)}
                     </td>
-                    <td className={`trade-status ${
+                    <td className="trade-exit">
+                      {trade.exit_price !== null
+                        ? (trade.exit_price / 100).toFixed(2)
+                        : '-'
+                      }
+                    </td>
+                    <td className={`trade-pnl ${
                       trade.status === 'open'
                         ? 'open'
                         : trade.pnl && trade.pnl >= 0
@@ -326,6 +353,7 @@ export default function TradeLogPanel({
                         formatPnL(trade.pnl)
                       )}
                     </td>
+                    <td className="trade-r2r">{formatR2R(trade)}</td>
                   </tr>
                 ))}
               </tbody>

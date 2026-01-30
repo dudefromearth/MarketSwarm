@@ -2617,8 +2617,21 @@ body {
   font-size: 10px;
 }
 
+.trade-qty {
+  color: #888;
+  text-align: center;
+}
+
+.trade-entry,
+.trade-exit {
+  color: #999;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 10px;
+}
+
 .trade-pnl {
   font-weight: 600;
+  font-family: 'SF Mono', Monaco, monospace;
 }
 
 .trade-pnl.open {
@@ -2631,6 +2644,12 @@ body {
 
 .trade-pnl.loss {
   color: #f87171;
+}
+
+.trade-r2r {
+  color: #a78bfa;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 10px;
 }
 
 /* Trade Log Pagination */
@@ -3884,6 +3903,29 @@ body {
 
 .stat-value.profit { color: #4ade80; }
 .stat-value.loss { color: #f87171; }
+
+/* Highlight backgrounds for key stats */
+.stat-item.highlight-green {
+  background: rgba(74, 222, 128, 0.15);
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(74, 222, 128, 0.3);
+}
+
+.stat-item.highlight-green .stat-value {
+  color: #4ade80;
+}
+
+.stat-item.highlight-yellow {
+  background: rgba(250, 204, 21, 0.15);
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(250, 204, 21, 0.3);
+}
+
+.stat-item.highlight-yellow .stat-value {
+  color: #facc15;
+}
 
 .reporting-loading,
 .reporting-empty {

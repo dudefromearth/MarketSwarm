@@ -50,10 +50,20 @@ interface LogAnalytics {
   largest_win_pct_gross: number;
   largest_loss_pct_gross: number;
 
+  // Gross P&L
+  gross_profit: number;
+  gross_profit_dollars: number;
+  gross_loss: number;
+  gross_loss_dollars: number;
+  avg_net_profit: number;
+  avg_net_profit_dollars: number;
+
   // System Health
   profit_factor: number;
   max_drawdown_pct: number;
   avg_r_multiple: number;
+  avg_r2r: number;
+  sharpe_ratio: number;
 }
 
 interface EquityPoint {
@@ -370,88 +380,132 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
               <h4>Capital & Returns</h4>
               <div className="stats-grid">
                 <div className="stat-item">
-                  <span className="stat-label">Starting</span>
+                  <span className="stat-label">Span in Days</span>
+                  <span className="stat-value">{analytics.span_days}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Starting Capital</span>
                   <span className="stat-value">
                     ${(analytics.starting_capital / 100).toLocaleString()}
                   </span>
                 </div>
-                <div className="stat-item">
-                  <span className="stat-label">Current</span>
+                <div className="stat-item highlight-green">
+                  <span className="stat-label">Balance</span>
                   <span className="stat-value">
                     ${(analytics.current_equity / 100).toLocaleString()}
+                  </span>
+                </div>
+                <div className="stat-item highlight-green">
+                  <span className="stat-label">Total Return</span>
+                  <span className="stat-value">
+                    {analytics.total_return_percent.toFixed(2)}%
+                  </span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Gross Profit</span>
+                  <span className="stat-value profit">
+                    ${(analytics.gross_profit / 100).toLocaleString()}
+                  </span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Gross Loss</span>
+                  <span className="stat-value loss">
+                    -${(analytics.gross_loss / 100).toLocaleString()}
                   </span>
                 </div>
                 <div className="stat-item">
                   <span className="stat-label">Net Profit</span>
                   <span className={`stat-value ${analytics.net_profit >= 0 ? 'profit' : 'loss'}`}>
-                    {formatCurrency(analytics.net_profit)}
+                    ${(analytics.net_profit / 100).toLocaleString()}
                   </span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">Return</span>
-                  <span className={`stat-value ${analytics.total_return_percent >= 0 ? 'profit' : 'loss'}`}>
-                    {formatPercent(analytics.total_return_percent)}
+                  <span className="stat-label">Profit Factor</span>
+                  <span className={`stat-value ${analytics.profit_factor >= 1 ? 'profit' : 'loss'}`}>
+                    {analytics.profit_factor.toFixed(2)}
                   </span>
                 </div>
               </div>
             </div>
 
             <div className="stats-section">
-              <h4>Win/Loss Distribution</h4>
+              <h4>Trade Distribution</h4>
               <div className="stats-grid">
                 <div className="stat-item">
+                  <span className="stat-label">Total Trades</span>
+                  <span className="stat-value">{analytics.total_trades}</span>
+                </div>
+                <div className="stat-item">
                   <span className="stat-label">Winners</span>
-                  <span className="stat-value profit">
-                    {analytics.winners} ({analytics.win_rate.toFixed(1)}%)
-                  </span>
+                  <span className="stat-value profit">{analytics.winners}</span>
                 </div>
                 <div className="stat-item">
                   <span className="stat-label">Losers</span>
-                  <span className="stat-value loss">
-                    {analytics.losers}
-                  </span>
+                  <span className="stat-value loss">{analytics.losers}</span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">Avg Win</span>
-                  <span className="stat-value profit">
-                    {formatCurrency(analytics.avg_win)}
-                  </span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">Avg Loss</span>
-                  <span className="stat-value loss">
-                    {formatCurrency(analytics.avg_loss)}
-                  </span>
+                  <span className="stat-label">Win Rate</span>
+                  <span className="stat-value">{analytics.win_rate.toFixed(1)}%</span>
                 </div>
               </div>
             </div>
 
             <div className="stats-section">
-              <h4>Risk & Asymmetry</h4>
+              <h4>Trade Averages</h4>
               <div className="stats-grid">
                 <div className="stat-item">
-                  <span className="stat-label">Avg Risk</span>
+                  <span className="stat-label">Avg Risk per Trade</span>
                   <span className="stat-value">
                     ${(analytics.avg_risk / 100).toFixed(2)}
                   </span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">Largest Win</span>
+                  <span className="stat-label">Avg Net Profit</span>
+                  <span className={`stat-value ${analytics.avg_net_profit >= 0 ? 'profit' : 'loss'}`}>
+                    ${(analytics.avg_net_profit / 100).toFixed(2)}
+                  </span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Avg Winning Trade</span>
                   <span className="stat-value profit">
-                    {formatCurrency(analytics.largest_win)}
+                    ${(analytics.avg_win / 100).toFixed(2)}
                   </span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">Largest Loss</span>
+                  <span className="stat-label">Avg Losing Trade</span>
                   <span className="stat-value loss">
-                    {formatCurrency(analytics.largest_loss)}
+                    (${Math.abs(analytics.avg_loss / 100).toFixed(2)})
                   </span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">Win/Loss Ratio</span>
-                  <span className="stat-value">
-                    {analytics.win_loss_ratio.toFixed(2)}
+                  <span className="stat-label">Ratio Avg Win/Loss</span>
+                  <span className="stat-value">{analytics.win_loss_ratio.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="stats-section">
+              <h4>Extremes</h4>
+              <div className="stats-grid">
+                <div className="stat-item">
+                  <span className="stat-label">Largest Winner</span>
+                  <span className="stat-value profit">
+                    ${(analytics.largest_win / 100).toLocaleString()}
                   </span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Largest Loser</span>
+                  <span className="stat-value loss">
+                    (${Math.abs(analytics.largest_loss / 100).toLocaleString()})
+                  </span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Winner as % Gross</span>
+                  <span className="stat-value">{analytics.largest_win_pct_gross.toFixed(2)}%</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Loser as % Gross</span>
+                  <span className="stat-value">{analytics.largest_loss_pct_gross.toFixed(2)}%</span>
                 </div>
               </div>
             </div>
@@ -459,51 +513,25 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
             <div className="stats-section">
               <h4>System Health</h4>
               <div className="stats-grid">
-                <div className="stat-item">
-                  <span className="stat-label">Profit Factor</span>
-                  <span className={`stat-value ${analytics.profit_factor >= 1 ? 'profit' : 'loss'}`}>
-                    {analytics.profit_factor.toFixed(2)}
+                <div className="stat-item highlight-yellow">
+                  <span className="stat-label">Max Drawdown</span>
+                  <span className="stat-value">
+                    {analytics.max_drawdown_pct.toFixed(2)}%
                   </span>
                 </div>
                 <div className="stat-item">
-                  <span className="stat-label">Max Drawdown</span>
-                  <span className="stat-value loss">
-                    -{analytics.max_drawdown_pct.toFixed(1)}%
-                  </span>
+                  <span className="stat-label">Average R2R</span>
+                  <span className="stat-value">{analytics.avg_r2r.toFixed(2)}</span>
+                </div>
+                <div className="stat-item">
+                  <span className="stat-label">Sharpe Ratio</span>
+                  <span className="stat-value">{analytics.sharpe_ratio.toFixed(2)}</span>
                 </div>
                 <div className="stat-item">
                   <span className="stat-label">Avg R-Multiple</span>
                   <span className={`stat-value ${analytics.avg_r_multiple >= 0 ? 'profit' : 'loss'}`}>
                     {analytics.avg_r_multiple.toFixed(2)}R
                   </span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">Span</span>
-                  <span className="stat-value">
-                    {analytics.span_days} days
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            <div className="stats-section time-scale">
-              <h4>Time & Scale</h4>
-              <div className="stats-grid">
-                <div className="stat-item">
-                  <span className="stat-label">Total Trades</span>
-                  <span className="stat-value">{analytics.total_trades}</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">Open</span>
-                  <span className="stat-value">{analytics.open_trades}</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">Closed</span>
-                  <span className="stat-value">{analytics.closed_trades}</span>
-                </div>
-                <div className="stat-item">
-                  <span className="stat-label">Trades/Week</span>
-                  <span className="stat-value">{analytics.trades_per_week.toFixed(1)}</span>
                 </div>
               </div>
             </div>

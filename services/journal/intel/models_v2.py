@@ -225,10 +225,17 @@ class LogAnalytics:
     largest_win_pct_gross: float = 0.0
     largest_loss_pct_gross: float = 0.0
 
+    # Gross P&L
+    gross_profit: int = 0  # cents
+    gross_loss: int = 0  # cents
+    avg_net_profit: int = 0  # cents (net_profit / closed_trades)
+
     # System Health
     profit_factor: float = 0.0
     max_drawdown_pct: float = 0.0
     avg_r_multiple: float = 0.0
+    avg_r2r: float = 0.0  # average reward-to-risk ratio
+    sharpe_ratio: float = 0.0
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -245,6 +252,9 @@ class LogAnalytics:
         d['avg_risk_dollars'] = d['avg_risk'] / 100
         d['largest_win_dollars'] = d['largest_win'] / 100
         d['largest_loss_dollars'] = d['largest_loss'] / 100
+        d['gross_profit_dollars'] = d['gross_profit'] / 100
+        d['gross_loss_dollars'] = d['gross_loss'] / 100
+        d['avg_net_profit_dollars'] = d['avg_net_profit'] / 100
         return d
 
 

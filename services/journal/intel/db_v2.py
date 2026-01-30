@@ -599,6 +599,21 @@ class JournalDBv2:
         finally:
             conn.close()
 
+    def _get_multiplier(self, symbol: str) -> int:
+        """Get the contract multiplier for a symbol."""
+        # Matches the user's Excel lookup
+        multipliers = {
+            'SPX': 100,
+            'NDX': 100,
+            'XSP': 100,
+            'SPY': 100,
+            'ES': 50,
+            'MES': 50,
+            'NQ': 20,
+            'MNQ': 20,
+        }
+        return multipliers.get(symbol.upper(), 100)  # Default to 100
+
     def close_trade(
         self,
         trade_id: str,
@@ -615,8 +630,11 @@ class JournalDBv2:
         if exit_time is None:
             exit_time = datetime.utcnow().isoformat()
 
-        # Calculate P&L
-        pnl = (exit_price - trade.entry_price) * trade.quantity
+        # Calculate P&L with symbol multiplier
+        # Prices are stored in cents (per-share), so:
+        # P&L = (exit - entry) * multiplier * quantity
+        multiplier = self._get_multiplier(trade.symbol)
+        pnl = (exit_price - trade.entry_price) * multiplier * trade.quantity
         r_multiple = None
         if trade.planned_risk and trade.planned_risk > 0:
             r_multiple = pnl / trade.planned_risk
