@@ -25,12 +25,15 @@
       { "bus": "market-redis", "key": "massive:vix_regime:model" },
       { "bus": "market-redis", "key": "massive:volume_profile:model" },
       { "bus": "market-redis", "key": "massive:bias_lfi:model" },
-      { "bus": "market-redis", "key": "vexy:model:playbyplay" }
+      { "bus": "market-redis", "key": "vexy:model:playbyplay" },
+      { "bus": "market-redis", "key": "copilot:mel:snapshot" },
+      { "bus": "market-redis", "key": "copilot:commentary:message" }
     ]
   },
   "dependencies": [
     "massive",
     "rss_agg",
-    "vexy_ai"
+    "vexy_ai",
+    "copilot"
   ]
 }
