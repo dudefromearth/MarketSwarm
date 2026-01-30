@@ -2003,6 +2003,160 @@ body {
   color: #f59e0b;
 }
 
+/* Alert Entry/Edit Mode */
+.alert-item.alert-entry-mode,
+.alert-item.alert-edit-mode {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 12px;
+  background: #1f1f1f;
+  border-color: #3b82f6;
+}
+
+.alert-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.alert-form-header {
+  font-size: 11px;
+  color: #888;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #333;
+}
+
+.alert-edit-form .alert-form-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.alert-edit-form select,
+.alert-edit-form input {
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #e5e5e5;
+  font-size: 11px;
+  padding: 6px 8px;
+}
+
+.alert-edit-form select:focus,
+.alert-edit-form input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.alert-edit-form .alert-value-input {
+  width: 80px;
+}
+
+.color-label {
+  font-size: 11px;
+  color: #888;
+}
+
+.color-picker-inline {
+  display: flex;
+  gap: 4px;
+}
+
+.color-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.color-dot:hover {
+  transform: scale(1.15);
+}
+
+.color-dot.selected {
+  border-color: #fff;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+}
+
+.alert-edit-form .alert-form-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 6px;
+}
+
+.btn-save-alert {
+  background: #3b82f6;
+  border: none;
+  color: white;
+  font-size: 11px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn-save-alert:hover {
+  background: #2563eb;
+}
+
+.btn-cancel-alert {
+  background: transparent;
+  border: 1px solid #444;
+  color: #888;
+  font-size: 11px;
+  padding: 6px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-cancel-alert:hover {
+  background: #2a2a2a;
+  color: #e5e5e5;
+}
+
+.btn-edit-alert {
+  background: transparent;
+  border: 1px solid #444;
+  color: #888;
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.btn-edit-alert:hover {
+  background: #333;
+  color: #e5e5e5;
+}
+
+.alert-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.alert-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-direction: row;
+}
+
+.alert-info .alert-strategy {
+  font-size: 11px;
+  color: #888;
+}
+
+.alert-info .alert-condition {
+  font-size: 12px;
+  color: #e5e5e5;
+  font-weight: 500;
+}
+
 /* Risk Graph Chart Container - Right Side */
 .risk-graph-chart-container {
   flex: 1;

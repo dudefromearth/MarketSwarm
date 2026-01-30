@@ -129,6 +129,17 @@ interface RiskGraphAlert {
   strategyLabel: string;
   // For trailing stop
   highWaterMark?: number;
+  // Visual customization
+  color: string;
+}
+
+// Draft alert for entry mode
+interface AlertDraft {
+  strategyId: string;
+  type: 'price' | 'debit' | 'profit_target' | 'trailing_stop';
+  condition: 'above' | 'below' | 'at';
+  targetValue: string;
+  color: string;
 }
 
 // Visual price alert line on risk graph
@@ -498,6 +509,8 @@ function App() {
     }
   });
   const [showAlertForm, setShowAlertForm] = useState<string | null>(null); // strategyId or null
+  const [alertDraft, setAlertDraft] = useState<AlertDraft | null>(null); // New alert being created
+  const [editingAlertId, setEditingAlertId] = useState<string | null>(null); // Alert being edited
   const [tosCopied, setTosCopied] = useState(false);
   const [crosshairPos, setCrosshairPos] = useState<{ x: number; price: number; pnl: number } | null>(null);
 
@@ -708,7 +721,7 @@ function App() {
   };
 
   // Alert management functions
-  const createAlert = (strategyId: string, type: 'price' | 'debit' | 'profit_target' | 'trailing_stop', condition: 'above' | 'below' | 'at', targetValue: number) => {
+  const createAlert = (strategyId: string, type: 'price' | 'debit' | 'profit_target' | 'trailing_stop', condition: 'above' | 'below' | 'at', targetValue: number, color: string) => {
     const strategy = riskGraphStrategies.find(s => s.id === strategyId);
     if (!strategy) return;
 
@@ -726,10 +739,38 @@ function App() {
       strategyLabel,
       // For trailing stop, initialize high water mark with current debit
       highWaterMark: type === 'trailing_stop' && strategy.debit ? strategy.debit : undefined,
+      color,
     };
 
     setRiskGraphAlerts(prev => [...prev, newAlert]);
+    setAlertDraft(null);
     setShowAlertForm(null);
+  };
+
+  const updateAlert = (alertId: string, updates: Partial<Pick<RiskGraphAlert, 'type' | 'condition' | 'targetValue' | 'color'>>) => {
+    setRiskGraphAlerts(prev => prev.map(a =>
+      a.id === alertId ? { ...a, ...updates } : a
+    ));
+    setEditingAlertId(null);
+  };
+
+  const startEditingAlert = (alertId: string) => {
+    setEditingAlertId(alertId);
+    setAlertDraft(null); // Clear any new draft
+  };
+
+  const startNewAlert = (strategyId: string) => {
+    const strategy = riskGraphStrategies.find(s => s.id === strategyId);
+    if (!strategy) return;
+
+    setAlertDraft({
+      strategyId,
+      type: 'price',
+      condition: 'below',
+      targetValue: currentSpot?.toFixed(0) || '',
+      color: ALERT_COLORS[0],
+    });
+    setEditingAlertId(null); // Clear any editing
   };
 
   const deleteAlert = (alertId: string) => {
@@ -2277,7 +2318,7 @@ function App() {
                               </button>
                               <button
                                 className="btn-alert"
-                                onClick={() => setShowAlertForm(showAlertForm === strat.id ? null : strat.id)}
+                                onClick={() => startNewAlert(strat.id)}
                                 title="Set price alert"
                               >
                                 Alert
@@ -2304,55 +2345,6 @@ function App() {
                                 Log Trade
                               </button>
                             </div>
-                            {/* Inline Alert Form */}
-                            {showAlertForm === strat.id && (
-                              <div className="alert-form">
-                                <div className="alert-form-row">
-                                  <select id={`alert-type-${strat.id}`} defaultValue="price">
-                                    <option value="price">Spot Price</option>
-                                    <option value="debit">Debit</option>
-                                    <option value="profit_target">Profit Target</option>
-                                    <option value="trailing_stop">Trailing Stop</option>
-                                  </select>
-                                  <select id={`alert-condition-${strat.id}`} defaultValue="below">
-                                    <option value="above">≥</option>
-                                    <option value="below">≤</option>
-                                    <option value="at">≈</option>
-                                  </select>
-                                  <input
-                                    type="number"
-                                    id={`alert-value-${strat.id}`}
-                                    placeholder={currentSpot?.toFixed(0) || '0'}
-                                    step="0.01"
-                                    className="alert-value-input"
-                                  />
-                                </div>
-                                <div className="alert-form-actions">
-                                  <button
-                                    className="btn-create-alert"
-                                    onClick={() => {
-                                      const typeEl = document.getElementById(`alert-type-${strat.id}`) as HTMLSelectElement;
-                                      const condEl = document.getElementById(`alert-condition-${strat.id}`) as HTMLSelectElement;
-                                      const valEl = document.getElementById(`alert-value-${strat.id}`) as HTMLInputElement;
-                                      const value = parseFloat(valEl.value);
-                                      if (!isNaN(value)) {
-                                        createAlert(
-                                          strat.id,
-                                          typeEl.value as 'price' | 'debit' | 'profit_target' | 'trailing_stop',
-                                          condEl.value as 'above' | 'below' | 'at',
-                                          value
-                                        );
-                                      }
-                                    }}
-                                  >
-                                    Create
-                                  </button>
-                                  <button className="btn-cancel-alert" onClick={() => setShowAlertForm(null)}>
-                                    Cancel
-                                  </button>
-                                </div>
-                              </div>
-                            )}
                           </div>
                         </div>
                       ))}
@@ -2368,17 +2360,92 @@ function App() {
                           </button>
                         )}
                       </div>
-                      {riskGraphAlerts.length === 0 && priceAlertLines.length === 0 ? (
-                        <div className="alerts-empty">No alerts set<br/><span className="hint">Right-click chart to add price line</span></div>
-                      ) : (
-                        <div className="alerts-list">
-                          {/* Strategy Alerts */}
-                          {riskGraphAlerts.map(alert => (
+                      <div className="alerts-list">
+                        {/* Strategy Alerts */}
+                        {riskGraphAlerts.map(alert => (
+                          editingAlertId === alert.id ? (
+                            /* Edit Mode */
+                            <div key={alert.id} className="alert-item alert-edit-mode">
+                              <div className="alert-edit-form">
+                                <div className="alert-form-row">
+                                  <select
+                                    defaultValue={alert.type}
+                                    onChange={(e) => {
+                                      const newType = e.target.value as RiskGraphAlert['type'];
+                                      setRiskGraphAlerts(prev => prev.map(a =>
+                                        a.id === alert.id ? { ...a, type: newType } : a
+                                      ));
+                                    }}
+                                  >
+                                    <option value="price">Spot Price</option>
+                                    <option value="debit">Debit</option>
+                                    <option value="profit_target">Profit Target</option>
+                                    <option value="trailing_stop">Trailing Stop</option>
+                                  </select>
+                                  <select
+                                    defaultValue={alert.condition}
+                                    onChange={(e) => {
+                                      const newCondition = e.target.value as RiskGraphAlert['condition'];
+                                      setRiskGraphAlerts(prev => prev.map(a =>
+                                        a.id === alert.id ? { ...a, condition: newCondition } : a
+                                      ));
+                                    }}
+                                  >
+                                    <option value="above">≥</option>
+                                    <option value="below">≤</option>
+                                    <option value="at">≈</option>
+                                  </select>
+                                  <input
+                                    type="number"
+                                    defaultValue={alert.targetValue}
+                                    step="0.01"
+                                    className="alert-value-input"
+                                    onChange={(e) => {
+                                      const val = parseFloat(e.target.value);
+                                      if (!isNaN(val)) {
+                                        setRiskGraphAlerts(prev => prev.map(a =>
+                                          a.id === alert.id ? { ...a, targetValue: val } : a
+                                        ));
+                                      }
+                                    }}
+                                  />
+                                </div>
+                                <div className="alert-form-row">
+                                  <span className="color-label">Color:</span>
+                                  <div className="color-picker-inline">
+                                    {ALERT_COLORS.map(color => (
+                                      <button
+                                        key={color}
+                                        className={`color-dot ${alert.color === color ? 'selected' : ''}`}
+                                        style={{ backgroundColor: color }}
+                                        onClick={() => setRiskGraphAlerts(prev => prev.map(a =>
+                                          a.id === alert.id ? { ...a, color } : a
+                                        ))}
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                                <div className="alert-form-actions">
+                                  <button className="btn-save-alert" onClick={() => setEditingAlertId(null)}>
+                                    Save
+                                  </button>
+                                  <button className="btn-cancel-alert" onClick={() => setEditingAlertId(null)}>
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            /* Display Mode */
                             <div
                               key={alert.id}
                               className={`alert-item ${alert.triggered ? 'triggered' : ''} ${!alert.enabled ? 'disabled' : ''}`}
                             >
                               <div className="alert-info">
+                                <div
+                                  className="alert-color-dot"
+                                  style={{ backgroundColor: alert.color || ALERT_COLORS[0] }}
+                                />
                                 <span className="alert-strategy">{alert.strategyLabel}</span>
                                 <span className="alert-condition">
                                   {alert.type === 'price' && `Spot ${alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} ${alert.targetValue.toFixed(0)}`}
@@ -2415,6 +2482,13 @@ function App() {
                                   </button>
                                 )}
                                 <button
+                                  className="btn-edit-alert"
+                                  onClick={() => startEditingAlert(alert.id)}
+                                  title="Edit alert"
+                                >
+                                  Edit
+                                </button>
+                                <button
                                   className={`btn-toggle-alert ${alert.enabled ? 'on' : 'off'}`}
                                   onClick={() => toggleAlert(alert.id)}
                                   title={alert.enabled ? 'Disable' : 'Enable'}
@@ -2430,43 +2504,122 @@ function App() {
                                 </button>
                               </div>
                             </div>
-                          ))}
+                          )
+                        ))}
 
-                          {/* Price Line Alerts */}
-                          {priceAlertLines.map(alert => (
-                            <div key={alert.id} className="alert-item price-line-alert">
-                              <div className="alert-info">
-                                <div
-                                  className="price-line-color"
-                                  style={{ backgroundColor: alert.color }}
-                                />
-                                <span className="alert-condition">
-                                  Price Line @ {alert.price.toFixed(0)}
-                                </span>
+                        {/* Price Line Alerts */}
+                        {priceAlertLines.map(alert => (
+                          <div key={alert.id} className="alert-item price-line-alert">
+                            <div className="alert-info">
+                              <div
+                                className="price-line-color"
+                                style={{ backgroundColor: alert.color }}
+                              />
+                              <span className="alert-condition">
+                                Price Line @ {alert.price.toFixed(0)}
+                              </span>
+                            </div>
+                            <div className="alert-actions">
+                              <div className="color-picker-inline">
+                                {ALERT_COLORS.map(color => (
+                                  <button
+                                    key={color}
+                                    className={`color-dot ${alert.color === color ? 'selected' : ''}`}
+                                    style={{ backgroundColor: color }}
+                                    onClick={() => updatePriceAlertColor(alert.id, color)}
+                                  />
+                                ))}
                               </div>
-                              <div className="alert-actions">
+                              <button
+                                className="btn-delete-alert"
+                                onClick={() => deletePriceAlertLine(alert.id)}
+                                title="Delete price line"
+                              >
+                                ×
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+
+                        {/* New Alert Entry Box */}
+                        {alertDraft && (
+                          <div className="alert-item alert-entry-mode">
+                            <div className="alert-edit-form">
+                              <div className="alert-form-header">
+                                New Alert for {riskGraphStrategies.find(s => s.id === alertDraft.strategyId)?.strategy === 'butterfly' ? 'BF' :
+                                  riskGraphStrategies.find(s => s.id === alertDraft.strategyId)?.strategy === 'vertical' ? 'VS' : 'SGL'} {
+                                  riskGraphStrategies.find(s => s.id === alertDraft.strategyId)?.strike}
+                              </div>
+                              <div className="alert-form-row">
+                                <select
+                                  value={alertDraft.type}
+                                  onChange={(e) => setAlertDraft({ ...alertDraft, type: e.target.value as AlertDraft['type'] })}
+                                >
+                                  <option value="price">Spot Price</option>
+                                  <option value="debit">Debit</option>
+                                  <option value="profit_target">Profit Target</option>
+                                  <option value="trailing_stop">Trailing Stop</option>
+                                </select>
+                                <select
+                                  value={alertDraft.condition}
+                                  onChange={(e) => setAlertDraft({ ...alertDraft, condition: e.target.value as AlertDraft['condition'] })}
+                                >
+                                  <option value="above">≥</option>
+                                  <option value="below">≤</option>
+                                  <option value="at">≈</option>
+                                </select>
+                                <input
+                                  type="number"
+                                  value={alertDraft.targetValue}
+                                  placeholder={currentSpot?.toFixed(0) || '0'}
+                                  step="0.01"
+                                  className="alert-value-input"
+                                  onChange={(e) => setAlertDraft({ ...alertDraft, targetValue: e.target.value })}
+                                />
+                              </div>
+                              <div className="alert-form-row">
+                                <span className="color-label">Color:</span>
                                 <div className="color-picker-inline">
                                   {ALERT_COLORS.map(color => (
                                     <button
                                       key={color}
-                                      className={`color-dot ${alert.color === color ? 'selected' : ''}`}
+                                      className={`color-dot ${alertDraft.color === color ? 'selected' : ''}`}
                                       style={{ backgroundColor: color }}
-                                      onClick={() => updatePriceAlertColor(alert.id, color)}
+                                      onClick={() => setAlertDraft({ ...alertDraft, color })}
                                     />
                                   ))}
                                 </div>
+                              </div>
+                              <div className="alert-form-actions">
                                 <button
-                                  className="btn-delete-alert"
-                                  onClick={() => deletePriceAlertLine(alert.id)}
-                                  title="Delete price line"
+                                  className="btn-save-alert"
+                                  onClick={() => {
+                                    const value = parseFloat(alertDraft.targetValue);
+                                    if (!isNaN(value)) {
+                                      createAlert(
+                                        alertDraft.strategyId,
+                                        alertDraft.type,
+                                        alertDraft.condition,
+                                        value,
+                                        alertDraft.color
+                                      );
+                                    }
+                                  }}
                                 >
-                                  ×
+                                  Save
+                                </button>
+                                <button className="btn-cancel-alert" onClick={() => setAlertDraft(null)}>
+                                  Cancel
                                 </button>
                               </div>
                             </div>
-                          ))}
-                        </div>
-                      )}
+                          </div>
+                        )}
+
+                        {riskGraphAlerts.length === 0 && priceAlertLines.length === 0 && !alertDraft && (
+                          <div className="alerts-empty">No alerts set<br/><span className="hint">Click Alert on a strategy or right-click chart</span></div>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -2648,6 +2801,98 @@ function App() {
                             {alert.price.toFixed(0)}
                           </text>
                         </g>
+                      </g>
+                    );
+                  })}
+
+                  {/* Strategy alert lines */}
+                  {riskGraphAlerts.filter(a => a.enabled && a.type === 'price').map((alert) => {
+                    const x = 50 + ((alert.targetValue - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
+                    const isInView = alert.targetValue >= riskGraphData.minPrice && alert.targetValue <= riskGraphData.maxPrice;
+
+                    if (!isInView) return null;
+
+                    return (
+                      <g key={alert.id} className="strategy-alert-line">
+                        {/* Target line - solid */}
+                        <line
+                          x1={x}
+                          y1="20"
+                          x2={x}
+                          y2="280"
+                          stroke={alert.color || ALERT_COLORS[0]}
+                          strokeWidth="2"
+                        />
+                        {/* Label at top */}
+                        <g transform={`translate(${x}, 15)`}>
+                          <rect
+                            x="-22"
+                            y="-10"
+                            width="44"
+                            height="14"
+                            fill={alert.color || ALERT_COLORS[0]}
+                            rx="2"
+                          />
+                          <text
+                            x="0"
+                            y="1"
+                            textAnchor="middle"
+                            fill="#fff"
+                            fontSize="9"
+                            fontWeight="bold"
+                          >
+                            {alert.targetValue.toFixed(0)}
+                          </text>
+                        </g>
+                      </g>
+                    );
+                  })}
+
+                  {/* Trailing stop alert lines (target solid, trail dashed) */}
+                  {riskGraphAlerts.filter(a => a.enabled && a.type === 'trailing_stop' && a.highWaterMark).map((alert) => {
+                    const trailPrice = alert.highWaterMark! - alert.targetValue;
+                    const targetX = 50 + ((alert.highWaterMark! - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
+                    const trailX = 50 + ((trailPrice - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
+                    const targetInView = alert.highWaterMark! >= riskGraphData.minPrice && alert.highWaterMark! <= riskGraphData.maxPrice;
+                    const trailInView = trailPrice >= riskGraphData.minPrice && trailPrice <= riskGraphData.maxPrice;
+
+                    return (
+                      <g key={alert.id} className="trailing-stop-lines">
+                        {/* High water mark - solid line */}
+                        {targetInView && (
+                          <>
+                            <line
+                              x1={targetX}
+                              y1="20"
+                              x2={targetX}
+                              y2="280"
+                              stroke={alert.color || ALERT_COLORS[0]}
+                              strokeWidth="2"
+                            />
+                            <g transform={`translate(${targetX}, 15)`}>
+                              <rect x="-16" y="-10" width="32" height="14" fill={alert.color || ALERT_COLORS[0]} rx="2" />
+                              <text x="0" y="1" textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold">HWM</text>
+                            </g>
+                          </>
+                        )}
+                        {/* Trail stop - dashed line */}
+                        {trailInView && (
+                          <>
+                            <line
+                              x1={trailX}
+                              y1="20"
+                              x2={trailX}
+                              y2="280"
+                              stroke={alert.color || ALERT_COLORS[0]}
+                              strokeWidth="2"
+                              strokeDasharray="6,4"
+                            />
+                            <g transform={`translate(${trailX}, 15)`}>
+                              <rect x="-18" y="-10" width="36" height="14" fill={alert.color || ALERT_COLORS[0]} rx="2" opacity="0.8" />
+                              <text x="0" y="1" textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold">STOP</text>
+                            </g>
+                          </>
+                        )}
                       </g>
                     );
                   })}
