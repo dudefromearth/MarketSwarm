@@ -79,6 +79,15 @@ interface DrawdownPoint {
   current: number;
 }
 
+interface DistributionBin {
+  bin_start: number;
+  bin_start_dollars: number;
+  bin_end: number;
+  bin_end_dollars: number;
+  count: number;
+  is_zero: boolean;
+}
+
 interface ReportingViewProps {
   logId: string;
   logName: string;
@@ -96,21 +105,24 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
   const [analytics, setAnalytics] = useState<LogAnalytics | null>(null);
   const [equityData, setEquityData] = useState<EquityPoint[]>([]);
   const [drawdownData, setDrawdownData] = useState<DrawdownPoint[]>([]);
+  const [distributionData, setDistributionData] = useState<DistributionBin[]>([]);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<TimeRange>('ALL');
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [analyticsRes, equityRes, drawdownRes] = await Promise.all([
+      const [analyticsRes, equityRes, drawdownRes, distributionRes] = await Promise.all([
         fetch(`${JOURNAL_API}/api/logs/${logId}/analytics`),
         fetch(`${JOURNAL_API}/api/logs/${logId}/equity`),
-        fetch(`${JOURNAL_API}/api/logs/${logId}/drawdown`)
+        fetch(`${JOURNAL_API}/api/logs/${logId}/drawdown`),
+        fetch(`${JOURNAL_API}/api/logs/${logId}/distribution?bin_size=50`)
       ]);
 
       const analyticsData = await analyticsRes.json();
       const equityDataRes = await equityRes.json();
       const drawdownDataRes = await drawdownRes.json();
+      const distributionDataRes = await distributionRes.json();
 
       if (analyticsData.success) {
         setAnalytics(analyticsData.data);
@@ -122,6 +134,10 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
 
       if (drawdownDataRes.success) {
         setDrawdownData(drawdownDataRes.data.drawdown || []);
+      }
+
+      if (distributionDataRes.success) {
+        setDistributionData(distributionDataRes.data.distribution || []);
       }
     } catch (err) {
       console.error('ReportingView fetch error:', err);
@@ -374,6 +390,41 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
               <div className="chart-container drawdown-chart" ref={drawdownChartRef} />
             </div>
           </div>
+
+          {distributionData.length > 0 && (
+            <div className="distribution-section">
+              <h4>Return Distribution</h4>
+              <div className="distribution-chart">
+                {(() => {
+                  const maxCount = Math.max(...distributionData.map(b => b.count));
+                  return (
+                    <div className="distribution-bars">
+                      {distributionData.map((bin, idx) => (
+                        <div
+                          key={idx}
+                          className={`distribution-bar ${bin.is_zero ? 'zero-bin' : ''} ${bin.bin_start_dollars < 0 ? 'loss' : 'profit'}`}
+                          style={{ height: `${(bin.count / maxCount) * 100}%` }}
+                          title={`$${bin.bin_start_dollars} to $${bin.bin_end_dollars}: ${bin.count} trades`}
+                        />
+                      ))}
+                    </div>
+                  );
+                })()}
+                <div className="distribution-axis">
+                  <span className="axis-label left">
+                    ${distributionData[0]?.bin_start_dollars || 0}
+                  </span>
+                  <span className="axis-label center">$0</span>
+                  <span className="axis-label right">
+                    ${distributionData[distributionData.length - 1]?.bin_end_dollars || 0}
+                  </span>
+                </div>
+              </div>
+              <p className="distribution-hint">
+                Right-skewed distribution with fat tail = convexity edge
+              </p>
+            </div>
+          )}
 
           <div className="reporting-stats">
             <div className="stats-section">

@@ -471,6 +471,29 @@ class JournalOrchestrator:
             self.logger.error(f"get_log_drawdown error: {e}")
             return self._error_response(str(e), 500)
 
+    async def get_return_distribution(self, request: web.Request) -> web.Response:
+        """GET /api/logs/:logId/distribution - Get return distribution histogram for a log."""
+        try:
+            log_id = request.match_info['logId']
+            params = request.query
+
+            # Bin size in dollars (default $50)
+            bin_size_dollars = int(params.get('bin_size', 50))
+            bin_size_cents = bin_size_dollars * 100
+
+            distribution = self.analytics.get_return_distribution(log_id, bin_size_cents)
+
+            return self._json_response({
+                'success': True,
+                'data': {
+                    'distribution': distribution,
+                    'bin_size_dollars': bin_size_dollars
+                }
+            })
+        except Exception as e:
+            self.logger.error(f"get_return_distribution error: {e}")
+            return self._error_response(str(e), 500)
+
     # ==================== Legacy Endpoints (for backwards compatibility) ====================
 
     async def legacy_list_trades(self, request: web.Request) -> web.Response:
@@ -618,6 +641,7 @@ class JournalOrchestrator:
         app.router.add_get('/api/logs/{logId}/analytics', self.get_log_analytics)
         app.router.add_get('/api/logs/{logId}/equity', self.get_log_equity)
         app.router.add_get('/api/logs/{logId}/drawdown', self.get_log_drawdown)
+        app.router.add_get('/api/logs/{logId}/distribution', self.get_return_distribution)
 
         # Legacy endpoints (backwards compatibility)
         app.router.add_get('/api/trades', self.legacy_list_trades)

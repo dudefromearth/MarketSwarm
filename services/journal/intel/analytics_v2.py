@@ -392,6 +392,57 @@ class AnalyticsV2:
             'by_day': by_day
         }
 
+    def get_return_distribution(
+        self,
+        log_id: str,
+        bin_size: int = 5000  # cents ($50 bins by default)
+    ) -> List[Dict[str, Any]]:
+        """
+        Calculate return distribution histogram for a log.
+        Returns bins with count of trades in each P&L range.
+        This shows the skewness and tail characteristics important for convexity traders.
+        """
+        trades = self.db.list_trades(log_id=log_id, status='closed', limit=10000)
+        if not trades:
+            return []
+
+        # Collect all P&L values
+        pnl_values = [t.pnl for t in trades if t.pnl is not None]
+        if not pnl_values:
+            return []
+
+        # Find range
+        min_pnl = min(pnl_values)
+        max_pnl = max(pnl_values)
+
+        # Create bins from min to max
+        # Round min down and max up to nearest bin_size
+        bin_start = (min_pnl // bin_size) * bin_size
+        bin_end = ((max_pnl // bin_size) + 1) * bin_size
+
+        # Count trades in each bin
+        bins: Dict[int, int] = {}
+        for pnl in pnl_values:
+            bin_key = (pnl // bin_size) * bin_size
+            bins[bin_key] = bins.get(bin_key, 0) + 1
+
+        # Convert to list sorted by bin value
+        result = []
+        current = bin_start
+        while current <= bin_end:
+            count = bins.get(current, 0)
+            result.append({
+                'bin_start': current,
+                'bin_start_dollars': current / 100,
+                'bin_end': current + bin_size,
+                'bin_end_dollars': (current + bin_size) / 100,
+                'count': count,
+                'is_zero': current <= 0 < current + bin_size  # marks the zero crossing bin
+            })
+            current += bin_size
+
+        return result
+
     def get_r_multiple_distribution(
         self,
         log_id: str
