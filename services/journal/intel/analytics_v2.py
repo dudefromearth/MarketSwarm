@@ -3,9 +3,32 @@
 
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+from decimal import Decimal
 
 from .models_v2 import LogAnalytics, EquityPoint, DrawdownPoint
 from .db_v2 import JournalDBv2
+
+
+def to_int(val) -> int:
+    """Convert Decimal/string to int safely."""
+    if val is None:
+        return 0
+    if isinstance(val, Decimal):
+        return int(val)
+    if isinstance(val, str):
+        return int(float(val))
+    return int(val)
+
+
+def to_float(val) -> float:
+    """Convert Decimal/string to float safely."""
+    if val is None:
+        return 0.0
+    if isinstance(val, Decimal):
+        return float(val)
+    if isinstance(val, str):
+        return float(val)
+    return float(val)
 
 
 class AnalyticsV2:
@@ -53,34 +76,34 @@ class AnalyticsV2:
                 analytics.span_days = 0
 
         # 2. Capital & Returns
-        analytics.net_profit = stats['total_pnl']
+        analytics.net_profit = to_int(stats['total_pnl'])
         analytics.current_equity = log.starting_capital + analytics.net_profit
         if log.starting_capital > 0:
             analytics.total_return_percent = (analytics.net_profit / log.starting_capital) * 100
 
         # 3. Win/Loss Distribution
-        analytics.open_trades = stats['open_trades']
-        analytics.closed_trades = stats['closed_trades']
-        analytics.winners = stats['winners']
-        analytics.losers = stats['losers']
-        analytics.breakeven = stats['breakeven']
+        analytics.open_trades = to_int(stats['open_trades'])
+        analytics.closed_trades = to_int(stats['closed_trades'])
+        analytics.winners = to_int(stats['winners'])
+        analytics.losers = to_int(stats['losers'])
+        analytics.breakeven = to_int(stats['breakeven'])
 
         if analytics.closed_trades > 0:
             analytics.win_rate = (analytics.winners / analytics.closed_trades) * 100
 
-        analytics.avg_win = int(stats['avg_win']) if stats['avg_win'] else 0
-        analytics.avg_loss = int(stats['avg_loss']) if stats['avg_loss'] else 0
+        analytics.avg_win = to_int(stats['avg_win'])
+        analytics.avg_loss = to_int(stats['avg_loss'])
 
         if analytics.avg_loss and analytics.avg_loss != 0:
             analytics.win_loss_ratio = abs(analytics.avg_win / analytics.avg_loss)
 
         # 4. Risk & Asymmetry
-        analytics.avg_risk = int(stats['avg_risk']) if stats['avg_risk'] else 0
-        analytics.largest_win = stats['largest_win']
-        analytics.largest_loss = stats['largest_loss']
+        analytics.avg_risk = to_int(stats['avg_risk'])
+        analytics.largest_win = to_int(stats['largest_win'])
+        analytics.largest_loss = to_int(stats['largest_loss'])
 
-        gross_profit = stats['gross_profit']
-        gross_loss = stats['gross_loss']
+        gross_profit = to_int(stats['gross_profit'])
+        gross_loss = to_int(stats['gross_loss'])
 
         # Store gross profit/loss
         analytics.gross_profit = gross_profit
@@ -99,7 +122,7 @@ class AnalyticsV2:
         if gross_loss > 0:
             analytics.profit_factor = gross_profit / gross_loss
 
-        analytics.avg_r_multiple = stats['avg_r_multiple'] or 0
+        analytics.avg_r_multiple = to_float(stats['avg_r_multiple'])
 
         # Calculate max drawdown from equity curve
         analytics.max_drawdown_pct = self._calculate_max_drawdown(log_id, log.starting_capital)
