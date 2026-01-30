@@ -389,15 +389,17 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
     };
   }, [loading, drawdownData, timeRange]);
 
-  const formatCurrency = (cents: number) => {
+  const _formatCurrency = (cents: number) => {
     const dollars = cents / 100;
     const formatted = Math.abs(dollars).toFixed(2);
     return dollars >= 0 ? `+$${formatted}` : `-$${formatted}`;
   };
+  void _formatCurrency; // Available for future use
 
-  const formatPercent = (value: number) => {
+  const _formatPercent = (value: number) => {
     return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
   };
+  void _formatPercent; // Available for future use
 
   return (
     <div className="reporting-view">

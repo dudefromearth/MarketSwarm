@@ -106,6 +106,20 @@ interface RiskGraphStrategy extends SelectedStrategy {
   visible: boolean;
 }
 
+interface RiskGraphAlert {
+  id: string;
+  strategyId: string;
+  type: 'price' | 'debit';
+  condition: 'above' | 'below' | 'at';
+  targetValue: number;
+  enabled: boolean;
+  triggered: boolean;
+  triggeredAt?: number;
+  createdAt: number;
+  // Snapshot of strategy info for display
+  strategyLabel: string;
+}
+
 // Gaussian smoothing for volume profile
 function gaussianSmooth(data: number[], kernelSize: number = 5): number[] {
   if (data.length === 0) return data;
@@ -437,6 +451,15 @@ function App() {
       return [];
     }
   });
+  const [riskGraphAlerts, setRiskGraphAlerts] = useState<RiskGraphAlert[]>(() => {
+    try {
+      const saved = localStorage.getItem('riskGraphAlerts');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showAlertForm, setShowAlertForm] = useState<string | null>(null); // strategyId or null
   const [tosCopied, setTosCopied] = useState(false);
   const [crosshairPos, setCrosshairPos] = useState<{ x: number; price: number; pnl: number } | null>(null);
 
@@ -587,6 +610,54 @@ function App() {
   useEffect(() => {
     localStorage.setItem('riskGraphStrategies', JSON.stringify(riskGraphStrategies));
   }, [riskGraphStrategies]);
+
+  // Persist risk graph alerts to localStorage
+  useEffect(() => {
+    localStorage.setItem('riskGraphAlerts', JSON.stringify(riskGraphAlerts));
+  }, [riskGraphAlerts]);
+
+  // Alert management functions
+  const createAlert = (strategyId: string, type: 'price' | 'debit', condition: 'above' | 'below' | 'at', targetValue: number) => {
+    const strategy = riskGraphStrategies.find(s => s.id === strategyId);
+    if (!strategy) return;
+
+    const strategyLabel = `${strategy.strategy === 'butterfly' ? 'BF' : strategy.strategy === 'vertical' ? 'VS' : 'SGL'} ${strategy.strike}${strategy.width > 0 ? '/' + strategy.width : ''} ${strategy.side.charAt(0).toUpperCase()}`;
+
+    const newAlert: RiskGraphAlert = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      strategyId,
+      type,
+      condition,
+      targetValue,
+      enabled: true,
+      triggered: false,
+      createdAt: Date.now(),
+      strategyLabel,
+    };
+
+    setRiskGraphAlerts(prev => [...prev, newAlert]);
+    setShowAlertForm(null);
+  };
+
+  const deleteAlert = (alertId: string) => {
+    setRiskGraphAlerts(prev => prev.filter(a => a.id !== alertId));
+  };
+
+  const toggleAlert = (alertId: string) => {
+    setRiskGraphAlerts(prev => prev.map(a =>
+      a.id === alertId ? { ...a, enabled: !a.enabled } : a
+    ));
+  };
+
+  const dismissAlert = (alertId: string) => {
+    setRiskGraphAlerts(prev => prev.map(a =>
+      a.id === alertId ? { ...a, triggered: false } : a
+    ));
+  };
+
+  const clearTriggeredAlerts = () => {
+    setRiskGraphAlerts(prev => prev.map(a => ({ ...a, triggered: false })));
+  };
 
   // Update strategy debit (for when actual fill differs from quoted price)
   const updateStrategyDebit = (id: string, newDebit: number | null) => {
@@ -1165,6 +1236,64 @@ function App() {
   }, [underlying, spot?.[underlying]?.value]);
 
   const currentSpot = spot?.[underlying]?.value || null;
+
+  // Check alerts against current spot price
+  useEffect(() => {
+    if (!currentSpot) return;
+
+    setRiskGraphAlerts(prev => {
+      let hasChanges = false;
+      const updated = prev.map(alert => {
+        if (!alert.enabled || alert.triggered) return alert;
+
+        let shouldTrigger = false;
+
+        if (alert.type === 'price') {
+          switch (alert.condition) {
+            case 'above':
+              shouldTrigger = currentSpot >= alert.targetValue;
+              break;
+            case 'below':
+              shouldTrigger = currentSpot <= alert.targetValue;
+              break;
+            case 'at':
+              shouldTrigger = Math.abs(currentSpot - alert.targetValue) < 1;
+              break;
+          }
+        } else if (alert.type === 'debit') {
+          const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
+          if (strategy && strategy.debit !== null) {
+            switch (alert.condition) {
+              case 'above':
+                shouldTrigger = strategy.debit >= alert.targetValue;
+                break;
+              case 'below':
+                shouldTrigger = strategy.debit <= alert.targetValue;
+                break;
+              case 'at':
+                shouldTrigger = Math.abs(strategy.debit - alert.targetValue) < 0.05;
+                break;
+            }
+          }
+        }
+
+        if (shouldTrigger) {
+          hasChanges = true;
+          // Play alert sound
+          try {
+            const audio = new Audio('data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleQA6s+DZpGgLJJPo7bN1');
+            audio.volume = 0.3;
+            audio.play().catch(() => {});
+          } catch {}
+          return { ...alert, triggered: true, triggeredAt: Date.now() };
+        }
+        return alert;
+      });
+
+      return hasChanges ? updated : prev;
+    });
+  }, [currentSpot, riskGraphStrategies]);
+
   const widths = WIDTHS[underlying][strategy];
 
   // Process data for the grid view - all widths as columns
@@ -1945,69 +2074,200 @@ function App() {
                 </div>
               ) : (
                 <div className="risk-graph-content">
-                  {/* Strategy List - Left Side */}
-                  <div className="risk-graph-strategies">
-                    {riskGraphStrategies.map(strat => (
-                      <div key={strat.id} className={`risk-graph-strategy-item ${!strat.visible ? 'hidden-strategy' : ''}`}>
-                        <div className="strategy-content">
-                          <div className="strategy-row-top">
-                            <span className="strategy-type">
-                              {strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL'}
-                            </span>
-                            <span className="strategy-strike">
-                              {strat.strike}{strat.width > 0 ? `/${strat.width}` : ''}
-                            </span>
-                            <span className={`strategy-side ${strat.side}`}>
-                              {strat.side}
-                            </span>
-                            <span className="strategy-dte">{strat.dte} DTE</span>
-                            <span className="strategy-debit">
-                              $<input
-                                type="number"
-                                className="debit-input"
-                                value={strat.debit !== null ? strat.debit.toFixed(2) : ''}
-                                step="0.01"
-                                min="0"
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  updateStrategyDebit(strat.id, isNaN(val) ? null : val);
+                  {/* Strategy & Alerts Column - Left Side */}
+                  <div className="risk-graph-left-column">
+                    {/* Strategy List */}
+                    <div className="risk-graph-strategies">
+                      <div className="section-header">Strategies</div>
+                      {riskGraphStrategies.map(strat => (
+                        <div key={strat.id} className={`risk-graph-strategy-item ${!strat.visible ? 'hidden-strategy' : ''}`}>
+                          <div className="strategy-content">
+                            <div className="strategy-row-top">
+                              <span className="strategy-type">
+                                {strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL'}
+                              </span>
+                              <span className="strategy-strike">
+                                {strat.strike}{strat.width > 0 ? `/${strat.width}` : ''}
+                              </span>
+                              <span className={`strategy-side ${strat.side}`}>
+                                {strat.side}
+                              </span>
+                              <span className="strategy-dte">{strat.dte} DTE</span>
+                              <span className="strategy-debit">
+                                $<input
+                                  type="number"
+                                  className="debit-input"
+                                  value={strat.debit !== null ? strat.debit.toFixed(2) : ''}
+                                  step="0.01"
+                                  min="0"
+                                  onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    updateStrategyDebit(strat.id, isNaN(val) ? null : val);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </span>
+                            </div>
+                            <div className="strategy-row-bottom">
+                              <button
+                                className={`btn-toggle-visibility ${strat.visible ? 'visible' : 'hidden'}`}
+                                onClick={() => toggleStrategyVisibility(strat.id)}
+                              >
+                                {strat.visible ? 'Hide' : 'Show'}
+                              </button>
+                              <button
+                                className="btn-alert"
+                                onClick={() => setShowAlertForm(showAlertForm === strat.id ? null : strat.id)}
+                                title="Set price alert"
+                              >
+                                Alert
+                              </button>
+                              <button className="btn-remove" onClick={() => removeFromRiskGraph(strat.id)}>Remove</button>
+                              <button
+                                className="btn-log-trade"
+                                onClick={() => {
+                                  openTradeEntry({
+                                    symbol: underlying === 'I:SPX' ? 'SPX' : 'NDX',
+                                    underlying,
+                                    strategy: strat.strategy as 'single' | 'vertical' | 'butterfly',
+                                    side: strat.side as 'call' | 'put',
+                                    strike: strat.strike,
+                                    width: strat.width,
+                                    dte: strat.dte,
+                                    entry_price: strat.debit || undefined,
+                                    entry_spot: currentSpot || undefined,
+                                    source: 'risk_graph'
+                                  });
                                 }}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </span>
-                          </div>
-                          <div className="strategy-row-bottom">
-                            <button
-                              className={`btn-toggle-visibility ${strat.visible ? 'visible' : 'hidden'}`}
-                              onClick={() => toggleStrategyVisibility(strat.id)}
-                            >
-                              {strat.visible ? 'Hide' : 'Show'}
-                            </button>
-                            <button className="btn-remove" onClick={() => removeFromRiskGraph(strat.id)}>Remove</button>
-                            <button
-                              className="btn-log-trade"
-                              onClick={() => {
-                                openTradeEntry({
-                                  symbol: underlying === 'I:SPX' ? 'SPX' : 'NDX',
-                                  underlying,
-                                  strategy: strat.strategy as 'single' | 'vertical' | 'butterfly',
-                                  side: strat.side as 'call' | 'put',
-                                  strike: strat.strike,
-                                  width: strat.width,
-                                  dte: strat.dte,
-                                  entry_price: strat.debit || undefined,
-                                  entry_spot: currentSpot || undefined,
-                                  source: 'risk_graph'
-                                });
-                              }}
-                              title="Log this trade"
-                            >
-                              Log Trade
-                            </button>
+                                title="Log this trade"
+                              >
+                                Log Trade
+                              </button>
+                            </div>
+                            {/* Inline Alert Form */}
+                            {showAlertForm === strat.id && (
+                              <div className="alert-form">
+                                <div className="alert-form-row">
+                                  <select id={`alert-type-${strat.id}`} defaultValue="price">
+                                    <option value="price">Spot Price</option>
+                                    <option value="debit">Debit</option>
+                                  </select>
+                                  <select id={`alert-condition-${strat.id}`} defaultValue="below">
+                                    <option value="above">≥</option>
+                                    <option value="below">≤</option>
+                                    <option value="at">≈</option>
+                                  </select>
+                                  <input
+                                    type="number"
+                                    id={`alert-value-${strat.id}`}
+                                    placeholder={currentSpot?.toFixed(0) || '0'}
+                                    step="1"
+                                    className="alert-value-input"
+                                  />
+                                </div>
+                                <div className="alert-form-actions">
+                                  <button
+                                    className="btn-create-alert"
+                                    onClick={() => {
+                                      const typeEl = document.getElementById(`alert-type-${strat.id}`) as HTMLSelectElement;
+                                      const condEl = document.getElementById(`alert-condition-${strat.id}`) as HTMLSelectElement;
+                                      const valEl = document.getElementById(`alert-value-${strat.id}`) as HTMLInputElement;
+                                      const value = parseFloat(valEl.value);
+                                      if (!isNaN(value)) {
+                                        createAlert(
+                                          strat.id,
+                                          typeEl.value as 'price' | 'debit',
+                                          condEl.value as 'above' | 'below' | 'at',
+                                          value
+                                        );
+                                      }
+                                    }}
+                                  >
+                                    Create
+                                  </button>
+                                  <button className="btn-cancel-alert" onClick={() => setShowAlertForm(null)}>
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
+                      ))}
+                    </div>
+
+                    {/* Alerts Section */}
+                    <div className="risk-graph-alerts">
+                      <div className="section-header">
+                        Alerts
+                        {riskGraphAlerts.filter(a => a.triggered).length > 0 && (
+                          <button className="btn-clear-triggered" onClick={clearTriggeredAlerts}>
+                            Clear
+                          </button>
+                        )}
                       </div>
-                    ))}
+                      {riskGraphAlerts.length === 0 ? (
+                        <div className="alerts-empty">No alerts set</div>
+                      ) : (
+                        <div className="alerts-list">
+                          {riskGraphAlerts.map(alert => (
+                            <div
+                              key={alert.id}
+                              className={`alert-item ${alert.triggered ? 'triggered' : ''} ${!alert.enabled ? 'disabled' : ''}`}
+                            >
+                              <div className="alert-info">
+                                <span className="alert-strategy">{alert.strategyLabel}</span>
+                                <span className="alert-condition">
+                                  {alert.type === 'price' ? 'Spot' : 'Debit'} {alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} {alert.type === 'price' ? alert.targetValue.toFixed(0) : '$' + alert.targetValue.toFixed(2)}
+                                </span>
+                              </div>
+                              <div className="alert-actions">
+                                {alert.triggered && (
+                                  <button
+                                    className="btn-alert-action"
+                                    onClick={() => {
+                                      const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
+                                      if (strategy) {
+                                        openTradeEntry({
+                                          symbol: underlying === 'I:SPX' ? 'SPX' : 'NDX',
+                                          underlying,
+                                          strategy: strategy.strategy as 'single' | 'vertical' | 'butterfly',
+                                          side: strategy.side as 'call' | 'put',
+                                          strike: strategy.strike,
+                                          width: strategy.width,
+                                          dte: strategy.dte,
+                                          entry_price: strategy.debit || undefined,
+                                          entry_spot: currentSpot || undefined,
+                                          source: 'risk_graph'
+                                        });
+                                      }
+                                      dismissAlert(alert.id);
+                                    }}
+                                    title="Log trade"
+                                  >
+                                    Log
+                                  </button>
+                                )}
+                                <button
+                                  className={`btn-toggle-alert ${alert.enabled ? 'on' : 'off'}`}
+                                  onClick={() => toggleAlert(alert.id)}
+                                  title={alert.enabled ? 'Disable' : 'Enable'}
+                                >
+                                  {alert.enabled ? 'On' : 'Off'}
+                                </button>
+                                <button
+                                  className="btn-delete-alert"
+                                  onClick={() => deleteAlert(alert.id)}
+                                  title="Delete alert"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   {/* P&L Chart - Right Side */}

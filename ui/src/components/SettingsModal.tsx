@@ -16,7 +16,7 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-type SettingsTab = 'symbols' | 'trading' | 'user' | 'display';
+type SettingsTab = 'symbols' | 'trading' | 'user' | 'display' | 'alerts';
 type AssetTypeFilter = 'all' | 'index_option' | 'etf_option' | 'future' | 'stock';
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
@@ -201,6 +201,12 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             onClick={() => setActiveTab('display')}
           >
             Display
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'alerts' ? 'active' : ''}`}
+            onClick={() => setActiveTab('alerts')}
+          >
+            Alerts
           </button>
         </div>
 
@@ -486,6 +492,91 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                         <option value="ALL">All Time</option>
                       </select>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {activeTab === 'alerts' && (
+                <div className="settings-alerts">
+                  <div className="settings-group">
+                    <h4>Alert Delivery</h4>
+                    <div className="setting-item">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={userSettings.alerts_sound !== false}
+                          onChange={e => handleSaveSetting('alerts_sound', e.target.checked, 'user')}
+                        />
+                        Sound Alerts
+                      </label>
+                      <span className="setting-hint">Play audio when alerts trigger</span>
+                    </div>
+                    <div className="setting-item">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={userSettings.alerts_browser === true}
+                          onChange={e => {
+                            if (e.target.checked && 'Notification' in window) {
+                              Notification.requestPermission().then(permission => {
+                                handleSaveSetting('alerts_browser', permission === 'granted', 'user');
+                              });
+                            } else {
+                              handleSaveSetting('alerts_browser', false, 'user');
+                            }
+                          }}
+                        />
+                        Browser Notifications
+                      </label>
+                      <span className="setting-hint">Show system notifications (requires permission)</span>
+                    </div>
+                    <div className="setting-item">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={userSettings.alerts_visual !== false}
+                          onChange={e => handleSaveSetting('alerts_visual', e.target.checked, 'user')}
+                        />
+                        Visual Alerts
+                      </label>
+                      <span className="setting-hint">Flash/highlight triggered alerts in UI</span>
+                    </div>
+                  </div>
+
+                  <div className="settings-group">
+                    <h4>Strategy Alerts</h4>
+                    <div className="setting-item">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={userSettings.alerts_strategy_price !== false}
+                          onChange={e => handleSaveSetting('alerts_strategy_price', e.target.checked, 'user')}
+                        />
+                        Price Alerts
+                      </label>
+                      <span className="setting-hint">Alert when spot reaches target price</span>
+                    </div>
+                    <div className="setting-item">
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={userSettings.alerts_strategy_debit !== false}
+                          onChange={e => handleSaveSetting('alerts_strategy_debit', e.target.checked, 'user')}
+                        />
+                        Debit Alerts
+                      </label>
+                      <span className="setting-hint">Alert when debit reaches target</span>
+                    </div>
+                  </div>
+
+                  <div className="settings-group">
+                    <h4>Trade Log Alerts</h4>
+                    <p className="setting-hint">Coming soon: Profit target, stop loss, and time-based alerts for open positions</p>
+                  </div>
+
+                  <div className="settings-group">
+                    <h4>Routine Alerts</h4>
+                    <p className="setting-hint">Coming soon: Daily logging reminders, weekly reviews, and journaling prompts</p>
                   </div>
                 </div>
               )}
