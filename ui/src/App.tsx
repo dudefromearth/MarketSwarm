@@ -10,7 +10,6 @@ import type { Trade } from './components/TradeLogPanel';
 import type { TradeLog } from './components/LogSelector';
 import TradeEntryModal from './components/TradeEntryModal';
 import type { TradeEntryData } from './components/TradeEntryModal';
-import EquityChartWidget from './components/EquityChartWidget';
 import LogManagerModal from './components/LogManagerModal';
 import TradeDetailModal from './components/TradeDetailModal';
 import ReportingView from './components/ReportingView';
@@ -2578,7 +2577,6 @@ function App() {
               <div className="trade-log-overlay-content">
               {!tradeLogCollapsed && (
                 <>
-                  <EquityChartWidget refreshTrigger={tradeRefreshTrigger} />
                   <TradeLogPanel
                     onOpenTradeEntry={openTradeEntry}
                     onEditTrade={openTradeEdit}
