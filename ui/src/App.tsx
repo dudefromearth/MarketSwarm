@@ -1425,7 +1425,32 @@ function App() {
   useEffect(() => {
     console.log('Alert useEffect running:', { currentSpot, alertCount: riskGraphAlerts.length });
     console.log('All alerts:', riskGraphAlerts.map(a => ({ id: a.id, type: a.type, enabled: a.enabled, strategyId: a.strategyId })));
+    console.log('All strategies:', riskGraphStrategies.map(s => ({ id: s.id, strategy: s.strategy, debit: s.debit })));
     if (!currentSpot) return;
+
+    // Process AI alerts directly here instead of inside setRiskGraphAlerts
+    const aiAlert = riskGraphAlerts.find(a => a.type === 'ai_theta_gamma' && a.enabled);
+    if (aiAlert) {
+      const strategy = riskGraphStrategies.find(s => s.id === aiAlert.strategyId);
+      const vix = spot?.['I:VIX']?.value || 20;
+      const volatility = vix / 100;
+      const entryDebit = aiAlert.entryDebit || strategy?.debit || 1;
+      const theoreticalPnL = strategy ? calculateStrategyTheoreticalPnL(strategy, currentSpot, volatility) : 0;
+      const currentProfit = theoreticalPnL / 100;
+      const profitPercent = entryDebit > 0 ? currentProfit / entryDebit : 0;
+      console.log('AI Alert calculation:', {
+        strategyFound: !!strategy,
+        strategyDebit: strategy?.debit,
+        alertEntryDebit: aiAlert.entryDebit,
+        entryDebit,
+        vix,
+        theoreticalPnL,
+        currentProfit,
+        profitPercent: (profitPercent * 100).toFixed(1) + '%',
+        threshold: ((aiAlert.minProfitThreshold || 0.5) * 100) + '%',
+        thresholdMet: profitPercent >= (aiAlert.minProfitThreshold || 0.5)
+      });
+    }
 
     let alertsToRemove: string[] = [];
 
