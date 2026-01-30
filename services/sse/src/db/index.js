@@ -2,6 +2,7 @@
 // MySQL database connection and initialization
 
 import mysql from "mysql2/promise";
+import { getConfig } from "../config.js";
 
 let pool = null;
 
@@ -32,9 +33,11 @@ function parseDbUrl(url) {
 
 /**
  * Initialize database connection pool
+ * Gets DATABASE_URL from truth config
  */
 export async function initDb() {
-  const dbUrl = process.env.DATABASE_URL;
+  const appConfig = getConfig();
+  const dbUrl = appConfig?.env?.DATABASE_URL || "";
 
   if (!dbUrl) {
     console.warn("[db] DATABASE_URL not set - user persistence disabled");
@@ -87,6 +90,7 @@ async function createTables() {
       display_name VARCHAR(255),
       roles_json TEXT NOT NULL DEFAULT '[]',
       is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+      subscription_tier VARCHAR(128) DEFAULT NULL,
       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       last_login_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       UNIQUE KEY uq_users_issuer_wp_user_id (issuer, wp_user_id)
@@ -95,6 +99,20 @@ async function createTables() {
 
   try {
     await pool.execute(createUsersTable);
+
+    // Add subscription_tier column if table already exists without it
+    try {
+      await pool.execute(`
+        ALTER TABLE users ADD COLUMN subscription_tier VARCHAR(128) DEFAULT NULL
+      `);
+      console.log("[db] Added subscription_tier column");
+    } catch (alterErr) {
+      // Column likely already exists, ignore duplicate column error
+      if (!alterErr.message.includes("Duplicate column")) {
+        // Only log if it's not a duplicate column error
+      }
+    }
+
     console.log("[db] Users table ready");
   } catch (e) {
     console.error("[db] Failed to create tables:", e.message);

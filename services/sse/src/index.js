@@ -1,11 +1,11 @@
 // services/sse/src/index.js
 // SSE Gateway - Entry point with WordPress SSO authentication
+// Config loaded from Truth (Redis) - no .env files needed
 
-import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
-import { loadConfig, getFallbackConfig } from "./config.js";
+import { loadConfig, getFallbackConfig, getConfig } from "./config.js";
 import { initRedis, closeRedis } from "./redis.js";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
 import { setConfig as setKeyConfig } from "./keys.js";
@@ -78,12 +78,7 @@ async function main() {
   console.log(" MarketSwarm – SSE Gateway (with Auth)");
   console.log("═══════════════════════════════════════════════════════");
 
-  // Log auth configuration
-  logAuthConfig();
-
-  // Initialize database (optional - continues without if unavailable)
-  await initDb();
-
+  // Load config from Truth FIRST (before anything else needs it)
   let config;
   try {
     config = await loadConfig();
@@ -92,6 +87,12 @@ async function main() {
     console.warn("[sse] Using fallback configuration");
     config = getFallbackConfig();
   }
+
+  // Log auth configuration (now that config is loaded)
+  logAuthConfig();
+
+  // Initialize database (now that config is loaded with DATABASE_URL)
+  await initDb();
 
   // Initialize key resolver from config
   setKeyConfig(config);
@@ -131,7 +132,7 @@ async function main() {
     console.log(`   GET /sse/all                - Combined stream`);
     console.log("═══════════════════════════════════════════════════════");
 
-    if (process.env.PUBLIC_MODE === "1") {
+    if (config.env.PUBLIC_MODE) {
       console.log("\n⚠️  WARNING: PUBLIC_MODE is enabled - auth is disabled!");
     }
   });

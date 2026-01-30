@@ -504,7 +504,17 @@
         "massive",
         "rss_agg",
         "vexy_ai"
-      ]
+      ],
+      "env": {
+        "SSE_PORT": "3001",
+        "SSE_POLL_INTERVAL_MS": "250",
+        "DATABASE_URL": "mysql://fotw_app:PfedKtaTaAa2iV21QTZp@127.0.0.1:3306/fotw_app",
+        "SSO_0DTE_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0",
+        "SSO_FOTW_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0",
+        "APP_SESSION_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0",
+        "APP_SESSION_TTL_SECONDS": "86400",
+        "PUBLIC_MODE": "0"
+      }
     },
     "mesh": {
       "id": "mesh",

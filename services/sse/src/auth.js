@@ -3,16 +3,28 @@
 
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-
-// Environment variables (loaded from .env or shell)
-const APP_SESSION_SECRET = process.env.APP_SESSION_SECRET || "change-me";
-const APP_SESSION_TTL_SECONDS = parseInt(process.env.APP_SESSION_TTL_SECONDS || "86400", 10);
-
-const SSO_0DTE_SECRET = process.env.SSO_0DTE_SECRET || "";
-const SSO_FOTW_SECRET = process.env.SSO_FOTW_SECRET || "";
+import { getConfig } from "./config.js";
 
 // Cookie name for app session
 const SESSION_COOKIE = "ms_session";
+
+/**
+ * Get auth config from truth (via getConfig)
+ */
+function getAuthConfig() {
+  const config = getConfig();
+  if (!config) {
+    // Fallback if config not loaded yet
+    return {
+      SSO_0DTE_SECRET: "",
+      SSO_FOTW_SECRET: "",
+      APP_SESSION_SECRET: "change-me",
+      APP_SESSION_TTL_SECONDS: 86400,
+      PUBLIC_MODE: false,
+    };
+  }
+  return config.env;
+}
 
 /**
  * Safe fingerprint for debugging (first 10 chars of sha256)
@@ -26,11 +38,13 @@ function fingerprint(secret) {
  * Log auth config on startup (without exposing secrets)
  */
 export function logAuthConfig() {
+  const env = getAuthConfig();
   console.log("[auth] Configuration:");
-  console.log(`  SSO_0DTE_SECRET: ${SSO_0DTE_SECRET ? `set (fp: ${fingerprint(SSO_0DTE_SECRET)})` : "NOT SET"}`);
-  console.log(`  SSO_FOTW_SECRET: ${SSO_FOTW_SECRET ? `set (fp: ${fingerprint(SSO_FOTW_SECRET)})` : "NOT SET"}`);
-  console.log(`  APP_SESSION_SECRET: ${APP_SESSION_SECRET !== "change-me" ? `set (fp: ${fingerprint(APP_SESSION_SECRET)})` : "NOT SET (using default)"}`);
-  console.log(`  APP_SESSION_TTL_SECONDS: ${APP_SESSION_TTL_SECONDS}`);
+  console.log(`  SSO_0DTE_SECRET: ${env.SSO_0DTE_SECRET ? `set (fp: ${fingerprint(env.SSO_0DTE_SECRET)})` : "NOT SET"}`);
+  console.log(`  SSO_FOTW_SECRET: ${env.SSO_FOTW_SECRET ? `set (fp: ${fingerprint(env.SSO_FOTW_SECRET)})` : "NOT SET"}`);
+  console.log(`  APP_SESSION_SECRET: ${env.APP_SESSION_SECRET !== "change-me" ? `set (fp: ${fingerprint(env.APP_SESSION_SECRET)})` : "NOT SET (using default)"}`);
+  console.log(`  APP_SESSION_TTL_SECONDS: ${env.APP_SESSION_TTL_SECONDS}`);
+  console.log(`  PUBLIC_MODE: ${env.PUBLIC_MODE}`);
 }
 
 /**
@@ -38,6 +52,8 @@ export function logAuthConfig() {
  * Returns decoded payload if valid, throws error otherwise
  */
 export function verifyWpSsoToken(token) {
+  const env = getAuthConfig();
+
   if (!token) {
     throw new Error("No token provided");
   }
@@ -66,10 +82,10 @@ export function verifyWpSsoToken(token) {
   let secretName;
 
   if (issuer === "0-dte") {
-    secret = SSO_0DTE_SECRET;
+    secret = env.SSO_0DTE_SECRET;
     secretName = "SSO_0DTE_SECRET";
   } else if (issuer === "fotw") {
-    secret = SSO_FOTW_SECRET;
+    secret = env.SSO_FOTW_SECRET;
     secretName = "SSO_FOTW_SECRET";
   } else {
     throw new Error(`Invalid SSO issuer: ${issuer}`);
@@ -101,10 +117,11 @@ export function verifyWpSsoToken(token) {
  * Issue an app session JWT from verified WordPress user data
  */
 export function issueAppSession(user) {
+  const env = getAuthConfig();
   const now = Math.floor(Date.now() / 1000);
   const payload = {
     iat: now,
-    exp: now + APP_SESSION_TTL_SECONDS,
+    exp: now + env.APP_SESSION_TTL_SECONDS,
     wp: {
       issuer: user.iss,
       id: user.sub,
@@ -113,7 +130,7 @@ export function issueAppSession(user) {
       roles: user.roles || [],
     },
   };
-  return jwt.sign(payload, APP_SESSION_SECRET, { algorithm: "HS256" });
+  return jwt.sign(payload, env.APP_SESSION_SECRET, { algorithm: "HS256" });
 }
 
 /**
@@ -121,13 +138,14 @@ export function issueAppSession(user) {
  * Returns session payload if valid, null otherwise
  */
 export function readAppSession(req) {
+  const env = getAuthConfig();
   const token = req.cookies?.[SESSION_COOKIE];
   if (!token) {
     return null;
   }
 
   try {
-    return jwt.verify(token, APP_SESSION_SECRET, {
+    return jwt.verify(token, env.APP_SESSION_SECRET, {
       algorithms: ["HS256"],
     });
   } catch (e) {
@@ -171,10 +189,11 @@ export function authMiddleware(options = {}) {
   const { publicMode = false } = options;
 
   return (req, res, next) => {
+    const env = getAuthConfig();
     const path = req.path;
 
     // Emergency public mode (turns off auth)
-    if (publicMode || process.env.PUBLIC_MODE === "1") {
+    if (publicMode || env.PUBLIC_MODE) {
       return next();
     }
 
@@ -208,17 +227,16 @@ export function authMiddleware(options = {}) {
  * Set session cookie on response
  */
 export function setSessionCookie(res, sessionJwt, req) {
+  const env = getAuthConfig();
   const isHttps = isHttpsRequest(req);
-  const secureCookie = isHttps && process.env.APP_COOKIE_SECURE !== "0";
-  const cookieDomain = process.env.APP_COOKIE_DOMAIN || undefined;
+  const secureCookie = isHttps;
 
   res.cookie(SESSION_COOKIE, sessionJwt, {
     httpOnly: true,
     secure: secureCookie,
     sameSite: "lax",
     path: "/",
-    domain: cookieDomain,
-    maxAge: APP_SESSION_TTL_SECONDS * 1000,
+    maxAge: env.APP_SESSION_TTL_SECONDS * 1000,
   });
 }
 
@@ -226,10 +244,8 @@ export function setSessionCookie(res, sessionJwt, req) {
  * Clear session cookie on response
  */
 export function clearSessionCookie(res) {
-  const cookieDomain = process.env.APP_COOKIE_DOMAIN || undefined;
   res.clearCookie(SESSION_COOKIE, {
     path: "/",
-    domain: cookieDomain,
   });
 }
 

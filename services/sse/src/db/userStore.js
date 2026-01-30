@@ -31,6 +31,7 @@ export async function upsertUserFromWpToken(wpTokenPayload) {
   const displayName = (wpTokenPayload.name || "").trim();
   const roles = safeRoles(wpTokenPayload.roles);
   const isAdmin = wpTokenPayload.is_admin === true || roles.includes("administrator");
+  const subscriptionTier = (wpTokenPayload.subscription_tier || "").trim() || null;
 
   if (!issuer || !wpUserId || !email) {
     console.warn("[userStore] Missing required fields:", { issuer, wpUserId, email });
@@ -52,19 +53,20 @@ export async function upsertUserFromWpToken(wpTokenPayload) {
           display_name = ?,
           roles_json = ?,
           is_admin = ?,
+          subscription_tier = ?,
           last_login_at = NOW()
         WHERE issuer = ? AND wp_user_id = ?`,
-        [email, displayName, JSON.stringify(roles), isAdmin, issuer, wpUserId]
+        [email, displayName, JSON.stringify(roles), isAdmin, subscriptionTier, issuer, wpUserId]
       );
-      console.log(`[userStore] Updated user: ${email} (${issuer})`);
+      console.log(`[userStore] Updated user: ${email} (${issuer}) tier: ${subscriptionTier || 'none'}`);
     } else {
       // Insert new user
       await pool.execute(
-        `INSERT INTO users (issuer, wp_user_id, email, display_name, roles_json, is_admin, created_at, last_login_at)
-         VALUES (?, ?, ?, ?, ?, ?, NOW(), NOW())`,
-        [issuer, wpUserId, email, displayName, JSON.stringify(roles), isAdmin]
+        `INSERT INTO users (issuer, wp_user_id, email, display_name, roles_json, is_admin, subscription_tier, created_at, last_login_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+        [issuer, wpUserId, email, displayName, JSON.stringify(roles), isAdmin, subscriptionTier]
       );
-      console.log(`[userStore] Created user: ${email} (${issuer})`);
+      console.log(`[userStore] Created user: ${email} (${issuer}) tier: ${subscriptionTier || 'none'}`);
     }
 
     // Return the user
@@ -104,6 +106,7 @@ export async function getUserProfile(issuer, wpUserId) {
       display_name: user.display_name,
       roles: JSON.parse(user.roles_json || "[]"),
       is_admin: Boolean(user.is_admin),
+      subscription_tier: user.subscription_tier || null,
       created_at: user.created_at?.toISOString(),
       last_login_at: user.last_login_at?.toISOString(),
     };
@@ -142,6 +145,7 @@ export async function getUserById(id) {
       display_name: user.display_name,
       roles: JSON.parse(user.roles_json || "[]"),
       is_admin: Boolean(user.is_admin),
+      subscription_tier: user.subscription_tier || null,
       created_at: user.created_at?.toISOString(),
       last_login_at: user.last_login_at?.toISOString(),
     };

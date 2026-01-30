@@ -1,8 +1,7 @@
 // ui/src/pages/Profile.tsx
-// Profile page with MarketSwarm aurora styling
-
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import AppLayout from "../components/AppLayout";
 
 interface Profile {
   display_name: string;
@@ -11,6 +10,7 @@ interface Profile {
   wp_user_id: number;
   is_admin: boolean;
   roles: string[];
+  subscription_tier: string | null;
   last_login_at: string;
   created_at: string;
 }
@@ -22,362 +22,536 @@ export default function ProfilePage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch('/api/profile/me', { credentials: 'include' })
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to load profile');
+    fetch("/api/profile/me", { credentials: "include" })
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to load profile");
         return res.json();
       })
       .then(setProfile)
-      .catch(e => setError(e.message))
+      .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 
-  const formatDate = (d: string) => d ? new Date(d).toLocaleString() : '—';
+  const formatDate = (d: string) =>
+    d ? new Date(d).toLocaleString() : "—";
 
   return (
-    <div className="profile-page">
-      {/* Aurora background */}
-      <div className="profile-aurora-bg">
-        <div className="profile-vignette" />
-        <div className="aurora aurora-a" />
-        <div className="aurora aurora-b" />
-        <div className="aurora aurora-c" />
-        <div className="aurora-grain" />
-      </div>
+    <AppLayout>
+      <div className="profile-page">
+        <div className="profile-container">
+          {/* Page Title */}
+          <div className="profile-page-header">
+            <button className="back-btn" onClick={() => navigate("/")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+              Back
+            </button>
+            <h1>Profile</h1>
+            {profile?.is_admin && <span className="admin-badge">Admin</span>}
+          </div>
 
-      {/* Content */}
-      <div className="profile-content">
-        <div className="profile-card">
-          <div className="profile-card-inner">
-            {/* Header */}
-            <div className="profile-header">
-              <button className="back-btn" onClick={() => navigate('/')}>
-                <span className="back-arrow">←</span> Dashboard
-              </button>
-              <h1 className="profile-title">Your Profile</h1>
-              {profile?.is_admin && <span className="admin-badge">Admin</span>}
+          {loading && (
+            <div className="profile-loading">
+              <div className="spinner" />
             </div>
+          )}
 
-            {loading && <div className="profile-loading"><div className="spinner" /></div>}
-            {error && <div className="profile-error">{error}</div>}
+          {error && <div className="profile-error">{error}</div>}
 
-            {profile && !loading && (
-              <>
-                {/* Avatar & Name */}
-                <div className="profile-avatar-section">
-                  <div className="avatar-glow">
+          {profile && !loading && (
+            <div className="profile-grid">
+              {/* User Info Card */}
+              <div className="profile-card user-card">
+                <div className="card-header">
+                  <svg className="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  <h2>User Information</h2>
+                </div>
+                <div className="card-content">
+                  <div className="avatar-section">
                     <div className="avatar">
-                      {profile.display_name?.charAt(0).toUpperCase() || '?'}
+                      {profile.display_name?.charAt(0).toUpperCase() || "?"}
+                    </div>
+                    <div className="avatar-info">
+                      <div className="user-name">{profile.display_name}</div>
+                      <div className="user-email">{profile.email}</div>
                     </div>
                   </div>
-                  <div className="profile-name">{profile.display_name}</div>
-                  <div className="profile-email">{profile.email}</div>
-                </div>
-
-                {/* Info Grid */}
-                <div className="info-grid">
-                  <InfoRow label="Issuer" value={profile.issuer} icon="🌐" />
-                  <InfoRow label="User ID" value={`#${profile.wp_user_id}`} icon="🆔" />
-                  <InfoRow label="Roles" value={profile.roles?.join(', ') || 'Member'} icon="🎭" />
-                  <InfoRow label="Member Since" value={formatDate(profile.created_at)} icon="📅" />
-                  <InfoRow label="Last Login" value={formatDate(profile.last_login_at)} icon="🕐" />
-                </div>
-
-                {/* Coming Soon Tiles */}
-                <div className="coming-soon-section">
-                  <h2 className="section-title">Coming Soon</h2>
-                  <div className="tiles-grid">
-                    <ComingSoonTile title="Trade Log" desc="View your trade history & performance" icon="📊" />
-                    <ComingSoonTile title="Broker Link" desc="Connect your brokerage account" icon="🔗" />
+                  <div className="info-rows">
+                    <InfoRow
+                      icon={<GlobeIcon />}
+                      label="Platform"
+                      value={profile.issuer === "fotw" ? "Fly On The Wall" : profile.issuer === "0-dte" ? "0-DTE" : profile.issuer}
+                    />
+                    <InfoRow
+                      icon={<IdIcon />}
+                      label="User ID"
+                      value={`#${profile.wp_user_id}`}
+                    />
+                    <InfoRow
+                      icon={<ShieldIcon />}
+                      label="Roles"
+                      value={profile.roles?.join(", ") || "Member"}
+                    />
                   </div>
                 </div>
+              </div>
 
-                {/* Logout */}
-                <a href="/api/auth/logout?next=/" className="logout-btn">
-                  Sign Out
-                </a>
-              </>
-            )}
-          </div>
+              {/* Subscription Card */}
+              <div className="profile-card subscription-card">
+                <div className="card-header">
+                  <svg className="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                    <path d="M2 17l10 5 10-5" />
+                    <path d="M2 12l10 5 10-5" />
+                  </svg>
+                  <h2>Subscription</h2>
+                </div>
+                <div className="card-content">
+                  <div className="subscription-tier-display">
+                    {profile.subscription_tier ? (
+                      <>
+                        <span className="tier-badge">{profile.subscription_tier}</span>
+                        <span className="tier-status active">Active</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="tier-none">No active subscription</span>
+                        <span className="tier-status inactive">Inactive</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Activity Card */}
+              <div className="profile-card activity-card">
+                <div className="card-header">
+                  <svg className="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                  <h2>Activity</h2>
+                </div>
+                <div className="card-content">
+                  <div className="info-rows">
+                    <InfoRow
+                      icon={<CalendarIcon />}
+                      label="Member Since"
+                      value={formatDate(profile.created_at)}
+                    />
+                    <InfoRow
+                      icon={<ClockIcon />}
+                      label="Last Login"
+                      value={formatDate(profile.last_login_at)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Coming Soon Cards */}
+              <div className="profile-card coming-soon-card">
+                <div className="card-header">
+                  <svg className="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 3v18h18" />
+                    <path d="M18 17V9" />
+                    <path d="M13 17V5" />
+                    <path d="M8 17v-3" />
+                  </svg>
+                  <h2>Trade Log</h2>
+                  <span className="soon-badge">Coming Soon</span>
+                </div>
+                <div className="card-content">
+                  <p className="coming-soon-text">
+                    Track your trades and analyze performance metrics.
+                  </p>
+                </div>
+              </div>
+
+              <div className="profile-card coming-soon-card">
+                <div className="card-header">
+                  <svg className="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                  </svg>
+                  <h2>Broker Integration</h2>
+                  <span className="soon-badge">Coming Soon</span>
+                </div>
+                <div className="card-content">
+                  <p className="coming-soon-text">
+                    Connect your brokerage account for seamless trading.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Logout */}
+          {profile && (
+            <div className="profile-actions">
+              <a href="/api/auth/logout?next=/" className="logout-btn">
+                Sign Out
+              </a>
+            </div>
+          )}
         </div>
-      </div>
 
-      <style>{`
-        .profile-page {
-          position: relative;
-          min-height: 100vh;
-          overflow: hidden;
-          background: #09090b;
-          color: #f1f5f9;
-        }
-        .profile-aurora-bg {
-          pointer-events: none;
-          position: absolute;
-          inset: 0;
-        }
-        .profile-vignette {
-          position: absolute;
-          inset: 0;
-          background: radial-gradient(1200px 600px at 50% 20%, rgba(255,255,255,0.06), transparent 60%);
-        }
-        .aurora {
-          position: absolute;
-          inset: -40%;
-          background:
-            radial-gradient(60% 50% at 20% 30%, rgba(34, 211, 238, 0.55), transparent 60%),
-            radial-gradient(55% 45% at 80% 20%, rgba(16, 185, 129, 0.45), transparent 65%),
-            radial-gradient(60% 55% at 55% 75%, rgba(99, 102, 241, 0.35), transparent 60%),
-            radial-gradient(50% 50% at 25% 80%, rgba(14, 165, 233, 0.35), transparent 60%);
-          transform: translate3d(0,0,0);
-          filter: blur(60px);
-        }
-        .aurora-a { opacity: 0.7; animation: auroraDriftA 12s ease-in-out infinite alternate; }
-        .aurora-b { inset: -45%; opacity: 0.6; animation: auroraDriftB 16s ease-in-out infinite alternate; }
-        .aurora-c { inset: -50%; opacity: 0.5; animation: auroraDriftC 20s ease-in-out infinite alternate; }
-        @keyframes auroraDriftA { 0% { transform: translate(-6%, -4%) rotate(0deg) scale(1.02); } 100% { transform: translate(6%, 3%) rotate(8deg) scale(1.08); } }
-        @keyframes auroraDriftB { 0% { transform: translate(5%, -3%) rotate(-6deg) scale(1.00); } 100% { transform: translate(-7%, 4%) rotate(10deg) scale(1.10); } }
-        @keyframes auroraDriftC { 0% { transform: translate(-3%, 6%) rotate(4deg) scale(1.02); } 100% { transform: translate(4%, -6%) rotate(-8deg) scale(1.12); } }
-        .aurora-grain {
-          position: absolute;
-          inset: 0;
-          opacity: 0.07;
-          mix-blend-mode: overlay;
-          background-image:
-            repeating-linear-gradient(0deg, rgba(255,255,255,0.35) 0 1px, transparent 1px 2px),
-            repeating-linear-gradient(90deg, rgba(255,255,255,0.22) 0 1px, transparent 1px 3px);
-          filter: blur(0.2px);
-        }
-        .profile-content {
-          position: relative;
-          z-index: 10;
-          display: flex;
-          width: 100%;
-          min-height: 100vh;
-          align-items: center;
-          justify-content: center;
-          padding: 2rem 1rem;
-          box-sizing: border-box;
-        }
-        .profile-card {
-          width: 100%;
-          max-width: 32rem;
-          margin: 0 auto;
-          border-radius: 1.5rem;
-          border: 1px solid rgba(255,255,255,0.1);
-          background: rgba(24,24,27,0.4);
-          box-shadow: 0 20px 80px rgba(0,0,0,0.6);
-          backdrop-filter: blur(24px);
-        }
-        .profile-card-inner { padding: 2rem; }
-        .profile-header {
-          display: flex;
-          align-items: center;
-          gap: 1rem;
-          margin-bottom: 1.5rem;
-        }
-        .back-btn {
-          background: rgba(255,255,255,0.08);
-          border: 1px solid rgba(255,255,255,0.12);
-          color: #94a3b8;
-          padding: 0.5rem 1rem;
-          border-radius: 0.75rem;
-          font-size: 0.875rem;
-          cursor: pointer;
-          transition: all 0.15s;
-        }
-        .back-btn:hover { background: rgba(255,255,255,0.12); color: #f1f5f9; }
-        .back-arrow { margin-right: 0.25rem; }
-        .profile-title {
-          flex: 1;
-          font-size: 1.5rem;
-          font-weight: 600;
-          margin: 0;
-          letter-spacing: -0.025em;
-        }
-        .admin-badge {
-          background: linear-gradient(135deg, #22d3ee, #10b981);
-          color: #09090b;
-          font-size: 0.7rem;
-          font-weight: 700;
-          padding: 0.25rem 0.75rem;
-          border-radius: 9999px;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-        }
-        .profile-loading, .profile-error {
-          display: flex;
-          justify-content: center;
-          padding: 3rem;
-        }
-        .profile-error { color: #f87171; }
-        .spinner {
-          width: 2rem;
-          height: 2rem;
-          border: 3px solid rgba(255,255,255,0.1);
-          border-top-color: #22d3ee;
-          border-radius: 50%;
-          animation: spin 0.8s linear infinite;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .profile-avatar-section {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          margin-bottom: 2rem;
-        }
-        .avatar-glow {
-          padding: 4px;
-          border-radius: 50%;
-          background: linear-gradient(135deg, #22d3ee, #6366f1, #10b981);
-          animation: glowPulse 3s ease-in-out infinite;
-        }
-        @keyframes glowPulse {
-          0%, 100% { box-shadow: 0 0 20px rgba(34,211,238,0.4), 0 0 40px rgba(99,102,241,0.2); }
-          50% { box-shadow: 0 0 30px rgba(34,211,238,0.6), 0 0 60px rgba(99,102,241,0.3); }
-        }
-        .avatar {
-          width: 5rem;
-          height: 5rem;
-          border-radius: 50%;
-          background: #18181b;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 2rem;
-          font-weight: 700;
-          color: #22d3ee;
-        }
-        .profile-name {
-          margin-top: 1rem;
-          font-size: 1.25rem;
-          font-weight: 600;
-        }
-        .profile-email {
-          color: #64748b;
-          font-size: 0.875rem;
-        }
-        .info-grid {
-          display: flex;
-          flex-direction: column;
-          gap: 0.75rem;
-          margin-bottom: 2rem;
-        }
-        .info-row {
-          display: flex;
-          align-items: center;
-          gap: 0.75rem;
-          padding: 0.875rem 1rem;
-          background: rgba(255,255,255,0.04);
-          border: 1px solid rgba(255,255,255,0.08);
-          border-radius: 0.875rem;
-          transition: all 0.15s;
-        }
-        .info-row:hover {
-          background: rgba(255,255,255,0.06);
-          border-color: rgba(255,255,255,0.12);
-        }
-        .info-icon {
-          font-size: 1.25rem;
-          width: 2rem;
-          text-align: center;
-        }
-        .info-label {
-          color: #64748b;
-          font-size: 0.75rem;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-        }
-        .info-value {
-          color: #f1f5f9;
-          font-size: 0.9rem;
-        }
-        .coming-soon-section {
-          margin-bottom: 1.5rem;
-        }
-        .section-title {
-          font-size: 0.875rem;
-          color: #64748b;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-          margin: 0 0 0.75rem;
-        }
-        .tiles-grid {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 0.75rem;
-        }
-        .tile {
-          position: relative;
-          padding: 1.25rem;
-          background: rgba(255,255,255,0.03);
-          border: 1px solid rgba(255,255,255,0.08);
-          border-radius: 1rem;
-          text-align: center;
-          overflow: hidden;
-        }
-        .tile::before {
-          content: '';
-          position: absolute;
-          inset: 0;
-          background: linear-gradient(135deg, rgba(34,211,238,0.1), rgba(99,102,241,0.1));
-          opacity: 0;
-          transition: opacity 0.3s;
-        }
-        .tile:hover::before { opacity: 1; }
-        .tile-icon { font-size: 1.5rem; margin-bottom: 0.5rem; }
-        .tile-title { font-weight: 600; font-size: 0.9rem; margin-bottom: 0.25rem; }
-        .tile-desc { font-size: 0.75rem; color: #64748b; }
-        .tile-badge {
-          position: absolute;
-          top: 0.5rem;
-          right: 0.5rem;
-          font-size: 0.6rem;
-          background: rgba(99,102,241,0.3);
-          color: #a5b4fc;
-          padding: 0.15rem 0.4rem;
-          border-radius: 4px;
-        }
-        .logout-btn {
-          display: block;
-          width: 100%;
-          text-align: center;
-          padding: 0.875rem;
-          background: rgba(239,68,68,0.1);
-          border: 1px solid rgba(239,68,68,0.2);
-          color: #f87171;
-          border-radius: 0.875rem;
-          text-decoration: none;
-          font-weight: 500;
-          transition: all 0.15s;
-        }
-        .logout-btn:hover {
-          background: rgba(239,68,68,0.2);
-          border-color: rgba(239,68,68,0.3);
-        }
-      `}</style>
-    </div>
+        <style>{`
+          .profile-page {
+            min-height: calc(100vh - 50px);
+            background: #09090b;
+            color: #f1f5f9;
+            padding: 1.5rem;
+          }
+
+          .profile-container {
+            max-width: 1200px;
+            margin: 0 auto;
+          }
+
+          .profile-page-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+          }
+
+          .back-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.5rem 0.875rem;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 0.5rem;
+            color: #a1a1aa;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.15s;
+          }
+
+          .back-btn:hover {
+            background: rgba(255, 255, 255, 0.08);
+            color: #e4e4e7;
+          }
+
+          .back-btn svg {
+            width: 1rem;
+            height: 1rem;
+          }
+
+          .profile-page-header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+            margin: 0;
+            color: #f1f5f9;
+          }
+
+          .admin-badge {
+            background: linear-gradient(135deg, #22d3ee, #10b981);
+            color: #09090b;
+            font-size: 0.7rem;
+            font-weight: 700;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+          }
+
+          .profile-loading {
+            display: flex;
+            justify-content: center;
+            padding: 4rem;
+          }
+
+          .spinner {
+            width: 2rem;
+            height: 2rem;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top-color: #22d3ee;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+          }
+
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+
+          .profile-error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #f87171;
+            padding: 1rem;
+            border-radius: 0.75rem;
+            text-align: center;
+          }
+
+          .profile-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+          }
+
+          @media (max-width: 768px) {
+            .profile-grid {
+              grid-template-columns: 1fr;
+            }
+          }
+
+          .profile-card {
+            background: rgba(24, 24, 27, 0.6);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 0.75rem;
+            overflow: hidden;
+          }
+
+          .card-header {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.875rem 1rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          }
+
+          .card-header h2 {
+            font-size: 0.875rem;
+            font-weight: 600;
+            margin: 0;
+            color: #e4e4e7;
+            flex: 1;
+          }
+
+          .card-icon {
+            width: 1.125rem;
+            height: 1.125rem;
+            color: #71717a;
+          }
+
+          .soon-badge {
+            font-size: 0.65rem;
+            background: rgba(99, 102, 241, 0.2);
+            color: #a5b4fc;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 500;
+          }
+
+          .card-content {
+            padding: 1rem;
+          }
+
+          .avatar-section {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+          }
+
+          .avatar {
+            width: 3.5rem;
+            height: 3.5rem;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #22d3ee, #6366f1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #fff;
+          }
+
+          .avatar-info {
+            flex: 1;
+          }
+
+          .user-name {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: #f1f5f9;
+          }
+
+          .user-email {
+            font-size: 0.8125rem;
+            color: #71717a;
+          }
+
+          .info-rows {
+            display: flex;
+            flex-direction: column;
+            gap: 0.625rem;
+          }
+
+          .info-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.625rem 0.75rem;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 0.5rem;
+          }
+
+          .info-row-icon {
+            width: 1rem;
+            height: 1rem;
+            color: #52525b;
+          }
+
+          .info-row-content {
+            flex: 1;
+          }
+
+          .info-row-label {
+            font-size: 0.7rem;
+            color: #52525b;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+          }
+
+          .info-row-value {
+            font-size: 0.875rem;
+            color: #e4e4e7;
+          }
+
+          .coming-soon-text {
+            color: #71717a;
+            font-size: 0.875rem;
+            margin: 0;
+          }
+
+          .subscription-tier-display {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+          }
+
+          .tier-badge {
+            font-size: 1.125rem;
+            font-weight: 600;
+            color: #f1f5f9;
+            background: linear-gradient(135deg, rgba(34, 211, 238, 0.15), rgba(99, 102, 241, 0.15));
+            border: 1px solid rgba(34, 211, 238, 0.3);
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+          }
+
+          .tier-none {
+            font-size: 0.875rem;
+            color: #71717a;
+          }
+
+          .tier-status {
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+          }
+
+          .tier-status.active {
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+          }
+
+          .tier-status.inactive {
+            background: rgba(113, 113, 122, 0.15);
+            color: #a1a1aa;
+            border: 1px solid rgba(113, 113, 122, 0.3);
+          }
+
+          .profile-actions {
+            margin-top: 1.5rem;
+            display: flex;
+            justify-content: flex-end;
+          }
+
+          .logout-btn {
+            display: inline-block;
+            padding: 0.625rem 1.25rem;
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: #f87171;
+            border-radius: 0.5rem;
+            text-decoration: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            transition: all 0.15s;
+          }
+
+          .logout-btn:hover {
+            background: rgba(239, 68, 68, 0.15);
+            border-color: rgba(239, 68, 68, 0.3);
+          }
+        `}</style>
+      </div>
+    </AppLayout>
   );
 }
 
-function InfoRow({ label, value, icon }: { label: string; value: string; icon: string }) {
+// Info Row Component
+function InfoRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
     <div className="info-row">
-      <span className="info-icon">{icon}</span>
-      <div>
-        <div className="info-label">{label}</div>
-        <div className="info-value">{value}</div>
+      <span className="info-row-icon">{icon}</span>
+      <div className="info-row-content">
+        <div className="info-row-label">{label}</div>
+        <div className="info-row-value">{value}</div>
       </div>
     </div>
   );
 }
 
-function ComingSoonTile({ title, desc, icon }: { title: string; desc: string; icon: string }) {
+// SVG Icons
+function GlobeIcon() {
   return (
-    <div className="tile">
-      <span className="tile-badge">Soon</span>
-      <div className="tile-icon">{icon}</div>
-      <div className="tile-title">{title}</div>
-      <div className="tile-desc">{desc}</div>
-    </div>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+    </svg>
+  );
+}
+
+function IdIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <line x1="2" y1="10" x2="22" y2="10" />
+    </svg>
+  );
+}
+
+function ShieldIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </svg>
+  );
+}
+
+function CalendarIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </svg>
   );
 }
