@@ -93,6 +93,11 @@ interface MarketModeData {
   ts?: string;
 }
 
+// User profile for header greeting
+interface UserProfile {
+  display_name: string;
+}
+
 // Strategy details for popup/risk graph (side is always 'call' or 'put', never 'both')
 interface SelectedStrategy {
   strategy: Strategy;
@@ -471,6 +476,9 @@ function App() {
   const [vpSmoothing, setVpSmoothing] = useState(5); // Gaussian kernel size (3, 5, 7, 9)
   const [vpOpacity, setVpOpacity] = useState(0.4); // Volume profile opacity
 
+  // User profile for header
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+
   // Popup and Risk Graph state
   const [selectedTile, setSelectedTile] = useState<SelectedStrategy | null>(null);
   const [riskGraphStrategies, setRiskGraphStrategies] = useState<RiskGraphStrategy[]>(() => {
@@ -675,6 +683,18 @@ function App() {
   useEffect(() => {
     localStorage.setItem('priceAlertLines', JSON.stringify(priceAlertLines));
   }, [priceAlertLines]);
+
+  // Fetch user profile for header greeting
+  useEffect(() => {
+    fetch('/api/profile/me', { credentials: 'include' })
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.display_name) {
+          setUserProfile({ display_name: data.display_name });
+        }
+      })
+      .catch(err => console.error('Failed to fetch user profile:', err));
+  }, []);
 
   // Price alert line management
   const updatePriceAlertColor = (alertId: string, color: string) => {
@@ -1705,7 +1725,16 @@ function App() {
     <div className="app">
       <header className="app-header">
         <div className="header-left">
-          <h1>MarketSwarm</h1>
+          <span className="header-greeting">
+            Hi, {userProfile?.display_name || 'User'}
+          </span>
+          <button
+            className="header-account-btn"
+            onClick={() => setSettingsOpen(true)}
+            title="My Account"
+          >
+            My Account
+          </button>
           <button
             className="header-settings-btn"
             onClick={() => setSettingsOpen(true)}
