@@ -1525,11 +1525,11 @@ body {
 
 /* Strategy List in Risk Graph - Left Side */
 .risk-graph-strategies {
-  width: 220px;
-  min-width: 220px;
+  width: 340px;
+  min-width: 340px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   padding: 12px;
   border-right: 1px solid #222;
   background: #0d0d0d;
@@ -1538,75 +1538,95 @@ body {
 
 .risk-graph-strategy-item {
   display: flex;
-  align-items: center;
-  gap: 8px;
   background: #1a1a1a;
   border: 1px solid #333;
-  border-radius: 4px;
-  padding: 8px 10px;
+  border-radius: 6px;
+  padding: 10px 12px;
 }
 
 .risk-graph-strategy-item.hidden-strategy {
-  opacity: 0.5;
+  opacity: 0.6;
+  border-style: dashed;
 }
 
-.strategy-checkbox {
-  width: 16px;
-  height: 16px;
-  accent-color: #3b82f6;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.strategy-info {
+.strategy-content {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 10px;
   flex: 1;
 }
 
-.strategy-row {
+.strategy-row-top {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .strategy-type {
   background: #3b82f6;
   color: #fff;
-  padding: 2px 6px;
+  padding: 3px 10px;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
+  flex-shrink: 0;
 }
 
-.strategy-details {
-  font-size: 12px;
-  color: #ccc;
+.strategy-strike {
+  font-size: 15px;
+  color: #fff;
+  font-weight: 600;
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+}
+
+.strategy-side {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.strategy-side.call {
+  background: rgba(74, 222, 128, 0.15);
+  color: #4ade80;
+}
+
+.strategy-side.put {
+  background: rgba(248, 113, 113, 0.15);
+  color: #f87171;
 }
 
 .strategy-dte {
-  font-size: 10px;
+  font-size: 12px;
   color: #888;
+  margin-left: auto;
 }
 
 .strategy-debit {
-  font-size: 12px;
+  font-size: 13px;
   color: #4ade80;
   font-weight: 500;
   display: flex;
   align-items: center;
 }
 
+.strategy-row-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .debit-input {
-  width: 50px;
-  background: transparent;
+  width: 55px;
+  background: #252525;
   border: 1px solid #333;
   border-radius: 3px;
   color: #4ade80;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
-  padding: 2px 4px;
+  padding: 3px 6px;
   text-align: right;
   -moz-appearance: textfield;
 }
@@ -1624,34 +1644,62 @@ body {
 }
 
 .btn-remove {
-  background: none;
-  border: none;
-  color: #666;
-  font-size: 16px;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  color: #999;
+  font-size: 11px;
   cursor: pointer;
-  padding: 0 4px;
-  line-height: 1;
+  padding: 5px 12px;
+  border-radius: 4px;
   flex-shrink: 0;
 }
 
 .btn-remove:hover {
-  color: #f87171;
+  background: #f87171;
+  border-color: #f87171;
+  color: white;
 }
 
 .btn-log-trade {
   background: #22c55e;
   border: none;
   color: white;
-  font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 3px;
+  font-size: 11px;
+  padding: 5px 12px;
+  border-radius: 4px;
   cursor: pointer;
-  margin-right: 4px;
   flex-shrink: 0;
+  font-weight: 500;
 }
 
 .btn-log-trade:hover {
   background: #16a34a;
+}
+
+.btn-toggle-visibility {
+  background: #2a2a2a;
+  border: 1px solid #444;
+  color: #999;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 5px 12px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  min-width: 50px;
+}
+
+.btn-toggle-visibility:hover {
+  background: #3a3a3a;
+  color: #fff;
+}
+
+.btn-toggle-visibility.visible {
+  background: #2a2a2a;
+}
+
+.btn-toggle-visibility.hidden {
+  background: #1a1a1a;
+  border-style: dashed;
 }
 
 /* Risk Graph Chart Container - Right Side */

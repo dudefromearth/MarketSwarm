@@ -1937,23 +1937,18 @@ function App() {
                   <div className="risk-graph-strategies">
                     {riskGraphStrategies.map(strat => (
                       <div key={strat.id} className={`risk-graph-strategy-item ${!strat.visible ? 'hidden-strategy' : ''}`}>
-                        <input
-                          type="checkbox"
-                          className="strategy-checkbox"
-                          checked={strat.visible}
-                          onChange={() => toggleStrategyVisibility(strat.id)}
-                        />
-                        <div className="strategy-info">
-                          <div className="strategy-row">
+                        <div className="strategy-content">
+                          <div className="strategy-row-top">
                             <span className="strategy-type">
                               {strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL'}
                             </span>
-                            <span className="strategy-details">
-                              {strat.strike} {strat.width > 0 && `w${strat.width}`} {strat.side.toUpperCase()}
+                            <span className="strategy-strike">
+                              {strat.strike}{strat.width > 0 ? `/${strat.width}` : ''}
                             </span>
-                          </div>
-                          <div className="strategy-row">
-                            <span className="strategy-dte">DTE {strat.dte}</span>
+                            <span className={`strategy-side ${strat.side}`}>
+                              {strat.side}
+                            </span>
+                            <span className="strategy-dte">{strat.dte} DTE</span>
                             <span className="strategy-debit">
                               $<input
                                 type="number"
@@ -1969,28 +1964,36 @@ function App() {
                               />
                             </span>
                           </div>
+                          <div className="strategy-row-bottom">
+                            <button
+                              className={`btn-toggle-visibility ${strat.visible ? 'visible' : 'hidden'}`}
+                              onClick={() => toggleStrategyVisibility(strat.id)}
+                            >
+                              {strat.visible ? 'Hide' : 'Show'}
+                            </button>
+                            <button className="btn-remove" onClick={() => removeFromRiskGraph(strat.id)}>Remove</button>
+                            <button
+                              className="btn-log-trade"
+                              onClick={() => {
+                                openTradeEntry({
+                                  symbol: underlying === 'I:SPX' ? 'SPX' : 'NDX',
+                                  underlying,
+                                  strategy: strat.strategy as 'single' | 'vertical' | 'butterfly',
+                                  side: strat.side as 'call' | 'put',
+                                  strike: strat.strike,
+                                  width: strat.width,
+                                  dte: strat.dte,
+                                  entry_price: strat.debit || undefined,
+                                  entry_spot: currentSpot || undefined,
+                                  source: 'risk_graph'
+                                });
+                              }}
+                              title="Log this trade"
+                            >
+                              Log Trade
+                            </button>
+                          </div>
                         </div>
-                        <button
-                          className="btn-log-trade"
-                          onClick={() => {
-                            openTradeEntry({
-                              symbol: underlying === 'I:SPX' ? 'SPX' : 'NDX',
-                              underlying,
-                              strategy: strat.strategy as 'single' | 'vertical' | 'butterfly',
-                              side: strat.side as 'call' | 'put',
-                              strike: strat.strike,
-                              width: strat.width,
-                              dte: strat.dte,
-                              entry_price: strat.debit || undefined,
-                              entry_spot: currentSpot || undefined,
-                              source: 'risk_graph'
-                            });
-                          }}
-                          title="Log this trade"
-                        >
-                          Log
-                        </button>
-                        <button className="btn-remove" onClick={() => removeFromRiskGraph(strat.id)}>&times;</button>
                       </div>
                     ))}
                   </div>
