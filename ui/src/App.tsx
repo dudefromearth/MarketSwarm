@@ -109,7 +109,7 @@ interface RiskGraphStrategy extends SelectedStrategy {
 interface RiskGraphAlert {
   id: string;
   strategyId: string;
-  type: 'price' | 'debit';
+  type: 'price' | 'debit' | 'profit_target' | 'trailing_stop';
   condition: 'above' | 'below' | 'at';
   targetValue: number;
   enabled: boolean;
@@ -118,6 +118,8 @@ interface RiskGraphAlert {
   createdAt: number;
   // Snapshot of strategy info for display
   strategyLabel: string;
+  // For trailing stop
+  highWaterMark?: number;
 }
 
 // Gaussian smoothing for volume profile
@@ -617,7 +619,7 @@ function App() {
   }, [riskGraphAlerts]);
 
   // Alert management functions
-  const createAlert = (strategyId: string, type: 'price' | 'debit', condition: 'above' | 'below' | 'at', targetValue: number) => {
+  const createAlert = (strategyId: string, type: 'price' | 'debit' | 'profit_target' | 'trailing_stop', condition: 'above' | 'below' | 'at', targetValue: number) => {
     const strategy = riskGraphStrategies.find(s => s.id === strategyId);
     if (!strategy) return;
 
@@ -633,6 +635,8 @@ function App() {
       triggered: false,
       createdAt: Date.now(),
       strategyLabel,
+      // For trailing stop, initialize high water mark with current debit
+      highWaterMark: type === 'trailing_stop' && strategy.debit ? strategy.debit : undefined,
     };
 
     setRiskGraphAlerts(prev => [...prev, newAlert]);
@@ -1246,7 +1250,9 @@ function App() {
       const updated = prev.map(alert => {
         if (!alert.enabled || alert.triggered) return alert;
 
+        const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
         let shouldTrigger = false;
+        let updatedAlert = alert;
 
         if (alert.type === 'price') {
           switch (alert.condition) {
@@ -1261,7 +1267,6 @@ function App() {
               break;
           }
         } else if (alert.type === 'debit') {
-          const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
           if (strategy && strategy.debit !== null) {
             switch (alert.condition) {
               case 'above':
@@ -1275,6 +1280,27 @@ function App() {
                 break;
             }
           }
+        } else if (alert.type === 'profit_target') {
+          // Profit target: alert when current profit reaches target
+          // Profit = (current debit - entry debit) for long positions
+          if (strategy && strategy.debit !== null) {
+            const entryDebit = alert.highWaterMark || strategy.debit;
+            const currentProfit = entryDebit - strategy.debit; // Positive when debit decreased
+            shouldTrigger = currentProfit >= alert.targetValue;
+          }
+        } else if (alert.type === 'trailing_stop') {
+          // Trailing stop: track high water mark (lowest debit), alert if debit rises above threshold from HWM
+          if (strategy && strategy.debit !== null) {
+            const hwm = alert.highWaterMark || strategy.debit;
+            // Update high water mark if debit is lower (more profitable)
+            if (strategy.debit < hwm) {
+              updatedAlert = { ...alert, highWaterMark: strategy.debit };
+              hasChanges = true;
+            }
+            // Trigger if debit rises above HWM + trailing amount
+            const currentHwm = updatedAlert.highWaterMark || hwm;
+            shouldTrigger = strategy.debit >= currentHwm + alert.targetValue;
+          }
         }
 
         if (shouldTrigger) {
@@ -1285,9 +1311,9 @@ function App() {
             audio.volume = 0.3;
             audio.play().catch(() => {});
           } catch {}
-          return { ...alert, triggered: true, triggeredAt: Date.now() };
+          return { ...updatedAlert, triggered: true, triggeredAt: Date.now() };
         }
-        return alert;
+        return updatedAlert;
       });
 
       return hasChanges ? updated : prev;
@@ -2151,6 +2177,8 @@ function App() {
                                   <select id={`alert-type-${strat.id}`} defaultValue="price">
                                     <option value="price">Spot Price</option>
                                     <option value="debit">Debit</option>
+                                    <option value="profit_target">Profit Target</option>
+                                    <option value="trailing_stop">Trailing Stop</option>
                                   </select>
                                   <select id={`alert-condition-${strat.id}`} defaultValue="below">
                                     <option value="above">≥</option>
@@ -2161,7 +2189,7 @@ function App() {
                                     type="number"
                                     id={`alert-value-${strat.id}`}
                                     placeholder={currentSpot?.toFixed(0) || '0'}
-                                    step="1"
+                                    step="0.01"
                                     className="alert-value-input"
                                   />
                                 </div>
@@ -2176,7 +2204,7 @@ function App() {
                                       if (!isNaN(value)) {
                                         createAlert(
                                           strat.id,
-                                          typeEl.value as 'price' | 'debit',
+                                          typeEl.value as 'price' | 'debit' | 'profit_target' | 'trailing_stop',
                                           condEl.value as 'above' | 'below' | 'at',
                                           value
                                         );
@@ -2218,7 +2246,10 @@ function App() {
                               <div className="alert-info">
                                 <span className="alert-strategy">{alert.strategyLabel}</span>
                                 <span className="alert-condition">
-                                  {alert.type === 'price' ? 'Spot' : 'Debit'} {alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} {alert.type === 'price' ? alert.targetValue.toFixed(0) : '$' + alert.targetValue.toFixed(2)}
+                                  {alert.type === 'price' && `Spot ${alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} ${alert.targetValue.toFixed(0)}`}
+                                  {alert.type === 'debit' && `Debit ${alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} $${alert.targetValue.toFixed(2)}`}
+                                  {alert.type === 'profit_target' && `Profit ≥ $${alert.targetValue.toFixed(2)}`}
+                                  {alert.type === 'trailing_stop' && `Trail $${alert.targetValue.toFixed(2)}${alert.highWaterMark ? ` (HWM: $${alert.highWaterMark.toFixed(2)})` : ''}`}
                                 </span>
                               </div>
                               <div className="alert-actions">
