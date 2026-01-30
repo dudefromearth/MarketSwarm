@@ -429,7 +429,14 @@ function App() {
 
   // Popup and Risk Graph state
   const [selectedTile, setSelectedTile] = useState<SelectedStrategy | null>(null);
-  const [riskGraphStrategies, setRiskGraphStrategies] = useState<RiskGraphStrategy[]>([]);
+  const [riskGraphStrategies, setRiskGraphStrategies] = useState<RiskGraphStrategy[]>(() => {
+    try {
+      const saved = localStorage.getItem('riskGraphStrategies');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [tosCopied, setTosCopied] = useState(false);
   const [crosshairPos, setCrosshairPos] = useState<{ x: number; price: number; pnl: number } | null>(null);
 
@@ -575,6 +582,11 @@ function App() {
   const clearRiskGraph = () => {
     setRiskGraphStrategies([]);
   };
+
+  // Persist risk graph strategies to localStorage
+  useEffect(() => {
+    localStorage.setItem('riskGraphStrategies', JSON.stringify(riskGraphStrategies));
+  }, [riskGraphStrategies]);
 
   // Update strategy debit (for when actual fill differs from quoted price)
   const updateStrategyDebit = (id: string, newDebit: number | null) => {
