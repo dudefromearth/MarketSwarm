@@ -3238,3 +3238,561 @@ body {
   background: #2a2a2a;
   border-right: 2px solid #444;
 }
+
+/* ==================== FOTW Trade Log v2 Styles ==================== */
+
+/* Log Selector */
+.log-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.log-select {
+  background: #1e293b;
+  border: 1px solid #334155;
+  color: #e2e8f0;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-size: 13px;
+  min-width: 140px;
+}
+
+.log-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+
+.log-pnl {
+  font-weight: 600;
+}
+
+.log-pnl.profit { color: #4ade80; }
+.log-pnl.loss { color: #f87171; }
+
+.btn-manage-logs {
+  background: transparent;
+  border: 1px solid #475569;
+  color: #94a3b8;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.btn-manage-logs:hover {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+/* Trade Log Header Updates */
+.trade-log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid #1e293b;
+}
+
+.trade-log-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-reporting {
+  background: #1e3a5f;
+  border: 1px solid #2563eb;
+  color: #60a5fa;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-reporting:hover {
+  background: #1e40af;
+  color: #93c5fd;
+}
+
+/* Status Tabs */
+.status-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.status-tab {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #64748b;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.status-tab:hover {
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+.status-tab.active {
+  background: #334155;
+  border-color: #475569;
+  color: #e2e8f0;
+}
+
+.status-open {
+  color: #60a5fa;
+  font-weight: 600;
+}
+
+/* Log Manager Modal */
+.log-manager-modal {
+  width: 500px;
+  max-height: 80vh;
+}
+
+.log-list {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.log-list-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  border-bottom: 1px solid #1e293b;
+  cursor: pointer;
+}
+
+.log-list-item:hover {
+  background: #1e293b;
+}
+
+.log-list-item.selected {
+  background: #1e3a5f;
+  border-color: #2563eb;
+}
+
+.log-item-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.log-item-indicator {
+  width: 12px;
+  color: #60a5fa;
+  font-weight: bold;
+}
+
+.log-item-name {
+  font-weight: 500;
+  color: #e2e8f0;
+  min-width: 120px;
+}
+
+.log-item-capital {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.log-item-trades {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.log-item-pnl {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.log-item-pnl.profit { color: #4ade80; }
+.log-item-pnl.loss { color: #f87171; }
+
+.btn-delete-log {
+  background: transparent;
+  border: 1px solid #475569;
+  color: #64748b;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.btn-delete-log:hover {
+  border-color: #dc2626;
+  color: #f87171;
+}
+
+.btn-create-log {
+  background: #1e3a5f;
+  border: 1px solid #2563eb;
+  color: #60a5fa;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.btn-create-log:hover {
+  background: #1e40af;
+}
+
+/* Log Create Form */
+.log-create-form {
+  padding: 16px;
+}
+
+.form-warning {
+  background: #451a03;
+  border: 1px solid #92400e;
+  color: #fbbf24;
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin: 16px 0;
+}
+
+/* Trade Detail Modal */
+.trade-detail-modal {
+  width: 450px;
+}
+
+.trade-detail-content {
+  padding: 16px;
+}
+
+.trade-detail-summary {
+  margin-bottom: 20px;
+}
+
+.trade-detail-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-bottom: 4px;
+}
+
+.trade-detail-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.trade-detail-info {
+  background: #1e293b;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid #334155;
+}
+
+.info-row:last-child {
+  border-bottom: none;
+}
+
+.info-label {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.info-value {
+  color: #e2e8f0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.info-value.status-open {
+  color: #60a5fa;
+}
+
+.info-value.profit { color: #4ade80; }
+.info-value.loss { color: #f87171; }
+
+.r-multiple {
+  margin-left: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+/* Events List */
+.trade-detail-events {
+  margin-bottom: 16px;
+}
+
+.trade-detail-events h4 {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.events-list {
+  background: #1e293b;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+.event-item {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  border-bottom: 1px solid #334155;
+  font-size: 12px;
+}
+
+.event-item:last-child {
+  border-bottom: none;
+}
+
+.event-type {
+  font-weight: 600;
+  min-width: 50px;
+}
+
+.event-item.event-open .event-type { color: #60a5fa; }
+.event-item.event-adjust .event-type { color: #fbbf24; }
+.event-item.event-close .event-type { color: #a78bfa; }
+
+.event-time {
+  color: #94a3b8;
+}
+
+.event-price {
+  color: #e2e8f0;
+}
+
+.event-spot {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.event-qty {
+  color: #fbbf24;
+}
+
+.event-notes {
+  flex-basis: 100%;
+  color: #94a3b8;
+  font-style: italic;
+  padding-top: 4px;
+}
+
+/* Trade Detail Actions */
+.trade-detail-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 16px;
+  border-top: 1px solid #1e293b;
+}
+
+.btn-adjust,
+.btn-close-trade {
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn-adjust {
+  background: #1e3a5f;
+  border: 1px solid #2563eb;
+  color: #60a5fa;
+}
+
+.btn-close-trade {
+  background: #1e3a3f;
+  border: 1px solid #059669;
+  color: #34d399;
+}
+
+.btn-delete-trade {
+  background: transparent;
+  border: 1px solid #dc2626;
+  color: #f87171;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-right: auto;
+}
+
+/* Trade Action Forms */
+.trade-action-form {
+  padding: 16px;
+}
+
+.trade-action-form h3 {
+  margin-bottom: 16px;
+  font-size: 16px;
+  color: #e2e8f0;
+}
+
+.trade-close-summary {
+  background: #1e293b;
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.trade-close-preview {
+  background: #1e293b;
+  padding: 10px;
+  border-radius: 4px;
+  margin-bottom: 16px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.preview-label {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+.preview-value {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.preview-value.profit { color: #4ade80; }
+.preview-value.loss { color: #f87171; }
+
+/* Reporting View */
+.reporting-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.reporting-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.btn-back {
+  background: transparent;
+  border: 1px solid #475569;
+  color: #94a3b8;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-back:hover {
+  background: #334155;
+  color: #e2e8f0;
+}
+
+.reporting-header h2 {
+  flex: 1;
+  font-size: 18px;
+  color: #e2e8f0;
+  margin: 0;
+}
+
+.reporting-charts {
+  margin-bottom: 24px;
+}
+
+.chart-section {
+  margin-bottom: 16px;
+}
+
+.chart-section h4 {
+  font-size: 12px;
+  color: #94a3b8;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.chart-container {
+  background: #1e293b;
+  border-radius: 6px;
+  padding: 8px;
+}
+
+/* Reporting Stats */
+.reporting-stats {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+.stats-section {
+  background: #1e293b;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.stats-section h4 {
+  font-size: 11px;
+  color: #64748b;
+  margin-bottom: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stats-section.time-scale {
+  grid-column: span 2;
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.stat-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.stat-value.profit { color: #4ade80; }
+.stat-value.loss { color: #f87171; }
+
+.reporting-loading,
+.reporting-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #64748b;
+}

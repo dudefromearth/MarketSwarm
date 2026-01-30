@@ -8,9 +8,13 @@ import MarketModeGaugeCard from './components/MarketModeGaugeCard';
 import VixRegimeCard from './components/VixRegimeCard';
 import TradeLogPanel from './components/TradeLogPanel';
 import type { Trade } from './components/TradeLogPanel';
+import type { TradeLog } from './components/LogSelector';
 import TradeEntryModal from './components/TradeEntryModal';
 import type { TradeEntryData } from './components/TradeEntryModal';
 import EquityChartWidget from './components/EquityChartWidget';
+import LogManagerModal from './components/LogManagerModal';
+import TradeDetailModal from './components/TradeDetailModal';
+import ReportingView from './components/ReportingView';
 
 const SSE_BASE = 'http://localhost:3001';
 
@@ -458,6 +462,12 @@ function App() {
   const [editingTrade, setEditingTrade] = useState<Trade | null>(null);
   const [tradeRefreshTrigger, setTradeRefreshTrigger] = useState(0);
 
+  // FOTW Trade Log v2 state
+  const [selectedLog, setSelectedLog] = useState<TradeLog | null>(null);
+  const [logManagerOpen, setLogManagerOpen] = useState(false);
+  const [tradeDetailTrade, setTradeDetailTrade] = useState<Trade | null>(null);
+  const [reportingLogId, setReportingLogId] = useState<string | null>(null);
+
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
   const heatmapScrollRef = useRef<HTMLDivElement>(null);
@@ -573,16 +583,21 @@ function App() {
   };
 
   // Trade Log handlers
-  const openTradeEntry = useCallback((prefill?: TradeEntryData) => {
-    setTradeEntryPrefill(prefill || null);
+  const openTradeEntry = useCallback((logIdOrPrefill?: string | TradeEntryData) => {
+    if (typeof logIdOrPrefill === 'string') {
+      // Called with logId from TradeLogPanel
+      setTradeEntryPrefill(null);
+    } else {
+      // Called with prefill data from heatmap
+      setTradeEntryPrefill(logIdOrPrefill || null);
+    }
     setEditingTrade(null);
     setTradeEntryOpen(true);
   }, []);
 
   const openTradeEdit = useCallback((trade: Trade) => {
-    setEditingTrade(trade);
-    setTradeEntryPrefill(null);
-    setTradeEntryOpen(true);
+    // Open trade detail modal instead of entry modal for editing
+    setTradeDetailTrade(trade);
   }, []);
 
   const closeTradeEntry = useCallback(() => {
@@ -592,6 +607,31 @@ function App() {
   }, []);
 
   const onTradeSaved = useCallback(() => {
+    setTradeRefreshTrigger(prev => prev + 1);
+  }, []);
+
+  // Log management handlers
+  const handleSelectLog = useCallback((log: TradeLog) => {
+    setSelectedLog(log);
+  }, []);
+
+  const handleManageLogs = useCallback(() => {
+    setLogManagerOpen(true);
+  }, []);
+
+  const handleViewReporting = useCallback((logId: string) => {
+    setReportingLogId(logId);
+  }, []);
+
+  const handleCloseReporting = useCallback(() => {
+    setReportingLogId(null);
+  }, []);
+
+  const handleTradeDetailClose = useCallback(() => {
+    setTradeDetailTrade(null);
+  }, []);
+
+  const handleLogCreated = useCallback(() => {
     setTradeRefreshTrigger(prev => prev + 1);
   }, []);
 
@@ -2200,23 +2240,51 @@ function App() {
           <span className="close-bar-label">Close</span>
         </div>
         <div className="trade-log-panel-inner">
-          <div className="trade-log-overlay-header">
-            <h2>Trade Log</h2>
-          </div>
-          <div className="trade-log-overlay-content">
-          {!tradeLogCollapsed && (
+          {reportingLogId ? (
+            <ReportingView
+              logId={reportingLogId}
+              logName={selectedLog?.name || 'Trade Log'}
+              onClose={handleCloseReporting}
+            />
+          ) : (
             <>
-              <EquityChartWidget refreshTrigger={tradeRefreshTrigger} />
-              <TradeLogPanel
-                onOpenTradeEntry={openTradeEntry}
-                onEditTrade={openTradeEdit}
-                refreshTrigger={tradeRefreshTrigger}
-              />
+              <div className="trade-log-overlay-content">
+              {!tradeLogCollapsed && (
+                <>
+                  <EquityChartWidget refreshTrigger={tradeRefreshTrigger} />
+                  <TradeLogPanel
+                    onOpenTradeEntry={openTradeEntry}
+                    onEditTrade={openTradeEdit}
+                    onViewReporting={handleViewReporting}
+                    onManageLogs={handleManageLogs}
+                    selectedLogId={selectedLog?.id || null}
+                    onSelectLog={handleSelectLog}
+                    refreshTrigger={tradeRefreshTrigger}
+                  />
+                </>
+              )}
+              </div>
             </>
           )}
-          </div>
         </div>
       </div>
+
+      {/* Log Manager Modal */}
+      <LogManagerModal
+        isOpen={logManagerOpen}
+        onClose={() => setLogManagerOpen(false)}
+        selectedLogId={selectedLog?.id || null}
+        onSelectLog={handleSelectLog}
+        onLogCreated={handleLogCreated}
+      />
+
+      {/* Trade Detail Modal */}
+      <TradeDetailModal
+        trade={tradeDetailTrade}
+        isOpen={tradeDetailTrade !== null}
+        onClose={handleTradeDetailClose}
+        onTradeUpdated={onTradeSaved}
+      />
 
       {/* Strategy Popup Modal */}
       {selectedTile && (

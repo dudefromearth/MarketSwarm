@@ -1,5 +1,5 @@
 # services/journal/intel/orchestrator.py
-"""API server and main loop for the journal service."""
+"""API server and main loop for the FOTW Trade Log service (v2)."""
 
 import asyncio
 import json
@@ -8,20 +8,20 @@ from datetime import datetime
 
 from aiohttp import web
 
-from .db import JournalDB
-from .models import Trade
-from .analytics import Analytics
+from .db_v2 import JournalDBv2
+from .models_v2 import TradeLog, Trade, TradeEvent
+from .analytics_v2 import AnalyticsV2
 
 
 class JournalOrchestrator:
-    """REST API server for the journal service."""
+    """REST API server for the FOTW Trade Log service."""
 
     def __init__(self, config: Dict[str, Any], logger):
         self.config = config
         self.logger = logger
         self.port = int(config.get('JOURNAL_PORT', 3002))
-        self.db = JournalDB()
-        self.analytics = Analytics(self.db)
+        self.db = JournalDBv2()
+        self.analytics = AnalyticsV2(self.db)
 
     def _json_response(self, data: Any, status: int = 200) -> web.Response:
         """Create a JSON response with CORS headers."""
@@ -51,12 +51,138 @@ class JournalOrchestrator:
             }
         )
 
-    async def list_trades(self, request: web.Request) -> web.Response:
-        """GET /api/trades - List trades with optional filters."""
+    # ==================== Trade Log Endpoints ====================
+
+    async def list_logs(self, request: web.Request) -> web.Response:
+        """GET /api/logs - List all trade logs."""
         try:
+            include_inactive = request.query.get('include_inactive', 'false') == 'true'
+            logs = self.db.list_logs(include_inactive=include_inactive)
+
+            # Get summaries for each log
+            log_data = []
+            for log in logs:
+                summary = self.db.get_log_summary(log.id)
+                log_data.append(summary)
+
+            return self._json_response({
+                'success': True,
+                'data': log_data,
+                'count': len(log_data)
+            })
+        except Exception as e:
+            self.logger.error(f"list_logs error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_log(self, request: web.Request) -> web.Response:
+        """GET /api/logs/:id - Get a single trade log with summary."""
+        try:
+            log_id = request.match_info['id']
+            summary = self.db.get_log_summary(log_id)
+
+            if not summary:
+                return self._error_response('Trade log not found', 404)
+
+            return self._json_response({
+                'success': True,
+                'data': summary
+            })
+        except Exception as e:
+            self.logger.error(f"get_log error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def create_log(self, request: web.Request) -> web.Response:
+        """POST /api/logs - Create a new trade log."""
+        try:
+            body = await request.json()
+
+            if 'name' not in body:
+                return self._error_response('name is required')
+            if 'starting_capital' not in body:
+                return self._error_response('starting_capital is required')
+
+            # Convert dollars to cents if needed
+            starting_capital = body['starting_capital']
+            if isinstance(starting_capital, float) or starting_capital < 10000:
+                # Assume dollars, convert to cents
+                starting_capital = int(starting_capital * 100)
+
+            risk_per_trade = body.get('risk_per_trade')
+            if risk_per_trade and (isinstance(risk_per_trade, float) or risk_per_trade < 1000):
+                risk_per_trade = int(risk_per_trade * 100)
+
+            log = TradeLog(
+                id=TradeLog.new_id(),
+                name=body['name'],
+                starting_capital=starting_capital,
+                risk_per_trade=risk_per_trade,
+                max_position_size=body.get('max_position_size'),
+                intent=body.get('intent'),
+                constraints=json.dumps(body.get('constraints')) if body.get('constraints') else None,
+                regime_assumptions=body.get('regime_assumptions'),
+                notes=body.get('notes')
+            )
+
+            created = self.db.create_log(log)
+            self.logger.info(f"Created trade log '{created.name}' with ${starting_capital/100:.2f} capital", emoji="📒")
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201)
+
+        except Exception as e:
+            self.logger.error(f"create_log error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def update_log(self, request: web.Request) -> web.Response:
+        """PUT /api/logs/:id - Update trade log metadata (not starting params)."""
+        try:
+            log_id = request.match_info['id']
+            body = await request.json()
+
+            log = self.db.update_log(log_id, body)
+
+            if not log:
+                return self._error_response('Trade log not found', 404)
+
+            return self._json_response({
+                'success': True,
+                'data': log.to_api_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"update_log error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def delete_log(self, request: web.Request) -> web.Response:
+        """DELETE /api/logs/:id - Soft delete a trade log."""
+        try:
+            log_id = request.match_info['id']
+            deleted = self.db.delete_log(log_id)
+
+            if not deleted:
+                return self._error_response('Trade log not found', 404)
+
+            self.logger.info(f"Archived trade log {log_id}", emoji="📦")
+
+            return self._json_response({
+                'success': True,
+                'message': 'Trade log archived'
+            })
+        except Exception as e:
+            self.logger.error(f"delete_log error: {e}")
+            return self._error_response(str(e), 500)
+
+    # ==================== Trade Endpoints (Log-Scoped) ====================
+
+    async def list_trades(self, request: web.Request) -> web.Response:
+        """GET /api/logs/:logId/trades - List trades in a log."""
+        try:
+            log_id = request.match_info['logId']
             params = request.query
+
             trades = self.db.list_trades(
-                user_id=params.get('user_id', 'default'),
+                log_id=log_id,
                 status=params.get('status'),
                 symbol=params.get('symbol'),
                 strategy=params.get('strategy'),
@@ -68,7 +194,7 @@ class JournalOrchestrator:
 
             return self._json_response({
                 'success': True,
-                'data': [t.to_dict() for t in trades],
+                'data': [t.to_api_dict() for t in trades],
                 'count': len(trades)
             })
         except Exception as e:
@@ -76,61 +202,83 @@ class JournalOrchestrator:
             return self._error_response(str(e), 500)
 
     async def get_trade(self, request: web.Request) -> web.Response:
-        """GET /api/trades/:id - Get a single trade."""
+        """GET /api/trades/:id - Get a single trade with events."""
         try:
             trade_id = request.match_info['id']
-            trade = self.db.get_trade(trade_id)
+            trade_data = self.db.get_trade_with_events(trade_id)
 
-            if not trade:
+            if not trade_data:
                 return self._error_response('Trade not found', 404)
 
             return self._json_response({
                 'success': True,
-                'data': trade.to_dict()
+                'data': trade_data
             })
         except Exception as e:
             self.logger.error(f"get_trade error: {e}")
             return self._error_response(str(e), 500)
 
     async def create_trade(self, request: web.Request) -> web.Response:
-        """POST /api/trades - Create a new trade."""
+        """POST /api/logs/:logId/trades - Create a new trade."""
         try:
+            log_id = request.match_info['logId']
             body = await request.json()
 
-            # Generate ID if not provided
-            trade_id = body.get('id') or Trade.new_id()
+            # Verify log exists
+            log = self.db.get_log(log_id)
+            if not log:
+                return self._error_response('Trade log not found', 404)
 
             # Set defaults
             entry_time = body.get('entry_time') or datetime.utcnow().isoformat()
 
+            # Convert prices to cents if needed
+            entry_price = body['entry_price']
+            if isinstance(entry_price, float) or entry_price < 1000:
+                entry_price = int(entry_price * 100)
+
+            planned_risk = body.get('planned_risk')
+            if planned_risk and (isinstance(planned_risk, float) or planned_risk < 1000):
+                planned_risk = int(planned_risk * 100)
+
+            max_profit = body.get('max_profit')
+            if max_profit and (isinstance(max_profit, float) or max_profit < 1000):
+                max_profit = int(max_profit * 100)
+
+            max_loss = body.get('max_loss')
+            if max_loss and (isinstance(max_loss, float) or max_loss < 1000):
+                max_loss = int(max_loss * 100)
+
             trade = Trade(
-                id=trade_id,
-                user_id=body.get('user_id', 'default'),
+                id=Trade.new_id(),
+                log_id=log_id,
                 symbol=body.get('symbol', 'SPX'),
                 underlying=body.get('underlying', 'I:SPX'),
                 strategy=body['strategy'],
                 side=body['side'],
-                dte=body.get('dte'),
                 strike=float(body['strike']),
-                width=int(body.get('width', 0)),
+                width=body.get('width'),
+                dte=body.get('dte'),
                 quantity=int(body.get('quantity', 1)),
                 entry_time=entry_time,
-                entry_price=float(body['entry_price']),
+                entry_price=entry_price,
                 entry_spot=body.get('entry_spot'),
-                max_profit=body.get('max_profit'),
-                max_loss=body.get('max_loss'),
+                entry_iv=body.get('entry_iv'),
+                planned_risk=planned_risk or max_loss,  # Default to max_loss
+                max_profit=max_profit,
+                max_loss=max_loss,
                 notes=body.get('notes'),
                 tags=body.get('tags', []),
-                playbook_id=body.get('playbook_id'),
-                source=body.get('source', 'manual')
+                source=body.get('source', 'manual'),
+                playbook_id=body.get('playbook_id')
             )
 
             created = self.db.create_trade(trade)
-            self.logger.info(f"Created trade {created.id}: {created.strategy} {created.strike}", emoji="📝")
+            self.logger.info(f"Created trade: {created.strategy} {created.strike} @ ${entry_price/100:.2f}", emoji="📝")
 
             return self._json_response({
                 'success': True,
-                'data': created.to_dict()
+                'data': created.to_api_dict()
             }, 201)
 
         except KeyError as e:
@@ -146,7 +294,7 @@ class JournalOrchestrator:
             body = await request.json()
 
             # Don't allow updating certain fields
-            protected = ['id', 'user_id', 'created_at']
+            protected = ['id', 'log_id', 'created_at']
             updates = {k: v for k, v in body.items() if k not in protected}
 
             # Handle tags serialization
@@ -160,10 +308,85 @@ class JournalOrchestrator:
 
             return self._json_response({
                 'success': True,
-                'data': trade.to_dict()
+                'data': trade.to_api_dict()
             })
         except Exception as e:
             self.logger.error(f"update_trade error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def add_adjustment(self, request: web.Request) -> web.Response:
+        """POST /api/trades/:id/adjust - Add an adjustment event."""
+        try:
+            trade_id = request.match_info['id']
+            body = await request.json()
+
+            if 'price' not in body:
+                return self._error_response('price is required')
+            if 'quantity_change' not in body:
+                return self._error_response('quantity_change is required')
+
+            # Convert price to cents
+            price = body['price']
+            if isinstance(price, float) or price < 1000:
+                price = int(price * 100)
+
+            event = self.db.add_adjustment(
+                trade_id=trade_id,
+                price=price,
+                quantity_change=int(body['quantity_change']),
+                spot=body.get('spot'),
+                notes=body.get('notes'),
+                event_time=body.get('event_time')
+            )
+
+            if not event:
+                return self._error_response('Trade not found or already closed', 404)
+
+            self.logger.info(f"Adjusted trade {trade_id}: {body['quantity_change']:+d} @ ${price/100:.2f}", emoji="📝")
+
+            return self._json_response({
+                'success': True,
+                'data': event.to_api_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"add_adjustment error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def close_trade(self, request: web.Request) -> web.Response:
+        """POST /api/trades/:id/close - Close a trade."""
+        try:
+            trade_id = request.match_info['id']
+            body = await request.json()
+
+            if 'exit_price' not in body:
+                return self._error_response('exit_price is required')
+
+            # Convert price to cents
+            exit_price = body['exit_price']
+            if isinstance(exit_price, float) or exit_price < 1000:
+                exit_price = int(exit_price * 100)
+
+            trade = self.db.close_trade(
+                trade_id=trade_id,
+                exit_price=exit_price,
+                exit_spot=body.get('exit_spot'),
+                exit_time=body.get('exit_time'),
+                notes=body.get('notes')
+            )
+
+            if not trade:
+                return self._error_response('Trade not found or already closed', 404)
+
+            pnl_dollars = (trade.pnl or 0) / 100
+            pnl_str = f"+${pnl_dollars:.2f}" if pnl_dollars >= 0 else f"-${abs(pnl_dollars):.2f}"
+            self.logger.info(f"Closed trade {trade_id}: {pnl_str}", emoji="✅")
+
+            return self._json_response({
+                'success': True,
+                'data': trade.to_api_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"close_trade error: {e}")
             return self._error_response(str(e), 500)
 
     async def delete_trade(self, request: web.Request) -> web.Response:
@@ -185,81 +408,180 @@ class JournalOrchestrator:
             self.logger.error(f"delete_trade error: {e}")
             return self._error_response(str(e), 500)
 
-    async def close_trade(self, request: web.Request) -> web.Response:
-        """POST /api/trades/:id/close - Close a trade."""
+    # ==================== Analytics Endpoints (Log-Scoped) ====================
+
+    async def get_log_analytics(self, request: web.Request) -> web.Response:
+        """GET /api/logs/:logId/analytics - Get full analytics for a log."""
         try:
-            trade_id = request.match_info['id']
-            body = await request.json()
+            log_id = request.match_info['logId']
+            analytics = self.analytics.get_full_analytics(log_id)
 
-            if 'exit_price' not in body:
-                return self._error_response('exit_price is required')
+            if not analytics:
+                return self._error_response('Trade log not found', 404)
 
-            trade = self.db.close_trade(
-                trade_id=trade_id,
-                exit_price=float(body['exit_price']),
-                exit_spot=body.get('exit_spot'),
-                exit_time=body.get('exit_time')
+            return self._json_response({
+                'success': True,
+                'data': analytics.to_api_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"get_log_analytics error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_log_equity(self, request: web.Request) -> web.Response:
+        """GET /api/logs/:logId/equity - Get equity curve for a log."""
+        try:
+            log_id = request.match_info['logId']
+            params = request.query
+
+            equity_points = self.analytics.get_equity_curve(
+                log_id,
+                from_date=params.get('from'),
+                to_date=params.get('to')
             )
 
-            if not trade:
-                return self._error_response('Trade not found', 404)
-
-            pnl_str = f"+${trade.pnl:.2f}" if trade.pnl and trade.pnl >= 0 else f"-${abs(trade.pnl or 0):.2f}"
-            self.logger.info(f"Closed trade {trade_id}: {pnl_str}", emoji="✅")
-
             return self._json_response({
                 'success': True,
-                'data': trade.to_dict()
+                'data': {
+                    'equity': [p.to_dict() for p in equity_points]
+                }
             })
         except Exception as e:
-            self.logger.error(f"close_trade error: {e}")
+            self.logger.error(f"get_log_equity error: {e}")
             return self._error_response(str(e), 500)
 
-    async def get_analytics(self, request: web.Request) -> web.Response:
-        """GET /api/analytics - Get performance statistics."""
+    async def get_log_drawdown(self, request: web.Request) -> web.Response:
+        """GET /api/logs/:logId/drawdown - Get drawdown curve for a log."""
         try:
+            log_id = request.match_info['logId']
             params = request.query
-            user_id = params.get('user_id', 'default')
 
-            summary = self.analytics.get_summary(user_id)
-            strategy_breakdown = self.analytics.get_strategy_breakdown(user_id)
+            drawdown_points = self.analytics.get_drawdown_curve(
+                log_id,
+                from_date=params.get('from'),
+                to_date=params.get('to')
+            )
 
             return self._json_response({
                 'success': True,
                 'data': {
-                    'summary': summary.to_dict(),
-                    'by_strategy': strategy_breakdown
+                    'drawdown': [p.to_dict() for p in drawdown_points]
                 }
             })
         except Exception as e:
-            self.logger.error(f"get_analytics error: {e}")
+            self.logger.error(f"get_log_drawdown error: {e}")
             return self._error_response(str(e), 500)
 
-    async def get_equity_curve(self, request: web.Request) -> web.Response:
-        """GET /api/analytics/equity - Get equity curve data."""
-        try:
-            params = request.query
-            user_id = params.get('user_id', 'default')
+    # ==================== Legacy Endpoints (for backwards compatibility) ====================
 
-            equity_points = self.analytics.get_equity_curve(user_id)
-            daily_pnl = self.analytics.get_daily_pnl(user_id)
+    async def legacy_list_trades(self, request: web.Request) -> web.Response:
+        """GET /api/trades - Legacy: List trades from first active log."""
+        try:
+            logs = self.db.list_logs()
+            if not logs:
+                return self._json_response({
+                    'success': True,
+                    'data': [],
+                    'count': 0
+                })
+
+            # Use first log for legacy endpoint
+            log_id = logs[0].id
+            params = request.query
+
+            trades = self.db.list_trades(
+                log_id=log_id,
+                status=params.get('status'),
+                symbol=params.get('symbol'),
+                strategy=params.get('strategy'),
+                from_date=params.get('from'),
+                to_date=params.get('to'),
+                limit=int(params.get('limit', 100)),
+                offset=int(params.get('offset', 0))
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': [t.to_api_dict() for t in trades],
+                'count': len(trades)
+            })
+        except Exception as e:
+            self.logger.error(f"legacy_list_trades error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def legacy_create_trade(self, request: web.Request) -> web.Response:
+        """POST /api/trades - Legacy: Create trade in first active log."""
+        try:
+            logs = self.db.list_logs()
+            if not logs:
+                # Create default log
+                default_log = TradeLog(
+                    id=TradeLog.new_id(),
+                    name='Default Log',
+                    starting_capital=2500000,  # $25,000
+                    intent='Auto-created default log'
+                )
+                self.db.create_log(default_log)
+                logs = [default_log]
+
+            # Inject log_id and forward to normal create
+            request._match_info = {'logId': logs[0].id}
+            return await self.create_trade(request)
+        except Exception as e:
+            self.logger.error(f"legacy_create_trade error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def legacy_analytics(self, request: web.Request) -> web.Response:
+        """GET /api/analytics - Legacy: Analytics from first active log."""
+        try:
+            logs = self.db.list_logs()
+            if not logs:
+                return self._json_response({
+                    'success': True,
+                    'data': {'summary': {}}
+                })
+
+            analytics = self.analytics.get_full_analytics(logs[0].id)
 
             return self._json_response({
                 'success': True,
                 'data': {
-                    'equity': [p.to_dict() for p in equity_points],
-                    'daily': daily_pnl
+                    'summary': analytics.to_api_dict() if analytics else {}
                 }
             })
         except Exception as e:
-            self.logger.error(f"get_equity_curve error: {e}")
+            self.logger.error(f"legacy_analytics error: {e}")
             return self._error_response(str(e), 500)
+
+    async def legacy_equity(self, request: web.Request) -> web.Response:
+        """GET /api/analytics/equity - Legacy: Equity from first active log."""
+        try:
+            logs = self.db.list_logs()
+            if not logs:
+                return self._json_response({
+                    'success': True,
+                    'data': {'equity': []}
+                })
+
+            equity_points = self.analytics.get_equity_curve(logs[0].id)
+
+            return self._json_response({
+                'success': True,
+                'data': {
+                    'equity': [p.to_dict() for p in equity_points]
+                }
+            })
+        except Exception as e:
+            self.logger.error(f"legacy_equity error: {e}")
+            return self._error_response(str(e), 500)
+
+    # ==================== Health & App Setup ====================
 
     async def health_check(self, request: web.Request) -> web.Response:
         """GET /health - Health check endpoint."""
         return self._json_response({
             'success': True,
             'service': 'journal',
+            'version': 'v2',
             'status': 'healthy',
             'ts': datetime.utcnow().isoformat()
         })
@@ -274,17 +596,34 @@ class JournalOrchestrator:
         # Health check
         app.router.add_get('/health', self.health_check)
 
-        # Trade CRUD
-        app.router.add_get('/api/trades', self.list_trades)
+        # Trade Log CRUD (v2)
+        app.router.add_get('/api/logs', self.list_logs)
+        app.router.add_get('/api/logs/{id}', self.get_log)
+        app.router.add_post('/api/logs', self.create_log)
+        app.router.add_put('/api/logs/{id}', self.update_log)
+        app.router.add_delete('/api/logs/{id}', self.delete_log)
+
+        # Log-scoped trades (v2)
+        app.router.add_get('/api/logs/{logId}/trades', self.list_trades)
+        app.router.add_post('/api/logs/{logId}/trades', self.create_trade)
+
+        # Trade operations
         app.router.add_get('/api/trades/{id}', self.get_trade)
-        app.router.add_post('/api/trades', self.create_trade)
         app.router.add_put('/api/trades/{id}', self.update_trade)
         app.router.add_delete('/api/trades/{id}', self.delete_trade)
+        app.router.add_post('/api/trades/{id}/adjust', self.add_adjustment)
         app.router.add_post('/api/trades/{id}/close', self.close_trade)
 
-        # Analytics
-        app.router.add_get('/api/analytics', self.get_analytics)
-        app.router.add_get('/api/analytics/equity', self.get_equity_curve)
+        # Log-scoped analytics (v2)
+        app.router.add_get('/api/logs/{logId}/analytics', self.get_log_analytics)
+        app.router.add_get('/api/logs/{logId}/equity', self.get_log_equity)
+        app.router.add_get('/api/logs/{logId}/drawdown', self.get_log_drawdown)
+
+        # Legacy endpoints (backwards compatibility)
+        app.router.add_get('/api/trades', self.legacy_list_trades)
+        app.router.add_post('/api/trades', self.legacy_create_trade)
+        app.router.add_get('/api/analytics', self.legacy_analytics)
+        app.router.add_get('/api/analytics/equity', self.legacy_equity)
 
         return app
 
@@ -297,7 +636,7 @@ class JournalOrchestrator:
         site = web.TCPSite(runner, '0.0.0.0', self.port)
         await site.start()
 
-        self.logger.ok(f"Journal API server running on port {self.port}", emoji="🚀")
+        self.logger.ok(f"FOTW Trade Log API (v2) running on port {self.port}", emoji="📒")
         return runner
 
 

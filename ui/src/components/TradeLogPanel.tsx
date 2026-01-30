@@ -1,50 +1,80 @@
 // src/components/TradeLogPanel.tsx
 import { useState, useEffect, useCallback } from 'react';
+import LogSelector, { TradeLog } from './LogSelector';
 
 const JOURNAL_API = 'http://localhost:3002';
 
 export interface Trade {
   id: string;
-  user_id: string;
+  log_id: string;
   symbol: string;
   underlying: string;
   strategy: string;
   side: string;
   dte: number | null;
   strike: number;
-  width: number;
+  width: number | null;
   quantity: number;
   entry_time: string;
   entry_price: number;
+  entry_price_dollars: number;
   entry_spot: number | null;
+  entry_iv: number | null;
   exit_time: string | null;
   exit_price: number | null;
+  exit_price_dollars?: number;
   exit_spot: number | null;
-  pnl: number | null;
-  pnl_percent: number | null;
+  planned_risk: number | null;
+  planned_risk_dollars?: number;
   max_profit: number | null;
+  max_profit_dollars?: number;
   max_loss: number | null;
+  max_loss_dollars?: number;
+  pnl: number | null;
+  pnl_dollars?: number;
+  r_multiple: number | null;
   status: string;
   notes: string | null;
-  tags: string;
-  playbook_id: string | null;
+  tags: string[] | string;
   source: string;
+  playbook_id: string | null;
   created_at: string;
   updated_at: string;
+  events?: TradeEvent[];
+}
+
+export interface TradeEvent {
+  id: string;
+  trade_id: string;
+  event_type: string;
+  event_time: string;
+  price: number | null;
+  price_dollars?: number;
+  spot: number | null;
+  quantity_change: number | null;
+  notes: string | null;
+  created_at: string;
 }
 
 interface TradeLogPanelProps {
-  onOpenTradeEntry: () => void;
+  onOpenTradeEntry: (logId: string) => void;
   onEditTrade: (trade: Trade) => void;
+  onViewReporting: (logId: string) => void;
+  onManageLogs: () => void;
+  selectedLogId: string | null;
+  onSelectLog: (log: TradeLog) => void;
   refreshTrigger?: number;
 }
 
 type StatusFilter = 'all' | 'open' | 'closed';
-type TimeFilter = 'today' | 'week' | 'month' | 'all';
 
 export default function TradeLogPanel({
   onOpenTradeEntry,
   onEditTrade,
+  onViewReporting,
+  onManageLogs,
+  selectedLogId,
+  onSelectLog,
   refreshTrigger = 0
 }: TradeLogPanelProps) {
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -53,52 +83,40 @@ export default function TradeLogPanel({
 
   // Filters
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
 
-  // Stats
+  // Counts
   const [openCount, setOpenCount] = useState(0);
+  const [closedCount, setClosedCount] = useState(0);
 
   const fetchTrades = useCallback(async () => {
+    if (!selectedLogId) {
+      setTrades([]);
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
     try {
-      // Build query params
       const params = new URLSearchParams();
       if (statusFilter !== 'all') {
         params.set('status', statusFilter);
       }
 
-      // Time filter
-      if (timeFilter !== 'all') {
-        const now = new Date();
-        let fromDate: Date;
-
-        switch (timeFilter) {
-          case 'today':
-            fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            break;
-          case 'week':
-            fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-            break;
-          case 'month':
-            fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-            break;
-          default:
-            fromDate = new Date(0);
-        }
-
-        params.set('from', fromDate.toISOString());
-      }
-
-      const response = await fetch(`${JOURNAL_API}/api/trades?${params}`);
+      const response = await fetch(
+        `${JOURNAL_API}/api/logs/${selectedLogId}/trades?${params}`
+      );
       const result = await response.json();
 
       if (result.success) {
         setTrades(result.data);
-        // Count open trades
+
+        // Count by status
         const open = result.data.filter((t: Trade) => t.status === 'open').length;
+        const closed = result.data.filter((t: Trade) => t.status === 'closed').length;
         setOpenCount(open);
+        setClosedCount(closed);
       } else {
         setError(result.error || 'Failed to fetch trades');
       }
@@ -108,7 +126,7 @@ export default function TradeLogPanel({
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, timeFilter]);
+  }, [selectedLogId, statusFilter]);
 
   useEffect(() => {
     fetchTrades();
@@ -131,8 +149,9 @@ export default function TradeLogPanel({
 
   const formatPnL = (pnl: number | null) => {
     if (pnl === null) return '-';
-    const formatted = Math.abs(pnl / 100).toFixed(2);
-    return pnl >= 0 ? `+$${formatted}` : `-$${formatted}`;
+    const dollars = pnl / 100;
+    const formatted = Math.abs(dollars).toFixed(2);
+    return dollars >= 0 ? `+$${formatted}` : `-$${formatted}`;
   };
 
   const getStrategyLabel = (strategy: string) => {
@@ -140,6 +159,7 @@ export default function TradeLogPanel({
       case 'butterfly': return 'BF';
       case 'vertical': return 'VS';
       case 'single': return 'SGL';
+      case 'iron_condor': return 'IC';
       default: return strategy.toUpperCase().slice(0, 3);
     }
   };
@@ -147,46 +167,62 @@ export default function TradeLogPanel({
   return (
     <div className="trade-log-panel">
       <div className="trade-log-header">
-        <h3>Trade Log</h3>
-        <button
-          className="btn-add-trade"
-          onClick={() => onOpenTradeEntry()}
-        >
-          + Add Trade
-        </button>
+        <LogSelector
+          selectedLogId={selectedLogId}
+          onSelectLog={onSelectLog}
+          onManageLogs={onManageLogs}
+          refreshTrigger={refreshTrigger}
+        />
+        <div className="trade-log-actions">
+          {selectedLogId && (
+            <button
+              className="btn-reporting"
+              onClick={() => onViewReporting(selectedLogId)}
+              title="View Performance Report"
+            >
+              Report
+            </button>
+          )}
+          <button
+            className="btn-add-trade"
+            onClick={() => selectedLogId && onOpenTradeEntry(selectedLogId)}
+            disabled={!selectedLogId}
+          >
+            + Add Trade
+          </button>
+        </div>
       </div>
 
       <div className="trade-log-filters">
-        <div className="filter-group">
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+        <div className="status-tabs">
+          <button
+            className={`status-tab ${statusFilter === 'open' ? 'active' : ''}`}
+            onClick={() => setStatusFilter('open')}
           >
-            <option value="all">All Status</option>
-            <option value="open">Open</option>
-            <option value="closed">Closed</option>
-          </select>
-        </div>
-
-        <div className="filter-group">
-          <select
-            value={timeFilter}
-            onChange={(e) => setTimeFilter(e.target.value as TimeFilter)}
+            Open: {openCount}
+          </button>
+          <button
+            className={`status-tab ${statusFilter === 'closed' ? 'active' : ''}`}
+            onClick={() => setStatusFilter('closed')}
           >
-            <option value="today">Today</option>
-            <option value="week">This Week</option>
-            <option value="month">This Month</option>
-            <option value="all">All Time</option>
-          </select>
-        </div>
-
-        <div className="trade-log-stats">
-          <span className="stat-badge open">Open: {openCount}</span>
+            Closed: {closedCount}
+          </button>
+          <button
+            className={`status-tab ${statusFilter === 'all' ? 'active' : ''}`}
+            onClick={() => setStatusFilter('all')}
+          >
+            All
+          </button>
         </div>
       </div>
 
       <div className="trade-log-table-container">
-        {loading && trades.length === 0 ? (
+        {!selectedLogId ? (
+          <div className="trade-log-empty">
+            <p>No trade log selected.</p>
+            <p className="hint">Create a log to start tracking trades.</p>
+          </div>
+        ) : loading && trades.length === 0 ? (
           <div className="trade-log-loading">Loading trades...</div>
         ) : error ? (
           <div className="trade-log-error">{error}</div>
@@ -204,7 +240,7 @@ export default function TradeLogPanel({
                 <th>Strategy</th>
                 <th>Strike</th>
                 <th>Entry</th>
-                <th>P&L</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody>
@@ -226,11 +262,25 @@ export default function TradeLogPanel({
                   </td>
                   <td className="trade-strike">
                     {trade.strike}
-                    {trade.width > 0 && <span className="trade-width">/{trade.width}</span>}
+                    {trade.width && trade.width > 0 && (
+                      <span className="trade-width">/{trade.width}</span>
+                    )}
                   </td>
-                  <td className="trade-entry">${trade.entry_price.toFixed(2)}</td>
-                  <td className={`trade-pnl ${trade.status === 'open' ? 'open' : trade.pnl && trade.pnl >= 0 ? 'profit' : 'loss'}`}>
-                    {trade.status === 'open' ? 'OPEN' : formatPnL(trade.pnl)}
+                  <td className="trade-entry">
+                    ${(trade.entry_price / 100).toFixed(2)}
+                  </td>
+                  <td className={`trade-status ${
+                    trade.status === 'open'
+                      ? 'open'
+                      : trade.pnl && trade.pnl >= 0
+                        ? 'profit'
+                        : 'loss'
+                  }`}>
+                    {trade.status === 'open' ? (
+                      <span className="status-open">OPEN</span>
+                    ) : (
+                      formatPnL(trade.pnl)
+                    )}
                   </td>
                 </tr>
               ))}
