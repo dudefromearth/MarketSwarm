@@ -1741,7 +1741,7 @@ function App() {
           </div>
         </div>
         <div className="header-center">
-          <MELStatusBar snapshot={mel.snapshot} connected={mel.connected} />
+          {/* MEL moved to control bar */}
         </div>
         <div className="connection-status">
           <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
@@ -1990,7 +1990,7 @@ function App() {
           )}
         </div>
 
-        {/* Gradient - at the end */}
+        {/* Gradient */}
         <div className="control-group">
           <label>Gradient {threshold}%</label>
           <input
@@ -2002,6 +2002,11 @@ function App() {
             className="threshold-slider"
           />
         </div>
+
+        <div className="control-separator" />
+
+        {/* MEL Status */}
+        <MELStatusBar snapshot={mel.snapshot} connected={mel.connected} />
       </div>
 
       {/* Main Content Row - Horizontal Scrollable */}
