@@ -1492,8 +1492,22 @@ function App() {
           // Zone edges = trigger levels. If price exits zone, risk is too high to stay in position.
           if (strategy && currentSpot) {
             const entryDebit = alert.entryDebit || strategy.debit || 1;
-            const currentDebit = strategy.debit || entryDebit;
-            const currentProfit = entryDebit - currentDebit;
+
+            // Look up current market value from heatmap tiles
+            let currentDebit = entryDebit; // fallback to entry if no live data
+            if (heatmap?.tiles) {
+              const tileKey = `${strategy.strategy}:${strategy.dte}:${strategy.width}:${Math.round(strategy.strike)}`;
+              const tile = heatmap.tiles[tileKey];
+              if (tile) {
+                const sideData = strategy.side === 'call' ? tile.call : tile.put;
+                if (sideData?.debit != null) {
+                  currentDebit = sideData.debit;
+                }
+              }
+            }
+
+            // P&L = current value - entry cost (for long positions, higher current = profit)
+            const currentProfit = currentDebit - entryDebit; // in dollars per share
             const profitPercent = entryDebit > 0 ? currentProfit / entryDebit : 0;
             const minProfitThreshold = alert.minProfitThreshold || 0.5;
 
@@ -1629,7 +1643,7 @@ function App() {
         setRiskGraphAlerts(prev => prev.filter(a => !alertsToRemove.includes(a.id)));
       }, 100);
     }
-  }, [currentSpot, riskGraphStrategies]);
+  }, [currentSpot, riskGraphStrategies, heatmap]);
 
   const widths = WIDTHS[underlying][strategy];
 
