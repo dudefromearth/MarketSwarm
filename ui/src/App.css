@@ -3884,6 +3884,65 @@ body {
   margin: 0;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.export-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-export {
+  background: #334155;
+  border: 1px solid #475569;
+  color: #94a3b8;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+  font-size: 12px;
+}
+
+.btn-export:hover {
+  background: #475569;
+  color: #e2e8f0;
+}
+
+.btn-import {
+  background: #334155;
+  border: 1px solid #475569;
+  color: #94a3b8;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.btn-import:hover {
+  background: #475569;
+  color: #e2e8f0;
+}
+
+.import-input {
+  display: none;
+}
+
+.import-result {
+  font-size: 12px;
+  color: #4ade80;
+  padding: 4px 8px;
+  background: rgba(74, 222, 128, 0.1);
+  border-radius: 4px;
+}
+
+.import-result.has-errors {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+}
+
 .reporting-charts {
   margin-bottom: 24px;
 }

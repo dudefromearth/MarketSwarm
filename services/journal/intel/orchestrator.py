@@ -2,11 +2,15 @@
 """API server and main loop for the FOTW Trade Log service (v2)."""
 
 import asyncio
+import csv
+import io
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from aiohttp import web
+import openpyxl
+from openpyxl.utils import get_column_letter
 
 from .db_v2 import JournalDBv2
 from .models_v2 import TradeLog, Trade, TradeEvent, Symbol, Setting
@@ -494,6 +498,314 @@ class JournalOrchestrator:
             self.logger.error(f"get_return_distribution error: {e}")
             return self._error_response(str(e), 500)
 
+    # ==================== Export/Import ====================
+
+    # CSV/Excel column definitions
+    EXPORT_COLUMNS = [
+        'entry_time', 'symbol', 'underlying', 'strategy', 'side', 'strike', 'width',
+        'dte', 'quantity', 'entry_price', 'entry_spot', 'exit_time', 'exit_price',
+        'exit_spot', 'pnl', 'r_multiple', 'status', 'planned_risk', 'max_profit',
+        'max_loss', 'notes', 'tags', 'source'
+    ]
+
+    async def export_trades(self, request: web.Request) -> web.Response:
+        """GET /api/logs/:logId/export - Export trades as CSV or Excel."""
+        try:
+            log_id = request.match_info['logId']
+            format_type = request.query.get('format', 'csv').lower()
+
+            # Verify log exists
+            log = self.db.get_log(log_id)
+            if not log:
+                return self._error_response('Trade log not found', 404)
+
+            # Get all trades
+            trades = self.db.list_trades(log_id=log_id, limit=100000)
+
+            if format_type == 'xlsx':
+                return await self._export_excel(trades, log.name)
+            else:
+                return await self._export_csv(trades, log.name)
+
+        except Exception as e:
+            self.logger.error(f"export_trades error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def _export_csv(self, trades: List[Trade], log_name: str) -> web.Response:
+        """Generate CSV file from trades."""
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Header row
+        writer.writerow(self.EXPORT_COLUMNS)
+
+        # Data rows
+        for trade in trades:
+            row = self._trade_to_export_row(trade)
+            writer.writerow(row)
+
+        csv_content = output.getvalue()
+        filename = f"{log_name.replace(' ', '_')}_trades.csv"
+
+        return web.Response(
+            body=csv_content,
+            content_type='text/csv',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Access-Control-Allow-Origin': '*',
+            }
+        )
+
+    async def _export_excel(self, trades: List[Trade], log_name: str) -> web.Response:
+        """Generate Excel file from trades."""
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Trades"
+
+        # Header row with styling
+        for col, header in enumerate(self.EXPORT_COLUMNS, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = openpyxl.styles.Font(bold=True)
+
+        # Data rows
+        for row_num, trade in enumerate(trades, 2):
+            row_data = self._trade_to_export_row(trade)
+            for col, value in enumerate(row_data, 1):
+                ws.cell(row=row_num, column=col, value=value)
+
+        # Auto-size columns
+        for col in range(1, len(self.EXPORT_COLUMNS) + 1):
+            ws.column_dimensions[get_column_letter(col)].width = 15
+
+        # Save to bytes
+        output = io.BytesIO()
+        wb.save(output)
+        output.seek(0)
+
+        filename = f"{log_name.replace(' ', '_')}_trades.xlsx"
+
+        return web.Response(
+            body=output.read(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Access-Control-Allow-Origin': '*',
+            }
+        )
+
+    def _trade_to_export_row(self, trade: Trade) -> list:
+        """Convert a trade to an export row with dollars instead of cents."""
+        return [
+            trade.entry_time,
+            trade.symbol,
+            trade.underlying,
+            trade.strategy,
+            trade.side,
+            trade.strike,
+            trade.width,
+            trade.dte,
+            trade.quantity,
+            trade.entry_price / 100 if trade.entry_price else None,  # cents to dollars
+            trade.entry_spot,
+            trade.exit_time,
+            trade.exit_price / 100 if trade.exit_price else None,  # cents to dollars
+            trade.exit_spot,
+            trade.pnl / 100 if trade.pnl is not None else None,  # cents to dollars
+            trade.r_multiple,
+            trade.status,
+            trade.planned_risk / 100 if trade.planned_risk else None,
+            trade.max_profit / 100 if trade.max_profit else None,
+            trade.max_loss / 100 if trade.max_loss else None,
+            trade.notes,
+            ','.join(trade.tags) if trade.tags else '',
+            trade.source
+        ]
+
+    async def import_trades(self, request: web.Request) -> web.Response:
+        """POST /api/logs/:logId/import - Import trades from CSV or Excel."""
+        try:
+            log_id = request.match_info['logId']
+
+            # Verify log exists
+            log = self.db.get_log(log_id)
+            if not log:
+                return self._error_response('Trade log not found', 404)
+
+            # Read multipart data
+            reader = await request.multipart()
+            field = await reader.next()
+
+            if not field:
+                return self._error_response('No file uploaded', 400)
+
+            filename = field.filename or 'upload'
+            content = await field.read()
+
+            # Determine format from filename or content
+            if filename.endswith('.xlsx') or filename.endswith('.xls'):
+                trades_data = self._parse_excel(content)
+            else:
+                trades_data = self._parse_csv(content)
+
+            if not trades_data:
+                return self._error_response('No valid trades found in file', 400)
+
+            # Create trades
+            created_count = 0
+            errors = []
+
+            for i, row in enumerate(trades_data):
+                try:
+                    trade = self._row_to_trade(row, log_id)
+                    if trade:
+                        self.db.create_trade(trade)
+                        created_count += 1
+                except Exception as e:
+                    errors.append(f"Row {i + 2}: {str(e)}")
+
+            self.logger.info(f"Imported {created_count} trades into '{log.name}'", emoji="📥")
+
+            return self._json_response({
+                'success': True,
+                'imported': created_count,
+                'errors': errors[:10] if errors else [],  # Limit error messages
+                'total_errors': len(errors)
+            })
+
+        except Exception as e:
+            self.logger.error(f"import_trades error: {e}")
+            return self._error_response(str(e), 500)
+
+    def _parse_csv(self, content: bytes) -> List[dict]:
+        """Parse CSV content into list of dicts."""
+        try:
+            text = content.decode('utf-8')
+        except UnicodeDecodeError:
+            text = content.decode('latin-1')
+
+        reader = csv.DictReader(io.StringIO(text))
+        return list(reader)
+
+    def _parse_excel(self, content: bytes) -> List[dict]:
+        """Parse Excel content into list of dicts."""
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
+        ws = wb.active
+
+        rows = list(ws.iter_rows(values_only=True))
+        if not rows:
+            return []
+
+        # First row is headers
+        headers = [str(h).lower().strip() if h else '' for h in rows[0]]
+        result = []
+
+        for row in rows[1:]:
+            if not any(row):  # Skip empty rows
+                continue
+            row_dict = {}
+            for i, value in enumerate(row):
+                if i < len(headers) and headers[i]:
+                    row_dict[headers[i]] = value
+            result.append(row_dict)
+
+        return result
+
+    def _row_to_trade(self, row: dict, log_id: str) -> Optional[Trade]:
+        """Convert an import row to a Trade object."""
+        # Normalize keys to lowercase
+        row = {k.lower().strip(): v for k, v in row.items() if k}
+
+        # Required fields
+        if not row.get('strategy') or not row.get('side') or not row.get('strike'):
+            return None
+
+        # Parse entry_time
+        entry_time = row.get('entry_time')
+        if isinstance(entry_time, datetime):
+            entry_time = entry_time.isoformat()
+        elif not entry_time:
+            entry_time = datetime.utcnow().isoformat()
+
+        # Parse exit_time
+        exit_time = row.get('exit_time')
+        if isinstance(exit_time, datetime):
+            exit_time = exit_time.isoformat()
+        elif exit_time == '' or exit_time is None:
+            exit_time = None
+
+        # Convert prices from dollars to cents
+        def to_cents(val):
+            if val is None or val == '':
+                return None
+            try:
+                return int(float(val) * 100)
+            except (ValueError, TypeError):
+                return None
+
+        entry_price = to_cents(row.get('entry_price'))
+        exit_price = to_cents(row.get('exit_price'))
+        pnl = to_cents(row.get('pnl'))
+        planned_risk = to_cents(row.get('planned_risk'))
+        max_profit = to_cents(row.get('max_profit'))
+        max_loss = to_cents(row.get('max_loss'))
+
+        # Parse numeric fields
+        def to_float(val):
+            if val is None or val == '':
+                return None
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return None
+
+        def to_int(val):
+            if val is None or val == '':
+                return None
+            try:
+                return int(float(val))
+            except (ValueError, TypeError):
+                return None
+
+        # Parse tags
+        tags_raw = row.get('tags', '')
+        if isinstance(tags_raw, str):
+            tags = [t.strip() for t in tags_raw.split(',') if t.strip()]
+        else:
+            tags = []
+
+        # Determine status
+        status = str(row.get('status', '')).lower()
+        if status not in ('open', 'closed'):
+            status = 'closed' if exit_price is not None else 'open'
+
+        return Trade(
+            id=Trade.new_id(),
+            log_id=log_id,
+            symbol=str(row.get('symbol', 'SPX')).upper(),
+            underlying=str(row.get('underlying', 'I:SPX')),
+            strategy=str(row.get('strategy', '')).lower(),
+            side=str(row.get('side', '')).lower(),
+            strike=to_float(row.get('strike')) or 0,
+            width=to_int(row.get('width')),
+            dte=to_int(row.get('dte')),
+            quantity=to_int(row.get('quantity')) or 1,
+            entry_time=entry_time,
+            entry_price=entry_price or 0,
+            entry_spot=to_float(row.get('entry_spot')),
+            exit_time=exit_time,
+            exit_price=exit_price,
+            exit_spot=to_float(row.get('exit_spot')),
+            pnl=pnl,
+            r_multiple=to_float(row.get('r_multiple')),
+            planned_risk=planned_risk,
+            max_profit=max_profit,
+            max_loss=max_loss,
+            status=status,
+            notes=str(row.get('notes', '')) if row.get('notes') else None,
+            tags=tags,
+            source=str(row.get('source', 'import'))
+        )
+
     # ==================== Symbols ====================
 
     async def list_symbols(self, request: web.Request) -> web.Response:
@@ -867,6 +1179,10 @@ class JournalOrchestrator:
         app.router.add_get('/api/logs/{logId}/equity', self.get_log_equity)
         app.router.add_get('/api/logs/{logId}/drawdown', self.get_log_drawdown)
         app.router.add_get('/api/logs/{logId}/distribution', self.get_return_distribution)
+
+        # Export/Import
+        app.router.add_get('/api/logs/{logId}/export', self.export_trades)
+        app.router.add_post('/api/logs/{logId}/import', self.import_trades)
 
         # Symbols registry
         app.router.add_get('/api/symbols', self.list_symbols)
