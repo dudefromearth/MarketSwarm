@@ -2782,7 +2782,7 @@ function App() {
                           x2={x}
                           y2="280"
                           stroke={alert.color}
-                          strokeWidth="2"
+                          strokeWidth="1"
                         />
                         {/* Price label at top */}
                         <g transform={`translate(${x}, 15)`}>
@@ -2825,7 +2825,7 @@ function App() {
                           x2={x}
                           y2="280"
                           stroke={alert.color || ALERT_COLORS[0]}
-                          strokeWidth="2"
+                          strokeWidth="1"
                         />
                         {/* Label at top */}
                         <g transform={`translate(${x}, 15)`}>
@@ -2871,7 +2871,7 @@ function App() {
                               x2={targetX}
                               y2="280"
                               stroke={alert.color || ALERT_COLORS[0]}
-                              strokeWidth="2"
+                              strokeWidth="1"
                             />
                             <g transform={`translate(${targetX}, 15)`}>
                               <rect x="-16" y="-10" width="32" height="14" fill={alert.color || ALERT_COLORS[0]} rx="2" />
@@ -2888,7 +2888,7 @@ function App() {
                               x2={trailX}
                               y2="280"
                               stroke={alert.color || ALERT_COLORS[0]}
-                              strokeWidth="2"
+                              strokeWidth="1"
                               strokeDasharray="6,4"
                             />
                             <g transform={`translate(${trailX}, 15)`}>
