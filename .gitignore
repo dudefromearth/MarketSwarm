@@ -7,3 +7,22 @@ redis-data/
 
 # Journal service data
 services/journal/data/
+
+# macOS
+.DS_Store
+
+# Node
+node_modules/
+
+# Temp/lock files
+*.pid
+~$*
+
+# Local data
+data/
+redis/*/data/
+
+# PDFs and images (local docs)
+*.pdf
+*.png
+*.xlsx
