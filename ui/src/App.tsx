@@ -1505,6 +1505,20 @@ function App() {
             const profitPercent = entryDebit > 0 ? currentProfit / entryDebit : 0;
             const minProfitThreshold = alert.minProfitThreshold || 0.5;
 
+            // DEBUG
+            console.log('AI Alert Debug:', {
+              entryDebit,
+              strategyDebit: strategy.debit,
+              alertEntryDebit: alert.entryDebit,
+              currentSpot,
+              vix,
+              theoreticalPnL,
+              currentProfit,
+              profitPercent,
+              minProfitThreshold,
+              thresholdMet: profitPercent >= minProfitThreshold
+            });
+
             // Zone only appears when profit threshold is met
             const profitThresholdMet = profitPercent >= minProfitThreshold;
 
