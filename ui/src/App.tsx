@@ -2576,11 +2576,12 @@ function App() {
                   {/* Real-time breakeven lines (where magenta line crosses zero) */}
                   {riskGraphData.theoreticalBreakevens.map((be, i) => {
                     const x = 50 + ((be - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
+                    const zeroY = 20 + (riskGraphData.maxPnL / (riskGraphData.maxPnL - riskGraphData.minPnL)) * 260;
                     return (
                       <line
                         key={i}
                         x1={x}
-                        y1="20"
+                        y1={zeroY - 20}
                         x2={x}
                         y2="280"
                         stroke="#3b82f6"
