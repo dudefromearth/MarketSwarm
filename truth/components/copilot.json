@@ -67,7 +67,7 @@
   },
   "commentary": {
     "mode": "one-way",
-    "provider": "anthropic",
+    "provider": "openai",
     "rateLimitPerMinute": 10
   }
 }

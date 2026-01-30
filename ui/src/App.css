@@ -4722,3 +4722,47 @@ body {
 .commentary-overlay.open {
   left: 0;
 }
+
+/* Commentary Close Bar (right side of overlay) */
+.commentary-close-bar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 100%;
+  background: #2a2a2a;
+  border-left: 2px solid #444;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  transition: background 0.2s, width 0.2s;
+}
+
+.commentary-close-bar:hover {
+  background: linear-gradient(to right, #252525, #333);
+  width: 18px;
+}
+
+.commentary-close-bar .close-bar-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 9px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.commentary-close-bar:hover .close-bar-label {
+  color: #888;
+}
+
+.commentary-panel-inner {
+  margin-right: 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}

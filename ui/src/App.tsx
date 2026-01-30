@@ -2573,10 +2573,18 @@ function App() {
       </div>
 
       <div className={`commentary-overlay ${!commentaryCollapsed ? 'open' : ''}`}>
-        <CommentaryPanel
-          collapsed={false}
-          onToggleCollapse={() => setCommentaryCollapsed(true)}
-        />
+        <div
+          className="commentary-close-bar"
+          onClick={() => setCommentaryCollapsed(true)}
+        >
+          <span className="close-bar-label">Close</span>
+        </div>
+        <div className="commentary-panel-inner">
+          <CommentaryPanel
+            collapsed={false}
+            onToggleCollapse={() => setCommentaryCollapsed(true)}
+          />
+        </div>
       </div>
 
       {/* Trade Log Edge Bar + Overlay */}
