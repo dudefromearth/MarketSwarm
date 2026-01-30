@@ -1,0 +1,59 @@
+{
+  "copilot": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 8095
+  },
+  "commentary": {
+    "enabled": false,
+    "mode": "one-way",
+    "provider": "openai",
+    "providers": {
+      "openai": {
+        "model": "gpt-4-turbo-preview",
+        "maxTokens": 256,
+        "assistantId": null
+      },
+      "grok": {
+        "model": "grok-beta",
+        "maxTokens": 256,
+        "apiBase": "https://api.x.ai/v1"
+      },
+      "anthropic": {
+        "model": "claude-sonnet-4-20250514",
+        "maxTokens": 256
+      }
+    },
+    "rateLimitPerMinute": 10
+  },
+  "adi": {
+    "enabled": true,
+    "schemaVersion": "gamma_snapshot_v1.0",
+    "exportFormats": ["json", "csv", "text"],
+    "snapshotIntervalMs": 5000
+  },
+  "mel": {
+    "enabled": true,
+    "thresholds": {
+      "valid": 70,
+      "degraded": 50
+    },
+    "weights": {
+      "gamma": 0.30,
+      "volume_profile": 0.25,
+      "liquidity": 0.20,
+      "volatility": 0.15,
+      "session": 0.10
+    },
+    "coherenceMultipliers": {
+      "STABLE": 1.0,
+      "MIXED": 0.85,
+      "COLLAPSING": 0.60,
+      "RECOVERED": 0.90
+    },
+    "snapshotIntervalMs": 5000,
+    "historyRetentionDays": 365,
+    "alertOnRevoked": true,
+    "visualDeEmphasis": true
+  }
+}

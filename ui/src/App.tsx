@@ -1,6 +1,11 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import './App.css';
+import './styles/mel.css';
+import './styles/commentary.css';
 import LightweightPriceChart from './components/LightweightPriceChart';
+import MELStatusBar from './components/MELStatusBar';
+import CommentaryPanel from './components/CommentaryPanel';
+import { useMEL } from './hooks/useMEL';
 import type { RawSnapshot } from './components/LightweightPriceChart';
 import BiasLfiQuadrantCard from './components/BiasLfiQuadrantCard';
 import MarketModeGaugeCard from './components/MarketModeGaugeCard';
@@ -394,6 +399,9 @@ function App() {
   const [updateCount, setUpdateCount] = useState(0);
   const [lastUpdateTime, setLastUpdateTime] = useState<number | null>(null);
 
+  // MEL (Model Effectiveness Layer)
+  const mel = useMEL();
+
   // Controls
   const [underlying, setUnderlying] = useState<'I:SPX' | 'I:NDX'>('I:SPX');
 
@@ -499,6 +507,9 @@ function App() {
   const [tradeDetailTrade, setTradeDetailTrade] = useState<Trade | null>(null);
   const [reportingLogId, setReportingLogId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Commentary panel state
+  const [commentaryCollapsed, setCommentaryCollapsed] = useState(true);
 
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
@@ -1646,6 +1657,9 @@ function App() {
             )}
           </div>
         </div>
+        <div className="header-center">
+          <MELStatusBar snapshot={mel.snapshot} connected={mel.connected} />
+        </div>
         <div className="connection-status">
           <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
           <span>{connected ? 'Live' : 'Disconnected'}</span>
@@ -2548,6 +2562,21 @@ function App() {
         <span>GEX: {gexCalls?.ts ? new Date(gexCalls.ts * 1000).toLocaleTimeString() : '-'}</span>
         <span>Tiles: {Object.keys(heatmap?.tiles || {}).length}</span>
         <span>v{heatmap?.version || '-'}</span>
+      </div>
+
+      {/* Commentary Panel (Left Edge) */}
+      <div
+        className={`commentary-edge-bar ${!commentaryCollapsed ? 'open' : ''}`}
+        onClick={() => setCommentaryCollapsed(!commentaryCollapsed)}
+      >
+        <span className="edge-bar-label">💬 Observer</span>
+      </div>
+
+      <div className={`commentary-overlay ${!commentaryCollapsed ? 'open' : ''}`}>
+        <CommentaryPanel
+          collapsed={false}
+          onToggleCollapse={() => setCommentaryCollapsed(true)}
+        />
       </div>
 
       {/* Trade Log Edge Bar + Overlay */}

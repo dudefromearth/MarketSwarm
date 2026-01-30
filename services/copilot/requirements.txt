@@ -1,0 +1,17 @@
+# Copilot Service Dependencies
+# MEL + ADI + AI Commentary
+
+# Web framework
+aiohttp>=3.9.0
+aiohttp-cors>=0.7.0
+
+# Data handling
+pydantic>=2.0.0
+
+# AI Providers (optional - install based on selected provider)
+# openai>=1.0.0       # For OpenAI Assistant API
+# anthropic>=0.18.0   # For Claude API
+# xai-sdk>=0.1.0      # For Grok API (when available)
+
+# Redis (for MarketSwarm data integration)
+redis>=5.0.0
