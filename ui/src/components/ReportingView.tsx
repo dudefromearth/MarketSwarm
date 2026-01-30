@@ -82,10 +82,6 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
   const drawdownChartRef = useRef<HTMLDivElement | null>(null);
   const equityChartApiRef = useRef<IChartApi | null>(null);
   const drawdownChartApiRef = useRef<IChartApi | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const equitySeriesRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const drawdownSeriesRef = useRef<any>(null);
 
   const [analytics, setAnalytics] = useState<LogAnalytics | null>(null);
   const [equityData, setEquityData] = useState<EquityPoint[]>([]);
@@ -128,182 +124,6 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
     fetchData();
   }, [fetchData]);
 
-  // Create equity chart
-  useEffect(() => {
-    if (!equityChartRef.current || equityChartApiRef.current) return;
-
-    try {
-      const chart = createChart(equityChartRef.current, {
-        height: 180,
-        layout: {
-          background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: 'rgba(148,163,184,1)',
-        },
-        grid: {
-          vertLines: { color: 'rgba(51,65,85,0.3)' },
-          horzLines: { color: 'rgba(51,65,85,0.3)' },
-        },
-        rightPriceScale: {
-          borderColor: 'rgba(30,41,59,1)',
-          scaleMargins: { top: 0.1, bottom: 0.1 },
-        },
-        timeScale: {
-          borderColor: 'rgba(30,41,59,1)',
-          timeVisible: true,
-          secondsVisible: false,
-        },
-        crosshair: { mode: 1 },
-      });
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (typeof (chart as any).addSeries === 'function') {
-        const series = (chart as any).addSeries(AreaSeries, {
-          lineColor: 'rgba(74,222,128,1)',
-          topColor: 'rgba(74,222,128,0.4)',
-          bottomColor: 'rgba(74,222,128,0.05)',
-          lineWidth: 2,
-        });
-        equitySeriesRef.current = series;
-      }
-
-      equityChartApiRef.current = chart;
-
-      const handleResize = () => {
-        if (!equityChartRef.current || !equityChartApiRef.current) return;
-        const { width } = equityChartRef.current.getBoundingClientRect();
-        equityChartApiRef.current.applyOptions({ width });
-      };
-
-      handleResize();
-      window.addEventListener('resize', handleResize);
-
-      return () => {
-        window.removeEventListener('resize', handleResize);
-        if (equityChartApiRef.current) equityChartApiRef.current.remove();
-        equityChartApiRef.current = null;
-        equitySeriesRef.current = null;
-      };
-    } catch (err) {
-      console.error('Equity chart creation error:', err);
-    }
-  }, []);
-
-  // Create drawdown chart
-  useEffect(() => {
-    if (!drawdownChartRef.current || drawdownChartApiRef.current) return;
-
-    try {
-      const chart = createChart(drawdownChartRef.current, {
-        height: 120,
-        layout: {
-          background: { type: ColorType.Solid, color: 'transparent' },
-          textColor: 'rgba(148,163,184,1)',
-        },
-        grid: {
-          vertLines: { color: 'rgba(51,65,85,0.3)' },
-          horzLines: { color: 'rgba(51,65,85,0.3)' },
-        },
-        rightPriceScale: {
-          borderColor: 'rgba(30,41,59,1)',
-          scaleMargins: { top: 0.1, bottom: 0.1 },
-        },
-        timeScale: {
-          borderColor: 'rgba(30,41,59,1)',
-          timeVisible: true,
-          secondsVisible: false,
-        },
-        crosshair: { mode: 1 },
-      });
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      if (typeof (chart as any).addSeries === 'function') {
-        const series = (chart as any).addSeries(AreaSeries, {
-          lineColor: 'rgba(248,113,113,1)',
-          topColor: 'rgba(248,113,113,0.4)',
-          bottomColor: 'rgba(248,113,113,0.05)',
-          lineWidth: 2,
-          invertFilledArea: true,
-        });
-        drawdownSeriesRef.current = series;
-      }
-
-      drawdownChartApiRef.current = chart;
-
-      const handleResize = () => {
-        if (!drawdownChartRef.current || !drawdownChartApiRef.current) return;
-        const { width } = drawdownChartRef.current.getBoundingClientRect();
-        drawdownChartApiRef.current.applyOptions({ width });
-      };
-
-      handleResize();
-      window.addEventListener('resize', handleResize);
-
-      return () => {
-        window.removeEventListener('resize', handleResize);
-        if (drawdownChartApiRef.current) drawdownChartApiRef.current.remove();
-        drawdownChartApiRef.current = null;
-        drawdownSeriesRef.current = null;
-      };
-    } catch (err) {
-      console.error('Drawdown chart creation error:', err);
-    }
-  }, []);
-
-  // Update equity chart data
-  useEffect(() => {
-    if (!equitySeriesRef.current || !equityChartApiRef.current || equityData.length === 0) return;
-
-    try {
-      const filteredData = filterByTimeRange(equityData, timeRange);
-      if (filteredData.length === 0) {
-        equitySeriesRef.current.setData([]);
-        return;
-      }
-
-      const chartData = filteredData.map(p => ({
-        time: Math.floor(new Date(p.time).getTime() / 1000) as UTCTimestamp,
-        value: p.value / 100,
-      }));
-
-      const lastValue = chartData[chartData.length - 1]?.value || 0;
-      const isProfit = lastValue >= 0;
-
-      equitySeriesRef.current.applyOptions({
-        lineColor: isProfit ? 'rgba(74,222,128,1)' : 'rgba(248,113,113,1)',
-        topColor: isProfit ? 'rgba(74,222,128,0.4)' : 'rgba(248,113,113,0.4)',
-        bottomColor: isProfit ? 'rgba(74,222,128,0.05)' : 'rgba(248,113,113,0.05)',
-      });
-
-      equitySeriesRef.current.setData(chartData);
-      equityChartApiRef.current.timeScale().fitContent();
-    } catch (err) {
-      console.error('Equity chart data update error:', err);
-    }
-  }, [equityData, timeRange]);
-
-  // Update drawdown chart data
-  useEffect(() => {
-    if (!drawdownSeriesRef.current || !drawdownChartApiRef.current || drawdownData.length === 0) return;
-
-    try {
-      const filteredData = filterByTimeRange(drawdownData, timeRange);
-      if (filteredData.length === 0) {
-        drawdownSeriesRef.current.setData([]);
-        return;
-      }
-
-      const chartData = filteredData.map(p => ({
-        time: Math.floor(new Date(p.time).getTime() / 1000) as UTCTimestamp,
-        value: -p.drawdown_pct, // Negative so it goes down
-      }));
-
-      drawdownSeriesRef.current.setData(chartData);
-      drawdownChartApiRef.current.timeScale().fitContent();
-    } catch (err) {
-      console.error('Drawdown chart data update error:', err);
-    }
-  }, [drawdownData, timeRange]);
-
   const filterByTimeRange = <T extends { time: string }>(data: T[], range: TimeRange): T[] => {
     if (range === 'ALL') return data;
 
@@ -323,6 +143,182 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
 
     return data.filter(p => new Date(p.time) >= fromDate);
   };
+
+  // Create and update equity chart
+  useEffect(() => {
+    if (!equityChartRef.current || loading || equityData.length === 0) return;
+
+    // Clean up existing chart
+    if (equityChartApiRef.current) {
+      equityChartApiRef.current.remove();
+      equityChartApiRef.current = null;
+    }
+
+    const container = equityChartRef.current;
+    const { width } = container.getBoundingClientRect();
+
+    const chart = createChart(container, {
+      width: width || 800,
+      height: 438,
+      layout: {
+        background: { type: ColorType.Solid, color: 'transparent' },
+        textColor: 'rgba(148,163,184,1)',
+      },
+      grid: {
+        vertLines: { color: 'rgba(51,65,85,0.3)' },
+        horzLines: { color: 'rgba(51,65,85,0.3)' },
+      },
+      rightPriceScale: {
+        borderColor: 'rgba(30,41,59,1)',
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
+      timeScale: {
+        borderColor: 'rgba(30,41,59,1)',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      crosshair: { mode: 1 },
+    });
+
+    equityChartApiRef.current = chart;
+
+    // Add series - use type assertion for v5 API
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const series = (chart as any).addSeries(AreaSeries, {
+      lineColor: 'rgba(74,222,128,1)',
+      topColor: 'rgba(74,222,128,0.4)',
+      bottomColor: 'rgba(74,222,128,0.05)',
+      lineWidth: 2,
+    });
+
+    // Process data - deduplicate and sort by time
+    const filteredData = filterByTimeRange(equityData, timeRange);
+    const timeMap = new Map<number, number>();
+    for (const p of filteredData) {
+      const time = Math.floor(new Date(p.time).getTime() / 1000);
+      timeMap.set(time, p.value / 100);
+    }
+
+    const chartData = Array.from(timeMap.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([time, value]) => ({ time: time as UTCTimestamp, value }));
+
+    if (chartData.length > 0) {
+      const lastValue = chartData[chartData.length - 1]?.value || 0;
+      const isProfit = lastValue >= 0;
+
+      series.applyOptions({
+        lineColor: isProfit ? 'rgba(74,222,128,1)' : 'rgba(248,113,113,1)',
+        topColor: isProfit ? 'rgba(74,222,128,0.4)' : 'rgba(248,113,113,0.4)',
+        bottomColor: isProfit ? 'rgba(74,222,128,0.05)' : 'rgba(248,113,113,0.05)',
+      });
+
+      series.setData(chartData);
+      chart.timeScale().fitContent();
+    }
+
+    const handleResize = () => {
+      if (!container || !equityChartApiRef.current) return;
+      const { width: newWidth } = container.getBoundingClientRect();
+      if (newWidth > 0) {
+        equityChartApiRef.current.applyOptions({ width: newWidth });
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (equityChartApiRef.current) {
+        equityChartApiRef.current.remove();
+        equityChartApiRef.current = null;
+      }
+    };
+  }, [loading, equityData, timeRange]);
+
+  // Create and update drawdown chart
+  useEffect(() => {
+    if (!drawdownChartRef.current || loading || drawdownData.length === 0) return;
+
+    // Clean up existing chart
+    if (drawdownChartApiRef.current) {
+      drawdownChartApiRef.current.remove();
+      drawdownChartApiRef.current = null;
+    }
+
+    const container = drawdownChartRef.current;
+    const { width } = container.getBoundingClientRect();
+
+    const chart = createChart(container, {
+      width: width || 800,
+      height: 88,
+      layout: {
+        background: { type: ColorType.Solid, color: 'transparent' },
+        textColor: 'rgba(148,163,184,1)',
+      },
+      grid: {
+        vertLines: { color: 'rgba(51,65,85,0.3)' },
+        horzLines: { color: 'rgba(51,65,85,0.3)' },
+      },
+      rightPriceScale: {
+        borderColor: 'rgba(30,41,59,1)',
+        scaleMargins: { top: 0.1, bottom: 0.1 },
+      },
+      timeScale: {
+        borderColor: 'rgba(30,41,59,1)',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      crosshair: { mode: 1 },
+    });
+
+    drawdownChartApiRef.current = chart;
+
+    // Add series
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const series = (chart as any).addSeries(AreaSeries, {
+      lineColor: 'rgba(248,113,113,1)',
+      topColor: 'rgba(248,113,113,0.4)',
+      bottomColor: 'rgba(248,113,113,0.05)',
+      lineWidth: 2,
+      invertFilledArea: true,
+    });
+
+    // Process data
+    const filteredData = filterByTimeRange(drawdownData, timeRange);
+    const timeMap = new Map<number, number>();
+    for (const p of filteredData) {
+      const time = Math.floor(new Date(p.time).getTime() / 1000);
+      timeMap.set(time, -p.drawdown_pct);
+    }
+
+    const chartData = Array.from(timeMap.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([time, value]) => ({ time: time as UTCTimestamp, value }));
+
+    if (chartData.length > 0) {
+      series.setData(chartData);
+      chart.timeScale().fitContent();
+    }
+
+    const handleResize = () => {
+      if (!container || !drawdownChartApiRef.current) return;
+      const { width: newWidth } = container.getBoundingClientRect();
+      if (newWidth > 0) {
+        drawdownChartApiRef.current.applyOptions({ width: newWidth });
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (drawdownChartApiRef.current) {
+        drawdownChartApiRef.current.remove();
+        drawdownChartApiRef.current = null;
+      }
+    };
+  }, [loading, drawdownData, timeRange]);
 
   const formatCurrency = (cents: number) => {
     const dollars = cents / 100;
@@ -359,13 +355,13 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
       ) : analytics ? (
         <>
           <div className="reporting-charts">
-            <div className="chart-section">
+            <div className="chart-section equity-section">
               <h4>Equity Curve</h4>
-              <div className="chart-container" ref={equityChartRef} />
+              <div className="chart-container equity-chart" ref={equityChartRef} />
             </div>
-            <div className="chart-section">
+            <div className="chart-section drawdown-section">
               <h4>Drawdown</h4>
-              <div className="chart-container" ref={drawdownChartRef} />
+              <div className="chart-container drawdown-chart" ref={drawdownChartRef} />
             </div>
           </div>
 
