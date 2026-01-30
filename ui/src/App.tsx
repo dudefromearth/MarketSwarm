@@ -399,9 +399,6 @@ function App() {
   const [updateCount, setUpdateCount] = useState(0);
   const [lastUpdateTime, setLastUpdateTime] = useState<number | null>(null);
 
-  // MEL (Model Effectiveness Layer)
-  const mel = useMEL();
-
   // Controls
   const [underlying, setUnderlying] = useState<'I:SPX' | 'I:NDX'>('I:SPX');
 
@@ -444,6 +441,10 @@ function App() {
   const [strategy, setStrategy] = useState<Strategy>('butterfly');
   const [side, setSide] = useState<Side>('both');
   const [dte, setDte] = useState(0);
+
+  // MEL (Model Effectiveness Layer) - uses selected DTE
+  const mel = useMEL(dte);
+
   const [gexMode, setGexMode] = useState<GexMode>('net');
   const [threshold, setThreshold] = useState(50); // % change threshold for blue/red transition
   const [volumeProfile, setVolumeProfile] = useState<VolumeProfileData | null>(null);

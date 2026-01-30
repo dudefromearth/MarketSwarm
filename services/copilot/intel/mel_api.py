@@ -35,10 +35,12 @@ class MELAPIHandler:
         self,
         orchestrator: MELOrchestrator,
         logger: Optional[logging.Logger] = None,
+        copilot_orchestrator: Optional[any] = None,
     ):
         self.mel = orchestrator
         self.logger = logger or logging.getLogger("MEL-API")
         self.ws_clients: List[web.WebSocketResponse] = []
+        self.copilot = copilot_orchestrator  # For DTE control
 
     def register_routes(self, app: web.Application) -> None:
         """Register all MEL routes on the application."""
@@ -65,6 +67,10 @@ class MELAPIHandler:
         """Broadcast snapshot to all connected WebSocket clients."""
         data = snapshot.to_dict()
 
+        # Include active DTE in broadcast
+        if self.copilot:
+            data["dte"] = self.copilot._active_dte
+
         for ws in list(self.ws_clients):
             try:
                 await ws.send_json({"type": "mel_snapshot", "data": data})
@@ -80,11 +86,22 @@ class MELAPIHandler:
     # ========== HTTP Handlers ==========
 
     async def get_snapshot(self, request: web.Request) -> web.Response:
-        """GET /api/mel/snapshot - Current MEL snapshot."""
-        snapshot = self.mel.get_current_snapshot()
+        """GET /api/mel/snapshot - Current MEL snapshot. Accepts ?dte=N query param."""
+        # Parse DTE and update active DTE if changed
+        dte = int(request.query.get("dte", "0"))
+        if self.copilot:
+            self.copilot.set_active_dte(dte)
+            # Trigger immediate recalculation
+            snapshot = await self.mel.calculate_snapshot()
+        else:
+            snapshot = self.mel.get_current_snapshot()
+
         if not snapshot:
             return web.json_response({"error": "No snapshot available"}, status=404)
-        return web.json_response(snapshot.to_dict())
+
+        data = snapshot.to_dict()
+        data["dte"] = dte
+        return web.json_response(data)
 
     async def get_gamma(self, request: web.Request) -> web.Response:
         """GET /api/mel/gamma - Gamma effectiveness detail."""
@@ -173,17 +190,26 @@ class MELAPIHandler:
     # ========== WebSocket Handler ==========
 
     async def ws_handler(self, request: web.Request) -> web.WebSocketResponse:
-        """WS /ws/mel - Real-time MEL updates."""
+        """WS /ws/mel - Real-time MEL updates. Accepts ?dte=N query param."""
         ws = web.WebSocketResponse()
         await ws.prepare(request)
 
+        # Parse DTE from query param
+        dte = int(request.query.get("dte", "0"))
+
+        # Set active DTE on copilot orchestrator
+        if self.copilot:
+            self.copilot.set_active_dte(dte)
+
         self.ws_clients.append(ws)
-        self.logger.info(f"MEL WebSocket client connected ({len(self.ws_clients)} total)")
+        self.logger.info(f"MEL WebSocket client connected (DTE={dte}, {len(self.ws_clients)} total)")
 
         # Send current snapshot immediately
         snapshot = self.mel.get_current_snapshot()
         if snapshot:
-            await ws.send_json({"type": "mel_snapshot", "data": snapshot.to_dict()})
+            data = snapshot.to_dict()
+            data["dte"] = dte  # Include DTE in response
+            await ws.send_json({"type": "mel_snapshot", "data": data})
 
         try:
             async for msg in ws:

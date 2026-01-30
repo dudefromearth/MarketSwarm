@@ -7,7 +7,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 const COPILOT_BASE = 'http://localhost:8095';
-const COPILOT_WS = 'ws://localhost:8095/ws/mel';
+const COPILOT_WS_BASE = 'ws://localhost:8095/ws/mel';
 
 export type ModelState = 'VALID' | 'DEGRADED' | 'REVOKED';
 export type CoherenceState = 'STABLE' | 'MIXED' | 'COLLAPSING' | 'RECOVERED';
@@ -54,20 +54,30 @@ export interface UseMELResult {
   refresh: () => Promise<void>;
 }
 
-export function useMEL(): UseMELResult {
+export function useMEL(dte: number = 0): UseMELResult {
   const [snapshot, setSnapshot] = useState<MELSnapshot | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const currentDteRef = useRef<number>(dte);
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    // Close existing connection if DTE changed
+    if (wsRef.current?.readyState === WebSocket.OPEN && currentDteRef.current === dte) {
       return;
     }
 
+    // Close old connection
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+
+    currentDteRef.current = dte;
+
     try {
-      const ws = new WebSocket(COPILOT_WS);
+      const ws = new WebSocket(`${COPILOT_WS_BASE}?dte=${dte}`);
 
       ws.onopen = () => {
         setConnected(true);
@@ -109,7 +119,7 @@ export function useMEL(): UseMELResult {
     }
   }, []);
 
-  // Initial connection
+  // Connect/reconnect when DTE changes
   useEffect(() => {
     connect();
 
@@ -121,12 +131,12 @@ export function useMEL(): UseMELResult {
         wsRef.current.close();
       }
     };
-  }, [connect]);
+  }, [connect, dte]);
 
   // Manual refresh via HTTP
   const refresh = useCallback(async () => {
     try {
-      const response = await fetch(`${COPILOT_BASE}/api/mel/snapshot`);
+      const response = await fetch(`${COPILOT_BASE}/api/mel/snapshot?dte=${dte}`);
       if (response.ok) {
         const data = await response.json();
         setSnapshot(data);
@@ -134,7 +144,7 @@ export function useMEL(): UseMELResult {
     } catch (e) {
       console.error('[MEL] Refresh failed:', e);
     }
-  }, []);
+  }, [dte]);
 
   const getModelState = useCallback((model: string): ModelState | null => {
     if (!snapshot) return null;

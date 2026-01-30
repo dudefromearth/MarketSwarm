@@ -55,14 +55,11 @@ class CopilotOrchestrator:
         self.market_redis: Redis | None = None
         self.system_redis: Redis | None = None
 
-        # Market data cache (populated from Redis subscriptions)
-        self._market_data = {
-            "spot_price": None,
-            "gamma_levels": None,
-            "volume_profile": None,
-            "heatmap": None,
-            "timestamp": None,
-        }
+        # Market data cache per DTE (populated from Redis subscriptions)
+        # Key is DTE (0, 1, 2, etc.), value is market data dict
+        self._market_data_by_dte: Dict[int, dict] = {}
+        self._available_dtes: list = []
+        self._active_dte: int = 0  # Currently selected DTE for MEL calculation
 
         # Subsystems
         self.mel: MELOrchestrator | None = None
@@ -95,12 +92,23 @@ class CopilotOrchestrator:
             )
             self.logger.info(f"connected to system-redis", emoji="🔗")
 
-    def get_market_data(self) -> dict:
+    def get_market_data(self, dte: int | None = None) -> dict:
         """
         Get current market data for MEL calculation.
-        Returns cached data from Redis subscriptions.
+        Returns cached data for the specified DTE (or active DTE).
         """
-        return self._market_data
+        target_dte = dte if dte is not None else self._active_dte
+        return self._market_data_by_dte.get(target_dte, {})
+
+    def set_active_dte(self, dte: int) -> None:
+        """Set the active DTE for MEL calculation."""
+        if dte != self._active_dte:
+            self._active_dte = dte
+            self.logger.info(f"MEL active DTE changed to {dte}", emoji="📅")
+
+    def get_available_dtes(self) -> list:
+        """Get list of available DTEs from GEX data."""
+        return self._available_dtes
 
     def get_event_flags(self, now: datetime) -> list:
         """
@@ -121,6 +129,150 @@ class CopilotOrchestrator:
             "open_trades": [],
             "active_log_id": None,
         }
+
+    async def poll_market_data(self):
+        """
+        Poll Redis for market data and update _market_data_by_dte cache.
+        Transforms massive data format into MEL-compatible format for each DTE.
+        Runs every 5 seconds.
+        """
+        import json
+        from datetime import datetime as dt
+        poll_interval = 5  # seconds
+
+        while True:
+            try:
+                if self.market_redis:
+                    # Fetch spot price (shared across all DTEs)
+                    spot_raw = await self.market_redis.get("massive:model:spot:I:SPX")
+                    spot_price = None
+                    if spot_raw:
+                        try:
+                            spot_data = json.loads(spot_raw)
+                            spot_price = spot_data.get("value")
+                        except Exception:
+                            pass
+
+                    # Fetch price history from trail (shared across all DTEs)
+                    price_history = []
+                    try:
+                        trail_raw = await self.market_redis.zrange(
+                            "massive:model:spot:I:SPX:trail", -100, -1, withscores=True
+                        )
+                        for member, score in trail_raw:
+                            try:
+                                data = json.loads(member)
+                                price_history.append({
+                                    "price": data.get("value"),
+                                    "ts": score,
+                                })
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+
+                    # Fetch heatmap (shared)
+                    heatmap_raw = await self.market_redis.get("massive:heatmap:model:I:SPX:latest")
+                    heatmap_data = None
+                    if heatmap_raw:
+                        try:
+                            heatmap_data = json.loads(heatmap_raw)
+                        except Exception:
+                            pass
+
+                    # Fetch volume profile (shared)
+                    vp_raw = await self.market_redis.hgetall("massive:volume_profile:spx")
+                    volume_profile = None
+                    if vp_raw:
+                        try:
+                            volume_profile = {
+                                int(k): int(v) for k, v in vp_raw.items()
+                            }
+                        except Exception:
+                            pass
+
+                    # Fetch GEX data - process ALL expirations
+                    gex_calls_raw = await self.market_redis.get("massive:gex:model:I:SPX:calls")
+                    gex_puts_raw = await self.market_redis.get("massive:gex:model:I:SPX:puts")
+
+                    if gex_calls_raw and gex_puts_raw:
+                        try:
+                            calls_data = json.loads(gex_calls_raw)
+                            puts_data = json.loads(gex_puts_raw)
+
+                            calls_exp = calls_data.get("expirations", {})
+                            puts_exp = puts_data.get("expirations", {})
+
+                            if calls_exp and puts_exp:
+                                # Get sorted expiration dates
+                                all_exps = sorted(set(calls_exp.keys()) & set(puts_exp.keys()))
+                                self._available_dtes = list(range(len(all_exps)))
+
+                                # Process each expiration as a DTE index
+                                for dte_index, exp_date in enumerate(all_exps):
+                                    calls = calls_exp.get(exp_date, {})
+                                    puts = puts_exp.get(exp_date, {})
+
+                                    # Calculate net gamma at each strike
+                                    all_strikes = set(calls.keys()) | set(puts.keys())
+                                    net_gamma = {}
+                                    max_abs_gamma = 0
+                                    max_gamma_strike = None
+
+                                    for strike in all_strikes:
+                                        call_g = float(calls.get(strike, 0))
+                                        put_g = float(puts.get(strike, 0))
+                                        net = call_g - put_g
+                                        net_gamma[int(float(strike))] = net
+
+                                        # Track max gamma for magnet
+                                        total = call_g + put_g
+                                        if total > max_abs_gamma:
+                                            max_abs_gamma = total
+                                            max_gamma_strike = int(float(strike))
+
+                                    # Sort strikes and build gamma level dicts
+                                    sorted_strikes = sorted(net_gamma.keys())
+                                    gamma_levels = [
+                                        {"strike": s, "net_gamma": net_gamma[s]}
+                                        for s in sorted_strikes
+                                    ]
+                                    gamma_magnet = max_gamma_strike
+
+                                    # Find zero gamma (where net gamma crosses zero)
+                                    zero_gamma = None
+                                    prev_strike = None
+                                    prev_net = None
+                                    for strike in sorted_strikes:
+                                        net = net_gamma[strike]
+                                        if prev_net is not None:
+                                            if (prev_net < 0 and net > 0) or (prev_net > 0 and net < 0):
+                                                zero_gamma = (prev_strike + strike) / 2
+                                                break
+                                        prev_strike = strike
+                                        prev_net = net
+
+                                    # Store market data for this DTE
+                                    self._market_data_by_dte[dte_index] = {
+                                        "dte": dte_index,
+                                        "expiration": exp_date,
+                                        "spot_price": spot_price,
+                                        "gamma_levels": gamma_levels,
+                                        "zero_gamma": zero_gamma,
+                                        "gamma_magnet": gamma_magnet,
+                                        "price_history": price_history,
+                                        "volume_profile": volume_profile,
+                                        "heatmap": heatmap_data,
+                                        "timestamp": datetime.utcnow(),
+                                    }
+
+                        except Exception as e:
+                            self.logger.warn(f"GEX transform error: {e}", emoji="⚠️")
+
+            except Exception as e:
+                self.logger.warn(f"market data poll error: {e}", emoji="⚠️")
+
+            await asyncio.sleep(poll_interval)
 
     async def setup_mel(self):
         """Initialize MEL subsystem."""
@@ -148,7 +300,11 @@ class CopilotOrchestrator:
             event_calendar=self.get_event_flags,
         )
 
-        self.mel_api = MELAPIHandler(orchestrator=self.mel, logger=self.logger)
+        self.mel_api = MELAPIHandler(
+            orchestrator=self.mel,
+            logger=self.logger,
+            copilot_orchestrator=self,
+        )
         self.logger.ok("MEL orchestrator initialized", emoji="📊")
 
     async def setup_adi(self):
@@ -219,10 +375,37 @@ class CopilotOrchestrator:
             "commentary_enabled": self.commentary_enabled,
         })
 
+    async def debug_market_data(self, request: web.Request) -> web.Response:
+        """Debug endpoint to check market data per DTE."""
+        dte = int(request.query.get("dte", "0"))
+        data = self._market_data_by_dte.get(dte, {})
+
+        # Summarize gamma levels
+        gamma_levels = data.get("gamma_levels", [])
+        gamma_summary = {
+            "count": len(gamma_levels),
+            "first_5": gamma_levels[:5] if gamma_levels else [],
+            "last_5": gamma_levels[-5:] if gamma_levels else [],
+        }
+
+        return web.json_response({
+            "dte": dte,
+            "active_dte": self._active_dte,
+            "available_dtes": self._available_dtes,
+            "data_present": bool(data),
+            "spot_price": data.get("spot_price"),
+            "zero_gamma": data.get("zero_gamma"),
+            "gamma_magnet": data.get("gamma_magnet"),
+            "gamma_levels_summary": gamma_summary,
+            "price_history_count": len(data.get("price_history", [])),
+            "expiration": data.get("expiration"),
+        })
+
     async def setup_web_app(self):
         """Setup aiohttp web application."""
         self.app = web.Application()
         self.app.router.add_get("/health", self.health_check)
+        self.app.router.add_get("/debug/market-data", self.debug_market_data)
 
         # Register API routes
         if self.mel_api:
@@ -258,6 +441,10 @@ class CopilotOrchestrator:
 
         # Setup web app
         await self.setup_web_app()
+
+        # Start market data polling
+        asyncio.create_task(self.poll_market_data(), name="market-data-poll")
+        self.logger.info("market data polling started", emoji="📊")
 
         # Start MEL
         if self.mel:
