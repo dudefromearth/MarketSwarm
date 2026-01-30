@@ -1,10 +1,9 @@
 # services/journal/intel/db_v2.py
-"""SQLite database operations for the FOTW Trade Log system (v2)."""
+"""MySQL database operations for the FOTW Trade Log system (v2)."""
 
-import sqlite3
-import os
+import mysql.connector
+from mysql.connector import pooling
 import json
-from pathlib import Path
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -12,7 +11,7 @@ from .models_v2 import TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint, 
 
 
 class JournalDBv2:
-    """SQLite database manager for FOTW trade logs."""
+    """MySQL database manager for FOTW trade logs."""
 
     SCHEMA_VERSION = 3
 
@@ -49,39 +48,78 @@ class JournalDBv2:
         {'symbol': 'MSFT', 'name': 'Microsoft Corp', 'asset_type': 'stock', 'multiplier': 100},
     ]
 
-    def __init__(self, db_path: Optional[str] = None):
-        if db_path is None:
-            base = Path(__file__).resolve().parents[1]
-            db_path = str(base / "data" / "journal.db")
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        if config is None:
+            config = {}
 
-        self.db_path = db_path
-        self._ensure_dir()
+        self._pool = pooling.MySQLConnectionPool(
+            pool_name="journal_pool",
+            pool_size=5,
+            host=config.get('JOURNAL_MYSQL_HOST', 'localhost'),
+            port=int(config.get('JOURNAL_MYSQL_PORT', 3306)),
+            user=config.get('JOURNAL_MYSQL_USER', 'journal'),
+            password=config.get('JOURNAL_MYSQL_PASSWORD', ''),
+            database=config.get('JOURNAL_MYSQL_DATABASE', 'journal'),
+            charset='utf8mb4',
+            autocommit=False
+        )
         self._init_schema()
 
-    def _ensure_dir(self):
-        """Ensure the database directory exists."""
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+    def _get_conn(self):
+        """Get a database connection from the pool."""
+        return self._pool.get_connection()
 
-    def _get_conn(self) -> sqlite3.Connection:
-        """Get a database connection with row factory."""
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
+    def _row_to_dict(self, cursor, row) -> Dict[str, Any]:
+        """Convert a row tuple to a dictionary using cursor description."""
+        if row is None:
+            return None
+        columns = [col[0] for col in cursor.description]
+        return dict(zip(columns, row))
 
-    def _get_schema_version(self, conn: sqlite3.Connection) -> int:
+    def _get_schema_version(self, conn) -> int:
         """Get current schema version from database."""
+        cursor = conn.cursor()
         try:
-            row = conn.execute("SELECT version FROM schema_version").fetchone()
+            # Check if schema_version table exists
+            cursor.execute("""
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_schema = DATABASE() AND table_name = 'schema_version'
+            """)
+            if cursor.fetchone()[0] == 0:
+                return 0
+            cursor.execute("SELECT version FROM schema_version")
+            row = cursor.fetchone()
             return row[0] if row else 0
-        except sqlite3.OperationalError:
+        except mysql.connector.Error:
             return 0
+        finally:
+            cursor.close()
 
-    def _set_schema_version(self, conn: sqlite3.Connection, version: int):
+    def _set_schema_version(self, conn, version: int):
         """Set schema version in database."""
-        conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER)")
-        conn.execute("DELETE FROM schema_version")
-        conn.execute("INSERT INTO schema_version (version) VALUES (?)", (version,))
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS schema_version (
+                    version INT
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+            cursor.execute("DELETE FROM schema_version")
+            cursor.execute("INSERT INTO schema_version (version) VALUES (%s)", (version,))
+        finally:
+            cursor.close()
+
+    def _table_exists(self, conn, table_name: str) -> bool:
+        """Check if a table exists in the database."""
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_schema = DATABASE() AND table_name = %s
+            """, (table_name,))
+            return cursor.fetchone()[0] > 0
+        finally:
+            cursor.close()
 
     def _init_schema(self):
         """Initialize or migrate the database schema."""
@@ -99,335 +137,215 @@ class JournalDBv2:
         finally:
             conn.close()
 
-    def _migrate_to_v2(self, conn: sqlite3.Connection):
+    def _migrate_to_v2(self, conn):
         """Migrate from v1 to v2 schema."""
-        # Check if old trades table exists
-        old_trades_exist = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='trades'"
-        ).fetchone() is not None
+        cursor = conn.cursor()
+        try:
+            # Check if we already have trade_logs (already migrated)
+            if self._table_exists(conn, 'trade_logs'):
+                # Already migrated, just update version
+                self._set_schema_version(conn, 2)
+                return
 
-        # Check if we already have trade_logs (already migrated)
-        logs_exist = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='trade_logs'"
-        ).fetchone() is not None
+            # Create new tables
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS trade_logs (
+                    id VARCHAR(36) PRIMARY KEY,
+                    name VARCHAR(255) NOT NULL,
 
-        if logs_exist:
-            # Already migrated, just update version
-            self._set_schema_version(conn, 2)
-            return
+                    -- Immutable Starting Parameters
+                    starting_capital BIGINT NOT NULL,
+                    risk_per_trade BIGINT,
+                    max_position_size BIGINT,
 
-        # Create new tables
-        conn.executescript("""
-            -- Trade Logs (containers with immutable params)
-            CREATE TABLE IF NOT EXISTS trade_logs (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
+                    -- Metadata
+                    intent TEXT,
+                    constraints TEXT,
+                    regime_assumptions TEXT,
+                    notes TEXT,
 
-                -- Immutable Starting Parameters
-                starting_capital INTEGER NOT NULL,
-                risk_per_trade INTEGER,
-                max_position_size INTEGER,
+                    -- Status
+                    is_active TINYINT DEFAULT 1,
 
-                -- Metadata
-                intent TEXT,
-                constraints TEXT,
-                regime_assumptions TEXT,
-                notes TEXT,
+                    created_at VARCHAR(32) DEFAULT (NOW()),
+                    updated_at VARCHAR(32) DEFAULT (NOW())
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
 
-                -- Status
-                is_active INTEGER DEFAULT 1,
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS trade_events (
+                    id VARCHAR(36) PRIMARY KEY,
+                    trade_id VARCHAR(36) NOT NULL,
 
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-            );
+                    event_type VARCHAR(50) NOT NULL,
+                    event_time VARCHAR(32) NOT NULL,
 
-            -- Trade Events (lifecycle audit trail)
-            CREATE TABLE IF NOT EXISTS trade_events (
-                id TEXT PRIMARY KEY,
-                trade_id TEXT NOT NULL,
+                    price BIGINT,
+                    spot DECIMAL(10,4),
+                    quantity_change INT,
+                    notes TEXT,
 
-                event_type TEXT NOT NULL,
-                event_time TEXT NOT NULL,
+                    created_at VARCHAR(32) DEFAULT (NOW()),
 
-                price INTEGER,
-                spot REAL,
-                quantity_change INTEGER,
-                notes TEXT,
+                    INDEX idx_events_trade (trade_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
 
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_events_trade ON trade_events(trade_id);
-        """)
-
-        if old_trades_exist:
-            # Migrate existing trades
-            self._migrate_trades_v1_to_v2(conn)
-        else:
             # Create fresh trades table
-            conn.executescript("""
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS trades (
-                    id TEXT PRIMARY KEY,
-                    log_id TEXT NOT NULL,
+                    id VARCHAR(36) PRIMARY KEY,
+                    log_id VARCHAR(36) NOT NULL,
 
-                    symbol TEXT NOT NULL,
-                    underlying TEXT NOT NULL,
-                    strategy TEXT NOT NULL,
-                    side TEXT NOT NULL,
-                    strike REAL NOT NULL,
-                    width INTEGER,
-                    dte INTEGER,
-                    quantity INTEGER NOT NULL DEFAULT 1,
+                    symbol VARCHAR(20) NOT NULL,
+                    underlying VARCHAR(50) NOT NULL,
+                    strategy VARCHAR(50) NOT NULL,
+                    side VARCHAR(20) NOT NULL,
+                    strike DECIMAL(10,4) NOT NULL,
+                    width INT,
+                    dte INT,
+                    quantity INT NOT NULL DEFAULT 1,
 
-                    entry_time TEXT NOT NULL,
-                    entry_price INTEGER NOT NULL,
-                    entry_spot REAL,
-                    entry_iv REAL,
+                    entry_time VARCHAR(32) NOT NULL,
+                    entry_price BIGINT NOT NULL,
+                    entry_spot DECIMAL(10,4),
+                    entry_iv DECIMAL(10,4),
 
-                    exit_time TEXT,
-                    exit_price INTEGER,
-                    exit_spot REAL,
+                    exit_time VARCHAR(32),
+                    exit_price BIGINT,
+                    exit_spot DECIMAL(10,4),
 
-                    planned_risk INTEGER,
-                    max_profit INTEGER,
-                    max_loss INTEGER,
+                    planned_risk BIGINT,
+                    max_profit BIGINT,
+                    max_loss BIGINT,
 
-                    pnl INTEGER,
-                    r_multiple REAL,
+                    pnl BIGINT,
+                    r_multiple DECIMAL(10,4),
 
-                    status TEXT DEFAULT 'open',
+                    status VARCHAR(20) DEFAULT 'open',
 
                     notes TEXT,
                     tags TEXT,
-                    source TEXT DEFAULT 'manual',
-                    playbook_id TEXT,
+                    source VARCHAR(50) DEFAULT 'manual',
+                    playbook_id VARCHAR(36),
 
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    created_at VARCHAR(32) DEFAULT (NOW()),
+                    updated_at VARCHAR(32) DEFAULT (NOW()),
 
+                    INDEX idx_trades_log_status (log_id, status),
+                    INDEX idx_trades_entry_time (entry_time),
                     FOREIGN KEY (log_id) REFERENCES trade_logs(id)
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_trades_log_status ON trades(log_id, status);
-                CREATE INDEX IF NOT EXISTS idx_trades_entry_time ON trades(entry_time);
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """)
 
-        self._set_schema_version(conn, 2)
+            self._set_schema_version(conn, 2)
+        finally:
+            cursor.close()
 
-    def _migrate_trades_v1_to_v2(self, conn: sqlite3.Connection):
-        """Migrate existing v1 trades to v2 schema."""
-        # Check if old trades have user_id column (v1 schema)
-        cursor = conn.execute("PRAGMA table_info(trades)")
-        columns = {row[1] for row in cursor.fetchall()}
-
-        if 'log_id' in columns:
-            # Already migrated
-            return
-
-        # Create a default trade log for existing trades
-        default_log_id = TradeLog.new_id()
-        now = datetime.utcnow().isoformat()
-
-        conn.execute("""
-            INSERT INTO trade_logs (id, name, starting_capital, intent, created_at, updated_at)
-            VALUES (?, 'Default Log', 2500000, 'Migrated from v1', ?, ?)
-        """, (default_log_id, now, now))
-
-        # Rename old trades table
-        conn.execute("ALTER TABLE trades RENAME TO trades_v1")
-
-        # Create new trades table
-        conn.executescript("""
-            CREATE TABLE trades (
-                id TEXT PRIMARY KEY,
-                log_id TEXT NOT NULL,
-
-                symbol TEXT NOT NULL,
-                underlying TEXT NOT NULL,
-                strategy TEXT NOT NULL,
-                side TEXT NOT NULL,
-                strike REAL NOT NULL,
-                width INTEGER,
-                dte INTEGER,
-                quantity INTEGER NOT NULL DEFAULT 1,
-
-                entry_time TEXT NOT NULL,
-                entry_price INTEGER NOT NULL,
-                entry_spot REAL,
-                entry_iv REAL,
-
-                exit_time TEXT,
-                exit_price INTEGER,
-                exit_spot REAL,
-
-                planned_risk INTEGER,
-                max_profit INTEGER,
-                max_loss INTEGER,
-
-                pnl INTEGER,
-                r_multiple REAL,
-
-                status TEXT DEFAULT 'open',
-
-                notes TEXT,
-                tags TEXT,
-                source TEXT DEFAULT 'manual',
-                playbook_id TEXT,
-
-                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-
-                FOREIGN KEY (log_id) REFERENCES trade_logs(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_trades_log_status ON trades(log_id, status);
-            CREATE INDEX IF NOT EXISTS idx_trades_entry_time ON trades(entry_time);
-        """)
-
-        # Migrate data from v1 to v2
-        # Convert prices from dollars to cents
-        conn.execute(f"""
-            INSERT INTO trades (
-                id, log_id, symbol, underlying, strategy, side, strike, width, dte, quantity,
-                entry_time, entry_price, entry_spot, exit_time, exit_price, exit_spot,
-                max_profit, max_loss, pnl, status, notes, tags, source, playbook_id,
-                created_at, updated_at
-            )
-            SELECT
-                id, ?, symbol, underlying, strategy, side, strike, width, dte, quantity,
-                entry_time,
-                CAST(entry_price * 100 AS INTEGER),
-                entry_spot,
-                exit_time,
-                CASE WHEN exit_price IS NOT NULL THEN CAST(exit_price * 100 AS INTEGER) END,
-                exit_spot,
-                CASE WHEN max_profit IS NOT NULL THEN CAST(max_profit * 100 AS INTEGER) END,
-                CASE WHEN max_loss IS NOT NULL THEN CAST(max_loss * 100 AS INTEGER) END,
-                CASE WHEN pnl IS NOT NULL THEN CAST(pnl AS INTEGER) END,
-                status, notes, tags, source, playbook_id,
-                created_at, updated_at
-            FROM trades_v1
-        """, (default_log_id,))
-
-        # Create OPEN events for all trades
-        trades = conn.execute("SELECT id, entry_time, entry_price, entry_spot FROM trades").fetchall()
-        for trade in trades:
-            event_id = TradeEvent.new_id()
-            conn.execute("""
-                INSERT INTO trade_events (id, trade_id, event_type, event_time, price, spot, created_at)
-                VALUES (?, ?, 'open', ?, ?, ?, ?)
-            """, (event_id, trade[0], trade[1], trade[2], trade[3], now))
-
-        # Create CLOSE events for closed trades
-        closed_trades = conn.execute(
-            "SELECT id, exit_time, exit_price, exit_spot FROM trades WHERE status = 'closed'"
-        ).fetchall()
-        for trade in closed_trades:
-            event_id = TradeEvent.new_id()
-            conn.execute("""
-                INSERT INTO trade_events (id, trade_id, event_type, event_time, price, spot, created_at)
-                VALUES (?, ?, 'close', ?, ?, ?, ?)
-            """, (event_id, trade[0], trade[1], trade[2], trade[3], now))
-
-        # Drop old table
-        conn.execute("DROP TABLE trades_v1")
-
-    def _migrate_to_v3(self, conn: sqlite3.Connection):
+    def _migrate_to_v3(self, conn):
         """Migrate to v3: Add symbols and settings tables."""
-        # Check if symbols table already exists
-        symbols_exist = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='symbols'"
-        ).fetchone() is not None
+        cursor = conn.cursor()
+        try:
+            # Check if symbols table already exists
+            if not self._table_exists(conn, 'symbols'):
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS symbols (
+                        symbol VARCHAR(20) PRIMARY KEY,
+                        name VARCHAR(255) NOT NULL,
+                        asset_type VARCHAR(50) NOT NULL,
+                        multiplier INT NOT NULL,
+                        enabled TINYINT DEFAULT 1,
+                        is_default TINYINT DEFAULT 0,
+                        created_at VARCHAR(32) DEFAULT (NOW())
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
 
-        if not symbols_exist:
-            conn.executescript("""
-                -- Symbols registry (user-added symbols)
-                CREATE TABLE IF NOT EXISTS symbols (
-                    symbol TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    asset_type TEXT NOT NULL,
-                    multiplier INTEGER NOT NULL,
-                    enabled INTEGER DEFAULT 1,
-                    is_default INTEGER DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS settings (
+                        `key` VARCHAR(100) NOT NULL,
+                        value TEXT,
+                        category VARCHAR(50) NOT NULL,
+                        scope VARCHAR(50) DEFAULT 'global',
+                        description TEXT,
+                        updated_at VARCHAR(32) DEFAULT (NOW()),
+                        PRIMARY KEY (`key`, scope),
+                        INDEX idx_settings_category (category),
+                        INDEX idx_settings_scope (scope)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
 
-                -- Global and per-log settings
-                CREATE TABLE IF NOT EXISTS settings (
-                    key TEXT NOT NULL,
-                    value TEXT,
-                    category TEXT NOT NULL,
-                    scope TEXT DEFAULT 'global',
-                    description TEXT,
-                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (key, scope)
-                );
+                # Insert default symbols
+                now = datetime.utcnow().isoformat()
+                for sym in self.DEFAULT_SYMBOLS:
+                    cursor.execute("""
+                        INSERT IGNORE INTO symbols (symbol, name, asset_type, multiplier, enabled, is_default, created_at)
+                        VALUES (%s, %s, %s, %s, 1, 1, %s)
+                    """, (sym['symbol'], sym['name'], sym['asset_type'], sym['multiplier'], now))
 
-                CREATE INDEX IF NOT EXISTS idx_settings_category ON settings(category);
-                CREATE INDEX IF NOT EXISTS idx_settings_scope ON settings(scope);
-            """)
-
-            # Insert default symbols
-            now = datetime.utcnow().isoformat()
-            for sym in self.DEFAULT_SYMBOLS:
-                conn.execute("""
-                    INSERT OR IGNORE INTO symbols (symbol, name, asset_type, multiplier, enabled, is_default, created_at)
-                    VALUES (?, ?, ?, ?, 1, 1, ?)
-                """, (sym['symbol'], sym['name'], sym['asset_type'], sym['multiplier'], now))
-
-        self._set_schema_version(conn, 3)
+            self._set_schema_version(conn, 3)
+        finally:
+            cursor.close()
 
     # ==================== Trade Log CRUD ====================
 
     def create_log(self, log: TradeLog) -> TradeLog:
         """Create a new trade log."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             data = log.to_dict()
             columns = ', '.join(data.keys())
-            placeholders = ', '.join('?' * len(data))
+            placeholders = ', '.join(['%s'] * len(data))
 
-            conn.execute(
+            cursor.execute(
                 f"INSERT INTO trade_logs ({columns}) VALUES ({placeholders})",
                 list(data.values())
             )
             conn.commit()
             return log
         finally:
+            cursor.close()
             conn.close()
 
     def get_log(self, log_id: str) -> Optional[TradeLog]:
         """Get a single trade log by ID."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            row = conn.execute(
-                "SELECT * FROM trade_logs WHERE id = ? AND is_active = 1",
+            cursor.execute(
+                "SELECT * FROM trade_logs WHERE id = %s AND is_active = 1",
                 (log_id,)
-            ).fetchone()
+            )
+            row = cursor.fetchone()
 
             if row:
-                return TradeLog.from_dict(dict(row))
+                return TradeLog.from_dict(self._row_to_dict(cursor, row))
             return None
         finally:
+            cursor.close()
             conn.close()
 
     def list_logs(self, include_inactive: bool = False) -> List[TradeLog]:
         """List all trade logs."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             query = "SELECT * FROM trade_logs"
             if not include_inactive:
                 query += " WHERE is_active = 1"
             query += " ORDER BY created_at DESC"
 
-            rows = conn.execute(query).fetchall()
-            return [TradeLog.from_dict(dict(row)) for row in rows]
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            return [TradeLog.from_dict(self._row_to_dict(cursor, row)) for row in rows]
         finally:
+            cursor.close()
             conn.close()
 
     def update_log(self, log_id: str, updates: Dict[str, Any]) -> Optional[TradeLog]:
         """Update a trade log (metadata only, not starting params)."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             # Prevent updating immutable fields
             immutable = {'starting_capital', 'risk_per_trade', 'max_position_size', 'id', 'created_at'}
@@ -438,48 +356,53 @@ class JournalDBv2:
 
             updates['updated_at'] = datetime.utcnow().isoformat()
 
-            set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
+            set_clause = ', '.join(f"{k} = %s" for k in updates.keys())
             params = list(updates.values()) + [log_id]
 
-            conn.execute(
-                f"UPDATE trade_logs SET {set_clause} WHERE id = ?",
+            cursor.execute(
+                f"UPDATE trade_logs SET {set_clause} WHERE id = %s",
                 params
             )
             conn.commit()
 
             return self.get_log(log_id)
         finally:
+            cursor.close()
             conn.close()
 
     def delete_log(self, log_id: str) -> bool:
         """Soft delete a trade log."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            cursor = conn.execute(
-                "UPDATE trade_logs SET is_active = 0, updated_at = ? WHERE id = ?",
+            cursor.execute(
+                "UPDATE trade_logs SET is_active = 0, updated_at = %s WHERE id = %s",
                 (datetime.utcnow().isoformat(), log_id)
             )
             conn.commit()
             return cursor.rowcount > 0
         finally:
+            cursor.close()
             conn.close()
 
     def get_log_summary(self, log_id: str) -> Dict[str, Any]:
         """Get a log with trade counts."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             log = self.get_log(log_id)
             if not log:
                 return {}
 
-            counts = conn.execute("""
+            cursor.execute("""
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
                     SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) as closed_count,
                     SUM(CASE WHEN status = 'closed' THEN pnl ELSE 0 END) as total_pnl
-                FROM trades WHERE log_id = ?
-            """, (log_id,)).fetchone()
+                FROM trades WHERE log_id = %s
+            """, (log_id,))
+            counts = cursor.fetchone()
 
             return {
                 **log.to_api_dict(),
@@ -490,6 +413,7 @@ class JournalDBv2:
                 'total_pnl_dollars': (counts[3] or 0) / 100
             }
         finally:
+            cursor.close()
             conn.close()
 
     # ==================== Trade CRUD ====================
@@ -497,13 +421,14 @@ class JournalDBv2:
     def create_trade(self, trade: Trade) -> Trade:
         """Create a new trade and auto-create OPEN event."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             # Insert trade
             data = trade.to_dict()
             columns = ', '.join(data.keys())
-            placeholders = ', '.join('?' * len(data))
+            placeholders = ', '.join(['%s'] * len(data))
 
-            conn.execute(
+            cursor.execute(
                 f"INSERT INTO trades ({columns}) VALUES ({placeholders})",
                 list(data.values())
             )
@@ -519,9 +444,9 @@ class JournalDBv2:
             )
             event_data = event.to_dict()
             event_columns = ', '.join(event_data.keys())
-            event_placeholders = ', '.join('?' * len(event_data))
+            event_placeholders = ', '.join(['%s'] * len(event_data))
 
-            conn.execute(
+            cursor.execute(
                 f"INSERT INTO trade_events ({event_columns}) VALUES ({event_placeholders})",
                 list(event_data.values())
             )
@@ -529,41 +454,48 @@ class JournalDBv2:
             conn.commit()
             return trade
         finally:
+            cursor.close()
             conn.close()
 
     def get_trade(self, trade_id: str) -> Optional[Trade]:
         """Get a single trade by ID."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            row = conn.execute(
-                "SELECT * FROM trades WHERE id = ?",
+            cursor.execute(
+                "SELECT * FROM trades WHERE id = %s",
                 (trade_id,)
-            ).fetchone()
+            )
+            row = cursor.fetchone()
 
             if row:
-                return Trade.from_dict(dict(row))
+                return Trade.from_dict(self._row_to_dict(cursor, row))
             return None
         finally:
+            cursor.close()
             conn.close()
 
     def get_trade_with_events(self, trade_id: str) -> Optional[Dict[str, Any]]:
         """Get a trade with all its events."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             trade = self.get_trade(trade_id)
             if not trade:
                 return None
 
-            events = conn.execute(
-                "SELECT * FROM trade_events WHERE trade_id = ? ORDER BY event_time ASC",
+            cursor.execute(
+                "SELECT * FROM trade_events WHERE trade_id = %s ORDER BY event_time ASC",
                 (trade_id,)
-            ).fetchall()
+            )
+            events = cursor.fetchall()
 
             return {
                 **trade.to_api_dict(),
-                'events': [TradeEvent.from_dict(dict(e)).to_api_dict() for e in events]
+                'events': [TradeEvent.from_dict(self._row_to_dict(cursor, e)).to_api_dict() for e in events]
             }
         finally:
+            cursor.close()
             conn.close()
 
     def list_trades(
@@ -579,55 +511,60 @@ class JournalDBv2:
     ) -> List[Trade]:
         """List trades in a log with optional filters."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            query = "SELECT * FROM trades WHERE log_id = ?"
+            query = "SELECT * FROM trades WHERE log_id = %s"
             params: List[Any] = [log_id]
 
             if status and status != "all":
-                query += " AND status = ?"
+                query += " AND status = %s"
                 params.append(status)
 
             if symbol:
-                query += " AND symbol = ?"
+                query += " AND symbol = %s"
                 params.append(symbol)
 
             if strategy:
-                query += " AND strategy = ?"
+                query += " AND strategy = %s"
                 params.append(strategy)
 
             if from_date:
-                query += " AND entry_time >= ?"
+                query += " AND entry_time >= %s"
                 params.append(from_date)
 
             if to_date:
-                query += " AND entry_time <= ?"
+                query += " AND entry_time <= %s"
                 params.append(to_date)
 
-            query += " ORDER BY entry_time DESC LIMIT ? OFFSET ?"
+            query += " ORDER BY entry_time DESC LIMIT %s OFFSET %s"
             params.extend([limit, offset])
 
-            rows = conn.execute(query, params).fetchall()
-            return [Trade.from_dict(dict(row)) for row in rows]
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [Trade.from_dict(self._row_to_dict(cursor, row)) for row in rows]
         finally:
+            cursor.close()
             conn.close()
 
     def update_trade(self, trade_id: str, updates: Dict[str, Any]) -> Optional[Trade]:
         """Update a trade with the given fields."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             updates['updated_at'] = datetime.utcnow().isoformat()
 
-            set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
+            set_clause = ', '.join(f"{k} = %s" for k in updates.keys())
             params = list(updates.values()) + [trade_id]
 
-            conn.execute(
-                f"UPDATE trades SET {set_clause} WHERE id = ?",
+            cursor.execute(
+                f"UPDATE trades SET {set_clause} WHERE id = %s",
                 params
             )
             conn.commit()
 
             return self.get_trade(trade_id)
         finally:
+            cursor.close()
             conn.close()
 
     def add_adjustment(
@@ -648,6 +585,7 @@ class JournalDBv2:
             event_time = datetime.utcnow().isoformat()
 
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             event = TradeEvent(
                 id=TradeEvent.new_id(),
@@ -662,23 +600,24 @@ class JournalDBv2:
 
             data = event.to_dict()
             columns = ', '.join(data.keys())
-            placeholders = ', '.join('?' * len(data))
+            placeholders = ', '.join(['%s'] * len(data))
 
-            conn.execute(
+            cursor.execute(
                 f"INSERT INTO trade_events ({columns}) VALUES ({placeholders})",
                 list(data.values())
             )
 
             # Update trade quantity
             new_quantity = trade.quantity + quantity_change
-            conn.execute(
-                "UPDATE trades SET quantity = ?, updated_at = ? WHERE id = ?",
+            cursor.execute(
+                "UPDATE trades SET quantity = %s, updated_at = %s WHERE id = %s",
                 (new_quantity, datetime.utcnow().isoformat(), trade_id)
             )
 
             conn.commit()
             return event
         finally:
+            cursor.close()
             conn.close()
 
     def _get_multiplier(self, symbol: str) -> int:
@@ -722,13 +661,14 @@ class JournalDBv2:
             r_multiple = pnl / trade.planned_risk
 
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             # Update trade
-            conn.execute("""
+            cursor.execute("""
                 UPDATE trades SET
-                    exit_time = ?, exit_price = ?, exit_spot = ?,
-                    pnl = ?, r_multiple = ?, status = 'closed', updated_at = ?
-                WHERE id = ?
+                    exit_time = %s, exit_price = %s, exit_spot = %s,
+                    pnl = %s, r_multiple = %s, status = 'closed', updated_at = %s
+                WHERE id = %s
             """, (exit_time, exit_price, exit_spot, pnl, r_multiple,
                   datetime.utcnow().isoformat(), trade_id))
 
@@ -744,9 +684,9 @@ class JournalDBv2:
             )
             data = event.to_dict()
             columns = ', '.join(data.keys())
-            placeholders = ', '.join('?' * len(data))
+            placeholders = ', '.join(['%s'] * len(data))
 
-            conn.execute(
+            cursor.execute(
                 f"INSERT INTO trade_events ({columns}) VALUES ({placeholders})",
                 list(data.values())
             )
@@ -754,17 +694,20 @@ class JournalDBv2:
             conn.commit()
             return self.get_trade(trade_id)
         finally:
+            cursor.close()
             conn.close()
 
     def delete_trade(self, trade_id: str) -> bool:
         """Delete a trade and its events."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            conn.execute("DELETE FROM trade_events WHERE trade_id = ?", (trade_id,))
-            cursor = conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+            cursor.execute("DELETE FROM trade_events WHERE trade_id = %s", (trade_id,))
+            cursor.execute("DELETE FROM trades WHERE id = %s", (trade_id,))
             conn.commit()
             return cursor.rowcount > 0
         finally:
+            cursor.close()
             conn.close()
 
     # ==================== Events ====================
@@ -772,13 +715,16 @@ class JournalDBv2:
     def get_trade_events(self, trade_id: str) -> List[TradeEvent]:
         """Get all events for a trade."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            rows = conn.execute(
-                "SELECT * FROM trade_events WHERE trade_id = ? ORDER BY event_time ASC",
+            cursor.execute(
+                "SELECT * FROM trade_events WHERE trade_id = %s ORDER BY event_time ASC",
                 (trade_id,)
-            ).fetchall()
-            return [TradeEvent.from_dict(dict(row)) for row in rows]
+            )
+            rows = cursor.fetchall()
+            return [TradeEvent.from_dict(self._row_to_dict(cursor, row)) for row in rows]
         finally:
+            cursor.close()
             conn.close()
 
     # ==================== Symbols ====================
@@ -786,29 +732,35 @@ class JournalDBv2:
     def list_symbols(self, include_disabled: bool = False) -> List[Symbol]:
         """List all symbols (default + user-added)."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             query = "SELECT * FROM symbols"
             if not include_disabled:
                 query += " WHERE enabled = 1"
             query += " ORDER BY asset_type, symbol"
 
-            rows = conn.execute(query).fetchall()
-            return [Symbol.from_dict(dict(row)) for row in rows]
+            cursor.execute(query)
+            rows = cursor.fetchall()
+            return [Symbol.from_dict(self._row_to_dict(cursor, row)) for row in rows]
         finally:
+            cursor.close()
             conn.close()
 
     def get_symbol(self, symbol: str) -> Optional[Symbol]:
         """Get a symbol by its ticker."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            row = conn.execute(
-                "SELECT * FROM symbols WHERE symbol = ?",
+            cursor.execute(
+                "SELECT * FROM symbols WHERE symbol = %s",
                 (symbol.upper(),)
-            ).fetchone()
+            )
+            row = cursor.fetchone()
             if row:
-                return Symbol.from_dict(dict(row))
+                return Symbol.from_dict(self._row_to_dict(cursor, row))
             return None
         finally:
+            cursor.close()
             conn.close()
 
     def get_multiplier(self, symbol: str) -> int:
@@ -822,22 +774,25 @@ class JournalDBv2:
     def add_symbol(self, symbol: Symbol) -> Symbol:
         """Add a new user symbol."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             symbol.symbol = symbol.symbol.upper()
             symbol.is_default = False
-            conn.execute("""
+            cursor.execute("""
                 INSERT INTO symbols (symbol, name, asset_type, multiplier, enabled, is_default, created_at)
-                VALUES (?, ?, ?, ?, ?, 0, ?)
+                VALUES (%s, %s, %s, %s, %s, 0, %s)
             """, (symbol.symbol, symbol.name, symbol.asset_type, symbol.multiplier,
                   1 if symbol.enabled else 0, symbol.created_at))
             conn.commit()
             return symbol
         finally:
+            cursor.close()
             conn.close()
 
     def update_symbol(self, symbol: str, updates: Dict[str, Any]) -> Optional[Symbol]:
         """Update a symbol (only user-added symbols can be fully edited)."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             symbol = symbol.upper()
             # Prevent editing symbol key
@@ -847,29 +802,32 @@ class JournalDBv2:
             if not updates:
                 return self.get_symbol(symbol)
 
-            set_clause = ', '.join(f"{k} = ?" for k in updates.keys())
+            set_clause = ', '.join(f"{k} = %s" for k in updates.keys())
             params = list(updates.values()) + [symbol]
 
-            conn.execute(
-                f"UPDATE symbols SET {set_clause} WHERE symbol = ?",
+            cursor.execute(
+                f"UPDATE symbols SET {set_clause} WHERE symbol = %s",
                 params
             )
             conn.commit()
             return self.get_symbol(symbol)
         finally:
+            cursor.close()
             conn.close()
 
     def delete_symbol(self, symbol: str) -> bool:
         """Delete a user-added symbol (cannot delete default symbols)."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            cursor = conn.execute(
-                "DELETE FROM symbols WHERE symbol = ? AND is_default = 0",
+            cursor.execute(
+                "DELETE FROM symbols WHERE symbol = %s AND is_default = 0",
                 (symbol.upper(),)
             )
             conn.commit()
             return cursor.rowcount > 0
         finally:
+            cursor.close()
             conn.close()
 
     # ==================== Settings ====================
@@ -877,83 +835,96 @@ class JournalDBv2:
     def get_setting(self, key: str, scope: str = 'global') -> Optional[Setting]:
         """Get a setting by key and scope."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            row = conn.execute(
-                "SELECT * FROM settings WHERE key = ? AND scope = ?",
+            cursor.execute(
+                "SELECT * FROM settings WHERE `key` = %s AND scope = %s",
                 (key, scope)
-            ).fetchone()
+            )
+            row = cursor.fetchone()
             if row:
-                return Setting.from_dict(dict(row))
+                return Setting.from_dict(self._row_to_dict(cursor, row))
             return None
         finally:
+            cursor.close()
             conn.close()
 
     def get_settings_by_category(self, category: str, scope: str = 'global') -> List[Setting]:
         """Get all settings in a category."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            rows = conn.execute(
-                "SELECT * FROM settings WHERE category = ? AND scope = ?",
+            cursor.execute(
+                "SELECT * FROM settings WHERE category = %s AND scope = %s",
                 (category, scope)
-            ).fetchall()
-            return [Setting.from_dict(dict(row)) for row in rows]
+            )
+            rows = cursor.fetchall()
+            return [Setting.from_dict(self._row_to_dict(cursor, row)) for row in rows]
         finally:
+            cursor.close()
             conn.close()
 
     def get_all_settings(self, scope: str = 'global') -> Dict[str, Dict[str, Any]]:
         """Get all settings organized by category."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            rows = conn.execute(
-                "SELECT * FROM settings WHERE scope = ?",
+            cursor.execute(
+                "SELECT * FROM settings WHERE scope = %s",
                 (scope,)
-            ).fetchall()
+            )
+            rows = cursor.fetchall()
 
             result: Dict[str, Dict[str, Any]] = {}
             for row in rows:
-                s = Setting.from_dict(dict(row))
+                s = Setting.from_dict(self._row_to_dict(cursor, row))
                 if s.category not in result:
                     result[s.category] = {}
                 result[s.category][s.key] = s.get_value()
             return result
         finally:
+            cursor.close()
             conn.close()
 
     def set_setting(self, key: str, value: Any, category: str, scope: str = 'global',
                     description: Optional[str] = None) -> Setting:
         """Set a setting value (insert or update)."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             now = datetime.utcnow().isoformat()
             value_json = json.dumps(value) if not isinstance(value, str) else value
 
-            conn.execute("""
-                INSERT INTO settings (key, value, category, scope, description, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(key, scope) DO UPDATE SET
-                    value = excluded.value,
-                    category = excluded.category,
-                    description = COALESCE(excluded.description, settings.description),
-                    updated_at = excluded.updated_at
+            cursor.execute("""
+                INSERT INTO settings (`key`, value, category, scope, description, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    value = VALUES(value),
+                    category = VALUES(category),
+                    description = COALESCE(VALUES(description), description),
+                    updated_at = VALUES(updated_at)
             """, (key, value_json, category, scope, description, now))
             conn.commit()
 
             return Setting(key=key, value=value_json, category=category, scope=scope,
                           description=description, updated_at=now)
         finally:
+            cursor.close()
             conn.close()
 
     def delete_setting(self, key: str, scope: str = 'global') -> bool:
         """Delete a setting."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
-            cursor = conn.execute(
-                "DELETE FROM settings WHERE key = ? AND scope = ?",
+            cursor.execute(
+                "DELETE FROM settings WHERE `key` = %s AND scope = %s",
                 (key, scope)
             )
             conn.commit()
             return cursor.rowcount > 0
         finally:
+            cursor.close()
             conn.close()
 
     def get_effective_setting(self, key: str, log_id: Optional[str] = None) -> Any:
@@ -981,47 +952,52 @@ class JournalDBv2:
     ) -> List[Trade]:
         """Get closed trades ordered by exit time for equity curve."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             query = """
                 SELECT * FROM trades
-                WHERE log_id = ? AND status = 'closed' AND exit_time IS NOT NULL
+                WHERE log_id = %s AND status = 'closed' AND exit_time IS NOT NULL
             """
             params: List[Any] = [log_id]
 
             if from_date:
-                query += " AND exit_time >= ?"
+                query += " AND exit_time >= %s"
                 params.append(from_date)
 
             if to_date:
-                query += " AND exit_time <= ?"
+                query += " AND exit_time <= %s"
                 params.append(to_date)
 
             query += " ORDER BY exit_time ASC"
 
-            rows = conn.execute(query, params).fetchall()
-            return [Trade.from_dict(dict(row)) for row in rows]
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [Trade.from_dict(self._row_to_dict(cursor, row)) for row in rows]
         finally:
+            cursor.close()
             conn.close()
 
     def get_log_stats(self, log_id: str) -> Dict[str, Any]:
         """Get basic statistics for a log."""
         conn = self._get_conn()
+        cursor = conn.cursor()
         try:
             log = self.get_log(log_id)
             if not log:
                 return {}
 
             # Total counts
-            counts = conn.execute("""
+            cursor.execute("""
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
                     SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END) as closed_count
-                FROM trades WHERE log_id = ?
-            """, (log_id,)).fetchone()
+                FROM trades WHERE log_id = %s
+            """, (log_id,))
+            counts = cursor.fetchone()
 
             # P&L stats
-            pnl_stats = conn.execute("""
+            cursor.execute("""
                 SELECT
                     SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as winners,
                     SUM(CASE WHEN pnl < 0 THEN 1 ELSE 0 END) as losers,
@@ -1036,14 +1012,16 @@ class JournalDBv2:
                     AVG(planned_risk) as avg_risk,
                     AVG(r_multiple) as avg_r_multiple
                 FROM trades
-                WHERE log_id = ? AND status = 'closed'
-            """, (log_id,)).fetchone()
+                WHERE log_id = %s AND status = 'closed'
+            """, (log_id,))
+            pnl_stats = cursor.fetchone()
 
             # Date range
-            dates = conn.execute("""
+            cursor.execute("""
                 SELECT MIN(entry_time), MAX(COALESCE(exit_time, entry_time))
-                FROM trades WHERE log_id = ?
-            """, (log_id,)).fetchone()
+                FROM trades WHERE log_id = %s
+            """, (log_id,))
+            dates = cursor.fetchone()
 
             return {
                 'log_id': log_id,
@@ -1068,4 +1046,5 @@ class JournalDBv2:
                 'last_trade': dates[1]
             }
         finally:
+            cursor.close()
             conn.close()

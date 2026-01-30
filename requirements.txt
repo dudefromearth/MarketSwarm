@@ -33,3 +33,4 @@ numpy~=2.3.5
 matplotlib~=3.10.7
 massive~=2.0.2
 pyarrow~=22.0.0
+mysql-connector-python>=8.0.0

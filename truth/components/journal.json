@@ -26,6 +26,11 @@
     "massive"
   ],
   "env": {
-    "JOURNAL_PORT": "3002"
+    "JOURNAL_PORT": "3002",
+    "JOURNAL_MYSQL_HOST": "localhost",
+    "JOURNAL_MYSQL_PORT": "3306",
+    "JOURNAL_MYSQL_USER": "journal",
+    "JOURNAL_MYSQL_PASSWORD": "",
+    "JOURNAL_MYSQL_DATABASE": "journal"
   }
 }

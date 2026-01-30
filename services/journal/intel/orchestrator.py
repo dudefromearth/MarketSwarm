@@ -24,7 +24,7 @@ class JournalOrchestrator:
         self.config = config
         self.logger = logger
         self.port = int(config.get('JOURNAL_PORT', 3002))
-        self.db = JournalDBv2()
+        self.db = JournalDBv2(config)
         self.analytics = AnalyticsV2(self.db)
 
     def _json_response(self, data: Any, status: int = 200) -> web.Response:
