@@ -10,6 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tiptap/extension-highlight": "^3.18.0",
+    "@tiptap/extension-text-align": "^3.18.0",
+    "@tiptap/extension-underline": "^3.18.0",
+    "@tiptap/pm": "^3.18.0",
+    "@tiptap/react": "^3.18.0",
+    "@tiptap/starter-kit": "^3.18.0",
     "lightweight-charts": "^5.1.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

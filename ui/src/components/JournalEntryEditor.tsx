@@ -1,5 +1,10 @@
 // src/components/JournalEntryEditor.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import Underline from '@tiptap/extension-underline';
+import TextAlign from '@tiptap/extension-text-align';
+import Highlight from '@tiptap/extension-highlight';
 import type { JournalEntry, JournalTrade } from '../hooks/useJournal';
 
 interface JournalEntryEditorProps {
@@ -39,6 +44,33 @@ function formatTime(isoTime: string): string {
   return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
+// Toolbar button component
+function ToolbarButton({
+  onClick,
+  isActive = false,
+  disabled = false,
+  title,
+  children,
+}: {
+  onClick: () => void;
+  isActive?: boolean;
+  disabled?: boolean;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`toolbar-btn ${isActive ? 'active' : ''}`}
+      title={title}
+    >
+      {children}
+    </button>
+  );
+}
+
 export default function JournalEntryEditor({
   date,
   entry,
@@ -49,42 +81,67 @@ export default function JournalEntryEditor({
   onLinkTrade,
   onUnlinkTrade,
 }: JournalEntryEditorProps) {
-  const [content, setContent] = useState('');
   const [isPlaybook, setIsPlaybook] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [linkingTradeId, setLinkingTradeId] = useState<string | null>(null);
 
+  // Initialize TipTap editor
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: {
+          levels: [1, 2, 3],
+        },
+      }),
+      Underline,
+      TextAlign.configure({
+        types: ['heading', 'paragraph'],
+      }),
+      Highlight.configure({
+        multicolor: false,
+      }),
+    ],
+    content: '',
+    onUpdate: () => {
+      setDirty(true);
+    },
+    editorProps: {
+      attributes: {
+        class: 'entry-content-editor',
+      },
+    },
+  });
+
   // Sync form state with entry data
   useEffect(() => {
-    if (entry) {
-      setContent(entry.content || '');
-      setIsPlaybook(entry.is_playbook_material);
-    } else {
-      setContent('');
-      setIsPlaybook(false);
+    if (editor) {
+      if (entry) {
+        editor.commands.setContent(entry.content || '');
+        setIsPlaybook(entry.is_playbook_material);
+      } else {
+        editor.commands.setContent('');
+        setIsPlaybook(false);
+      }
+      setDirty(false);
     }
-    setDirty(false);
-  }, [entry, date]);
-
-  const handleContentChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setContent(e.target.value);
-    setDirty(true);
-  };
+  }, [entry, date, editor]);
 
   const handlePlaybookChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setIsPlaybook(e.target.checked);
     setDirty(true);
   };
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
+    if (!editor) return;
     setSaving(true);
+    const content = editor.getHTML();
     const success = await onSave(content, isPlaybook);
     setSaving(false);
     if (success) {
       setDirty(false);
     }
-  };
+  }, [editor, isPlaybook, onSave]);
 
   const handleLinkTrade = async (tradeId: string) => {
     if (!entry) return;
@@ -109,7 +166,7 @@ export default function JournalEntryEditor({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [dirty, saving, content, isPlaybook]);
+  }, [dirty, saving, handleSave]);
 
   // Get list of already linked trade IDs
   const linkedTradeIds = new Set(entry?.trade_refs?.map(r => r.trade_id) || []);
@@ -139,14 +196,168 @@ export default function JournalEntryEditor({
         )}
       </div>
 
+      {/* Rich Text Toolbar */}
+      {editor && (
+        <div className="editor-toolbar">
+          <div className="toolbar-group">
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleBold().run()}
+              isActive={editor.isActive('bold')}
+              title="Bold (Cmd+B)"
+            >
+              <strong>B</strong>
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleItalic().run()}
+              isActive={editor.isActive('italic')}
+              title="Italic (Cmd+I)"
+            >
+              <em>I</em>
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleUnderline().run()}
+              isActive={editor.isActive('underline')}
+              title="Underline (Cmd+U)"
+            >
+              <span style={{ textDecoration: 'underline' }}>U</span>
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleStrike().run()}
+              isActive={editor.isActive('strike')}
+              title="Strikethrough"
+            >
+              <span style={{ textDecoration: 'line-through' }}>S</span>
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleHighlight().run()}
+              isActive={editor.isActive('highlight')}
+              title="Highlight"
+            >
+              <span style={{ background: '#fbbf24', color: '#000', padding: '0 2px' }}>H</span>
+            </ToolbarButton>
+          </div>
+
+          <div className="toolbar-separator" />
+
+          <div className="toolbar-group">
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+              isActive={editor.isActive('heading', { level: 1 })}
+              title="Heading 1"
+            >
+              H1
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+              isActive={editor.isActive('heading', { level: 2 })}
+              title="Heading 2"
+            >
+              H2
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}
+              isActive={editor.isActive('heading', { level: 3 })}
+              title="Heading 3"
+            >
+              H3
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().setParagraph().run()}
+              isActive={editor.isActive('paragraph')}
+              title="Paragraph"
+            >
+              P
+            </ToolbarButton>
+          </div>
+
+          <div className="toolbar-separator" />
+
+          <div className="toolbar-group">
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleBulletList().run()}
+              isActive={editor.isActive('bulletList')}
+              title="Bullet List"
+            >
+              &bull;
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleOrderedList().run()}
+              isActive={editor.isActive('orderedList')}
+              title="Numbered List"
+            >
+              1.
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleBlockquote().run()}
+              isActive={editor.isActive('blockquote')}
+              title="Quote"
+            >
+              "
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+              isActive={editor.isActive('codeBlock')}
+              title="Code Block"
+            >
+              {'</>'}
+            </ToolbarButton>
+          </div>
+
+          <div className="toolbar-separator" />
+
+          <div className="toolbar-group">
+            <ToolbarButton
+              onClick={() => editor.chain().focus().setTextAlign('left').run()}
+              isActive={editor.isActive({ textAlign: 'left' })}
+              title="Align Left"
+            >
+              &#8676;
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().setTextAlign('center').run()}
+              isActive={editor.isActive({ textAlign: 'center' })}
+              title="Align Center"
+            >
+              &#8596;
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().setTextAlign('right').run()}
+              isActive={editor.isActive({ textAlign: 'right' })}
+              title="Align Right"
+            >
+              &#8677;
+            </ToolbarButton>
+          </div>
+
+          <div className="toolbar-separator" />
+
+          <div className="toolbar-group">
+            <ToolbarButton
+              onClick={() => editor.chain().focus().setHorizontalRule().run()}
+              title="Horizontal Rule"
+            >
+              &#8213;
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().undo().run()}
+              disabled={!editor.can().undo()}
+              title="Undo (Cmd+Z)"
+            >
+              &#8630;
+            </ToolbarButton>
+            <ToolbarButton
+              onClick={() => editor.chain().focus().redo().run()}
+              disabled={!editor.can().redo()}
+              title="Redo (Cmd+Shift+Z)"
+            >
+              &#8631;
+            </ToolbarButton>
+          </div>
+        </div>
+      )}
+
       <div className="entry-body">
-        <textarea
-          className="entry-content"
-          value={content}
-          onChange={handleContentChange}
-          placeholder="What happened today? What did you learn?"
-          autoFocus
-        />
+        <EditorContent editor={editor} className="entry-content-wrapper" />
       </div>
 
       <div className="entry-footer">
