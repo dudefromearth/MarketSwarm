@@ -2462,7 +2462,7 @@ body {
   display: flex;
   gap: 20px;
   transition: opacity 0.2s;
-  min-height: 110px;
+  min-height: 130px;
 }
 
 .time-machine-controls.disabled {
@@ -2548,8 +2548,8 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 60px;
-  padding: 0 8px;
+  width: 70px;
+  padding: 0 12px;
   border-left: 1px solid #333;
 }
 
@@ -2565,65 +2565,67 @@ body {
 }
 
 .time-machine-controls .vol-value {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   color: #f59e0b;
-  margin: 4px 0;
+  margin: 2px 0;
 }
 
 .time-machine-controls .vertical-slider-container {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: space-between;
   flex: 1;
   width: 100%;
+  padding: 4px 0;
 }
 
 .time-machine-controls .vol-tick {
-  font-size: 8px;
-  color: #555;
+  font-size: 9px;
+  color: #666;
+  font-weight: 500;
 }
 
+/* Vertical slider - rotated via transform for better browser support */
 .time-machine-controls .vol-slider-vertical {
-  writing-mode: vertical-lr;
-  direction: rtl;
-  width: 90px;
-  height: 8px;
+  width: 80px;
+  height: 12px;
   -webkit-appearance: none;
   appearance: none;
-  background: linear-gradient(to top, #22c55e 0%, #eab308 50%, #ef4444 100%);
-  border-radius: 4px;
+  background: linear-gradient(to right, #22c55e 0%, #eab308 50%, #ef4444 100%);
+  border-radius: 6px;
   outline: none;
   cursor: pointer;
-  margin: 6px 0;
+  transform: rotate(-90deg);
+  transform-origin: center center;
+  margin: 30px 0;
 }
 
 .time-machine-controls .vol-slider-vertical::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: #fff;
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
   border: 2px solid #f59e0b;
+}
+
+.time-machine-controls .vol-slider-vertical::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
 }
 
 .time-machine-controls .vol-slider-vertical::-moz-range-thumb {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: #fff;
   cursor: pointer;
   border: 2px solid #f59e0b;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.4);
-}
-
-.time-machine-controls .vol-offset {
-  font-size: 10px;
-  color: #888;
-  margin-top: 2px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.5);
 }
 
 .time-machine-controls .slider-labels {
