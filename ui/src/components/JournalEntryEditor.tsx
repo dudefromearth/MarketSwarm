@@ -5,6 +5,7 @@ import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
 import Highlight from '@tiptap/extension-highlight';
+import { Markdown } from 'tiptap-markdown';
 import type { JournalEntry, JournalTrade } from '../hooks/useJournal';
 import TradeDetailModal from './TradeDetailModal';
 import type { Trade } from './TradeLogPanel';
@@ -95,7 +96,7 @@ export default function JournalEntryEditor({
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [showTradeModal, setShowTradeModal] = useState(false);
 
-  // Initialize TipTap editor
+  // Initialize TipTap editor with Markdown support
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -109,6 +110,11 @@ export default function JournalEntryEditor({
       }),
       Highlight.configure({
         multicolor: false,
+      }),
+      Markdown.configure({
+        html: false, // Don't parse HTML in Markdown
+        transformPastedText: true, // Transform pasted Markdown
+        transformCopiedText: true, // Copy as Markdown
       }),
     ],
     content: '',
@@ -144,7 +150,9 @@ export default function JournalEntryEditor({
   const handleSave = useCallback(async () => {
     if (!editor) return;
     setSaving(true);
-    const content = editor.getHTML();
+    // Save as Markdown for portability and LLM compatibility
+    const markdownStorage = editor.storage.markdown as { getMarkdown: () => string };
+    const content = markdownStorage.getMarkdown();
     const success = await onSave(content, isPlaybook);
     setSaving(false);
     if (success) {
