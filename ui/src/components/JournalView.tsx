@@ -7,6 +7,7 @@ import '../styles/journal.css';
 
 interface JournalViewProps {
   onClose: () => void;
+  onOpenPlaybook?: () => void;
 }
 
 type Tab = 'entries' | 'retrospectives';
@@ -44,7 +45,7 @@ function getMonthEnd(year: number, month: number): Date {
   return new Date(year, month, 0);
 }
 
-export default function JournalView({ onClose }: JournalViewProps) {
+export default function JournalView({ onClose, onOpenPlaybook }: JournalViewProps) {
   // Tab state
   const [activeTab, setActiveTab] = useState<Tab>('entries');
 
@@ -185,9 +186,16 @@ export default function JournalView({ onClose }: JournalViewProps) {
             Retrospectives
           </button>
         </div>
-        <button className="btn-back-to-trades" onClick={onClose}>
-          ← Back to Trades
-        </button>
+        <div className="journal-header-actions">
+          {onOpenPlaybook && (
+            <button className="btn-playbook-link" onClick={onOpenPlaybook}>
+              Playbook
+            </button>
+          )}
+          <button className="btn-back-to-trades" onClick={onClose}>
+            ← Back to Trades
+          </button>
+        </div>
       </div>
 
       <div className="journal-content">

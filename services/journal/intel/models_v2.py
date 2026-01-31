@@ -473,3 +473,73 @@ class JournalAttachment:
         d = asdict(self)
         d.pop('file_path', None)  # Don't expose internal path
         return d
+
+
+# ==================== Playbook Models ====================
+
+@dataclass
+class PlaybookEntry:
+    """A distilled piece of trading wisdom in the Playbook."""
+    id: str
+    user_id: int
+    
+    # Core content
+    title: str
+    entry_type: str  # pattern, rule, warning, filter, constraint
+    description: str
+    
+    # Status
+    status: str = "draft"  # draft, active, retired
+    
+    # Timestamps
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new playbook entry ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'PlaybookEntry':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return asdict(self)
+
+
+@dataclass
+class PlaybookSourceRef:
+    """A reference linking a Playbook entry to its source material."""
+    id: str
+    playbook_entry_id: str
+    source_type: str  # 'entry' | 'retrospective' | 'trade'
+    source_id: str
+    note: Optional[str] = None  # Optional context about why this source matters
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new source ref ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'PlaybookSourceRef':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return asdict(self)

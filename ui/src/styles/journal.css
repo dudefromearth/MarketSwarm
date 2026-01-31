@@ -24,7 +24,6 @@
 }
 
 .btn-back-to-trades {
-  margin-left: auto;
   background: transparent;
   border: 1px solid #64748b;
   color: #94a3b8;
@@ -39,6 +38,29 @@
   background: rgba(100, 116, 139, 0.1);
   color: #e2e8f0;
   border-color: #94a3b8;
+}
+
+.journal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.btn-playbook-link {
+  background: #2a1a2e;
+  border: 1px solid #a855f7;
+  color: #c084fc;
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-playbook-link:hover {
+  background: #581c87;
+  color: #d8b4fe;
 }
 
 /* Journal Modal Styles */

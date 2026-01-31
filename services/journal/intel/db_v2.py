@@ -9,14 +9,15 @@ from datetime import datetime
 
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint, Symbol, Setting,
-    JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment
+    JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
+    PlaybookEntry, PlaybookSourceRef
 )
 
 
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 5
+    SCHEMA_VERSION = 6
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -412,7 +413,47 @@ class JournalDBv2:
                     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
                 """)
 
-            self._set_schema_version(conn, 5)
+            # Create playbook_entries table
+            if not self._table_exists(conn, 'playbook_entries'):
+                cursor.execute("""
+                    CREATE TABLE playbook_entries (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+
+                        title VARCHAR(255) NOT NULL,
+                        entry_type ENUM('pattern', 'rule', 'warning', 'filter', 'constraint') NOT NULL,
+                        description TEXT,
+                        status ENUM('draft', 'active', 'retired') DEFAULT 'draft',
+
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+                        updated_at VARCHAR(32) DEFAULT (NOW()),
+
+                        INDEX idx_playbook_user (user_id),
+                        INDEX idx_playbook_type (entry_type),
+                        INDEX idx_playbook_status (status)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create playbook_source_refs table
+            if not self._table_exists(conn, 'playbook_source_refs'):
+                cursor.execute("""
+                    CREATE TABLE playbook_source_refs (
+                        id VARCHAR(36) PRIMARY KEY,
+                        playbook_entry_id VARCHAR(36) NOT NULL,
+
+                        source_type ENUM('entry', 'retrospective', 'trade') NOT NULL,
+                        source_id VARCHAR(36) NOT NULL,
+                        note TEXT,
+
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+
+                        INDEX idx_pbref_entry (playbook_entry_id),
+                        INDEX idx_pbref_source (source_type, source_id),
+                        FOREIGN KEY (playbook_entry_id) REFERENCES playbook_entries(id) ON DELETE CASCADE
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 6)
         finally:
             cursor.close()
 
@@ -1757,6 +1798,207 @@ class JournalDBv2:
                 'week_end': week_end,
                 'days': days,
                 'has_retrospective': retro is not None
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Playbook CRUD ====================
+
+    def create_playbook_entry(self, entry: PlaybookEntry) -> PlaybookEntry:
+        """Create a new playbook entry."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = entry.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO playbook_entries ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return entry
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_playbook_entry(self, entry_id: str) -> Optional[PlaybookEntry]:
+        """Get a playbook entry by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT * FROM playbook_entries WHERE id = %s",
+                (entry_id,)
+            )
+            row = cursor.fetchone()
+            return PlaybookEntry.from_dict(row) if row else None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_playbook_entries(
+        self,
+        user_id: int,
+        entry_type: Optional[str] = None,
+        status: Optional[str] = None,
+        search: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[PlaybookEntry]:
+        """List playbook entries with optional filters."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            query = "SELECT * FROM playbook_entries WHERE user_id = %s"
+            params: List[Any] = [user_id]
+
+            if entry_type:
+                query += " AND entry_type = %s"
+                params.append(entry_type)
+
+            if status:
+                query += " AND status = %s"
+                params.append(status)
+
+            if search:
+                query += " AND (title LIKE %s OR description LIKE %s)"
+                search_term = f"%{search}%"
+                params.extend([search_term, search_term])
+
+            query += " ORDER BY updated_at DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [PlaybookEntry.from_dict(row) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_playbook_entry(self, entry_id: str, updates: Dict[str, Any]) -> Optional[PlaybookEntry]:
+        """Update a playbook entry."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            updates['updated_at'] = datetime.utcnow().isoformat()
+            set_clause = ', '.join([f"{k} = %s" for k in updates.keys()])
+
+            cursor.execute(
+                f"UPDATE playbook_entries SET {set_clause} WHERE id = %s",
+                list(updates.values()) + [entry_id]
+            )
+            conn.commit()
+
+            if cursor.rowcount == 0:
+                return None
+
+            cursor.execute("SELECT * FROM playbook_entries WHERE id = %s", (entry_id,))
+            row = cursor.fetchone()
+            return PlaybookEntry.from_dict(row) if row else None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_playbook_entry(self, entry_id: str) -> bool:
+        """Delete a playbook entry (source refs cascade)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM playbook_entries WHERE id = %s", (entry_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Playbook Source Refs ====================
+
+    def create_playbook_source_ref(self, ref: PlaybookSourceRef) -> PlaybookSourceRef:
+        """Create a source reference for a playbook entry."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = ref.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO playbook_source_refs ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return ref
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_playbook_source_refs(self, playbook_entry_id: str) -> List[PlaybookSourceRef]:
+        """List source references for a playbook entry."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT * FROM playbook_source_refs WHERE playbook_entry_id = %s ORDER BY created_at",
+                (playbook_entry_id,)
+            )
+            rows = cursor.fetchall()
+            return [PlaybookSourceRef.from_dict(row) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_playbook_source_ref(self, ref_id: str) -> bool:
+        """Delete a source reference."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM playbook_source_refs WHERE id = %s", (ref_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_flagged_playbook_material(self, user_id: int) -> Dict[str, List[Dict]]:
+        """List all journal entries and retrospectives flagged as playbook material."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            # Get flagged entries
+            cursor.execute("""
+                SELECT id, entry_date, content, created_at, updated_at
+                FROM journal_entries
+                WHERE user_id = %s AND is_playbook_material = 1
+                ORDER BY entry_date DESC
+            """, (user_id,))
+            entries = cursor.fetchall()
+
+            # Get flagged retrospectives
+            cursor.execute("""
+                SELECT id, retro_type, period_start, period_end, content, created_at, updated_at
+                FROM journal_retrospectives
+                WHERE user_id = %s AND is_playbook_material = 1
+                ORDER BY period_start DESC
+            """, (user_id,))
+            retros = cursor.fetchall()
+
+            # Convert dates to strings
+            for e in entries:
+                if hasattr(e.get('entry_date'), 'strftime'):
+                    e['entry_date'] = e['entry_date'].strftime('%Y-%m-%d')
+
+            for r in retros:
+                if hasattr(r.get('period_start'), 'strftime'):
+                    r['period_start'] = r['period_start'].strftime('%Y-%m-%d')
+                if hasattr(r.get('period_end'), 'strftime'):
+                    r['period_end'] = r['period_end'].strftime('%Y-%m-%d')
+
+            return {
+                'entries': entries,
+                'retrospectives': retros
             }
         finally:
             cursor.close()

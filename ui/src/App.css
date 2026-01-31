@@ -5198,6 +5198,21 @@ body {
   color: #86efac;
 }
 
+.btn-playbook {
+  background: #2a1a2e;
+  border: 1px solid #a855f7;
+  color: #c084fc;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-playbook:hover {
+  background: #581c87;
+  color: #d8b4fe;
+}
+
 /* Status Tabs */
 .status-tabs {
   display: flex;

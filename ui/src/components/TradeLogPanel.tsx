@@ -63,6 +63,7 @@ interface TradeLogPanelProps {
   onViewReporting: (logId: string) => void;
   onManageLogs: () => void;
   onOpenJournal: () => void;
+  onOpenPlaybook: () => void;
   selectedLogId: string | null;
   selectedLog: TradeLog | null;
   onSelectLog: (log: TradeLog) => void;
@@ -79,6 +80,7 @@ export default function TradeLogPanel({
   onViewReporting,
   onManageLogs,
   onOpenJournal,
+  onOpenPlaybook,
   selectedLogId,
   selectedLog,
   onSelectLog,
@@ -326,6 +328,13 @@ export default function TradeLogPanel({
             title="Journal"
           >
             Journal
+          </button>
+          <button
+            className="btn-playbook"
+            onClick={onOpenPlaybook}
+            title="Playbook"
+          >
+            Playbook
           </button>
           {selectedLogId && (
             <button

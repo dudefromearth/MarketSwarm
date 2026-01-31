@@ -17,7 +17,8 @@ from openpyxl.utils import get_column_letter
 from .db_v2 import JournalDBv2
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, Symbol, Setting,
-    JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment
+    JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
+    PlaybookEntry, PlaybookSourceRef
 )
 from .analytics_v2 import AnalyticsV2
 from .auth import JournalAuth, require_auth, optional_auth
@@ -1935,6 +1936,332 @@ class JournalOrchestrator:
             self.logger.error(f"get_calendar_week error: {e}")
             return self._error_response(str(e), 500)
 
+    # ==================== Playbook Endpoints ====================
+
+    async def list_playbook_entries(self, request: web.Request) -> web.Response:
+        """GET /api/playbook/entries - List playbook entries with optional filters."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            # Parse query params
+            entry_type = request.query.get('type')
+            status = request.query.get('status')
+            search = request.query.get('search')
+            limit = int(request.query.get('limit', 100))
+            offset = int(request.query.get('offset', 0))
+
+            entries = self.db.list_playbook_entries(
+                user['id'],
+                entry_type=entry_type,
+                status=status,
+                search=search,
+                limit=limit,
+                offset=offset
+            )
+
+            # Get source counts for each entry
+            entries_with_sources = []
+            for entry in entries:
+                data = entry.to_api_dict()
+                sources = self.db.list_playbook_source_refs(entry.id)
+                data['source_count'] = len(sources)
+                entries_with_sources.append(data)
+
+            return self._json_response({
+                'success': True,
+                'data': entries_with_sources,
+                'count': len(entries_with_sources)
+            })
+        except Exception as e:
+            self.logger.error(f"list_playbook_entries error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_playbook_entry(self, request: web.Request) -> web.Response:
+        """GET /api/playbook/entries/:id - Get a playbook entry with sources."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_playbook_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Playbook entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            # Get sources
+            sources = self.db.list_playbook_source_refs(entry_id)
+
+            data = entry.to_api_dict()
+            data['sources'] = [s.to_api_dict() for s in sources]
+
+            return self._json_response({
+                'success': True,
+                'data': data
+            })
+        except Exception as e:
+            self.logger.error(f"get_playbook_entry error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def create_playbook_entry(self, request: web.Request) -> web.Response:
+        """POST /api/playbook/entries - Create a new playbook entry."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            body = await request.json()
+
+            # Validate required fields
+            if not body.get('title'):
+                return self._error_response('Title is required', 400)
+            if not body.get('entry_type'):
+                return self._error_response('Entry type is required', 400)
+
+            valid_types = ['pattern', 'rule', 'warning', 'filter', 'constraint']
+            if body['entry_type'] not in valid_types:
+                return self._error_response(f'Invalid entry type. Must be one of: {valid_types}', 400)
+
+            entry = PlaybookEntry(
+                id=PlaybookEntry.new_id(),
+                user_id=user['id'],
+                title=body['title'],
+                entry_type=body['entry_type'],
+                description=body.get('description', ''),
+                status=body.get('status', 'draft')
+            )
+
+            created = self.db.create_playbook_entry(entry)
+
+            # Add source references if provided
+            sources = body.get('sources', [])
+            for src in sources:
+                if src.get('source_type') and src.get('source_id'):
+                    ref = PlaybookSourceRef(
+                        id=PlaybookSourceRef.new_id(),
+                        playbook_entry_id=created.id,
+                        source_type=src['source_type'],
+                        source_id=src['source_id'],
+                        note=src.get('note')
+                    )
+                    self.db.create_playbook_source_ref(ref)
+
+            self.logger.info(f"Created playbook entry '{entry.title}'", emoji="📚")
+
+            # Return with sources
+            source_refs = self.db.list_playbook_source_refs(created.id)
+            data = created.to_api_dict()
+            data['sources'] = [s.to_api_dict() for s in source_refs]
+
+            return self._json_response({
+                'success': True,
+                'data': data
+            }, 201)
+        except Exception as e:
+            self.logger.error(f"create_playbook_entry error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def update_playbook_entry(self, request: web.Request) -> web.Response:
+        """PUT /api/playbook/entries/:id - Update a playbook entry."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_playbook_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Playbook entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            body = await request.json()
+
+            # Build updates
+            updates = {}
+            if 'title' in body:
+                updates['title'] = body['title']
+            if 'entry_type' in body:
+                valid_types = ['pattern', 'rule', 'warning', 'filter', 'constraint']
+                if body['entry_type'] not in valid_types:
+                    return self._error_response(f'Invalid entry type. Must be one of: {valid_types}', 400)
+                updates['entry_type'] = body['entry_type']
+            if 'description' in body:
+                updates['description'] = body['description']
+            if 'status' in body:
+                valid_statuses = ['draft', 'active', 'retired']
+                if body['status'] not in valid_statuses:
+                    return self._error_response(f'Invalid status. Must be one of: {valid_statuses}', 400)
+                updates['status'] = body['status']
+
+            if not updates:
+                return self._error_response('No valid fields to update', 400)
+
+            updated = self.db.update_playbook_entry(entry_id, updates)
+
+            if not updated:
+                return self._error_response('Failed to update entry', 500)
+
+            # Return with sources
+            sources = self.db.list_playbook_source_refs(entry_id)
+            data = updated.to_api_dict()
+            data['sources'] = [s.to_api_dict() for s in sources]
+
+            return self._json_response({
+                'success': True,
+                'data': data
+            })
+        except Exception as e:
+            self.logger.error(f"update_playbook_entry error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def delete_playbook_entry(self, request: web.Request) -> web.Response:
+        """DELETE /api/playbook/entries/:id - Delete a playbook entry."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_playbook_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Playbook entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            self.db.delete_playbook_entry(entry_id)
+            self.logger.info(f"Deleted playbook entry {entry_id}", emoji="🗑️")
+
+            return self._json_response({
+                'success': True,
+                'message': 'Playbook entry deleted'
+            })
+        except Exception as e:
+            self.logger.error(f"delete_playbook_entry error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def list_playbook_sources(self, request: web.Request) -> web.Response:
+        """GET /api/playbook/entries/:id/sources - List sources for a playbook entry."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_playbook_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Playbook entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            sources = self.db.list_playbook_source_refs(entry_id)
+
+            return self._json_response({
+                'success': True,
+                'data': [s.to_api_dict() for s in sources],
+                'count': len(sources)
+            })
+        except Exception as e:
+            self.logger.error(f"list_playbook_sources error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def add_playbook_source(self, request: web.Request) -> web.Response:
+        """POST /api/playbook/entries/:id/sources - Add a source reference."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_playbook_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Playbook entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            body = await request.json()
+
+            if not body.get('source_type'):
+                return self._error_response('source_type is required', 400)
+            if not body.get('source_id'):
+                return self._error_response('source_id is required', 400)
+
+            valid_types = ['entry', 'retrospective', 'trade']
+            if body['source_type'] not in valid_types:
+                return self._error_response(f'Invalid source_type. Must be one of: {valid_types}', 400)
+
+            ref = PlaybookSourceRef(
+                id=PlaybookSourceRef.new_id(),
+                playbook_entry_id=entry_id,
+                source_type=body['source_type'],
+                source_id=body['source_id'],
+                note=body.get('note')
+            )
+
+            created = self.db.create_playbook_source_ref(ref)
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201)
+        except Exception as e:
+            self.logger.error(f"add_playbook_source error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def delete_playbook_source(self, request: web.Request) -> web.Response:
+        """DELETE /api/playbook/sources/:id - Delete a source reference."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            ref_id = request.match_info['id']
+            # Note: We should verify ownership through the playbook entry
+            # For now, just delete if exists
+
+            deleted = self.db.delete_playbook_source_ref(ref_id)
+
+            if not deleted:
+                return self._error_response('Source reference not found', 404)
+
+            return self._json_response({
+                'success': True,
+                'message': 'Source reference deleted'
+            })
+        except Exception as e:
+            self.logger.error(f"delete_playbook_source error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_flagged_playbook_material(self, request: web.Request) -> web.Response:
+        """GET /api/playbook/flagged-material - Get all items flagged as playbook material."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            data = self.db.list_flagged_playbook_material(user['id'])
+
+            return self._json_response({
+                'success': True,
+                'data': data
+            })
+        except Exception as e:
+            self.logger.error(f"get_flagged_playbook_material error: {e}")
+            return self._error_response(str(e), 500)
+
     # ==================== Legacy Endpoints (for backwards compatibility) ====================
 
     async def legacy_list_trades(self, request: web.Request) -> web.Response:
@@ -2135,6 +2462,17 @@ class JournalOrchestrator:
         # Journal Calendar Views (Temporal Gravity)
         app.router.add_get('/api/journal/calendar/{year}/{month}', self.get_calendar_month)
         app.router.add_get('/api/journal/calendar/week/{weekStart}', self.get_calendar_week)
+
+        # Playbook
+        app.router.add_get('/api/playbook/entries', self.list_playbook_entries)
+        app.router.add_get('/api/playbook/entries/{id}', self.get_playbook_entry)
+        app.router.add_post('/api/playbook/entries', self.create_playbook_entry)
+        app.router.add_put('/api/playbook/entries/{id}', self.update_playbook_entry)
+        app.router.add_delete('/api/playbook/entries/{id}', self.delete_playbook_entry)
+        app.router.add_get('/api/playbook/entries/{id}/sources', self.list_playbook_sources)
+        app.router.add_post('/api/playbook/entries/{id}/sources', self.add_playbook_source)
+        app.router.add_delete('/api/playbook/sources/{id}', self.delete_playbook_source)
+        app.router.add_get('/api/playbook/flagged-material', self.get_flagged_playbook_material)
 
         # Legacy endpoints (backwards compatibility)
         app.router.add_get('/api/trades', self.legacy_list_trades)

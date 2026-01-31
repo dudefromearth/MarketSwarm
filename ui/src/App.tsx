@@ -20,6 +20,7 @@ import TradeDetailModal from './components/TradeDetailModal';
 import ReportingView from './components/ReportingView';
 import SettingsModal from './components/SettingsModal';
 import JournalView from './components/JournalView';
+import PlaybookView from './components/PlaybookView';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -608,6 +609,7 @@ function App() {
   const [reportingLogId, setReportingLogId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
+  const [playbookOpen, setPlaybookOpen] = useState(false);
 
   // Commentary panel state
   const [commentaryCollapsed, setCommentaryCollapsed] = useState(true);
@@ -3958,9 +3960,14 @@ function App() {
           <span className="close-bar-label">Close</span>
         </div>
         <div className="trade-log-panel-inner">
-          {journalOpen ? (
+          {playbookOpen ? (
+            <PlaybookView
+              onClose={() => setPlaybookOpen(false)}
+            />
+          ) : journalOpen ? (
             <JournalView
               onClose={() => setJournalOpen(false)}
+              onOpenPlaybook={() => { setJournalOpen(false); setPlaybookOpen(true); }}
             />
           ) : reportingLogId ? (
             <ReportingView
@@ -3979,6 +3986,7 @@ function App() {
                     onViewReporting={handleViewReporting}
                     onManageLogs={handleManageLogs}
                     onOpenJournal={() => setJournalOpen(true)}
+                    onOpenPlaybook={() => setPlaybookOpen(true)}
                     selectedLogId={selectedLog?.id || null}
                     selectedLog={selectedLog}
                     onSelectLog={handleSelectLog}
