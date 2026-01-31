@@ -2456,9 +2456,9 @@ body {
 
 .time-machine-controls {
   display: flex;
-  gap: 24px;
-  flex-wrap: wrap;
+  gap: 20px;
   transition: opacity 0.2s;
+  min-height: 100px;
 }
 
 .time-machine-controls.disabled {
@@ -2466,9 +2466,20 @@ body {
   pointer-events: none;
 }
 
+/* Left column: horizontal sliders */
+.time-machine-controls .horizontal-controls {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .time-machine-controls .control-group {
   flex: 1;
-  min-width: 200px;
+}
+
+.time-machine-controls .control-icon {
+  margin-right: 4px;
 }
 
 .time-machine-controls label {
@@ -2490,13 +2501,14 @@ body {
   margin-left: 4px;
 }
 
+/* Horizontal sliders */
 .time-machine-controls input[type="range"] {
   width: 100%;
-  height: 6px;
+  height: 8px;
   -webkit-appearance: none;
   appearance: none;
   background: #333;
-  border-radius: 3px;
+  border-radius: 4px;
   outline: none;
   cursor: pointer;
 }
@@ -2504,25 +2516,110 @@ body {
 .time-machine-controls input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #f59e0b;
   cursor: pointer;
   transition: transform 0.1s;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
 }
 
 .time-machine-controls input[type="range"]::-webkit-slider-thumb:hover {
-  transform: scale(1.2);
+  transform: scale(1.15);
 }
 
 .time-machine-controls input[type="range"]::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: #f59e0b;
   cursor: pointer;
   border: none;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+/* Vertical VIX control */
+.time-machine-controls .vertical-control {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 60px;
+  padding: 0 8px;
+  border-left: 1px solid #333;
+}
+
+.time-machine-controls .vol-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 10px;
+  color: #888;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.time-machine-controls .vol-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: #f59e0b;
+  margin: 4px 0;
+}
+
+.time-machine-controls .vertical-slider-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  width: 100%;
+}
+
+.time-machine-controls .vol-tick {
+  font-size: 8px;
+  color: #555;
+}
+
+.time-machine-controls .vol-slider-vertical {
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 80px;
+  height: 8px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: linear-gradient(to top, #22c55e 0%, #333 33%, #333 66%, #ef4444 100%);
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+  margin: 4px 0;
+}
+
+.time-machine-controls .vol-slider-vertical::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+  border: 2px solid #f59e0b;
+}
+
+.time-machine-controls .vol-slider-vertical::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  cursor: pointer;
+  border: 2px solid #f59e0b;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+}
+
+.time-machine-controls .vol-offset {
+  font-size: 10px;
+  color: #888;
+  margin-top: 2px;
 }
 
 .time-machine-controls .slider-labels {
@@ -2533,16 +2630,10 @@ body {
   margin-top: 4px;
 }
 
-.time-control {
-  flex: 2 !important;
-}
-
-.vol-control {
-  flex: 1 !important;
-}
-
-.spot-control {
-  flex: 1 !important;
+/* Time and Spot sliders take equal space in horizontal layout */
+.horizontal-controls .time-control,
+.horizontal-controls .spot-control {
+  flex: 1;
 }
 
 .spot-control .control-value {

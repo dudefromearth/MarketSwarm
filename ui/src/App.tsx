@@ -3528,7 +3528,6 @@ function App() {
                           const formatDTE = (hours: number) => {
                             if (hours <= 0) return '0m';
                             if (hours < 4) {
-                              // Show in 15-min increments
                               const mins = Math.round(hours * 60);
                               if (mins < 60) return `${mins}m`;
                               const h = Math.floor(mins / 60);
@@ -3546,83 +3545,88 @@ function App() {
                             return `${days.toFixed(1)}d`;
                           };
 
-                          // Step size: 15 min when < 4 hours remaining, else 1 hour
                           const stepSize = effectiveHoursRemaining <= 4 ? 0.25 : 1;
+                          const currentVix = (spot?.['I:VIX']?.value || 20) + simVolatilityOffset;
 
                           return (
                             <>
-                              <div className="control-group time-control">
-                                <label>
-                                  Time Forward: <span className="control-value">
-                                    {formatDTE(simTimeOffsetHours)}
-                                  </span>
-                                  <span className="control-detail">
-                                    (DTE: {formatDTE(effectiveHoursRemaining)})
-                                  </span>
-                                </label>
-                                <input
-                                  type="range"
-                                  min="0"
-                                  max={maxHours}
-                                  step={stepSize}
-                                  value={simTimeOffsetHours}
-                                  onChange={(e) => setSimTimeOffsetHours(parseFloat(e.target.value))}
-                                  className="time-slider"
-                                  disabled={!timeMachineEnabled}
-                                />
-                                <div className="slider-labels">
-                                  <span>{formatDTE(maxHours)}</span>
-                                  <span>0m (Exp)</span>
+                              {/* Left column: Time and Spot (horizontal sliders) */}
+                              <div className="horizontal-controls">
+                                <div className="control-group time-control">
+                                  <label>
+                                    <span className="control-icon">⏱</span>
+                                    Time Forward: <span className="control-value">
+                                      {formatDTE(simTimeOffsetHours)}
+                                    </span>
+                                    <span className="control-detail">
+                                      → DTE: {formatDTE(effectiveHoursRemaining)}
+                                    </span>
+                                  </label>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max={maxHours}
+                                    step={stepSize}
+                                    value={simTimeOffsetHours}
+                                    onChange={(e) => setSimTimeOffsetHours(parseFloat(e.target.value))}
+                                    className="time-slider"
+                                    disabled={!timeMachineEnabled}
+                                  />
+                                  <div className="slider-labels">
+                                    <span>{formatDTE(maxHours)}</span>
+                                    <span>0m (Exp)</span>
+                                  </div>
+                                </div>
+                                <div className="control-group spot-control">
+                                  <label>
+                                    <span className="control-icon">📍</span>
+                                    Spot Price: <span className="control-value">
+                                      {simulatedSpot?.toFixed(0) || '-'}
+                                    </span>
+                                    <span className="control-detail">
+                                      ({simSpotOffset >= 0 ? '+' : ''}{simSpotOffset.toFixed(0)} pts)
+                                    </span>
+                                  </label>
+                                  <input
+                                    type="range"
+                                    min="-150"
+                                    max="150"
+                                    step="1"
+                                    value={simSpotOffset}
+                                    onChange={(e) => setSimSpotOffset(parseFloat(e.target.value))}
+                                    className="spot-slider"
+                                    disabled={!timeMachineEnabled}
+                                  />
+                                  <div className="slider-labels">
+                                    <span>-150</span>
+                                    <span>0</span>
+                                    <span>+150</span>
+                                  </div>
                                 </div>
                               </div>
-                              <div className="control-group vol-control">
-                                <label>
-                                  Volatility: <span className="control-value">
-                                    VIX {((spot?.['I:VIX']?.value || 20) + simVolatilityOffset).toFixed(1)}
-                                  </span>
-                                  <span className="control-detail">
-                                    ({simVolatilityOffset >= 0 ? '+' : ''}{simVolatilityOffset.toFixed(1)})
-                                  </span>
-                                </label>
-                                <input
-                                  type="range"
-                                  min="-15"
-                                  max="30"
-                                  step="0.5"
-                                  value={simVolatilityOffset}
-                                  onChange={(e) => setSimVolatilityOffset(parseFloat(e.target.value))}
-                                  className="vol-slider"
-                                  disabled={!timeMachineEnabled}
-                                />
-                                <div className="slider-labels">
-                                  <span>-15</span>
-                                  <span>0</span>
-                                  <span>+30</span>
+                              {/* Right column: VIX (vertical slider) */}
+                              <div className="vertical-control vol-control">
+                                <div className="vol-label">
+                                  <span className="control-icon">📊</span>
+                                  <span>VIX</span>
                                 </div>
-                              </div>
-                              <div className="control-group spot-control">
-                                <label>
-                                  Spot: <span className="control-value">
-                                    {simulatedSpot?.toFixed(0) || '-'}
-                                  </span>
-                                  <span className="control-detail">
-                                    ({simSpotOffset >= 0 ? '+' : ''}{simSpotOffset.toFixed(0)})
-                                  </span>
-                                </label>
-                                <input
-                                  type="range"
-                                  min="-150"
-                                  max="150"
-                                  step="1"
-                                  value={simSpotOffset}
-                                  onChange={(e) => setSimSpotOffset(parseFloat(e.target.value))}
-                                  className="spot-slider"
-                                  disabled={!timeMachineEnabled}
-                                />
-                                <div className="slider-labels">
-                                  <span>-150</span>
-                                  <span>0</span>
-                                  <span>+150</span>
+                                <div className="vol-value">{currentVix.toFixed(1)}</div>
+                                <div className="vertical-slider-container">
+                                  <span className="vol-tick">+30</span>
+                                  <input
+                                    type="range"
+                                    min="-15"
+                                    max="30"
+                                    step="0.5"
+                                    value={simVolatilityOffset}
+                                    onChange={(e) => setSimVolatilityOffset(parseFloat(e.target.value))}
+                                    className="vol-slider-vertical"
+                                    disabled={!timeMachineEnabled}
+                                  />
+                                  <span className="vol-tick">-15</span>
+                                </div>
+                                <div className="vol-offset">
+                                  {simVolatilityOffset >= 0 ? '+' : ''}{simVolatilityOffset.toFixed(1)}
                                 </div>
                               </div>
                             </>
