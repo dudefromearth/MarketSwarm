@@ -348,7 +348,7 @@ export default function TradeLogPanel({
           >
             + Add Trade
           </button>
-          <label className="btn-import" title="Import trades">
+          <label className="btn-tool btn-tool-label" title="Import trades">
             Import
             <input
               type="file"
@@ -359,8 +359,9 @@ export default function TradeLogPanel({
             />
           </label>
           <span className="tools-separator" />
+          <span className="tools-label">Export:</span>
           <button
-            className="btn-export"
+            className="btn-tool"
             onClick={() => handleExport('csv')}
             disabled={!selectedLogId || trades.length === 0}
             title="Export to CSV"
@@ -368,7 +369,7 @@ export default function TradeLogPanel({
             CSV
           </button>
           <button
-            className="btn-export"
+            className="btn-tool"
             onClick={() => handleExport('excel')}
             disabled={!selectedLogId || trades.length === 0}
             title="Export to Excel"
