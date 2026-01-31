@@ -610,6 +610,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
   const [playbookOpen, setPlaybookOpen] = useState(false);
+  const [playbookSource, setPlaybookSource] = useState<'journal' | 'tradelog' | null>(null);
 
   // Commentary panel state
   const [commentaryCollapsed, setCommentaryCollapsed] = useState(true);
@@ -3962,12 +3963,19 @@ function App() {
         <div className="trade-log-panel-inner">
           {playbookOpen ? (
             <PlaybookView
-              onClose={() => setPlaybookOpen(false)}
+              onClose={() => {
+                setPlaybookOpen(false);
+                if (playbookSource === 'journal') {
+                  setJournalOpen(true);
+                }
+                setPlaybookSource(null);
+              }}
+              backLabel={playbookSource === 'journal' ? 'Back to Journal' : 'Back to Trades'}
             />
           ) : journalOpen ? (
             <JournalView
               onClose={() => setJournalOpen(false)}
-              onOpenPlaybook={() => { setJournalOpen(false); setPlaybookOpen(true); }}
+              onOpenPlaybook={() => { setPlaybookSource('journal'); setPlaybookOpen(true); }}
             />
           ) : reportingLogId ? (
             <ReportingView
@@ -3986,7 +3994,7 @@ function App() {
                     onViewReporting={handleViewReporting}
                     onManageLogs={handleManageLogs}
                     onOpenJournal={() => setJournalOpen(true)}
-                    onOpenPlaybook={() => setPlaybookOpen(true)}
+                    onOpenPlaybook={() => { setPlaybookSource('tradelog'); setPlaybookOpen(true); }}
                     selectedLogId={selectedLog?.id || null}
                     selectedLog={selectedLog}
                     onSelectLog={handleSelectLog}

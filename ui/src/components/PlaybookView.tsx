@@ -6,6 +6,7 @@ import '../styles/playbook.css';
 
 interface PlaybookViewProps {
   onClose: () => void;
+  backLabel?: string;
 }
 
 type Tab = 'entries' | 'flagged';
@@ -26,7 +27,7 @@ const STATUS_LABELS: Record<string, string> = {
   retired: 'Retired',
 };
 
-export default function PlaybookView({ onClose }: PlaybookViewProps) {
+export default function PlaybookView({ onClose, backLabel = 'Back to Trades' }: PlaybookViewProps) {
   const playbook = usePlaybook();
 
   const [activeTab, setActiveTab] = useState<Tab>('entries');
@@ -179,7 +180,7 @@ export default function PlaybookView({ onClose }: PlaybookViewProps) {
           </button>
         </div>
         <button className="btn-back" onClick={onClose}>
-          ← Back
+          ← {backLabel}
         </button>
       </div>
 
