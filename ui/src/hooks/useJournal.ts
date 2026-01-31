@@ -52,6 +52,20 @@ export interface CalendarDay {
   is_playbook_material: boolean;
 }
 
+export interface Retrospective {
+  id: string;
+  user_id: number;
+  retro_type: 'weekly' | 'monthly';
+  period_start: string;
+  period_end: string;
+  content: string | null;
+  is_playbook_material: boolean;
+  trade_refs: TradeRef[];
+  attachments: Attachment[];
+  created_at: string;
+  updated_at: string;
+}
+
 export interface CalendarData {
   year: number;
   month: number;
@@ -82,6 +96,16 @@ export interface UseJournalReturn {
   linkTrade: (entryId: string, tradeId: string, note?: string) => Promise<boolean>;
   unlinkTrade: (refId: string) => Promise<boolean>;
 
+  // Retrospectives
+  retrospectives: Retrospective[];
+  currentRetrospective: Retrospective | null;
+  loadingRetrospectives: boolean;
+  loadingRetrospective: boolean;
+  fetchRetrospectives: (type?: 'weekly' | 'monthly') => Promise<void>;
+  fetchRetrospective: (type: 'weekly' | 'monthly', periodStart: string) => Promise<void>;
+  saveRetrospective: (retro: { retro_type: 'weekly' | 'monthly'; period_start: string; period_end: string; content: string; is_playbook_material: boolean }) => Promise<boolean>;
+  clearRetrospective: () => void;
+
   // Error
   error: string | null;
   clearError: () => void;
@@ -94,6 +118,10 @@ export function useJournal(): UseJournalReturn {
   const [loadingEntry, setLoadingEntry] = useState(false);
   const [tradesForDate, setTradesForDate] = useState<JournalTrade[]>([]);
   const [loadingTrades, setLoadingTrades] = useState(false);
+  const [retrospectives, setRetrospectives] = useState<Retrospective[]>([]);
+  const [currentRetrospective, setCurrentRetrospective] = useState<Retrospective | null>(null);
+  const [loadingRetrospectives, setLoadingRetrospectives] = useState(false);
+  const [loadingRetrospective, setLoadingRetrospective] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchCalendar = useCallback(async (year: number, month: number) => {
@@ -262,6 +290,96 @@ export function useJournal(): UseJournalReturn {
     }
   }, [currentEntry]);
 
+  const fetchRetrospectives = useCallback(async (type?: 'weekly' | 'monthly') => {
+    setLoadingRetrospectives(true);
+    try {
+      const params = type ? `?type=${type}` : '';
+      const res = await fetch(`${JOURNAL_API}/api/journal/retrospectives${params}`, {
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (data.success) {
+        setRetrospectives(data.data);
+      } else {
+        setRetrospectives([]);
+      }
+    } catch (err) {
+      console.error('Failed to fetch retrospectives:', err);
+      setRetrospectives([]);
+    } finally {
+      setLoadingRetrospectives(false);
+    }
+  }, []);
+
+  const fetchRetrospective = useCallback(async (type: 'weekly' | 'monthly', periodStart: string) => {
+    setLoadingRetrospective(true);
+    try {
+      const res = await fetch(`${JOURNAL_API}/api/journal/retrospectives/${type}/${periodStart}`, {
+        credentials: 'include',
+      });
+      if (res.status === 404) {
+        setCurrentRetrospective(null);
+        return;
+      }
+      const data = await res.json();
+      if (data.success) {
+        setCurrentRetrospective(data.data);
+      } else {
+        setCurrentRetrospective(null);
+      }
+    } catch (err) {
+      console.error('Failed to fetch retrospective:', err);
+      setCurrentRetrospective(null);
+    } finally {
+      setLoadingRetrospective(false);
+    }
+  }, []);
+
+  const saveRetrospective = useCallback(async (retro: {
+    retro_type: 'weekly' | 'monthly';
+    period_start: string;
+    period_end: string;
+    content: string;
+    is_playbook_material: boolean;
+  }): Promise<boolean> => {
+    setError(null);
+    try {
+      // Check if retrospective exists
+      const existing = currentRetrospective;
+      const method = existing ? 'PUT' : 'POST';
+      const url = existing
+        ? `${JOURNAL_API}/api/journal/retrospectives/${existing.id}`
+        : `${JOURNAL_API}/api/journal/retrospectives`;
+
+      const body = existing
+        ? { content: retro.content, is_playbook_material: retro.is_playbook_material }
+        : retro;
+
+      const res = await fetch(url, {
+        method,
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setCurrentRetrospective(data.data);
+        return true;
+      } else {
+        setError(data.error || 'Failed to save retrospective');
+        return false;
+      }
+    } catch (err) {
+      console.error('Failed to save retrospective:', err);
+      setError('Failed to save retrospective');
+      return false;
+    }
+  }, [currentRetrospective]);
+
+  const clearRetrospective = useCallback(() => {
+    setCurrentRetrospective(null);
+  }, []);
+
   return {
     calendarData,
     loadingCalendar,
@@ -276,6 +394,14 @@ export function useJournal(): UseJournalReturn {
     fetchTradesForDate,
     linkTrade,
     unlinkTrade,
+    retrospectives,
+    currentRetrospective,
+    loadingRetrospectives,
+    loadingRetrospective,
+    fetchRetrospectives,
+    fetchRetrospective,
+    saveRetrospective,
+    clearRetrospective,
     error,
     clearError,
   };

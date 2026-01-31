@@ -521,3 +521,175 @@
   color: #555;
   padding: 8px 0;
 }
+
+/* Journal Tabs */
+.journal-tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: 24px;
+}
+
+.journal-tab {
+  background: none;
+  border: 1px solid transparent;
+  color: #666;
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.journal-tab:hover {
+  color: #888;
+  background: #1a1a1a;
+}
+
+.journal-tab.active {
+  background: #1a1a1a;
+  border-color: #333;
+  color: #e5e5e5;
+}
+
+/* Retrospectives Sidebar */
+.retro-type-toggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.retro-type-btn {
+  flex: 1;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #888;
+  padding: 8px 12px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.retro-type-btn:first-child {
+  border-radius: 4px 0 0 4px;
+}
+
+.retro-type-btn:last-child {
+  border-radius: 0 4px 4px 0;
+}
+
+.retro-type-btn:hover {
+  background: #222;
+  color: #e5e5e5;
+}
+
+.retro-type-btn.active {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+
+.retro-periods {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.retro-period-btn {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #888;
+  padding: 10px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.retro-period-btn:hover {
+  background: #222;
+  border-color: #444;
+  color: #e5e5e5;
+}
+
+.retro-period-btn.active {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: #3b82f6;
+  color: #e5e5e5;
+}
+
+/* Retrospective Editor */
+.retro-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 12px;
+}
+
+.retro-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.retro-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.retro-meta {
+  font-size: 10px;
+  color: #666;
+}
+
+.retro-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: #666;
+}
+
+.retro-body {
+  flex: 1;
+  display: flex;
+  min-height: 300px;
+}
+
+.retro-content {
+  flex: 1;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e5e5e5;
+  font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 12px;
+  padding: 12px;
+  resize: none;
+  line-height: 1.6;
+}
+
+.retro-content:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.retro-content::placeholder {
+  color: #555;
+}
+
+.retro-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 8px;
+  border-top: 1px solid #222;
+}
+
+.retro-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}

@@ -1,6 +1,6 @@
 // src/components/JournalEntryEditor.tsx
 import { useState, useEffect } from 'react';
-import type { JournalEntry, JournalTrade, TradeRef } from '../hooks/useJournal';
+import type { JournalEntry, JournalTrade } from '../hooks/useJournal';
 
 interface JournalEntryEditorProps {
   date: string;
@@ -114,8 +114,7 @@ export default function JournalEntryEditor({
   // Get list of already linked trade IDs
   const linkedTradeIds = new Set(entry?.trade_refs?.map(r => r.trade_id) || []);
 
-  // Separate trades into linked and available
-  const linkedTrades = tradesForDate.filter(t => linkedTradeIds.has(t.id));
+  // Get available trades (not yet linked)
   const availableTrades = tradesForDate.filter(t => !linkedTradeIds.has(t.id));
 
   if (loading) {
