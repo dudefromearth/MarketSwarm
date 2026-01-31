@@ -31,6 +31,144 @@ const MONTH_NAMES = [
   'July', 'August', 'September', 'October', 'November', 'December'
 ];
 
+// Journal Templates - disposable scaffolding for reflection
+interface JournalTemplate {
+  id: string;
+  name: string;
+  content: string;
+}
+
+const JOURNAL_TEMPLATES: JournalTemplate[] = [
+  {
+    id: 'end-of-day',
+    name: 'End of Day',
+    content: `## End of Day Reflection
+
+### Market Context
+-
+
+### What I Did Well
+-
+
+### What I Could Improve
+-
+
+### Key Observations
+-
+
+### Tomorrow's Focus
+-
+`,
+  },
+  {
+    id: 'trade-reflection',
+    name: 'Trade Reflection',
+    content: `## Trade Reflection
+
+### Setup
+What was the thesis? What signal triggered entry?
+
+
+### Execution
+Did I follow my plan? Any deviations?
+
+
+### Outcome
+What happened? Was the result aligned with the process?
+
+
+### Lessons
+What would I do differently? What worked?
+
+`,
+  },
+  {
+    id: 'weekly-retro',
+    name: 'Weekly Retrospective',
+    content: `## Weekly Retrospective
+
+### Performance Summary
+- Total trades:
+- Win rate:
+- P&L:
+
+### Best Trade
+What made it work?
+
+
+### Worst Trade
+What went wrong?
+
+
+### Patterns Noticed
+-
+
+### Adjustments for Next Week
+-
+
+`,
+  },
+  {
+    id: 'monthly-retro',
+    name: 'Monthly Retrospective',
+    content: `## Monthly Retrospective
+
+### Month Overview
+- Trading days:
+- Total trades:
+- Net P&L:
+
+### Goals Review
+What did I set out to accomplish? Did I achieve it?
+
+
+### Biggest Wins
+-
+
+### Biggest Lessons
+-
+
+### Process Changes
+What am I doing differently now vs. start of month?
+
+
+### Next Month Focus
+-
+
+`,
+  },
+  {
+    id: 'pre-market',
+    name: 'Pre-Market Plan',
+    content: `## Pre-Market Plan
+
+### Overnight/Globex Summary
+-
+
+### Key Levels
+- Resistance:
+- Support:
+- POC:
+
+### Economic Calendar
+-
+
+### Today's Bias
+
+
+### Scenarios
+**If bullish:**
+
+**If bearish:**
+
+### Risk Parameters
+- Max loss:
+- Position size:
+
+`,
+  },
+];
+
 function formatDate(dateStr: string): string {
   const [year, month, day] = dateStr.split('-').map(Number);
   const date = new Date(year, month - 1, day);
@@ -95,6 +233,7 @@ export default function JournalEntryEditor({
   const [linkingTradeId, setLinkingTradeId] = useState<string | null>(null);
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [showTradeModal, setShowTradeModal] = useState(false);
+  const [showTemplateMenu, setShowTemplateMenu] = useState(false);
 
   // Initialize TipTap editor with Markdown support
   const editor = useEditor({
@@ -194,6 +333,14 @@ export default function JournalEntryEditor({
     onTradesUpdated?.();
   };
 
+  const handleInsertTemplate = (template: JournalTemplate) => {
+    if (!editor) return;
+    // Insert template content at cursor position
+    editor.chain().focus().insertContent(template.content).run();
+    setShowTemplateMenu(false);
+    setDirty(true);
+  };
+
   // Keyboard shortcut: Cmd/Ctrl + S to save
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -207,6 +354,19 @@ export default function JournalEntryEditor({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [dirty, saving, handleSave]);
+
+  // Close template menu when clicking outside
+  useEffect(() => {
+    if (!showTemplateMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.template-dropdown-container')) {
+        setShowTemplateMenu(false);
+      }
+    };
+    document.addEventListener('click', handleClickOutside);
+    return () => document.removeEventListener('click', handleClickOutside);
+  }, [showTemplateMenu]);
 
   // Get list of already linked trade IDs
   const linkedTradeIds = new Set(entry?.trade_refs?.map(r => r.trade_id) || []);
@@ -423,6 +583,34 @@ export default function JournalEntryEditor({
             >
               &#8631;
             </ToolbarButton>
+          </div>
+
+          <div className="toolbar-separator" />
+
+          {/* Template Dropdown */}
+          <div className="toolbar-group template-dropdown-container">
+            <button
+              type="button"
+              className="toolbar-btn template-btn"
+              onClick={() => setShowTemplateMenu(!showTemplateMenu)}
+              title="Insert Template"
+            >
+              + Template
+            </button>
+            {showTemplateMenu && (
+              <div className="template-menu">
+                {JOURNAL_TEMPLATES.map(template => (
+                  <button
+                    key={template.id}
+                    type="button"
+                    className="template-menu-item"
+                    onClick={() => handleInsertTemplate(template)}
+                  >
+                    {template.name}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
