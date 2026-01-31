@@ -33,10 +33,11 @@ function formatDate(dateStr: string): string {
   return `${weekday}, ${monthName} ${day}, ${year}`;
 }
 
-function formatPnl(pnl: number | null): string {
-  if (pnl === null) return '-';
-  const sign = pnl >= 0 ? '+' : '';
-  return `${sign}$${pnl.toFixed(0)}`;
+function formatPnl(pnlCents: number | null): string {
+  if (pnlCents === null) return '-';
+  const dollars = pnlCents / 100;
+  const sign = dollars >= 0 ? '+' : '';
+  return `${sign}$${Math.abs(dollars).toFixed(0)}`;
 }
 
 function formatTime(isoTime: string): string {
@@ -450,8 +451,8 @@ export default function JournalEntryEditor({
                           <span className="trade-details">
                             {trade.side} {trade.strategy} @ {formatTime(trade.entry_time)}
                           </span>
-                          <span className={`trade-pnl ${trade.status === 'open' ? 'open' : (trade.pnl_dollars ?? 0) >= 0 ? 'profit' : 'loss'}`}>
-                            {trade.status === 'open' ? 'OPEN' : formatPnl(trade.pnl_dollars)}
+                          <span className={`trade-pnl ${trade.status === 'open' ? 'open' : (trade.pnl ?? 0) >= 0 ? 'profit' : 'loss'}`}>
+                            {trade.status === 'open' ? 'OPEN' : formatPnl(trade.pnl)}
                           </span>
                         </div>
                         {entry ? (

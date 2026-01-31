@@ -15,7 +15,8 @@ export interface JournalTrade {
   quantity: number;
   entry_time: string;
   exit_time: string | null;
-  pnl_dollars: number | null;
+  pnl: number | null;  // raw cents from API
+  pnl_dollars?: number | null;  // calculated dollars (pnl/100)
   status: string;
 }
 
