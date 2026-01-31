@@ -2605,12 +2605,18 @@ function App() {
                                 $<input
                                   type="number"
                                   className="debit-input"
-                                  value={strat.debit !== null ? strat.debit.toFixed(2) : ''}
+                                  defaultValue={strat.debit !== null ? strat.debit.toFixed(2) : ''}
+                                  key={`debit-${strat.id}-${strat.debit}`}
                                   step="0.01"
                                   min="0"
-                                  onChange={(e) => {
+                                  onBlur={(e) => {
                                     const val = parseFloat(e.target.value);
                                     updateStrategyDebit(strat.id, isNaN(val) ? null : val);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.currentTarget.blur();
+                                    }
                                   }}
                                   onClick={(e) => e.stopPropagation()}
                                 />
