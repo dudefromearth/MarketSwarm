@@ -4192,10 +4192,53 @@ body {
 
 .trade-log-filters {
   display: flex;
+  justify-content: space-between;
   gap: 8px;
   padding: 8px 12px;
   border-bottom: 1px solid #222;
   align-items: center;
+}
+
+.trade-log-tools {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.btn-export {
+  background: #1a1a1a;
+  border: 1px solid #444;
+  color: #94a3b8;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.btn-export:hover:not(:disabled) {
+  background: #2a2a2a;
+  color: #e2e8f0;
+}
+
+.btn-export:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-import {
+  background: #1a1a1a;
+  border: 1px solid #444;
+  color: #94a3b8;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-block;
+}
+
+.btn-import:hover {
+  background: #2a2a2a;
+  color: #e2e8f0;
 }
 
 .trade-log-filters select {
@@ -5048,6 +5091,21 @@ body {
   color: #93c5fd;
 }
 
+.btn-journal {
+  background: #1a2e1a;
+  border: 1px solid #22c55e;
+  color: #4ade80;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-journal:hover {
+  background: #166534;
+  color: #86efac;
+}
+
 /* Status Tabs */
 .status-tabs {
   display: flex;
@@ -5194,6 +5252,42 @@ body {
 /* Trade Detail Modal */
 .trade-detail-modal {
   width: 450px;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  max-height: 85vh;
+  overflow-y: auto;
+}
+
+.trade-detail-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid #334155;
+  background: #1e293b;
+  border-radius: 8px 8px 0 0;
+}
+
+.trade-detail-modal .modal-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.trade-detail-modal .modal-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.trade-detail-modal .modal-close:hover {
+  color: #e2e8f0;
 }
 
 .trade-detail-content {

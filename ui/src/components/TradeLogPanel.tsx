@@ -62,7 +62,7 @@ interface TradeLogPanelProps {
   onEditTrade: (trade: Trade) => void;
   onViewReporting: (logId: string) => void;
   onManageLogs: () => void;
-  onOpenSettings: () => void;
+  onOpenJournal: () => void;
   selectedLogId: string | null;
   onSelectLog: (log: TradeLog) => void;
   refreshTrigger?: number;
@@ -77,7 +77,7 @@ export default function TradeLogPanel({
   onEditTrade,
   onViewReporting,
   onManageLogs,
-  onOpenSettings,
+  onOpenJournal,
   selectedLogId,
   onSelectLog,
   refreshTrigger = 0
@@ -168,6 +168,65 @@ export default function TradeLogPanel({
     }
   };
 
+  const handleExport = async (format: 'csv' | 'excel') => {
+    if (!selectedLogId || trades.length === 0) return;
+
+    try {
+      const response = await fetch(
+        `${JOURNAL_API}/api/logs/${selectedLogId}/export?format=${format}`
+      );
+
+      if (!response.ok) {
+        throw new Error('Export failed');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `trades-${selectedLogId}.${format === 'csv' ? 'csv' : 'xlsx'}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Export error:', err);
+      setError('Failed to export trades');
+    }
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedLogId) return;
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const response = await fetch(
+        `${JOURNAL_API}/api/logs/${selectedLogId}/import`,
+        {
+          method: 'POST',
+          body: formData,
+        }
+      );
+
+      const result = await response.json();
+
+      if (result.success) {
+        fetchTrades();
+      } else {
+        setError(result.error || 'Failed to import trades');
+      }
+    } catch (err) {
+      console.error('Import error:', err);
+      setError('Failed to import trades');
+    }
+
+    // Reset file input
+    e.target.value = '';
+  };
+
   useEffect(() => {
     fetchTrades();
   }, [fetchTrades, refreshTrigger]);
@@ -242,11 +301,11 @@ export default function TradeLogPanel({
         />
         <div className="trade-log-actions">
           <button
-            className="btn-settings"
-            onClick={onOpenSettings}
-            title="Settings"
+            className="btn-journal"
+            onClick={onOpenJournal}
+            title="Journal"
           >
-            Settings
+            Journal
           </button>
           {selectedLogId && (
             <button
@@ -257,13 +316,6 @@ export default function TradeLogPanel({
               Report
             </button>
           )}
-          <button
-            className="btn-add-trade"
-            onClick={() => selectedLogId && onOpenTradeEntry(selectedLogId)}
-            disabled={!selectedLogId}
-          >
-            + Add Trade
-          </button>
         </div>
       </div>
 
@@ -287,6 +339,41 @@ export default function TradeLogPanel({
           >
             All
           </button>
+        </div>
+        <div className="trade-log-tools">
+          <button
+            className="btn-add-trade"
+            onClick={() => selectedLogId && onOpenTradeEntry(selectedLogId)}
+            disabled={!selectedLogId}
+          >
+            + Add Trade
+          </button>
+          <button
+            className="btn-export"
+            onClick={() => handleExport('csv')}
+            disabled={!selectedLogId || trades.length === 0}
+            title="Export to CSV"
+          >
+            CSV
+          </button>
+          <button
+            className="btn-export"
+            onClick={() => handleExport('excel')}
+            disabled={!selectedLogId || trades.length === 0}
+            title="Export to Excel"
+          >
+            Excel
+          </button>
+          <label className="btn-import" title="Import trades">
+            Import
+            <input
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              onChange={handleImport}
+              disabled={!selectedLogId}
+              style={{ display: 'none' }}
+            />
+          </label>
         </div>
       </div>
 

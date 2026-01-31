@@ -1,8 +1,53 @@
 // src/components/TradeDetailModal.tsx
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Component, type ReactNode } from 'react';
 import type { Trade, TradeEvent } from './TradeLogPanel';
 
 const JOURNAL_API = 'http://localhost:3002';
+
+// Error boundary to catch render crashes
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class TradeDetailErrorBoundary extends Component<{ children: ReactNode; onClose: () => void }, ErrorBoundaryState> {
+  constructor(props: { children: ReactNode; onClose: () => void }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('TradeDetailModal crash:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="modal-overlay" onClick={this.props.onClose}>
+          <div className="modal-content trade-detail-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Error</h2>
+              <button className="modal-close" onClick={this.props.onClose}>&times;</button>
+            </div>
+            <div className="trade-detail-content">
+              <div className="form-error" style={{ padding: '20px' }}>
+                <p>Failed to display trade details.</p>
+                <p style={{ fontSize: '11px', color: '#888', marginTop: '8px' }}>
+                  {this.state.error?.message || 'Unknown error'}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 interface TradeDetailModalProps {
   trade: Trade | null;
@@ -171,6 +216,7 @@ export default function TradeDetailModal({
   if (!isOpen || !trade) return null;
 
   return (
+    <TradeDetailErrorBoundary onClose={onClose}>
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal-content trade-detail-modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
@@ -188,21 +234,21 @@ export default function TradeDetailModal({
                 {trade.side ? trade.side.toUpperCase() : ''}
               </div>
               <div className="trade-detail-meta">
-                <span>@ ${(trade.entry_price / 100).toFixed(2)}</span>
-                <span>x{trade.quantity}</span>
+                <span>@ ${trade.entry_price != null ? (trade.entry_price / 100).toFixed(2) : '-'}</span>
+                <span>x{trade.quantity ?? '-'}</span>
               </div>
             </div>
 
             <div className="trade-detail-info">
               <div className="info-row">
                 <span className="info-label">Status:</span>
-                <span className={`info-value status-${trade.status}`}>
-                  {trade.status.toUpperCase()}
+                <span className={`info-value status-${trade.status || 'unknown'}`}>
+                  {trade.status ? trade.status.toUpperCase() : 'UNKNOWN'}
                 </span>
               </div>
               <div className="info-row">
                 <span className="info-label">Opened:</span>
-                <span className="info-value">{formatDateTime(trade.entry_time)}</span>
+                <span className="info-value">{trade.entry_time ? formatDateTime(trade.entry_time) : '-'}</span>
               </div>
               {trade.exit_time && (
                 <div className="info-row">
@@ -210,10 +256,10 @@ export default function TradeDetailModal({
                   <span className="info-value">{formatDateTime(trade.exit_time)}</span>
                 </div>
               )}
-              {trade.entry_spot && (
+              {trade.entry_spot != null && (
                 <div className="info-row">
                   <span className="info-label">Spot at Entry:</span>
-                  <span className="info-value">{trade.entry_spot.toFixed(2)}</span>
+                  <span className="info-value">{Number(trade.entry_spot).toFixed(2)}</span>
                 </div>
               )}
               {trade.pnl !== null && (
@@ -221,8 +267,8 @@ export default function TradeDetailModal({
                   <span className="info-label">P&L:</span>
                   <span className={`info-value ${trade.pnl >= 0 ? 'profit' : 'loss'}`}>
                     {formatPnL(trade.pnl)}
-                    {trade.r_multiple !== null && (
-                      <span className="r-multiple">({trade.r_multiple.toFixed(2)}R)</span>
+                    {trade.r_multiple != null && (
+                      <span className="r-multiple">({Number(trade.r_multiple).toFixed(2)}R)</span>
                     )}
                   </span>
                 </div>
@@ -241,12 +287,12 @@ export default function TradeDetailModal({
                 {events.map(event => (
                   <div key={event.id} className={`event-item event-${event.event_type || 'unknown'}`}>
                     <span className="event-type">{event.event_type ? event.event_type.toUpperCase() : 'EVENT'}</span>
-                    <span className="event-time">{formatDateTime(event.event_time)}</span>
+                    <span className="event-time">{event.event_time ? formatDateTime(event.event_time) : '-'}</span>
                     {event.price && (
                       <span className="event-price">@ {formatPrice(event.price)}</span>
                     )}
-                    {event.spot && (
-                      <span className="event-spot">(spot: {event.spot.toFixed(2)})</span>
+                    {event.spot != null && (
+                      <span className="event-spot">(spot: {Number(event.spot).toFixed(2)})</span>
                     )}
                     {event.quantity_change && (
                       <span className="event-qty">
@@ -431,5 +477,6 @@ export default function TradeDetailModal({
         )}
       </div>
     </div>
+    </TradeDetailErrorBoundary>
   );
 }

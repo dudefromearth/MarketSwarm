@@ -1995,13 +1995,6 @@ function App() {
           >
             ⚙️
           </button>
-          <button
-            className="header-journal-btn"
-            onClick={() => setJournalOpen(true)}
-            title="Journal"
-          >
-            Journal
-          </button>
         </div>
         <div className="header-center">
           <div className="underlying-selector">
@@ -3981,7 +3974,7 @@ function App() {
                     onEditTrade={openTradeEdit}
                     onViewReporting={handleViewReporting}
                     onManageLogs={handleManageLogs}
-                    onOpenSettings={() => setSettingsOpen(true)}
+                    onOpenJournal={() => setJournalOpen(true)}
                     selectedLogId={selectedLog?.id || null}
                     onSelectLog={handleSelectLog}
                     refreshTrigger={tradeRefreshTrigger}
