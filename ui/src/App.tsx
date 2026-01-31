@@ -19,6 +19,7 @@ import LogManagerModal from './components/LogManagerModal';
 import TradeDetailModal from './components/TradeDetailModal';
 import ReportingView from './components/ReportingView';
 import SettingsModal from './components/SettingsModal';
+import JournalModal from './components/JournalModal';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -563,7 +564,7 @@ function App() {
   const [alertContextMenu, setAlertContextMenu] = useState<{ x: number; y: number; price: number } | null>(null);
   const [alertLineContextMenu, setAlertLineContextMenu] = useState<{ x: number; y: number; alertId: string } | null>(null);
 
-  // Time Machine controls for theta decay analysis
+  // 3D of Options controls - analyze time, price, and volatility dimensions
   const [timeMachineEnabled, setTimeMachineEnabled] = useState(false);
   const [simTimeOffsetHours, setSimTimeOffsetHours] = useState(0); // Hours forward from now toward expiration
   const [simVolatilityOffset, setSimVolatilityOffset] = useState(0); // Percentage points offset from current VIX
@@ -588,6 +589,7 @@ function App() {
   const [dteExpanded, setDteExpanded] = useState(false);
   const [gexExpanded, setGexExpanded] = useState(false);
   const [scrollExpanded, setScrollExpanded] = useState(false);
+  const [vexyAdvisorTab, setVexyAdvisorTab] = useState<'vexy' | 'advisor'>('vexy');
 
   // Dealer Gravity snapshot data for LightweightPriceChart
   const [dgSnapshot, setDgSnapshot] = useState<RawSnapshot | null>(null);
@@ -605,6 +607,7 @@ function App() {
   const [tradeDetailTrade, setTradeDetailTrade] = useState<Trade | null>(null);
   const [reportingLogId, setReportingLogId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [journalOpen, setJournalOpen] = useState(false);
 
   // Commentary panel state
   const [commentaryCollapsed, setCommentaryCollapsed] = useState(true);
@@ -1024,7 +1027,7 @@ function App() {
     const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
     const volatility = Math.max(0.05, adjustedVix) / 100; // Min 5% vol
 
-    // Time offset for time machine (hours forward)
+    // Time offset for 3D analysis (hours forward)
     const timeOffset = timeMachineEnabled ? simTimeOffsetHours : 0;
 
     // Determine base price range based on visible strategies
@@ -1438,7 +1441,7 @@ function App() {
 
   const currentSpot = spot?.[underlying]?.value || null;
 
-  // Simulated spot for Time Machine (actual spot + offset when enabled)
+  // Simulated spot for 3D of Options (actual spot + offset when enabled)
   const simulatedSpot = currentSpot && timeMachineEnabled
     ? currentSpot + simSpotOffset
     : currentSpot;
@@ -1512,13 +1515,13 @@ function App() {
         } else if (alert.type === 'ai_theta_gamma') {
           // AI Theta/Gamma: Dynamic zone that appears when profit exceeds threshold
           // Zone edges = trigger levels. If price exits zone, risk is too high to stay in position.
-          // Uses simulated values when Time Machine is enabled
+          // Uses simulated values when 3D of Options is enabled
           const effectiveSpot = simulatedSpot || currentSpot;
           if (strategy && effectiveSpot) {
             const entryDebit = alert.entryDebit || strategy.debit || 1;
 
             // Calculate current P&L using Black-Scholes theoretical value
-            // Uses Time Machine settings when enabled (simulated spot, volatility, time)
+            // Uses 3D of Options settings when enabled (simulated spot, volatility, time)
             const vix = spot?.['I:VIX']?.value || 20;
             const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
             const volatility = Math.max(0.05, adjustedVix) / 100;
@@ -1992,6 +1995,13 @@ function App() {
           >
             ⚙️
           </button>
+          <button
+            className="header-journal-btn"
+            onClick={() => setJournalOpen(true)}
+            title="Journal"
+          >
+            Journal
+          </button>
         </div>
         <div className="header-center">
           <div className="underlying-selector">
@@ -2035,46 +2045,6 @@ function App() {
 
       {/* Widget Row - Indicator Widgets */}
       <div className="widget-row">
-        <div className="widget vexy-widget">
-          <div className="widget-header">
-            <h4>Vexy</h4>
-            {vexy?.epoch?.ts && (
-              <span className="widget-timestamp">
-                {new Date(vexy.epoch.ts).toLocaleTimeString()}
-              </span>
-            )}
-          </div>
-          <div className="widget-content vexy-content">
-            {vexy?.epoch ? (
-              <div className="vexy-section">
-                <div className="vexy-epoch">
-                  <span className="vexy-icon">🎙️</span>
-                  <span className="vexy-label">Epoch</span>
-                  {typeof vexy.epoch.meta?.epoch_name === 'string' && (
-                    <span className="vexy-epoch-name">{vexy.epoch.meta.epoch_name}</span>
-                  )}
-                </div>
-                <div className="vexy-text epoch-text">{vexy.epoch.text}</div>
-              </div>
-            ) : (
-              <div className="vexy-empty">Awaiting epoch...</div>
-            )}
-            {vexy?.event && (
-              <div className="vexy-section event-section">
-                <div className="vexy-event-header">
-                  <span className="vexy-icon">💥</span>
-                  <span className="vexy-label">Event</span>
-                  {vexy.event.ts && (
-                    <span className="vexy-event-time">
-                      {new Date(vexy.event.ts).toLocaleTimeString()}
-                    </span>
-                  )}
-                </div>
-                <div className="vexy-text event-text">{vexy.event.text}</div>
-              </div>
-            )}
-          </div>
-        </div>
         {/* Market Mode Score Widget */}
         <div className="widget market-mode-widget">
           <MarketModeGaugeCard score={marketMode?.score ?? 50} />
@@ -2088,6 +2058,11 @@ function App() {
           />
         </div>
 
+        {/* Dealer Gravity Widget - Candle Chart with Bands */}
+        <div className="widget dealer-gravity-widget">
+          <LightweightPriceChart snap={dgSnapshot} height={280} title="Dealer Gravity" />
+        </div>
+
         {/* VIX Regime Widget */}
         <div className="widget vix-regime-widget">
           <VixRegimeCard
@@ -2096,9 +2071,156 @@ function App() {
           />
         </div>
 
-        {/* Dealer Gravity Widget - Candle Chart with Bands */}
-        <div className="widget dealer-gravity-widget">
-          <LightweightPriceChart snap={dgSnapshot} height={280} title="Dealer Gravity" />
+        {/* Vexy / AI Advisor Widget - Tabbed (Far Right) */}
+        <div className="widget vexy-advisor-widget">
+          <div className="widget-tabs">
+            <button
+              className={`widget-tab ${vexyAdvisorTab === 'vexy' ? 'active' : ''}`}
+              onClick={() => setVexyAdvisorTab('vexy')}
+            >
+              🎙️ Vexy
+            </button>
+            <button
+              className={`widget-tab ${vexyAdvisorTab === 'advisor' ? 'active' : ''}`}
+              onClick={() => setVexyAdvisorTab('advisor')}
+            >
+              🤖 Advisor
+            </button>
+          </div>
+
+          {vexyAdvisorTab === 'vexy' ? (
+            <div className="widget-content vexy-content">
+              {vexy?.epoch ? (
+                <div className="vexy-section">
+                  <div className="vexy-epoch">
+                    <span className="vexy-icon">🎙️</span>
+                    <span className="vexy-label">Epoch</span>
+                    {typeof vexy.epoch.meta?.epoch_name === 'string' && (
+                      <span className="vexy-epoch-name">{vexy.epoch.meta.epoch_name}</span>
+                    )}
+                  </div>
+                  <div className="vexy-text epoch-text">{vexy.epoch.text}</div>
+                </div>
+              ) : (
+                <div className="vexy-empty">Awaiting epoch...</div>
+              )}
+              {vexy?.event && (
+                <div className="vexy-section event-section">
+                  <div className="vexy-event-header">
+                    <span className="vexy-icon">💥</span>
+                    <span className="vexy-label">Event</span>
+                    {vexy.event.ts && (
+                      <span className="vexy-event-time">
+                        {new Date(vexy.event.ts).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                  <div className="vexy-text event-text">{vexy.event.text}</div>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* AI Advisor Tab Content */
+            (() => {
+              const vixValue = spot?.['I:VIX']?.value || 20;
+              const currentHour = new Date().getHours();
+              const currentMinute = new Date().getMinutes();
+              const isAfternoon = currentHour >= 14;
+              const timeString = `${currentHour}:${currentMinute.toString().padStart(2, '0')}`;
+
+              const marketCloseHour = 16;
+              const hoursToClose = Math.max(0, marketCloseHour - currentHour - currentMinute / 60);
+
+              const activeAlerts = riskGraphAlerts.filter(a => a.enabled && a.type === 'ai_theta_gamma');
+              const effectiveSpot = simulatedSpot || currentSpot;
+
+              const isZombieland = vixValue <= 17;
+              const isGoldilocks = vixValue > 17 && vixValue <= 32;
+              const isChaos = vixValue > 32;
+              const isBatmanTerritory = vixValue > 40;
+              const isGammaScalpWindow = isZombieland && isAfternoon;
+              const isTimeWarp = vixValue <= 15;
+
+              const commentary: string[] = [];
+              let advisorMood: 'neutral' | 'bullish' | 'cautious' | 'alert' = 'neutral';
+
+              if (isBatmanTerritory) {
+                commentary.push(`🦇 Batman territory at VIX ${vixValue.toFixed(1)}. Gamma is crushed - bracket spot with wide flies.`);
+                advisorMood = 'bullish';
+              } else if (isChaos) {
+                commentary.push(`Chaos zone. Wide flies cheap, suppressed gamma. Good for asymmetric setups.`);
+                advisorMood = 'bullish';
+              } else if (isGammaScalpWindow) {
+                commentary.push(`⚡ Gamma Scalp window OPEN. Look for backstop to sandwich 10-20w fly near spot.`);
+                advisorMood = 'bullish';
+              } else if (isTimeWarp && !isAfternoon) {
+                commentary.push(`⏰ TimeWarp. VIX ${vixValue.toFixed(1)} - go 1-2 DTE, 0 DTE premium gone.`);
+                advisorMood = 'cautious';
+              } else if (isZombieland) {
+                commentary.push(`Zombieland. High gamma - narrow flies, manage carefully.`);
+                advisorMood = 'cautious';
+              } else if (isGoldilocks) {
+                commentary.push(`Goldilocks. Ideal for OTM butterfly utility trades.`);
+                advisorMood = 'neutral';
+              }
+
+              if (hoursToClose <= 0.5) {
+                commentary.push(`⚠️ Final 30 min. Gamma max. Close or tight stops.`);
+                advisorMood = 'alert';
+              } else if (hoursToClose <= 1) {
+                commentary.push(`Last hour. Protect gains aggressively.`);
+                if (advisorMood === 'neutral' || advisorMood === 'bullish') advisorMood = 'cautious';
+              }
+
+              if (activeAlerts.length > 0 && effectiveSpot) {
+                activeAlerts.forEach(alert => {
+                  const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
+                  if (!strategy) return;
+
+                  const entryDebit = alert.entryDebit || strategy.debit || 1;
+                  const adjustedVix = timeMachineEnabled ? vixValue + simVolatilityOffset : vixValue;
+                  const volatility = Math.max(0.05, adjustedVix) / 100;
+                  const timeOffset = timeMachineEnabled ? simTimeOffsetHours : 0;
+
+                  const pnlAtSpot = calculateStrategyTheoreticalPnL(strategy, effectiveSpot, volatility, 0.05, timeOffset);
+                  const currentProfit = pnlAtSpot / 100;
+                  const profitPercent = entryDebit > 0 ? (currentProfit / entryDebit) * 100 : 0;
+
+                  const pnlPlus = calculateStrategyTheoreticalPnL(strategy, effectiveSpot + 1, volatility, 0.05, timeOffset);
+                  const pnlMinus = calculateStrategyTheoreticalPnL(strategy, effectiveSpot - 1, volatility, 0.05, timeOffset);
+                  const delta = (pnlPlus - pnlMinus) / 200;
+
+                  const strategyLabel = `${strategy.strike}${strategy.width ? '/' + strategy.width : ''}`;
+
+                  if (profitPercent >= 100) {
+                    commentary.push(`✨ ${strategyLabel}: ${profitPercent.toFixed(0)}% profit${Math.abs(delta) < 0.5 ? ', at peak' : ''}.`);
+                  } else if (profitPercent >= 50) {
+                    commentary.push(`💰 ${strategyLabel}: ${profitPercent.toFixed(0)}% profit.`);
+                  } else if (profitPercent > 0) {
+                    commentary.push(`${strategyLabel}: ${profitPercent.toFixed(0)}% - building.`);
+                  } else {
+                    commentary.push(`🔻 ${strategyLabel}: underwater.`);
+                    if (advisorMood === 'neutral' || advisorMood === 'bullish') advisorMood = 'cautious';
+                  }
+                });
+              }
+
+              if (commentary.length === 0) {
+                commentary.push(`VIX ${vixValue.toFixed(1)}, ${hoursToClose.toFixed(1)}h to close.`);
+              }
+
+              return (
+                <div className={`ai-advisor-content ${advisorMood}`}>
+                  <div className="ai-advisor-time">{timeString} ET • {hoursToClose.toFixed(1)}h left</div>
+                  <div className="ai-advisor-commentary">
+                    {commentary.map((line, i) => (
+                      <p key={i} className="ai-commentary-line">{line}</p>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()
+          )}
         </div>
       </div>
 
@@ -3223,8 +3345,12 @@ function App() {
                     const pnlAtSpotMinus = calculateStrategyTheoreticalPnL(strategy, effectiveSpot - 1, volatility, 0.05, timeOffset);
                     const pnlAtSpotPlus = calculateStrategyTheoreticalPnL(strategy, effectiveSpot + 1, volatility, 0.05, timeOffset);
 
+                    // Calculate numerical delta (first derivative of P&L w.r.t. price)
+                    // Delta = (P&L(S+1) - P&L(S-1)) / 2 - the slope of the P&L curve
+                    const numericalDelta = (pnlAtSpotPlus - pnlAtSpotMinus) / 2;
+
                     // Calculate numerical gamma (second derivative of P&L w.r.t. price)
-                    // Gamma = (P&L(S+1) - 2*P&L(S) + P&L(S-1)) / 1^2
+                    // Gamma = (P&L(S+1) - 2*P&L(S) + P&L(S-1)) / 1^2 - the curvature
                     const numericalGamma = Math.abs(pnlAtSpotPlus - 2 * pnlAtSpot + pnlAtSpotMinus);
 
                     const currentProfit = pnlAtSpot / 100;
@@ -3238,40 +3364,126 @@ function App() {
                     const nominalDTE = strategy.dte || 0;
                     const effectiveDTE = Math.max(0, nominalDTE - (timeOffset / 24));
 
-                    // === ZONE WIDTH CALCULATION: All 3 dimensions ===
+                    // === TOLERANCE-BASED ZONE CALCULATION ===
+                    // Zone edge = price where we'd lose more than we're willing to tolerate
 
-                    // 1. TIME FACTOR: Less time = narrower zone
-                    // At 0 DTE: 0.25, At 1 DTE: 0.5, At 3 DTE: 0.85, At 7 DTE: 1.3
-                    const timeFactor = Math.min(1.5, Math.max(0.25, Math.sqrt(effectiveDTE) * 0.5));
+                    // Convert DTE to market hours remaining (~6.5 hours per trading day)
+                    const hoursRemaining = effectiveDTE * 6.5;
 
-                    // 2. GAMMA FACTOR: Higher gamma = narrower zone
-                    // Gamma in cents per point^2, normalize to reasonable scale
-                    // High gamma (~50+) = very sensitive = narrow zone
-                    // Low gamma (~5) = less sensitive = wider zone
-                    const normalizedGamma = Math.min(1, numericalGamma / 50); // 0 to 1 scale
-                    const gammaZoneFactor = Math.max(0.3, 1 - normalizedGamma * 0.7);
+                    // VIX Regime classification
+                    // VIX Regime Classification:
+                    // Zombieland (≤17): Low vol, HIGH gamma, fast decay → tight management
+                    // Goldilocks (17-32): Moderate vol, suppressed gamma, delayed decay → more room
+                    // High Vol (>32): Super low gamma, wide flies cheap → most room
+                    const isGoldilocks = adjustedVix > 17 && adjustedVix <= 32;
+                    const isHighVol = adjustedVix > 32;
+                    // isZombieland is implicit: !isGoldilocks && !isHighVol
 
-                    // 3. VOLATILITY FACTOR: Higher vol = expect bigger moves = narrower zone
-                    // VIX 15 = wide zone, VIX 25 = moderate, VIX 35+ = tight zone
-                    const volFactor = Math.max(0.5, Math.min(1.2, 1.5 - (adjustedVix / 30)));
+                    // Tolerance schedule: % of unrealized profit willing to give up
+                    // Adjusted by VIX regime
+                    let baseTolerance: number;
+                    if (hoursRemaining >= 6) baseTolerance = 0.625;      // Morning: 50-75%
+                    else if (hoursRemaining >= 4) baseTolerance = 0.45;  // Later morning: 40-50%
+                    else if (hoursRemaining >= 2) baseTolerance = 0.35;  // Early afternoon: 30-40%
+                    else if (hoursRemaining >= 1) baseTolerance = 0.25;  // Late afternoon: 20-30%
+                    else if (hoursRemaining >= 0.5) baseTolerance = 0.15; // Final hour: 10-20%
+                    else baseTolerance = 0.10;                           // Final stretch
 
-                    // 4. PROFIT BUFFER: More profit gives slightly more room (but diminishing)
-                    const profitBuffer = 1 + Math.min(0.3, Math.max(0, profitPercent) * 0.2);
+                    // Regime adjustment to tolerance
+                    // Higher VIX = lower gamma = more tolerance
+                    let tolerancePercent: number;
+                    if (isHighVol) {
+                      // Super low gamma, wide flies, very forgiving
+                      // Scale up with VIX: 1.3 at 32, up to 1.5 at 50+
+                      const highVolBonus = Math.min(1.5, 1.30 + (adjustedVix - 32) * 0.01);
+                      tolerancePercent = baseTolerance * highVolBonus;
+                    } else if (isGoldilocks) {
+                      // Gamma stays flat into afternoon - more forgiving
+                      tolerancePercent = baseTolerance * 1.20;
+                    } else {
+                      // Zombieland (adjustedVix <= 17): gamma is amplified, decay is rapid - less forgiving
+                      // Lower VIX = worse (scale from 0.75 at VIX 10 to 0.90 at VIX 17)
+                      const zombieSeverity = Math.max(0.75, 0.90 - (17 - adjustedVix) * 0.02);
+                      tolerancePercent = baseTolerance * zombieSeverity;
+                    }
 
-                    // Combine all factors: base width scaled by each dimension
-                    const baseWidth = 25; // Base zone half-width in points
-                    const zoneHalfWidth = Math.max(2, baseWidth * timeFactor * gammaZoneFactor * volFactor * profitBuffer);
+                    // How much profit (in dollars) are we willing to give up?
+                    const tolerableLossDollars = currentProfit * tolerancePercent;
+
+                    // Convert delta/gamma from cents to dollars per point
+                    const deltaPerPoint = Math.abs(numericalDelta) / 100; // $/point
+                    const gammaPerPoint = numericalGamma / 100;           // $/point²
+
+                    // Calculate zone width based on how far price can move before losing tolerance
+                    let zoneHalfWidth: number;
+
+                    if (deltaPerPoint < 0.5) {
+                      // Near the peak (delta ≈ 0) - gamma dominates the P&L curve
+                      // Loss ≈ 0.5 × gamma × distance² (quadratic)
+                      // Solving for distance: sqrt(2 × tolerableLoss / gamma)
+                      if (gammaPerPoint > 0.01) {
+                        zoneHalfWidth = Math.sqrt(2 * tolerableLossDollars / gammaPerPoint);
+                      } else {
+                        zoneHalfWidth = 50; // Very flat curve, wide zone
+                      }
+                    } else {
+                      // Away from peak - delta gives initial rate of loss
+                      // Linear estimate: distance = tolerableLoss / delta
+                      const linearEstimate = tolerableLossDollars / deltaPerPoint;
+
+                      // Gamma acceleration: losses speed up as we move further
+                      // Higher gamma = linear estimate is optimistic, reduce it
+                      const gammaAdjustment = Math.max(0.4, 1 - gammaPerPoint * 0.4);
+                      zoneHalfWidth = linearEstimate * gammaAdjustment;
+                    }
+
+                    // VIX Regime zone adjustment
+                    // Zombieland: gamma is amplified beyond what the numbers show - tighten
+                    // Goldilocks: gamma is suppressed, stays flat longer - widen
+                    // High Vol: gamma is crushed, wide flies cheap - widest zones
+                    let regimeAdjustment: number;
+                    if (isHighVol) {
+                      // Gamma is super low - very wide zones possible
+                      // Scale: 1.25 at VIX 32, up to 1.5 at VIX 50+
+                      regimeAdjustment = Math.min(1.5, 1.25 + (adjustedVix - 32) * 0.014);
+                    } else if (isGoldilocks) {
+                      // Sweet spot - gamma suppressed, premium decay delayed
+                      // Peak benefit around VIX 22-26
+                      const optimalVix = 24;
+                      const distFromOptimal = Math.abs(adjustedVix - optimalVix);
+                      regimeAdjustment = 1.15 - distFromOptimal * 0.01; // ~1.15 at optimal, 1.05 at edges
+                    } else {
+                      // Zombieland: gamma amplified - calculated zone is too optimistic
+                      // Scale: 0.70 at VIX 10, 0.85 at VIX 17
+                      regimeAdjustment = 0.70 + (adjustedVix - 10) * 0.021;
+                    }
+                    zoneHalfWidth *= regimeAdjustment;
+
+                    // Clamp to reasonable visual bounds
+                    zoneHalfWidth = Math.max(2, Math.min(80, zoneHalfWidth));
 
                     // Zone bounds centered on current effective spot
                     const zoneLow = effectiveSpot - zoneHalfWidth;
                     const zoneHigh = effectiveSpot + zoneHalfWidth;
 
-                    const xLow = 50 + ((zoneLow - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
-                    const xHigh = 50 + ((zoneHigh - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
+                    // 10% buffer zone - still okay but approaching exit signal
+                    const bufferWidth = zoneHalfWidth * 0.10;
+                    const bufferLow = zoneLow - bufferWidth;
+                    const bufferHigh = zoneHigh + bufferWidth;
+
+                    // Convert to SVG coordinates
+                    const priceToX = (price: number) => 50 + ((price - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
+
+                    const xLow = priceToX(zoneLow);
+                    const xHigh = priceToX(zoneHigh);
+                    const xBufferLow = priceToX(bufferLow);
+                    const xBufferHigh = priceToX(bufferHigh);
 
                     // Clamp to visible area
                     const clampedXLow = Math.max(50, Math.min(580, xLow));
                     const clampedXHigh = Math.max(50, Math.min(580, xHigh));
+                    const clampedXBufferLow = Math.max(50, Math.min(580, xBufferLow));
+                    const clampedXBufferHigh = Math.max(50, Math.min(580, xBufferHigh));
                     const width = clampedXHigh - clampedXLow;
 
                     if (width <= 0) return null;
@@ -3280,7 +3492,24 @@ function App() {
 
                     return (
                       <g key={alert.id} className="ai-theta-gamma-zone">
-                        {/* Shaded safe zone */}
+                        {/* 10% buffer zones - still okay but approaching signal */}
+                        <rect
+                          x={clampedXBufferLow}
+                          y="20"
+                          width={clampedXLow - clampedXBufferLow}
+                          height="260"
+                          fill={alert.color || ALERT_COLORS[4]}
+                          opacity={0.06}
+                        />
+                        <rect
+                          x={clampedXHigh}
+                          y="20"
+                          width={clampedXBufferHigh - clampedXHigh}
+                          height="260"
+                          fill={alert.color || ALERT_COLORS[4]}
+                          opacity={0.06}
+                        />
+                        {/* Main safe zone - the profit tent */}
                         <rect
                           x={clampedXLow}
                           y="20"
@@ -3289,7 +3518,28 @@ function App() {
                           fill={alert.color || ALERT_COLORS[4]}
                           opacity={0.15}
                         />
-                        {/* Zone boundary lines - trigger levels */}
+                        {/* Buffer boundary lines - outer warning */}
+                        <line
+                          x1={clampedXBufferLow}
+                          y1="20"
+                          x2={clampedXBufferLow}
+                          y2="280"
+                          stroke={alert.color || ALERT_COLORS[4]}
+                          strokeWidth="1"
+                          strokeDasharray="4,4"
+                          opacity={0.4}
+                        />
+                        <line
+                          x1={clampedXBufferHigh}
+                          y1="20"
+                          x2={clampedXBufferHigh}
+                          y2="280"
+                          stroke={alert.color || ALERT_COLORS[4]}
+                          strokeWidth="1"
+                          strokeDasharray="4,4"
+                          opacity={0.4}
+                        />
+                        {/* Zone boundary lines - exit signal levels */}
                         <line
                           x1={clampedXLow}
                           y1="20"
@@ -3488,11 +3738,11 @@ function App() {
                 )}
                 </div>
 
-                    {/* Time Machine Controls - Always visible */}
+                    {/* 3D of Options Controls - Always visible */}
                     <div className={`time-machine-panel ${timeMachineEnabled ? 'active' : ''}`}>
                       <div className="time-machine-header">
                         <div className="time-machine-switch">
-                          <span className="switch-label">⏱ Time Machine</span>
+                          <span className="switch-label">📐 3D of Options</span>
                           <button
                             className={`switch-toggle ${timeMachineEnabled ? 'on' : 'off'}`}
                             onClick={() => setTimeMachineEnabled(!timeMachineEnabled)}
@@ -3553,64 +3803,53 @@ function App() {
                               {/* Left column: Time and Spot (horizontal sliders) */}
                               <div className="horizontal-controls">
                                 <div className="control-group time-control">
-                                  <label>
-                                    <span className="control-icon">⏱</span>
-                                    Time Forward: <span className="control-value">
-                                      {formatDTE(simTimeOffsetHours)}
+                                  <div className="slider-row">
+                                    <span className="control-label">Time</span>
+                                    <input
+                                      type="range"
+                                      min="0"
+                                      max={maxHours}
+                                      step={stepSize}
+                                      value={simTimeOffsetHours}
+                                      onChange={(e) => setSimTimeOffsetHours(parseFloat(e.target.value))}
+                                      className="time-slider"
+                                      disabled={!timeMachineEnabled}
+                                    />
+                                    <span className="control-readout time-readout">
+                                      {formatDTE(effectiveHoursRemaining)}
                                     </span>
-                                    <span className="control-detail">
-                                      → DTE: {formatDTE(effectiveHoursRemaining)}
-                                    </span>
-                                  </label>
-                                  <input
-                                    type="range"
-                                    min="0"
-                                    max={maxHours}
-                                    step={stepSize}
-                                    value={simTimeOffsetHours}
-                                    onChange={(e) => setSimTimeOffsetHours(parseFloat(e.target.value))}
-                                    className="time-slider"
-                                    disabled={!timeMachineEnabled}
-                                  />
-                                  <div className="slider-labels">
-                                    <span>{formatDTE(maxHours)}</span>
-                                    <span>0m (Exp)</span>
                                   </div>
                                 </div>
                                 <div className="control-group spot-control">
-                                  <label>
-                                    <span className="control-icon">📍</span>
-                                    Spot Price: <span className="control-value">
-                                      {simulatedSpot?.toFixed(0) || '-'}
-                                    </span>
-                                    <span className="control-detail">
-                                      ({simSpotOffset >= 0 ? '+' : ''}{simSpotOffset.toFixed(0)} pts)
-                                    </span>
-                                  </label>
-                                  <input
-                                    type="range"
-                                    min="-150"
-                                    max="150"
-                                    step="1"
-                                    value={simSpotOffset}
-                                    onChange={(e) => setSimSpotOffset(parseFloat(e.target.value))}
-                                    className="spot-slider"
-                                    disabled={!timeMachineEnabled}
-                                  />
-                                  <div className="slider-labels">
-                                    <span>-150</span>
-                                    <span>0</span>
-                                    <span>+150</span>
+                                  <div className="slider-row">
+                                    <span className="control-label">Spot</span>
+                                    <div className="slider-with-thumb-value">
+                                      <input
+                                        type="range"
+                                        min="-150"
+                                        max="150"
+                                        step="1"
+                                        value={simSpotOffset}
+                                        onChange={(e) => setSimSpotOffset(parseFloat(e.target.value))}
+                                        className="spot-slider"
+                                        disabled={!timeMachineEnabled}
+                                      />
+                                      <div
+                                        className="thumb-value"
+                                        style={{ left: `${((simSpotOffset + 150) / 300) * 100}%` }}
+                                      >
+                                        {simulatedSpot?.toFixed(0) || '-'}
+                                      </div>
+                                    </div>
                                   </div>
                                 </div>
                               </div>
                               {/* Right column: VIX (vertical slider) - absolute range 5-30 */}
                               <div className="vertical-control vol-control">
-                                <div className="vol-label">
-                                  <span className="control-icon">📊</span>
-                                  <span>VIX</span>
+                                <div className="vol-label-left">
+                                  <span className="vol-label-text">VIX</span>
+                                  <span className="vol-value">{currentVix.toFixed(1)}</span>
                                 </div>
-                                <div className="vol-value">{currentVix.toFixed(1)}</div>
                                 <div className="vertical-slider-container">
                                   <span className="vol-tick">30</span>
                                   <input
@@ -3775,6 +4014,11 @@ function App() {
       {/* Settings Modal */}
       {settingsOpen && (
         <SettingsModal onClose={() => setSettingsOpen(false)} />
+      )}
+
+      {/* Journal Modal */}
+      {journalOpen && (
+        <JournalModal isOpen={journalOpen} onClose={() => setJournalOpen(false)} />
       )}
 
       {/* Strategy Popup Modal */}

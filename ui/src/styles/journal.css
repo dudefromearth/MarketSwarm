@@ -1,0 +1,395 @@
+/* Journal Modal Styles */
+
+.journal-modal {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 8px;
+  width: 850px;
+  max-width: 95vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.journal-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid #333;
+  background: #0a0a0a;
+}
+
+.journal-modal .modal-header h2 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.journal-modal .modal-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.journal-modal .modal-close:hover {
+  color: #e5e5e5;
+}
+
+.journal-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Sidebar - Calendar */
+.journal-sidebar {
+  width: 260px;
+  min-width: 260px;
+  border-right: 1px solid #333;
+  padding: 16px;
+  background: #0d0d0d;
+  overflow-y: auto;
+}
+
+/* Main - Entry Editor */
+.journal-main {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+  background: #111;
+}
+
+.journal-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #666;
+  font-size: 13px;
+}
+
+/* Calendar Component */
+.journal-calendar-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.journal-calendar-container.loading {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.calendar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.calendar-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #e5e5e5;
+  text-align: center;
+  flex: 1;
+}
+
+.calendar-nav {
+  background: none;
+  border: 1px solid #333;
+  color: #888;
+  width: 28px;
+  height: 28px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.calendar-nav:hover {
+  background: #222;
+  color: #e5e5e5;
+  border-color: #444;
+}
+
+.calendar-today-btn {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  color: #888;
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  width: 100%;
+}
+
+.calendar-today-btn:hover {
+  background: #222;
+  color: #e5e5e5;
+  border-color: #3b82f6;
+}
+
+.calendar-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.calendar-weekday {
+  text-align: center;
+  font-size: 10px;
+  color: #666;
+  padding: 4px 0;
+  font-weight: 600;
+}
+
+.journal-calendar {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+
+.calendar-day {
+  aspect-ratio: 1;
+  background: #1a1a1a;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+
+.calendar-day.empty {
+  background: transparent;
+  cursor: default;
+}
+
+.calendar-day:not(.empty):hover {
+  background: #222;
+  border-color: #444;
+}
+
+.calendar-day.selected {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: #3b82f6;
+}
+
+.calendar-day.today .calendar-day-number {
+  color: #3b82f6;
+  font-weight: 700;
+}
+
+.calendar-day-number {
+  font-size: 11px;
+  color: #888;
+}
+
+.calendar-day.has-entry .calendar-day-number {
+  color: #e5e5e5;
+}
+
+.calendar-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #333;
+}
+
+.calendar-dot.filled {
+  background: #3b82f6;
+}
+
+.calendar-dot.playbook {
+  background: #22c55e;
+}
+
+/* Entry Editor */
+.journal-entry-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  gap: 12px;
+}
+
+.entry-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.entry-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.entry-meta {
+  font-size: 10px;
+  color: #666;
+}
+
+.entry-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: #666;
+}
+
+.entry-body {
+  flex: 1;
+  display: flex;
+  min-height: 200px;
+}
+
+.entry-content {
+  flex: 1;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e5e5e5;
+  font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
+  font-size: 12px;
+  padding: 12px;
+  resize: none;
+  line-height: 1.6;
+}
+
+.entry-content:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.entry-content::placeholder {
+  color: #555;
+}
+
+.entry-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 8px;
+  border-top: 1px solid #222;
+}
+
+.playbook-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 11px;
+  color: #888;
+}
+
+.playbook-toggle input {
+  cursor: pointer;
+}
+
+.playbook-toggle input:checked + span {
+  color: #22c55e;
+}
+
+.entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.unsaved-indicator {
+  font-size: 10px;
+  color: #fbbf24;
+}
+
+.save-btn {
+  background: #3b82f6;
+  border: none;
+  color: #fff;
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.save-btn:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.save-btn:disabled {
+  background: #333;
+  color: #666;
+  cursor: not-allowed;
+}
+
+/* Trade Refs & Attachments */
+.entry-trade-refs,
+.entry-attachments {
+  padding-top: 12px;
+  border-top: 1px solid #222;
+}
+
+.entry-trade-refs h4,
+.entry-attachments h4 {
+  margin: 0 0 8px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.entry-trade-refs ul,
+.entry-attachments ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.entry-trade-refs li,
+.entry-attachments li {
+  font-size: 11px;
+  color: #888;
+  padding: 4px 0;
+}
+
+.ref-note,
+.att-size {
+  color: #555;
+}
+
+/* Error display */
+.journal-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(239, 68, 68, 0.1);
+  border-top: 1px solid #ef4444;
+  padding: 8px 16px;
+  color: #ef4444;
+  font-size: 12px;
+}
+
+.journal-error button {
+  background: none;
+  border: none;
+  color: #ef4444;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0;
+}
