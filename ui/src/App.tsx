@@ -2538,11 +2538,11 @@ function App() {
                             const isValid = val !== null && val > 0;
                             return (
                               <div
-                                className={`width-cell ${isValid ? 'clickable' : ''}`}
+                                className="width-cell clickable"
                                 style={{ backgroundColor: debitColor(val, changeGrid[strike]?.[0] ?? 0) }}
-                                onClick={isValid ? () => handleTileClick(strike, 0, val) : undefined}
+                                onClick={() => handleTileClick(strike, 0, val)}
                               >
-                                {isValid ? val.toFixed(2) : 'NA'}
+                                {isValid ? val.toFixed(2) : '-'}
                               </div>
                             );
                           })()
@@ -2554,11 +2554,11 @@ function App() {
                             return (
                               <div
                                 key={w}
-                                className={`width-cell ${isValid ? 'clickable' : ''}`}
+                                className="width-cell clickable"
                                 style={{ backgroundColor: debitColor(val, pctChange) }}
-                                onClick={isValid ? () => handleTileClick(strike, w, val) : undefined}
+                                onClick={() => handleTileClick(strike, w, val)}
                               >
-                                {isValid ? val.toFixed(2) : 'NA'}
+                                {isValid ? val.toFixed(2) : '-'}
                               </div>
                             );
                           })
