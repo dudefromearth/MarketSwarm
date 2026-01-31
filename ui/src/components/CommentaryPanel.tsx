@@ -51,7 +51,7 @@ export default function CommentaryPanel({
   useEffect(() => {
     const connect = () => {
       // Use full URL for SSE endpoint
-      const baseUrl = import.meta.env.VITE_SSE_URL || 'http://localhost:8085';
+      const baseUrl = import.meta.env.VITE_SSE_URL || 'http://localhost:3001';
       const fullUrl = `${baseUrl}${sseUrl}`;
 
       const eventSource = new EventSource(fullUrl);
@@ -74,28 +74,29 @@ export default function CommentaryPanel({
         console.log('Vexy SSE channel connected:', JSON.parse(event.data));
       });
 
-      // Handle initial history (all today's messages)
-      eventSource.addEventListener('vexy_history', (event) => {
+      // Handle vexy updates (format: { epoch: VexyMessage | null, event: VexyMessage | null })
+      eventSource.addEventListener('vexy', (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.messages && Array.isArray(data.messages)) {
-            setMessages(data.messages.slice(-maxMessages));
+          const newMessages: VexyMessage[] = [];
+          if (data.epoch) {
+            newMessages.push(data.epoch);
+          }
+          if (data.event) {
+            newMessages.push(data.event);
+          }
+          if (newMessages.length > 0) {
+            setMessages((prev) => {
+              // Merge new messages, avoiding duplicates by timestamp
+              const existing = new Set(prev.map(m => m.ts));
+              const toAdd = newMessages.filter(m => !existing.has(m.ts));
+              if (toAdd.length === 0) return prev;
+              const updated = [...prev, ...toAdd];
+              return updated.slice(-maxMessages);
+            });
           }
         } catch (e) {
-          console.error('Failed to parse vexy_history:', e);
-        }
-      });
-
-      // Handle new messages
-      eventSource.addEventListener('vexy_message', (event) => {
-        try {
-          const message = JSON.parse(event.data) as VexyMessage;
-          setMessages((prev) => {
-            const updated = [...prev, message];
-            return updated.slice(-maxMessages);
-          });
-        } catch (e) {
-          console.error('Failed to parse vexy_message:', e);
+          console.error('Failed to parse vexy:', e);
         }
       });
 

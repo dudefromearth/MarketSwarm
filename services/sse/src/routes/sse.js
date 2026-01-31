@@ -25,7 +25,7 @@ const modelState = {
   gex: new Map(), // symbol -> data
   heatmap: new Map(), // symbol -> data
   candles: new Map(), // symbol -> { candles_5m, candles_15m, candles_1h, spot, ts }
-  vexy: [], // Array of all today's messages
+  vexy: null, // { epoch, event } - combined latest messages
   bias_lfi: null,
   market_mode: null,
 };
@@ -116,9 +116,9 @@ router.get("/vexy", (req, res) => {
   sseHeaders(res);
   clients.vexy.add(res);
 
-  // Send all today's messages
-  if (modelState.vexy && modelState.vexy.length > 0) {
-    sendEvent(res, "vexy_history", { messages: modelState.vexy });
+  // Send current state if available
+  if (modelState.vexy) {
+    sendEvent(res, "vexy", modelState.vexy);
   }
 
   sendEvent(res, "connected", { channel: "vexy", ts: Date.now() });
@@ -186,8 +186,8 @@ router.get("/all", (req, res) => {
   for (const [symbol, data] of modelState.candles) {
     sendEvent(res, "candles", { symbol, ...data });
   }
-  if (modelState.vexy && modelState.vexy.length > 0) {
-    sendEvent(res, "vexy_history", { messages: modelState.vexy });
+  if (modelState.vexy) {
+    sendEvent(res, "vexy", modelState.vexy);
   }
   if (modelState.bias_lfi) {
     sendEvent(res, "bias_lfi", modelState.bias_lfi);
@@ -419,16 +419,16 @@ export async function startPolling(config) {
         }
       }
 
-      // Fetch all of today's vexy messages (only on first poll or if empty)
-      if (modelState.vexy.length === 0) {
-        const todayKey = keys.vexyTodayKey();
-        const messages = await redis.lrange(todayKey, 0, -1);
-        if (messages && messages.length > 0) {
-          modelState.vexy = messages.map(m => {
-            try { return JSON.parse(m); } catch { return null; }
-          }).filter(Boolean);
-          console.log(`[sse] Loaded ${modelState.vexy.length} vexy messages for today`);
-        }
+      // Poll vexy (epoch + event latest)
+      const vexyEpoch = await redis.get(keys.vexyEpochKey());
+      const vexyEvent = await redis.get(keys.vexyEventKey());
+      const vexyData = {
+        epoch: vexyEpoch ? JSON.parse(vexyEpoch) : null,
+        event: vexyEvent ? JSON.parse(vexyEvent) : null,
+      };
+      if (JSON.stringify(vexyData) !== JSON.stringify(modelState.vexy)) {
+        modelState.vexy = vexyData;
+        broadcastToChannel("vexy", "vexy", vexyData);
       }
 
       // Poll bias_lfi model
@@ -521,10 +521,14 @@ export function subscribeVexyPubSub() {
     if (channel === vexyChannel) {
       try {
         const data = JSON.parse(message);
-        // Append to message history
-        modelState.vexy.push(data);
-        // Broadcast the new message to all clients
-        broadcastToChannel("vexy", "vexy_message", data);
+        // Merge into modelState based on kind
+        if (data.kind === "epoch") {
+          modelState.vexy = { ...modelState.vexy, epoch: data };
+        } else if (data.kind === "event") {
+          modelState.vexy = { ...modelState.vexy, event: data };
+        }
+        // Broadcast the updated state
+        broadcastToChannel("vexy", "vexy", modelState.vexy);
       } catch (err) {
         console.error("[sse] vexy:playbyplay parse error:", err.message);
       }
