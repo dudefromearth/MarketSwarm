@@ -107,6 +107,12 @@ export class KeyResolver {
     return "vexy:playbyplay";
   }
 
+  vexyTodayKey() {
+    // Today's message list - uses UTC date
+    const today = new Date().toISOString().split('T')[0];
+    return `vexy:messages:${today}`;
+  }
+
   // Market mode
   marketModeKey() {
     return this.keyMap.market_mode ? `${this.keyMap.market_mode}:latest` : "massive:market_mode:model:latest";

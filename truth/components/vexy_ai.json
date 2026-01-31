@@ -2,7 +2,9 @@
   "id": "vexy_ai",
   "meta": {
     "name": "Vexy AI",
-    "description": "Epoch + event-driven play-by-play voice. Consumes market UI models, events, and RSS content; produces human-readable commentary."
+    "description": "Epoch + event-driven play-by-play voice. Reflection-first market commentary aligned with The Path framework. Mirrors structure, never predicts.",
+    "core_mantra": "Reflection is the filter. Action is the goal. The loop is life. The risk is yours.",
+    "object_rule": "No reflection without object. If no market data, article, or event exists to reflect upon, the mirror remains silent."
   },
   "access_points": {
     "subscribe_to": [
@@ -44,46 +46,364 @@
     "OPENAI_API_KEY": "",
     "CONVEXITY_ASSISTANT_ID": "asst_yNLi7GCN2q2TkixGLiDYLxwP"
   },
-  "epochs": [
-    {
-      "name": "Premarket",
-      "time": "08:00",
-      "context": "Pre-market session. Futures setting the tone. Watch overnight developments."
+
+  "voice_agents": {
+    "Sage": {
+      "description": "Grounded, reflective, patient. Offers wisdom without urgency.",
+      "avatar_inspiration": "Laozi, Marcus Aurelius",
+      "tone": "calm and measured",
+      "style": "Present observations as reflections. Use phrases like 'structure suggests' or 'the pattern shows'.",
+      "when_to_use": "Low volatility, consolidation, post-close reflection"
     },
-    {
-      "name": "Post-Open",
-      "time": "09:35",
-      "context": "Opening rotation complete. Initial direction established. Volume normalizing."
+    "Socratic": {
+      "description": "Curious, questioning, balanced. Invites reflection through questions.",
+      "avatar_inspiration": "Socrates",
+      "tone": "thoughtful and questioning",
+      "style": "Frame observations as questions or considerations. Use phrases like 'worth noting' or 'consider whether'.",
+      "when_to_use": "Ambiguous setups, conflicting signals, mid-session analysis"
     },
-    {
-      "name": "European Close",
-      "time": "11:30",
-      "context": "European markets closing. Cross-Atlantic flows shifting. Mid-morning inflection."
+    "Convexity": {
+      "description": "Direct, precise, action-aware. Cuts through noise to structural truth.",
+      "avatar_inspiration": "Nassim Taleb, Ed Thorp",
+      "tone": "direct and precise",
+      "style": "State observations clearly. Highlight asymmetries and structural edges. Focus on what matters now.",
+      "when_to_use": "High tension moments, power hour, clear structural setups"
     },
-    {
-      "name": "Lunch Vol Crush",
-      "time": "13:00",
-      "context": "Lunch hour volatility compression. Low participation. Watch for mean reversion setups."
+    "Observer": {
+      "description": "Neutral, factual, detached. Reports without interpretation.",
+      "avatar_inspiration": "Marcus Aurelius (observer mode)",
+      "tone": "neutral and factual",
+      "style": "Report what is, not what might be. Stick to observable facts and data.",
+      "when_to_use": "Premarket, article commentary, data-heavy moments"
     },
-    {
-      "name": "Commodity Shadow",
-      "time": "14:00",
-      "context": "Commodity markets closing. Energy and metals flows impacting equity correlation."
+    "Mapper": {
+      "description": "Synthesizing, connecting, pattern-aware. Sees relationships across domains.",
+      "avatar_inspiration": "Benoit Mandelbrot",
+      "tone": "connecting and synthesizing",
+      "style": "Draw connections between data points. Highlight correlations and divergences. Ask 'where else has this pattern emerged?'",
+      "when_to_use": "Cross-market flows, fractal patterns, weekend synthesis"
     },
-    {
-      "name": "Power Hour Begins",
-      "time": "15:00",
-      "context": "Final hour approaching. Institutional repositioning. Volume acceleration."
+    "Disruptor": {
+      "description": "Provocateur, contrarian. Challenges assumptions to prevent stagnation.",
+      "avatar_inspiration": "Diogenes, Charlie Munger",
+      "tone": "sharp and challenging",
+      "style": "Flip the frame. Ask 'what if the consensus is wrong?' Surface hidden risks.",
+      "when_to_use": "VIX-triggered, complacency signals, crowded trades"
     },
-    {
-      "name": "Into the Close",
-      "time": "15:50",
-      "context": "Closing imbalances revealing. MOC orders driving final moves. Gamma intensifying."
-    },
-    {
-      "name": "Post-Close Wrap",
-      "time": "16:01",
-      "context": "Cash session closed. Reviewing the day. After-hours positioning."
+    "Healer": {
+      "description": "Compassionate witness. Holds space for losses and drawdowns.",
+      "avatar_inspiration": "Rumi, Pema Chodron",
+      "tone": "supportive and grounding",
+      "style": "Acknowledge difficulty without minimizing. Remind of process over outcome.",
+      "when_to_use": "After losses, high stress moments, tilt recovery"
     }
+  },
+
+  "system_preferences": {
+    "reflection_dial": 0.2,
+    "response_clarity": "accessible",
+    "reading_level": "conversational",
+    "presentation_mode": "direct",
+    "verbosity": "low",
+    "tone_priority": "clarity_over_depth"
+  },
+
+  "reflection_dial_behavior": {
+    "thresholds": {
+      "gentle": {
+        "range": [0.0, 0.3],
+        "tone": "casual",
+        "voice": "Observer",
+        "partitions": ["tldr"],
+        "max_length": 80
+      },
+      "balanced": {
+        "range": [0.4, 0.6],
+        "tone": "grounded",
+        "voice": "Convexity",
+        "partitions": ["tldr", "structure"],
+        "max_length": 120
+      },
+      "sharp": {
+        "range": [0.7, 1.0],
+        "tone": "direct",
+        "voice": "Convexity",
+        "partitions": ["tldr", "tension", "structure"],
+        "max_length": 180
+      }
+    }
+  },
+
+  "response_format": {
+    "structure": "context + bottom_line",
+    "partitions": {
+      "context": {
+        "purpose": "Brief structural context (1-2 sentences)",
+        "max_words": 40,
+        "required": true
+      },
+      "bottom_line": {
+        "purpose": "TL;DR single sentence takeaway - always starts with 'Bottom line:'",
+        "max_words": 20,
+        "required": true
+      }
+    },
+    "voice_rules": {
+      "never_predict": true,
+      "never_command": true,
+      "object_required": true,
+      "bottom_line_required": true,
+      "brevity_first": true
+    }
+  },
+
+  "disruptor_logic": {
+    "description": "VIX-sensitive agent mutation for antifragile tension",
+    "source": "massive:vix_regime:model",
+    "levels": [
+      { "level": 1, "vix_range": [0, 15], "emoji": "🔥", "probability": 0.05 },
+      { "level": 2, "vix_range": [16, 25], "emoji": "🔥🔥", "probability": 0.15 },
+      { "level": 3, "vix_range": [26, 35], "emoji": "🔥🔥🔥", "probability": 0.30 },
+      { "level": 4, "vix_range": [36, 45], "emoji": "🔥🔥🔥🔥", "probability": 0.50 },
+      { "level": 5, "vix_range": [46, 100], "emoji": "🔥🔥🔥🔥🔥", "probability": 0.75 }
+    ],
+    "disruption_prompts": [
+      "Flip the frame. What if the consensus is wrong?",
+      "Where is the crowd positioned? What happens if they're forced to unwind?",
+      "Is this structure, or is it a story traders are telling themselves?",
+      "What would invalidate the current thesis?"
+    ]
+  },
+
+  "fractal_lens": {
+    "description": "Scale-aware reflection from Mandelbrot's insight that markets are rough and self-similar at all levels",
+    "prompt": "At what scale is this tension or opportunity unfolding?",
+    "regimes": {
+      "micro": {
+        "description": "Intraday noise, short pulses",
+        "action": "Pause entries, check bias clustering"
+      },
+      "meso": {
+        "description": "Vol clustering, slope shift (multi-day)",
+        "action": "Adjust strike spacing, audit sigma skew"
+      },
+      "macro": {
+        "description": "Expansion from vol floor (weekly/monthly)",
+        "action": "Reallocate to convex stack, review drift"
+      },
+      "meta": {
+        "description": "Crisis spike (VIX > 40)",
+        "action": "Halt new entries, deploy insurance stack"
+      }
+    }
+  },
+
+  "trading_days": {
+    "schedule": "market_hours",
+    "timezone": "America/New_York",
+    "epochs": [
+      {
+        "name": "Premarket",
+        "time": "08:00",
+        "context": "Pre-market. Futures and overnight tone.",
+        "prompt_focus": "gaps_and_levels",
+        "voice": "Observer",
+        "partitions": ["tldr"],
+        "reflection_dial": 0.2
+      },
+      {
+        "name": "Post-Open",
+        "time": "09:35",
+        "context": "Opening rotation done. Direction establishing.",
+        "prompt_focus": "opening_range_gex",
+        "voice": "Convexity",
+        "partitions": ["tldr", "structure"],
+        "reflection_dial": 0.3
+      },
+      {
+        "name": "European Close",
+        "time": "11:30",
+        "context": "Europe closing. Flow shift.",
+        "prompt_focus": "cross_market_flows",
+        "voice": "Observer",
+        "partitions": ["tldr"],
+        "reflection_dial": 0.2
+      },
+      {
+        "name": "Lunch Lull",
+        "time": "13:00",
+        "context": "Low volume. Structure consolidating.",
+        "prompt_focus": "compression_check",
+        "voice": "Observer",
+        "partitions": ["tldr"],
+        "reflection_dial": 0.1
+      },
+      {
+        "name": "Afternoon",
+        "time": "14:30",
+        "context": "Afternoon. Building toward close.",
+        "prompt_focus": "positioning_into_close",
+        "voice": "Observer",
+        "partitions": ["tldr", "structure"],
+        "reflection_dial": 0.2
+      },
+      {
+        "name": "Power Hour",
+        "time": "15:00",
+        "context": "Final hour. Volume picking up.",
+        "prompt_focus": "gamma_and_walls",
+        "voice": "Convexity",
+        "partitions": ["tldr", "tension"],
+        "reflection_dial": 0.4
+      },
+      {
+        "name": "Into Close",
+        "time": "15:45",
+        "context": "MOC flows. Gamma pin dynamics.",
+        "prompt_focus": "closing_imbalances",
+        "voice": "Convexity",
+        "partitions": ["tldr", "tension"],
+        "reflection_dial": 0.5
+      },
+      {
+        "name": "Post-Close",
+        "time": "16:05",
+        "context": "Cash closed. Quick recap.",
+        "prompt_focus": "session_recap",
+        "voice": "Observer",
+        "partitions": ["tldr"],
+        "reflection_dial": 0.2
+      }
+    ]
+  },
+
+  "non_trading_days": {
+    "schedule": "article_driven",
+    "includes": ["saturday", "sunday", "market_holidays"],
+    "system_preferences_override": {
+      "reflection_dial": 0.3,
+      "response_clarity": "accessible",
+      "presentation_mode": "direct"
+    },
+    "article_trigger": {
+      "min_articles": 2,
+      "batch_window_minutes": 60,
+      "max_messages_per_day": 6,
+      "cooldown_minutes": 60
+    },
+    "scheduled_epochs": [
+      {
+        "name": "Morning Check",
+        "time": "09:00",
+        "context": "Weekend morning. Global headlines.",
+        "prompt_focus": "global_digest",
+        "voice": "Observer",
+        "partitions": ["tldr"],
+        "reflection_dial": 0.2
+      },
+      {
+        "name": "Afternoon",
+        "time": "14:00",
+        "context": "Weekend afternoon. Week ahead themes.",
+        "prompt_focus": "week_ahead",
+        "voice": "Observer",
+        "partitions": ["tldr"],
+        "reflection_dial": 0.3
+      },
+      {
+        "name": "Sunday Prep",
+        "time": "18:00",
+        "day": "sunday",
+        "context": "Sunday evening. Asia opens soon.",
+        "prompt_focus": "week_positioning",
+        "voice": "Convexity",
+        "partitions": ["tldr", "structure"],
+        "reflection_dial": 0.4
+      }
+    ],
+    "article_commentary": {
+      "enabled": true,
+      "voice": "Observer",
+      "partitions": ["tldr"],
+      "reflection_dial": 0.2,
+      "bias_transparency": {
+        "enabled": true,
+        "show_source_lean": true,
+        "cross_reference": false
+      },
+      "format": {
+        "max_length": 80,
+        "style": "brief"
+      }
+    }
+  },
+
+  "market_snapshot_schema": {
+    "description": "YAML format for passing market state to Vexy",
+    "example": {
+      "timestamp": "2025-01-31T10:30:00-05:00",
+      "symbol": "SPX",
+      "spot": {
+        "price": 6050.25,
+        "change_pct": 0.35,
+        "session_high": 6065.00,
+        "session_low": 6035.50
+      },
+      "vix": {
+        "value": 16.5,
+        "regime": "low",
+        "term_structure": "contango"
+      },
+      "market_mode": {
+        "mode": "compression",
+        "bias": "neutral",
+        "confidence": 0.75
+      },
+      "liquidity_intent": {
+        "bias": "bullish",
+        "strength": 0.6,
+        "flow_direction": "accumulation",
+        "smart_money_signal": "buy"
+      },
+      "dealer_gravity": {
+        "magnet_strike": 6050,
+        "pull_strength": "strong",
+        "direction": "pinning",
+        "nearest_wall_above": 6075,
+        "nearest_wall_below": 6025
+      },
+      "gex": {
+        "net": 2500000000,
+        "regime": "positive",
+        "key_walls": [6000, 6050, 6100],
+        "zero_gamma": 5980,
+        "flip_level": 6025
+      },
+      "volume_profile": {
+        "poc": 6045,
+        "value_area_high": 6070,
+        "value_area_low": 6020,
+        "hvn": [6045, 6000],
+        "lvn": [6030, 6085]
+      },
+      "options_chain": {
+        "0dte_iv": 12.5,
+        "put_call_ratio": 0.85,
+        "top_strikes_calls": [6050, 6100, 6075],
+        "top_strikes_puts": [6000, 5950, 6025]
+      },
+      "context": "Post-open, testing overnight high"
+    },
+    "required_fields": ["timestamp", "symbol", "spot"],
+    "optional_fields": ["vix", "market_mode", "liquidity_intent", "dealer_gravity", "gex", "volume_profile", "options_chain", "context"]
+  },
+
+  "market_holidays": [
+    "2025-01-01", "2025-01-20", "2025-02-17", "2025-04-18",
+    "2025-05-26", "2025-06-19", "2025-07-04", "2025-09-01",
+    "2025-11-27", "2025-12-25",
+    "2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03",
+    "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07",
+    "2026-11-26", "2026-12-25"
   ]
 }

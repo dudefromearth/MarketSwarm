@@ -30,6 +30,12 @@ def _log(step: str, emoji: str, msg: str):
     print(f"[{ts}] [vexy_ai|{step}] {emoji} {msg}")
 
 
+def _get_today_key() -> str:
+    """Get the Redis key for today's messages."""
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
+    return f"vexy:messages:{today}"
+
+
 def publish(kind: str, text: str, meta: Dict[str, Any]) -> None:
     """
     Publish commentary to the market bus.
@@ -49,15 +55,23 @@ def publish(kind: str, text: str, meta: Dict[str, Any]) -> None:
         "voice": "anchor",
     }
 
+    payload_json = json.dumps(payload)
+
     try:
         # Publish to channel (for real-time subscribers)
-        r.publish("vexy:playbyplay", json.dumps(payload))
+        r.publish("vexy:playbyplay", payload_json)
 
-        # Also store as latest model (for polling clients)
+        # Store in today's message list (for history)
+        # Messages persist for the entire day + buffer
+        today_key = _get_today_key()
+        r.rpush(today_key, payload_json)
+        r.expire(today_key, 86400 + 3600)  # 25 hours TTL (day + 1 hour buffer)
+
+        # Also keep latest for quick polling
         r.set(
             f"vexy:model:playbyplay:{kind}:latest",
-            json.dumps(payload),
-            ex=3600,  # 1 hour TTL
+            payload_json,
+            ex=86400,  # 24 hour TTL
         )
 
         emoji = "🎙️" if kind == "epoch" else "💥"
@@ -65,3 +79,15 @@ def publish(kind: str, text: str, meta: Dict[str, Any]) -> None:
     except redis.RedisError as e:
         _log("publish", "❌", f"Failed to publish to Redis: {e}")
         raise
+
+
+def get_today_messages() -> list:
+    """Retrieve all messages from today."""
+    r = _get_redis()
+    today_key = _get_today_key()
+    try:
+        messages = r.lrange(today_key, 0, -1)
+        return [json.loads(m) for m in messages]
+    except redis.RedisError as e:
+        _log("fetch", "❌", f"Failed to fetch messages: {e}")
+        return []

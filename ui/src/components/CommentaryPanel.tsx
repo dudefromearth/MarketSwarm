@@ -1,42 +1,42 @@
 /**
- * CommentaryPanel - AI market commentary display.
+ * CommentaryPanel - AI market commentary display (Vexy).
  *
  * One-way contextual observations. The AI observes and comments,
- * users do not interact. Commentary is ephemeral and observational.
+ * users do not interact. Uses SSE for real-time updates.
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 
-interface CommentaryMessage {
-  id: string;
-  category: 'observation' | 'doctrine' | 'mel_warning' | 'structure' | 'event';
+interface VexyMessage {
+  kind: 'epoch' | 'event';
   text: string;
-  timestamp: string;
-  trigger?: {
-    type: string;
-    data: Record<string, unknown>;
+  ts: string;
+  voice: string;
+  meta?: {
+    epoch?: string;
+    type?: string;
+    [key: string]: unknown;
   };
-  metadata?: Record<string, unknown>;
 }
 
 interface CommentaryPanelProps {
-  wsUrl?: string;
+  sseUrl?: string;
   maxMessages?: number;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
 }
 
 export default function CommentaryPanel({
-  wsUrl = 'ws://localhost:8095/ws/commentary',
-  maxMessages = 20,
+  sseUrl = '/sse/vexy',
+  maxMessages = 50,
   collapsed = false,
   onToggleCollapse,
 }: CommentaryPanelProps) {
-  const [messages, setMessages] = useState<CommentaryMessage[]>([]);
+  const [messages, setMessages] = useState<VexyMessage[]>([]);
   const [connected, setConnected] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   // Auto-scroll to latest message
   const scrollToBottom = useCallback(() => {
@@ -47,88 +47,85 @@ export default function CommentaryPanel({
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
-  // WebSocket connection
+  // SSE connection
   useEffect(() => {
     const connect = () => {
-      const ws = new WebSocket(wsUrl);
+      // Use full URL for SSE endpoint
+      const baseUrl = import.meta.env.VITE_SSE_URL || 'http://localhost:8085';
+      const fullUrl = `${baseUrl}${sseUrl}`;
 
-      ws.onopen = () => {
+      const eventSource = new EventSource(fullUrl);
+
+      eventSource.onopen = () => {
         setConnected(true);
-        console.log('Commentary WebSocket connected');
+        console.log('Vexy SSE connected');
       };
 
-      ws.onclose = () => {
+      eventSource.onerror = () => {
         setConnected(false);
-        console.log('Commentary WebSocket disconnected');
+        console.log('Vexy SSE disconnected, reconnecting...');
+        eventSource.close();
         // Reconnect after delay
         setTimeout(connect, 5000);
       };
 
-      ws.onerror = (error) => {
-        console.error('Commentary WebSocket error:', error);
-      };
+      // Handle connection confirmation
+      eventSource.addEventListener('connected', (event) => {
+        console.log('Vexy SSE channel connected:', JSON.parse(event.data));
+      });
 
-      ws.onmessage = (event) => {
+      // Handle initial history (all today's messages)
+      eventSource.addEventListener('vexy_history', (event) => {
         try {
           const data = JSON.parse(event.data);
-
-          if (data.type === 'init') {
-            setEnabled(data.data.enabled);
-          } else if (data.type === 'commentary') {
-            setMessages((prev) => {
-              const updated = [...prev, data.data as CommentaryMessage];
-              return updated.slice(-maxMessages);
-            });
-          } else if (data.type === 'config_update') {
-            setEnabled(data.data.enabled);
-          } else if (data.type === 'recent') {
-            setMessages(data.data.messages);
+          if (data.messages && Array.isArray(data.messages)) {
+            setMessages(data.messages.slice(-maxMessages));
           }
         } catch (e) {
-          console.error('Failed to parse commentary message:', e);
+          console.error('Failed to parse vexy_history:', e);
         }
-      };
+      });
 
-      wsRef.current = ws;
+      // Handle new messages
+      eventSource.addEventListener('vexy_message', (event) => {
+        try {
+          const message = JSON.parse(event.data) as VexyMessage;
+          setMessages((prev) => {
+            const updated = [...prev, message];
+            return updated.slice(-maxMessages);
+          });
+        } catch (e) {
+          console.error('Failed to parse vexy_message:', e);
+        }
+      });
+
+      eventSourceRef.current = eventSource;
     };
 
     connect();
 
     return () => {
-      wsRef.current?.close();
+      eventSourceRef.current?.close();
     };
-  }, [wsUrl, maxMessages]);
-
-  // Request recent messages on mount
-  useEffect(() => {
-    if (connected && wsRef.current) {
-      wsRef.current.send(JSON.stringify({ type: 'get_recent', limit: maxMessages }));
-    }
-  }, [connected, maxMessages]);
+  }, [sseUrl, maxMessages]);
 
   const toggleEnabled = () => {
-    if (wsRef.current && connected) {
-      wsRef.current.send(JSON.stringify({ type: 'toggle' }));
-    }
+    setEnabled((prev) => !prev);
   };
 
-  const getCategoryIcon = (category: string): string => {
-    switch (category) {
-      case 'mel_warning':
-        return '⚠';
-      case 'doctrine':
-        return '📖';
-      case 'structure':
-        return '◆';
+  const getKindIcon = (kind: string): string => {
+    switch (kind) {
+      case 'epoch':
+        return '🎙️';
       case 'event':
-        return '◉';
+        return '💥';
       default:
         return '○';
     }
   };
 
-  const getCategoryClass = (category: string): string => {
-    return `commentary-msg commentary-${category}`;
+  const getKindClass = (kind: string): string => {
+    return `commentary-msg commentary-${kind}`;
   };
 
   const formatTime = (timestamp: string): string => {
@@ -136,11 +133,18 @@ export default function CommentaryPanel({
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const getEpochLabel = (msg: VexyMessage): string | null => {
+    if (msg.kind === 'epoch' && msg.meta?.epoch) {
+      return msg.meta.epoch as string;
+    }
+    return null;
+  };
+
   if (collapsed) {
     return (
       <div className="commentary-panel-collapsed" onClick={onToggleCollapse}>
-        <span className="commentary-expand-icon">💬</span>
-        <span className="commentary-expand-label">AI Observer</span>
+        <span className="commentary-expand-icon">🎙️</span>
+        <span className="commentary-expand-label">Vexy</span>
         {messages.length > 0 && (
           <span className="commentary-unread-badge">{messages.length}</span>
         )}
@@ -152,8 +156,8 @@ export default function CommentaryPanel({
     <div className="commentary-panel">
       <div className="commentary-header">
         <div className="commentary-title">
-          <span className="commentary-icon">💬</span>
-          <span>AI Observer</span>
+          <span className="commentary-icon">🎙️</span>
+          <span>Vexy</span>
           <span className={`commentary-status ${connected ? 'connected' : 'disconnected'}`}>
             {connected ? '●' : '○'}
           </span>
@@ -193,13 +197,16 @@ export default function CommentaryPanel({
           </div>
         )}
 
-        {messages.map((msg) => (
-          <div key={msg.id} className={getCategoryClass(msg.category)}>
+        {messages.map((msg, idx) => (
+          <div key={`${msg.ts}-${idx}`} className={getKindClass(msg.kind)}>
             <div className="commentary-msg-header">
               <span className="commentary-category-icon">
-                {getCategoryIcon(msg.category)}
+                {getKindIcon(msg.kind)}
               </span>
-              <span className="commentary-time">{formatTime(msg.timestamp)}</span>
+              {getEpochLabel(msg) && (
+                <span className="commentary-epoch-label">{getEpochLabel(msg)}</span>
+              )}
+              <span className="commentary-time">{formatTime(msg.ts)}</span>
             </div>
             <div className="commentary-text">{msg.text}</div>
           </div>
@@ -209,7 +216,7 @@ export default function CommentaryPanel({
       </div>
 
       <div className="commentary-footer">
-        <span className="commentary-mode">one-way • observe only</span>
+        <span className="commentary-mode">{messages.length} messages today</span>
       </div>
     </div>
   );

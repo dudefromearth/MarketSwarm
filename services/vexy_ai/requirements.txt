@@ -1,3 +1,6 @@
 redis==7.0.1
 websocket-client==1.9.0
 requests
+httpx>=0.24.0
+pytz>=2023.3
+pyyaml>=6.0

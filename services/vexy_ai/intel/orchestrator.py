@@ -28,6 +28,15 @@ from .intel_feed import process_intel_articles
 from .market_reader import MarketReader
 from .article_reader import ArticleReader
 from .synthesizer import Synthesizer
+from .schedule import (
+    is_trading_day,
+    is_market_hours,
+    get_epochs_for_day,
+    get_active_schedule,
+    get_system_preferences,
+    get_article_trigger_config,
+    get_current_et,
+)
 
 
 # Vexy mode control
@@ -137,24 +146,44 @@ async def run(config: Dict[str, Any], logger) -> None:
     emit("startup", "startup", "Vexy AI Play-by-Play Engine starting")
     emit("config", "config", f"VEXY_MODE={VEXY_MODE}")
 
-    loop_sleep_sec = float(config.get("VEXY_LOOP_SLEEP_SEC", "60"))
+    env = config.get("env", {})
+    loop_sleep_sec = float(env.get("VEXY_LOOP_SLEEP_SEC", "60"))
 
-    # Epochs from config (externalized in truth/components/vexy_ai.json)
-    epochs = config.get("epochs", [])
-    if not epochs:
-        logger.warn("No epochs defined in config — epoch commentary disabled", emoji="⚠️")
+    # Article-driven state for non-trading days
+    article_batch_start: float | None = None
+    article_batch_count: int = 0
+    last_article_publish: float = 0
+    daily_article_count: int = 0
+    current_day: str | None = None
 
     try:
         while True:
             cycle_start = time.time()
+            now_et = get_current_et()
             now = datetime.now()
-            current_time = now.strftime("%H:%M")
+            current_time = now_et.strftime("%H:%M")
+            today_str = now_et.strftime("%Y-%m-%d")
+
+            # Reset daily counters on new day
+            if current_day != today_str:
+                current_day = today_str
+                daily_article_count = 0
+                last_epoch_name = None
+                emit("system", "info", f"New day: {today_str}")
+
+            # Determine schedule type
+            trading_day = is_trading_day(config, now_et)
+            schedule = get_active_schedule(config, now_et)
+            epochs = get_epochs_for_day(config, now_et)
+
+            schedule_type = "trading" if trading_day else "non-trading"
+            emit("system", "info", f"Schedule: {schedule_type} | Epochs: {len(epochs)}")
 
             # -----------------------------
             # Epochs (with market data + news synthesis)
             # -----------------------------
             if ENABLE_EPOCHS and VEXY_MODE in ["full", "epochs_only"] and epochs:
-                emit("epoch", "epoch_check", "Checking epoch triggers…")
+                emit("epoch", "epoch_check", f"Checking {len(epochs)} epoch triggers…")
                 epoch = should_speak_epoch(current_time, epochs)
                 if epoch and epoch["name"] != last_epoch_name:
                     # Fetch current market state
@@ -170,18 +199,23 @@ async def run(config: Dict[str, Any], logger) -> None:
                         emit("epoch", "warn", "LLM synthesis failed — using template fallback")
                         commentary = generate_epoch_commentary(epoch, market_state)
 
+                    # Include epoch config in meta for downstream use
                     publish("epoch", commentary, {
                         "epoch": epoch["name"],
+                        "voice": epoch.get("voice", "Observer"),
+                        "partitions": epoch.get("partitions", []),
+                        "reflection_dial": epoch.get("reflection_dial", 0.4),
                         "market_state": market_state,
                         "articles_used": len(recent_articles),
+                        "schedule_type": schedule_type,
                     })
                     last_epoch_name = epoch["name"]
-                    emit("epoch", "epoch_speak", f"{commentary[:120]}…")
+                    emit("epoch", "epoch_speak", f"[{epoch.get('voice', 'Observer')}] {commentary[:100]}…")
 
             # -----------------------------
-            # Events
+            # Events (trading days only for real-time events)
             # -----------------------------
-            if ENABLE_EVENTS and VEXY_MODE in ["full", "events_only"]:
+            if ENABLE_EVENTS and VEXY_MODE in ["full", "events_only"] and trading_day:
                 emit("event", "event_check", "Checking event triggers…")
                 events = get_triggered_events(r_market)
                 for event in events:
@@ -195,11 +229,57 @@ async def run(config: Dict[str, Any], logger) -> None:
 
             # -----------------------------
             # Intel articles → commentary
+            # On trading days: immediate publish
+            # On non-trading days: batched based on article_trigger config
             # -----------------------------
             if ENABLE_INTEL and VEXY_MODE in ["full", "intel_only"]:
-                processed = process_intel_articles(r_system, emit)
-                if processed:
-                    emit("intel", "ok", f"Published {processed} intel update(s)")
+                if trading_day:
+                    # Trading day: publish articles immediately
+                    processed = process_intel_articles(r_system, emit)
+                    if processed:
+                        emit("intel", "ok", f"Published {processed} intel update(s)")
+                else:
+                    # Non-trading day: use article batching logic
+                    article_config = get_article_trigger_config(config)
+                    min_articles = article_config.get("min_articles", 2)
+                    batch_window = article_config.get("batch_window_minutes", 60) * 60  # to seconds
+                    max_per_day = article_config.get("max_messages_per_day", 8)
+                    cooldown = article_config.get("cooldown_minutes", 45) * 60  # to seconds
+
+                    # Check if we're under the daily limit and past cooldown
+                    now_ts = time.time()
+                    can_publish = (
+                        daily_article_count < max_per_day and
+                        (now_ts - last_article_publish) >= cooldown
+                    )
+
+                    if can_publish:
+                        # Check for new articles (don't publish, just count)
+                        recent_articles = article_reader.get_recent_articles(
+                            max_count=10,
+                            max_age_hours=batch_window / 3600,
+                        )
+
+                        if recent_articles:
+                            # Start or continue batch window
+                            if article_batch_start is None:
+                                article_batch_start = now_ts
+                                article_batch_count = len(recent_articles)
+                                emit("intel", "info", f"Starting article batch: {article_batch_count} articles")
+                            else:
+                                article_batch_count = len(recent_articles)
+
+                            # Check if batch criteria met
+                            window_elapsed = now_ts - article_batch_start
+                            if article_batch_count >= min_articles or window_elapsed >= batch_window:
+                                # Publish batch commentary
+                                processed = process_intel_articles(r_system, emit)
+                                if processed:
+                                    daily_article_count += 1
+                                    last_article_publish = now_ts
+                                    article_batch_start = None
+                                    article_batch_count = 0
+                                    emit("intel", "ok", f"Published article batch ({daily_article_count}/{max_per_day} today)")
 
             cycle_time = time.time() - cycle_start
             emit("cycle", "cycle", f"Cycle complete in {cycle_time:.1f}s — sleeping {int(loop_sleep_sec)}s")
