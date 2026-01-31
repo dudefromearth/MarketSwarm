@@ -143,6 +143,9 @@ class JournalDBv2:
             if current_version < 5:
                 self._migrate_to_v5(conn)
 
+            if current_version < 6:
+                self._migrate_to_v6(conn)
+
             conn.commit()
         finally:
             conn.close()
@@ -435,6 +438,54 @@ class JournalDBv2:
                 """)
 
             # Create playbook_source_refs table
+            if not self._table_exists(conn, 'playbook_source_refs'):
+                cursor.execute("""
+                    CREATE TABLE playbook_source_refs (
+                        id VARCHAR(36) PRIMARY KEY,
+                        playbook_entry_id VARCHAR(36) NOT NULL,
+
+                        source_type ENUM('entry', 'retrospective', 'trade') NOT NULL,
+                        source_id VARCHAR(36) NOT NULL,
+                        note TEXT,
+
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+
+                        INDEX idx_pbref_entry (playbook_entry_id),
+                        INDEX idx_pbref_source (source_type, source_id),
+                        FOREIGN KEY (playbook_entry_id) REFERENCES playbook_entries(id) ON DELETE CASCADE
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 6)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v6(self, conn):
+        """Migrate to v6: Add playbook tables if they don't exist (for DBs that ran v5 before playbook was added)."""
+        cursor = conn.cursor()
+        try:
+            # Create playbook_entries table if it doesn't exist
+            if not self._table_exists(conn, 'playbook_entries'):
+                cursor.execute("""
+                    CREATE TABLE playbook_entries (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+
+                        title VARCHAR(255) NOT NULL,
+                        entry_type ENUM('pattern', 'rule', 'warning', 'filter', 'constraint') NOT NULL,
+                        description TEXT,
+                        status ENUM('draft', 'active', 'retired') DEFAULT 'draft',
+
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+                        updated_at VARCHAR(32) DEFAULT (NOW()),
+
+                        INDEX idx_playbook_user (user_id),
+                        INDEX idx_playbook_type (entry_type),
+                        INDEX idx_playbook_status (status)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create playbook_source_refs table if it doesn't exist
             if not self._table_exists(conn, 'playbook_source_refs'):
                 cursor.execute("""
                     CREATE TABLE playbook_source_refs (
