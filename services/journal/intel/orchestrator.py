@@ -1193,9 +1193,17 @@ class JournalOrchestrator:
             result = self.db.upsert_entry(entry)
             self.logger.info(f"Upserted journal entry for {body['entry_date']}", emoji="📓")
 
+            # Get related data to return complete entry
+            trade_refs = self.db.list_trade_refs('entry', result.id)
+            attachments = self.db.list_attachments('entry', result.id)
+
+            data = result.to_api_dict()
+            data['trade_refs'] = [r.to_api_dict() for r in trade_refs]
+            data['attachments'] = [a.to_api_dict() for a in attachments]
+
             return self._json_response({
                 'success': True,
-                'data': result.to_api_dict()
+                'data': data
             }, 201)
         except Exception as e:
             self.logger.error(f"create_journal_entry error: {e}")
