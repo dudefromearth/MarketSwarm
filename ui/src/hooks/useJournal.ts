@@ -6,6 +6,8 @@ const JOURNAL_API = 'http://localhost:3002';
 // Simplified Trade interface for journal linking
 export interface JournalTrade {
   id: string;
+  log_id: string;
+  log_name?: string;
   symbol: string;
   strategy: string;
   side: string;
@@ -14,6 +16,12 @@ export interface JournalTrade {
   exit_time: string | null;
   pnl_dollars: number | null;
   status: string;
+}
+
+// Trade log interface for fetching all logs
+interface TradeLog {
+  id: string;
+  name: string;
 }
 
 export interface JournalEntry {
@@ -89,10 +97,10 @@ export interface UseJournalReturn {
   saveEntry: (date: string, content: string, isPlaybook: boolean) => Promise<boolean>;
   clearEntry: () => void;
 
-  // Trades for linking
+  // Trades for linking (from all logs)
   tradesForDate: JournalTrade[];
   loadingTrades: boolean;
-  fetchTradesForDate: (logId: string, date: string) => Promise<void>;
+  fetchTradesForDate: (date: string) => Promise<void>;
   linkTrade: (entryId: string, tradeId: string, note?: string) => Promise<boolean>;
   unlinkTrade: (refId: string) => Promise<boolean>;
 
@@ -207,28 +215,61 @@ export function useJournal(): UseJournalReturn {
     setError(null);
   }, []);
 
-  const fetchTradesForDate = useCallback(async (logId: string, date: string) => {
-    if (!logId) {
-      setTradesForDate([]);
-      return;
-    }
+  const fetchTradesForDate = useCallback(async (date: string) => {
     setLoadingTrades(true);
     try {
-      // Fetch all trades and filter by date client-side
-      const res = await fetch(`${JOURNAL_API}/api/logs/${logId}/trades?limit=10000`, {
+      // First, fetch all logs
+      const logsRes = await fetch(`${JOURNAL_API}/api/logs`, {
         credentials: 'include',
       });
-      const data = await res.json();
-      if (data.success) {
-        // Filter trades that were entered on this date
-        const filtered = data.data.filter((t: JournalTrade) => {
-          const entryDate = t.entry_time.split('T')[0];
-          return entryDate === date;
-        });
-        setTradesForDate(filtered);
-      } else {
+      const logsData = await logsRes.json();
+
+      if (!logsData.success || !logsData.data.length) {
         setTradesForDate([]);
+        return;
       }
+
+      const logs: TradeLog[] = logsData.data;
+
+      // Fetch trades from all logs in parallel
+      const tradePromises = logs.map(async (log) => {
+        const res = await fetch(`${JOURNAL_API}/api/logs/${log.id}/trades?limit=10000`, {
+          credentials: 'include',
+        });
+        const data = await res.json();
+        if (data.success) {
+          // Filter trades that existed on this date (entered on or before, and still open or exited on/after)
+          return data.data
+            .filter((t: JournalTrade) => {
+              const entryDate = t.entry_time.split('T')[0];
+              const exitDate = t.exit_time ? t.exit_time.split('T')[0] : null;
+
+              // Trade existed on this date if:
+              // - Entered on or before this date AND
+              // - Still open OR exited on or after this date
+              return entryDate <= date && (exitDate === null || exitDate >= date);
+            })
+            .map((t: JournalTrade) => ({
+              ...t,
+              log_id: log.id,
+              log_name: log.name,
+            }));
+        }
+        return [];
+      });
+
+      const allTrades = await Promise.all(tradePromises);
+      const flatTrades = allTrades.flat();
+
+      // Sort by log name, then by entry time
+      flatTrades.sort((a, b) => {
+        if (a.log_name !== b.log_name) {
+          return (a.log_name || '').localeCompare(b.log_name || '');
+        }
+        return new Date(b.entry_time).getTime() - new Date(a.entry_time).getTime();
+      });
+
+      setTradesForDate(flatTrades);
     } catch (err) {
       console.error('Failed to fetch trades for date:', err);
       setTradesForDate([]);

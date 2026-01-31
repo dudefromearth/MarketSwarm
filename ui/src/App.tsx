@@ -3960,7 +3960,6 @@ function App() {
         <div className="trade-log-panel-inner">
           {journalOpen ? (
             <JournalView
-              selectedLogId={selectedLog?.id || null}
               onClose={() => setJournalOpen(false)}
             />
           ) : reportingLogId ? (

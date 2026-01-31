@@ -7,7 +7,6 @@ import JournalRetrospectiveEditor from './JournalRetrospectiveEditor';
 import '../styles/journal.css';
 
 interface JournalViewProps {
-  selectedLogId: string | null;
   onClose: () => void;
 }
 
@@ -46,7 +45,7 @@ function getMonthEnd(year: number, month: number): Date {
   return new Date(year, month, 0);
 }
 
-export default function JournalView({ selectedLogId, onClose }: JournalViewProps) {
+export default function JournalView({ onClose }: JournalViewProps) {
   // Tab state
   const [activeTab, setActiveTab] = useState<Tab>('entries');
 
@@ -105,13 +104,11 @@ export default function JournalView({ selectedLogId, onClose }: JournalViewProps
   useEffect(() => {
     if (activeTab === 'entries' && selectedDate) {
       journal.fetchEntry(selectedDate);
-      if (selectedLogId) {
-        journal.fetchTradesForDate(selectedLogId, selectedDate);
-      }
+      journal.fetchTradesForDate(selectedDate);
     } else if (activeTab === 'entries') {
       journal.clearEntry();
     }
-  }, [activeTab, selectedDate, selectedLogId]);
+  }, [activeTab, selectedDate]);
 
   // Fetch retrospective when period is selected
   useEffect(() => {

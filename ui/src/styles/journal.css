@@ -801,6 +801,40 @@
   padding: 8px 0;
 }
 
+/* Trade log grouping */
+.trades-log-group {
+  margin-bottom: 8px;
+}
+
+.trades-log-group:last-child {
+  margin-bottom: 0;
+}
+
+.log-group-name {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  color: #3b82f6;
+  text-transform: uppercase;
+  margin-bottom: 4px;
+  padding-left: 4px;
+  border-left: 2px solid #3b82f6;
+}
+
+.trade-status {
+  color: #888;
+  font-style: italic;
+}
+
+.trade-status.open {
+  color: #fbbf24;
+}
+
+.trade-pnl.open {
+  color: #fbbf24;
+  font-weight: 500;
+}
+
 /* Journal Tabs */
 .journal-tabs {
   display: flex;
