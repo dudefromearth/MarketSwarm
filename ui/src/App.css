@@ -2374,38 +2374,67 @@ body {
 /* Time Machine Controls */
 .time-machine-panel {
   padding: 10px 16px;
-  background: #0f0f0f;
+  background: #0a0a0a;
   border-top: 1px solid #222;
+  transition: all 0.2s;
+}
+
+.time-machine-panel.active {
+  background: #0f1510;
+  border-top: 1px solid #2a4a2a;
 }
 
 .time-machine-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
-.time-machine-toggle {
+.time-machine-switch {
   display: flex;
   align-items: center;
-  gap: 8px;
-  cursor: pointer;
+  gap: 12px;
 }
 
-.time-machine-toggle input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: #f59e0b;
-}
-
-.toggle-label {
+.switch-label {
   font-size: 12px;
   font-weight: 600;
+  color: #666;
+}
+
+.time-machine-panel.active .switch-label {
+  color: #f59e0b;
+}
+
+.switch-toggle {
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  border: none;
+}
+
+.switch-toggle.off {
+  background: #333;
   color: #888;
 }
 
-.time-machine-toggle input:checked + .toggle-label {
-  color: #f59e0b;
+.switch-toggle.off:hover {
+  background: #444;
+  color: #aaa;
+}
+
+.switch-toggle.on {
+  background: #16a34a;
+  color: #fff;
+  box-shadow: 0 0 8px rgba(22, 163, 74, 0.4);
+}
+
+.switch-toggle.on:hover {
+  background: #15803d;
 }
 
 .time-machine-panel .btn-reset {
@@ -2429,6 +2458,12 @@ body {
   display: flex;
   gap: 24px;
   flex-wrap: wrap;
+  transition: opacity 0.2s;
+}
+
+.time-machine-controls.disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }
 
 .time-machine-controls .control-group {

@@ -3488,17 +3488,18 @@ function App() {
                 )}
                 </div>
 
-                    {/* Time Machine Controls */}
-                    <div className="time-machine-panel">
+                    {/* Time Machine Controls - Always visible */}
+                    <div className={`time-machine-panel ${timeMachineEnabled ? 'active' : ''}`}>
                       <div className="time-machine-header">
-                        <label className="time-machine-toggle">
-                          <input
-                            type="checkbox"
-                            checked={timeMachineEnabled}
-                            onChange={(e) => setTimeMachineEnabled(e.target.checked)}
-                          />
-                          <span className="toggle-label">⏱ Time Machine</span>
-                        </label>
+                        <div className="time-machine-switch">
+                          <span className="switch-label">⏱ Time Machine</span>
+                          <button
+                            className={`switch-toggle ${timeMachineEnabled ? 'on' : 'off'}`}
+                            onClick={() => setTimeMachineEnabled(!timeMachineEnabled)}
+                          >
+                            {timeMachineEnabled ? 'ON' : 'OFF'}
+                          </button>
+                        </div>
                         {timeMachineEnabled && (
                           <button
                             className="btn-reset"
@@ -3512,100 +3513,122 @@ function App() {
                           </button>
                         )}
                       </div>
-                      {timeMachineEnabled && (
-                        <div className="time-machine-controls">
-                          <div className="control-group time-control">
-                            <label>
-                              Time Forward: <span className="control-value">{
-                                simTimeOffsetHours < 24
-                                  ? `${simTimeOffsetHours.toFixed(simTimeOffsetHours >= 1 ? 1 : 2)}h`
-                                  : `${(simTimeOffsetHours / 24).toFixed(1)}d`
-                              }</span>
-                            </label>
-                            {(() => {
-                              // Calculate max hours based on minimum DTE of visible strategies
-                              const visibleStrategies = riskGraphStrategies.filter(s => s.visible);
-                              const minDTE = visibleStrategies.length > 0
-                                ? Math.min(...visibleStrategies.map(s => s.dte))
-                                : 1;
-                              // Max hours = DTE * 24, with some buffer for 0-DTE
-                              const maxHours = Math.max(1, minDTE) * 24;
+                      <div className={`time-machine-controls ${!timeMachineEnabled ? 'disabled' : ''}`}>
+                        {(() => {
+                          // Calculate DTE info for all controls
+                          const visibleStrategies = riskGraphStrategies.filter(s => s.visible);
+                          const minDTE = visibleStrategies.length > 0
+                            ? Math.min(...visibleStrategies.map(s => s.dte))
+                            : 1;
+                          const maxHours = Math.max(1, minDTE) * 24;
+                          const hoursRemaining = maxHours - simTimeOffsetHours;
+                          const effectiveHoursRemaining = Math.max(0, hoursRemaining);
 
-                              // Determine step size based on current position
-                              // Near expiration (last 4 hours): 15 min increments
-                              // Otherwise: 1 hour increments
-                              const hoursRemaining = maxHours - simTimeOffsetHours;
-                              const stepSize = hoursRemaining <= 4 ? 0.25 : 1;
+                          // Format hours as DTE string
+                          const formatDTE = (hours: number) => {
+                            if (hours <= 0) return '0m';
+                            if (hours < 4) {
+                              // Show in 15-min increments
+                              const mins = Math.round(hours * 60);
+                              if (mins < 60) return `${mins}m`;
+                              const h = Math.floor(mins / 60);
+                              const m = mins % 60;
+                              return m > 0 ? `${h}h ${m}m` : `${h}h`;
+                            }
+                            if (hours < 24) {
+                              return `${hours.toFixed(0)}h`;
+                            }
+                            const days = hours / 24;
+                            if (days < 1.5) {
+                              const h = Math.round(hours % 24);
+                              return `1d ${h}h`;
+                            }
+                            return `${days.toFixed(1)}d`;
+                          };
 
-                              return (
-                                <>
-                                  <input
-                                    type="range"
-                                    min="0"
-                                    max={maxHours}
-                                    step={stepSize}
-                                    value={simTimeOffsetHours}
-                                    onChange={(e) => setSimTimeOffsetHours(parseFloat(e.target.value))}
-                                    className="time-slider"
-                                  />
-                                  <div className="slider-labels">
-                                    <span>Now</span>
-                                    <span>Expiration</span>
-                                  </div>
-                                </>
-                              );
-                            })()}
-                          </div>
-                          <div className="control-group vol-control">
-                            <label>
-                              Volatility Adj: <span className="control-value">
-                                {simVolatilityOffset >= 0 ? '+' : ''}{simVolatilityOffset.toFixed(1)}
-                              </span>
-                              <span className="control-detail">
-                                (VIX: {((spot?.['I:VIX']?.value || 20) + simVolatilityOffset).toFixed(1)})
-                              </span>
-                            </label>
-                            <input
-                              type="range"
-                              min="-15"
-                              max="30"
-                              step="0.5"
-                              value={simVolatilityOffset}
-                              onChange={(e) => setSimVolatilityOffset(parseFloat(e.target.value))}
-                              className="vol-slider"
-                            />
-                            <div className="slider-labels">
-                              <span>-15</span>
-                              <span>0</span>
-                              <span>+30</span>
-                            </div>
-                          </div>
-                          <div className="control-group spot-control">
-                            <label>
-                              Spot Price: <span className="control-value">
-                                {simSpotOffset >= 0 ? '+' : ''}{simSpotOffset.toFixed(0)}
-                              </span>
-                              <span className="control-detail">
-                                ({simulatedSpot?.toFixed(0) || '-'})
-                              </span>
-                            </label>
-                            <input
-                              type="range"
-                              min="-150"
-                              max="150"
-                              step="1"
-                              value={simSpotOffset}
-                              onChange={(e) => setSimSpotOffset(parseFloat(e.target.value))}
-                              className="spot-slider"
-                            />
-                            <div className="slider-labels">
-                              <span>-150</span>
-                              <span>0</span>
-                              <span>+150</span>
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                          // Step size: 15 min when < 4 hours remaining, else 1 hour
+                          const stepSize = effectiveHoursRemaining <= 4 ? 0.25 : 1;
+
+                          return (
+                            <>
+                              <div className="control-group time-control">
+                                <label>
+                                  Time Forward: <span className="control-value">
+                                    {formatDTE(simTimeOffsetHours)}
+                                  </span>
+                                  <span className="control-detail">
+                                    (DTE: {formatDTE(effectiveHoursRemaining)})
+                                  </span>
+                                </label>
+                                <input
+                                  type="range"
+                                  min="0"
+                                  max={maxHours}
+                                  step={stepSize}
+                                  value={simTimeOffsetHours}
+                                  onChange={(e) => setSimTimeOffsetHours(parseFloat(e.target.value))}
+                                  className="time-slider"
+                                  disabled={!timeMachineEnabled}
+                                />
+                                <div className="slider-labels">
+                                  <span>{formatDTE(maxHours)}</span>
+                                  <span>0m (Exp)</span>
+                                </div>
+                              </div>
+                              <div className="control-group vol-control">
+                                <label>
+                                  Volatility: <span className="control-value">
+                                    VIX {((spot?.['I:VIX']?.value || 20) + simVolatilityOffset).toFixed(1)}
+                                  </span>
+                                  <span className="control-detail">
+                                    ({simVolatilityOffset >= 0 ? '+' : ''}{simVolatilityOffset.toFixed(1)})
+                                  </span>
+                                </label>
+                                <input
+                                  type="range"
+                                  min="-15"
+                                  max="30"
+                                  step="0.5"
+                                  value={simVolatilityOffset}
+                                  onChange={(e) => setSimVolatilityOffset(parseFloat(e.target.value))}
+                                  className="vol-slider"
+                                  disabled={!timeMachineEnabled}
+                                />
+                                <div className="slider-labels">
+                                  <span>-15</span>
+                                  <span>0</span>
+                                  <span>+30</span>
+                                </div>
+                              </div>
+                              <div className="control-group spot-control">
+                                <label>
+                                  Spot: <span className="control-value">
+                                    {simulatedSpot?.toFixed(0) || '-'}
+                                  </span>
+                                  <span className="control-detail">
+                                    ({simSpotOffset >= 0 ? '+' : ''}{simSpotOffset.toFixed(0)})
+                                  </span>
+                                </label>
+                                <input
+                                  type="range"
+                                  min="-150"
+                                  max="150"
+                                  step="1"
+                                  value={simSpotOffset}
+                                  onChange={(e) => setSimSpotOffset(parseFloat(e.target.value))}
+                                  className="spot-slider"
+                                  disabled={!timeMachineEnabled}
+                                />
+                                <div className="slider-labels">
+                                  <span>-150</span>
+                                  <span>0</span>
+                                  <span>+150</span>
+                                </div>
+                              </div>
+                            </>
+                          );
+                        })()}
+                      </div>
                     </div>
 
                     {/* Summary Stats */}
