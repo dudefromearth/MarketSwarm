@@ -122,7 +122,9 @@ export function usePlaybook(): UsePlaybookReturn {
       if (filters?.search) params.set('search', filters.search);
 
       const url = `${JOURNAL_API}/api/playbook/entries${params.toString() ? '?' + params : ''}`;
-      const response = await fetch(url);
+      const response = await fetch(url, {
+        credentials: 'include',
+      });
       const result = await response.json();
 
       if (result.success) {
@@ -141,7 +143,9 @@ export function usePlaybook(): UsePlaybookReturn {
     setLoadingEntry(true);
     setError(null);
     try {
-      const response = await fetch(`${JOURNAL_API}/api/playbook/entries/${id}`);
+      const response = await fetch(`${JOURNAL_API}/api/playbook/entries/${id}`, {
+        credentials: 'include',
+      });
       const result = await response.json();
 
       if (result.success) {
@@ -171,6 +175,7 @@ export function usePlaybook(): UsePlaybookReturn {
     try {
       const response = await fetch(`${JOURNAL_API}/api/playbook/entries`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
       });
@@ -193,6 +198,7 @@ export function usePlaybook(): UsePlaybookReturn {
     try {
       const response = await fetch(`${JOURNAL_API}/api/playbook/entries/${id}`, {
         method: 'PUT',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates),
       });
@@ -216,6 +222,7 @@ export function usePlaybook(): UsePlaybookReturn {
     try {
       const response = await fetch(`${JOURNAL_API}/api/playbook/entries/${id}`, {
         method: 'DELETE',
+        credentials: 'include',
       });
       const result = await response.json();
 
@@ -244,6 +251,7 @@ export function usePlaybook(): UsePlaybookReturn {
     try {
       const response = await fetch(`${JOURNAL_API}/api/playbook/entries/${entryId}/sources`, {
         method: 'POST',
+        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(source),
       });
@@ -270,6 +278,7 @@ export function usePlaybook(): UsePlaybookReturn {
     try {
       const response = await fetch(`${JOURNAL_API}/api/playbook/sources/${sourceId}`, {
         method: 'DELETE',
+        credentials: 'include',
       });
       const result = await response.json();
 
@@ -296,7 +305,9 @@ export function usePlaybook(): UsePlaybookReturn {
     setLoadingFlagged(true);
     setError(null);
     try {
-      const response = await fetch(`${JOURNAL_API}/api/playbook/flagged-material`);
+      const response = await fetch(`${JOURNAL_API}/api/playbook/flagged-material`, {
+        credentials: 'include',
+      });
       const result = await response.json();
 
       if (result.success) {

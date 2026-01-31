@@ -41,31 +41,52 @@ class JournalOrchestrator:
         self.attachments_path.mkdir(parents=True, exist_ok=True)
         self.max_attachment_size = 10 * 1024 * 1024  # 10MB
 
-    def _json_response(self, data: Any, status: int = 200) -> web.Response:
+    # Allowed origins for CORS with credentials
+    ALLOWED_ORIGINS = [
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://localhost:5175',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:5174',
+        'http://127.0.0.1:5175',
+    ]
+
+    def _get_cors_origin(self, request: web.Request) -> str:
+        """Get allowed origin for CORS response."""
+        origin = request.headers.get('Origin', '')
+        if origin in self.ALLOWED_ORIGINS:
+            return origin
+        return self.ALLOWED_ORIGINS[0]  # Default to first allowed origin
+
+    def _json_response(self, data: Any, status: int = 200, request: web.Request = None) -> web.Response:
         """Create a JSON response with CORS headers."""
+        origin = self._get_cors_origin(request) if request else self.ALLOWED_ORIGINS[0]
         return web.Response(
             text=json.dumps(data, default=str),
             status=status,
             content_type='application/json',
             headers={
-                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Origin': origin,
                 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
                 'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                'Access-Control-Allow-Credentials': 'true',
             }
         )
 
-    def _error_response(self, message: str, status: int = 400) -> web.Response:
+    def _error_response(self, message: str, status: int = 400, request: web.Request = None) -> web.Response:
         """Create an error JSON response."""
-        return self._json_response({'success': False, 'error': message}, status)
+        return self._json_response({'success': False, 'error': message}, status, request)
 
     async def handle_options(self, request: web.Request) -> web.Response:
         """Handle CORS preflight requests."""
+        origin = self._get_cors_origin(request)
         return web.Response(
             status=204,
             headers={
-                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Origin': origin,
                 'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
                 'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+                'Access-Control-Allow-Credentials': 'true',
             }
         )
 
@@ -2377,9 +2398,28 @@ class JournalOrchestrator:
             'ts': datetime.utcnow().isoformat()
         })
 
+    @web.middleware
+    async def cors_middleware(self, request: web.Request, handler):
+        """Add CORS headers to all responses."""
+        # Handle preflight
+        if request.method == 'OPTIONS':
+            return await self.handle_options(request)
+
+        # Process request
+        response = await handler(request)
+
+        # Add CORS headers
+        origin = self._get_cors_origin(request)
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+
+        return response
+
     def create_app(self) -> web.Application:
         """Create the aiohttp application with routes."""
-        app = web.Application()
+        app = web.Application(middlewares=[self.cors_middleware])
 
         # CORS preflight for all routes
         app.router.add_route('OPTIONS', '/{tail:.*}', self.handle_options)
