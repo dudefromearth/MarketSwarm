@@ -138,9 +138,7 @@ export function useJournal(): UseJournalReturn {
     setLoadingCalendar(true);
     setError(null);
     try {
-      const res = await fetch(`${JOURNAL_API}/api/journal/calendar/${year}/${month}`, {
-        credentials: 'include',
-      });
+      const res = await fetch(`${JOURNAL_API}/api/journal/calendar/${year}/${month}`);
       const data = await res.json();
       if (data.success) {
         setCalendarData(data.data);
@@ -159,9 +157,7 @@ export function useJournal(): UseJournalReturn {
     setLoadingEntry(true);
     setError(null);
     try {
-      const res = await fetch(`${JOURNAL_API}/api/journal/entries/date/${date}`, {
-        credentials: 'include',
-      });
+      const res = await fetch(`${JOURNAL_API}/api/journal/entries/date/${date}`);
       if (res.status === 404) {
         // No entry for this date - that's OK
         setCurrentEntry(null);
@@ -186,7 +182,6 @@ export function useJournal(): UseJournalReturn {
     try {
       const res = await fetch(`${JOURNAL_API}/api/journal/entries`, {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           entry_date: date,
@@ -221,9 +216,7 @@ export function useJournal(): UseJournalReturn {
     setLoadingTrades(true);
     try {
       // First, fetch all logs
-      const logsRes = await fetch(`${JOURNAL_API}/api/logs`, {
-        credentials: 'include',
-      });
+      const logsRes = await fetch(`${JOURNAL_API}/api/logs`);
       const logsData = await logsRes.json();
 
       if (!logsData.success || !logsData.data.length) {
@@ -235,9 +228,7 @@ export function useJournal(): UseJournalReturn {
 
       // Fetch trades from all logs in parallel
       const tradePromises = logs.map(async (log) => {
-        const res = await fetch(`${JOURNAL_API}/api/logs/${log.id}/trades?limit=10000`, {
-          credentials: 'include',
-        });
+        const res = await fetch(`${JOURNAL_API}/api/logs/${log.id}/trades?limit=10000`);
         const data = await res.json();
         if (data.success) {
           // Filter trades that existed on this date (entered on or before, and still open or exited on/after)
@@ -284,7 +275,6 @@ export function useJournal(): UseJournalReturn {
     try {
       const res = await fetch(`${JOURNAL_API}/api/journal/entries/${entryId}/trades`, {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ trade_id: tradeId, note }),
       });
@@ -292,9 +282,7 @@ export function useJournal(): UseJournalReturn {
       if (data.success) {
         // Refresh current entry to get updated trade_refs
         if (currentEntry) {
-          const updated = await fetch(`${JOURNAL_API}/api/journal/entries/${entryId}`, {
-            credentials: 'include',
-          });
+          const updated = await fetch(`${JOURNAL_API}/api/journal/entries/${entryId}`);
           const entryData = await updated.json();
           if (entryData.success) {
             setCurrentEntry(entryData.data);
@@ -313,7 +301,6 @@ export function useJournal(): UseJournalReturn {
     try {
       const res = await fetch(`${JOURNAL_API}/api/journal/trade-refs/${refId}`, {
         method: 'DELETE',
-        credentials: 'include',
       });
       const data = await res.json();
       if (data.success) {
@@ -337,9 +324,7 @@ export function useJournal(): UseJournalReturn {
     setLoadingRetrospectives(true);
     try {
       const params = type ? `?type=${type}` : '';
-      const res = await fetch(`${JOURNAL_API}/api/journal/retrospectives${params}`, {
-        credentials: 'include',
-      });
+      const res = await fetch(`${JOURNAL_API}/api/journal/retrospectives${params}`);
       const data = await res.json();
       if (data.success) {
         setRetrospectives(data.data);
@@ -357,9 +342,7 @@ export function useJournal(): UseJournalReturn {
   const fetchRetrospective = useCallback(async (type: 'weekly' | 'monthly', periodStart: string) => {
     setLoadingRetrospective(true);
     try {
-      const res = await fetch(`${JOURNAL_API}/api/journal/retrospectives/${type}/${periodStart}`, {
-        credentials: 'include',
-      });
+      const res = await fetch(`${JOURNAL_API}/api/journal/retrospectives/${type}/${periodStart}`);
       if (res.status === 404) {
         setCurrentRetrospective(null);
         return;
@@ -400,7 +383,6 @@ export function useJournal(): UseJournalReturn {
 
       const res = await fetch(url, {
         method,
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });

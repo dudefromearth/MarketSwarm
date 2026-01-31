@@ -6,6 +6,10 @@ import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
 import Highlight from '@tiptap/extension-highlight';
 import type { JournalEntry, JournalTrade } from '../hooks/useJournal';
+import TradeDetailModal from './TradeDetailModal';
+import type { Trade } from './TradeLogPanel';
+
+const JOURNAL_API = 'http://localhost:3002';
 
 interface JournalEntryEditorProps {
   date: string;
@@ -17,6 +21,7 @@ interface JournalEntryEditorProps {
   loadingTrades: boolean;
   onLinkTrade: (entryId: string, tradeId: string) => Promise<boolean>;
   onUnlinkTrade: (refId: string) => Promise<boolean>;
+  onTradesUpdated?: () => void;
 }
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -81,11 +86,14 @@ export default function JournalEntryEditor({
   loadingTrades,
   onLinkTrade,
   onUnlinkTrade,
+  onTradesUpdated,
 }: JournalEntryEditorProps) {
   const [isPlaybook, setIsPlaybook] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [linkingTradeId, setLinkingTradeId] = useState<string | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
+  const [showTradeModal, setShowTradeModal] = useState(false);
 
   // Initialize TipTap editor
   const editor = useEditor({
@@ -153,6 +161,29 @@ export default function JournalEntryEditor({
 
   const handleUnlinkTrade = async (refId: string) => {
     await onUnlinkTrade(refId);
+  };
+
+  const handleTradeClick = async (journalTrade: JournalTrade) => {
+    try {
+      // Fetch full trade details from API
+      const response = await fetch(`${JOURNAL_API}/api/trades/${journalTrade.id}`);
+      const result = await response.json();
+      if (result.success && result.data) {
+        setSelectedTrade(result.data);
+        setShowTradeModal(true);
+      }
+    } catch (err) {
+      console.error('Failed to fetch trade details:', err);
+    }
+  };
+
+  const handleTradeModalClose = () => {
+    setShowTradeModal(false);
+    setSelectedTrade(null);
+  };
+
+  const handleTradeUpdated = () => {
+    onTradesUpdated?.();
   };
 
   // Keyboard shortcut: Cmd/Ctrl + S to save
@@ -443,7 +474,11 @@ export default function JournalEntryEditor({
 
                     return (
                       <li key={trade.id} className={`trade-item ${isLinked ? 'linked' : 'available'}`}>
-                        <div className="trade-info">
+                        <div
+                          className="trade-info clickable"
+                          onClick={() => handleTradeClick(trade)}
+                          title="Click to view trade details"
+                        >
                           <span className="trade-symbol">{trade.symbol}</span>
                           <span className="trade-dte-badge">
                             {trade.dte !== undefined ? `${trade.dte}DTE` : ''}
@@ -509,6 +544,14 @@ export default function JournalEntryEditor({
           </ul>
         </div>
       )}
+
+      {/* Trade Detail Modal */}
+      <TradeDetailModal
+        trade={selectedTrade}
+        isOpen={showTradeModal}
+        onClose={handleTradeModalClose}
+        onTradeUpdated={handleTradeUpdated}
+      />
     </div>
   );
 }

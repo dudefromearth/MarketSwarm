@@ -217,6 +217,7 @@ export default function JournalView({ onClose }: JournalViewProps) {
                   loadingTrades={journal.loadingTrades}
                   onLinkTrade={handleLinkTrade}
                   onUnlinkTrade={handleUnlinkTrade}
+                  onTradesUpdated={() => journal.fetchTradesForDate(selectedDate)}
                 />
               ) : (
                 <div className="journal-empty">
