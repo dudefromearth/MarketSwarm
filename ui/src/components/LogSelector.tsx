@@ -77,6 +77,7 @@ export default function LogSelector({
 
   return (
     <div className="log-selector">
+      <span className="log-selector-label">Logs</span>
       <select
         className="log-select"
         value={selectedLogId || ''}
