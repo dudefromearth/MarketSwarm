@@ -1,6 +1,7 @@
 // src/components/JournalEntryEditor.tsx
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
+import type { Attachment } from '../hooks/useJournal';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
@@ -346,6 +347,13 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
   const [showTradeModal, setShowTradeModal] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
 
+  // Attachment state
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [uploadingAttachment, setUploadingAttachment] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const [showAttachments, setShowAttachments] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Filter templates based on mode
   const availableTemplates = useMemo(() => {
     if (isEntryMode) {
@@ -402,6 +410,140 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
       setDirty(false);
     }
   }, [currentData, dataKey, editor]);
+
+  // Sync attachments from entry/retrospective data
+  useEffect(() => {
+    if (currentData && currentData.attachments) {
+      setAttachments(currentData.attachments);
+    } else {
+      setAttachments([]);
+    }
+  }, [currentData, dataKey]);
+
+  // Get the source ID for attachment operations
+  const attachmentSourceId = isEntryMode ? entry?.id : retrospective?.id;
+
+  // Upload attachment
+  const uploadAttachment = useCallback(async (file: File) => {
+    if (!attachmentSourceId) return;
+    setUploadingAttachment(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const endpoint = isEntryMode
+        ? `${JOURNAL_API}/api/journal/entries/${attachmentSourceId}/attachments`
+        : `${JOURNAL_API}/api/journal/retrospectives/${attachmentSourceId}/attachments`;
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+      if (result.success && result.data) {
+        setAttachments(prev => [...prev, result.data]);
+      }
+    } catch (err) {
+      console.error('Failed to upload attachment:', err);
+    } finally {
+      setUploadingAttachment(false);
+    }
+  }, [attachmentSourceId, isEntryMode]);
+
+  // Delete attachment
+  const deleteAttachment = useCallback(async (attachmentId: string) => {
+    try {
+      const response = await fetch(`${JOURNAL_API}/api/journal/attachments/${attachmentId}`, {
+        method: 'DELETE',
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        setAttachments(prev => prev.filter(a => a.id !== attachmentId));
+      }
+    } catch (err) {
+      console.error('Failed to delete attachment:', err);
+    }
+  }, []);
+
+  // Handle file input change
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      uploadAttachment(files[0]);
+    }
+    // Reset input so same file can be selected again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }, [uploadAttachment]);
+
+  // Handle drag events
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    if (!attachmentSourceId) return;
+
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      uploadAttachment(files[0]);
+    }
+  }, [attachmentSourceId, uploadAttachment]);
+
+  // Handle paste for screenshots
+  const handlePaste = useCallback((e: ClipboardEvent) => {
+    if (!attachmentSourceId) return;
+
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          // Generate a filename for pasted images
+          const ext = item.type.split('/')[1] || 'png';
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const namedFile = new File([file], `screenshot-${timestamp}.${ext}`, { type: item.type });
+          uploadAttachment(namedFile);
+          e.preventDefault();
+          break;
+        }
+      }
+    }
+  }, [attachmentSourceId, uploadAttachment]);
+
+  // Register paste handler
+  useEffect(() => {
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [handlePaste]);
+
+  // Get thumbnail URL for image attachments
+  const getAttachmentUrl = (attachmentId: string) => {
+    return `${JOURNAL_API}/api/journal/attachments/${attachmentId}`;
+  };
+
+  // Check if file is an image
+  const isImageAttachment = (attachment: Attachment) => {
+    return attachment.mime_type?.startsWith('image/');
+  };
 
   const handlePlaybookChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setIsPlaybook(e.target.checked);
@@ -742,11 +884,43 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
               </div>
             )}
           </div>
+
+          {/* Attach Button - only show when entry/retro exists */}
+          {attachmentSourceId && (
+            <div className="toolbar-group">
+              <button
+                type="button"
+                className="toolbar-btn attach-btn"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingAttachment}
+                title="Attach file"
+              >
+                📎
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                style={{ display: 'none' }}
+                onChange={handleFileSelect}
+                accept="image/*,.pdf,.doc,.docx,.txt"
+              />
+            </div>
+          )}
         </div>
       )}
 
-      <div className="entry-body">
+      <div
+        className={`entry-body ${isDragging ? 'dragging' : ''}`}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
         <EditorContent editor={editor} className="entry-content-wrapper" />
+        {isDragging && (
+          <div className="drop-overlay">
+            <span>Drop file to attach</span>
+          </div>
+        )}
       </div>
 
       <div className="entry-footer">
@@ -859,17 +1033,71 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
       </div>
       )}
 
-      {isEntryMode && entry && entry.attachments && entry.attachments.length > 0 && (
-        <div className="entry-attachments">
-          <h4>Attachments</h4>
-          <ul>
-            {entry.attachments.map(att => (
-              <li key={att.id}>
-                {att.filename}
-                {att.file_size && <span className="att-size"> ({Math.round(att.file_size / 1024)}KB)</span>}
-              </li>
-            ))}
-          </ul>
+      {/* Attachments Section - works for both entry and retrospective modes */}
+      {attachmentSourceId && (
+        <div className="entry-attachments-section">
+          <div
+            className="attachments-header"
+            onClick={() => setShowAttachments(!showAttachments)}
+          >
+            <h4>
+              <span className="collapse-icon">{showAttachments ? '▼' : '▶'}</span>
+              Attachments
+              {attachments.length > 0 && <span className="attachment-count">({attachments.length})</span>}
+            </h4>
+            {uploadingAttachment && <span className="uploading-indicator">Uploading...</span>}
+          </div>
+
+          {showAttachments && (
+            <div className="attachments-content">
+              {attachments.length === 0 ? (
+                <div className="no-attachments">
+                  Drag & drop files here, paste screenshots, or use the 📎 button
+                </div>
+              ) : (
+                <div className="attachment-tiles">
+                  {attachments.map(att => (
+                    <div key={att.id} className="attachment-tile">
+                      {isImageAttachment(att) ? (
+                        <a
+                          href={getAttachmentUrl(att.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="attachment-thumbnail"
+                        >
+                          <img
+                            src={getAttachmentUrl(att.id)}
+                            alt={att.filename}
+                          />
+                        </a>
+                      ) : (
+                        <a
+                          href={getAttachmentUrl(att.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="attachment-icon"
+                        >
+                          📄
+                        </a>
+                      )}
+                      <span className="attachment-filename" title={att.filename}>
+                        {att.filename.length > 20
+                          ? att.filename.slice(0, 17) + '...'
+                          : att.filename}
+                      </span>
+                      <button
+                        className="attachment-delete"
+                        onClick={() => deleteAttachment(att.id)}
+                        title="Delete attachment"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
