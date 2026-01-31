@@ -352,6 +352,7 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
   const [uploadingAttachment, setUploadingAttachment] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [showAttachments, setShowAttachments] = useState(true);
+  const [pendingAttachments, setPendingAttachments] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Filter templates based on mode
@@ -423,9 +424,10 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
   // Get the source ID for attachment operations
   const attachmentSourceId = isEntryMode ? entry?.id : retrospective?.id;
 
-  // Upload attachment
-  const uploadAttachment = useCallback(async (file: File) => {
-    if (!attachmentSourceId) return;
+  // Upload attachment to an existing entry/retrospective
+  const uploadAttachment = useCallback(async (file: File, targetId?: string) => {
+    const sourceId = targetId || attachmentSourceId;
+    if (!sourceId) return;
     setUploadingAttachment(true);
 
     try {
@@ -433,11 +435,12 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
       formData.append('file', file);
 
       const endpoint = isEntryMode
-        ? `${JOURNAL_API}/api/journal/entries/${attachmentSourceId}/attachments`
-        : `${JOURNAL_API}/api/journal/retrospectives/${attachmentSourceId}/attachments`;
+        ? `${JOURNAL_API}/api/journal/entries/${sourceId}/attachments`
+        : `${JOURNAL_API}/api/journal/retrospectives/${sourceId}/attachments`;
 
       const response = await fetch(endpoint, {
         method: 'POST',
+        credentials: 'include',
         body: formData,
       });
 
@@ -451,6 +454,29 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
       setUploadingAttachment(false);
     }
   }, [attachmentSourceId, isEntryMode]);
+
+  // Handle attachment - auto-creates entry if needed
+  const handleAttachment = useCallback(async (file: File) => {
+    if (attachmentSourceId) {
+      // Entry exists, upload directly
+      uploadAttachment(file);
+    } else if (isEntryMode && onSave) {
+      // No entry yet - queue attachment and save entry first
+      setPendingAttachments(prev => [...prev, file]);
+      const content = editor
+        ? (editor.storage as unknown as Record<string, { getMarkdown: () => string }>).markdown.getMarkdown()
+        : '';
+      await onSave(content || '', isPlaybook);
+    }
+  }, [attachmentSourceId, isEntryMode, onSave, editor, isPlaybook, uploadAttachment]);
+
+  // Upload pending attachments when entry becomes available
+  useEffect(() => {
+    if (attachmentSourceId && pendingAttachments.length > 0) {
+      pendingAttachments.forEach(file => uploadAttachment(file, attachmentSourceId));
+      setPendingAttachments([]);
+    }
+  }, [attachmentSourceId, pendingAttachments, uploadAttachment]);
 
   // Delete attachment
   const deleteAttachment = useCallback(async (attachmentId: string) => {
@@ -472,13 +498,13 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
-      uploadAttachment(files[0]);
+      handleAttachment(files[0]);
     }
     // Reset input so same file can be selected again
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-  }, [uploadAttachment]);
+  }, [handleAttachment]);
 
   // Handle drag events
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -498,18 +524,14 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
     e.stopPropagation();
     setIsDragging(false);
 
-    if (!attachmentSourceId) return;
-
     const files = e.dataTransfer.files;
     if (files && files.length > 0) {
-      uploadAttachment(files[0]);
+      handleAttachment(files[0]);
     }
-  }, [attachmentSourceId, uploadAttachment]);
+  }, [handleAttachment]);
 
   // Handle paste for screenshots
   const handlePaste = useCallback((e: ClipboardEvent) => {
-    if (!attachmentSourceId) return;
-
     const items = e.clipboardData?.items;
     if (!items) return;
 
@@ -521,13 +543,13 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
           const ext = item.type.split('/')[1] || 'png';
           const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
           const namedFile = new File([file], `screenshot-${timestamp}.${ext}`, { type: item.type });
-          uploadAttachment(namedFile);
+          handleAttachment(namedFile);
           e.preventDefault();
           break;
         }
       }
     }
-  }, [attachmentSourceId, uploadAttachment]);
+  }, [handleAttachment]);
 
   // Register paste handler
   useEffect(() => {
@@ -906,17 +928,17 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
             )}
           </div>
 
-          {/* Attach Button - only show when entry/retro exists */}
-          {attachmentSourceId && (
+          {/* Attach Button - always available in entry mode */}
+          {isEntryMode && (
             <div className="toolbar-group">
               <button
                 type="button"
                 className="toolbar-btn attach-btn"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploadingAttachment}
-                title="Attach file"
+                disabled={uploadingAttachment || pendingAttachments.length > 0}
+                title={attachmentSourceId ? "Attach file" : "Attach file (will auto-save entry)"}
               >
-                📎
+                📎{pendingAttachments.length > 0 && <span className="pending-badge">{pendingAttachments.length}</span>}
               </button>
               <input
                 ref={fileInputRef}
@@ -1055,7 +1077,7 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
       )}
 
       {/* Attachments Section - works for both entry and retrospective modes */}
-      {attachmentSourceId && (
+      {(attachmentSourceId || (isEntryMode && pendingAttachments.length > 0)) && (
         <div className="entry-attachments-section">
           <div
             className="attachments-header"
@@ -1064,20 +1086,45 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
             <h4>
               <span className="collapse-icon">{showAttachments ? '▼' : '▶'}</span>
               Attachments
-              {attachments.length > 0 && <span className="attachment-count">({attachments.length})</span>}
+              {(attachments.length > 0 || pendingAttachments.length > 0) && (
+                <span className="attachment-count">
+                  ({attachments.length}{pendingAttachments.length > 0 ? ` + ${pendingAttachments.length} pending` : ''})
+                </span>
+              )}
             </h4>
-            {uploadingAttachment && <span className="uploading-indicator">Uploading...</span>}
+            {(uploadingAttachment || pendingAttachments.length > 0) && (
+              <span className="uploading-indicator">
+                {pendingAttachments.length > 0 ? 'Saving entry...' : 'Uploading...'}
+              </span>
+            )}
           </div>
 
           {showAttachments && (
             <div className="attachments-content">
-              {attachments.length === 0 ? (
+              {attachments.length === 0 && pendingAttachments.length === 0 ? (
                 <div className="no-attachments">
                   Drag & drop files here, paste screenshots, or use the 📎 button
                 </div>
               ) : (
                 <>
                   <div className="attachment-tiles">
+                    {/* Pending attachments (waiting for entry to be created) */}
+                    {pendingAttachments.map((file, idx) => (
+                      <div key={`pending-${idx}`} className="attachment-tile pending">
+                        <div className="attachment-thumbnail pending-overlay">
+                          {file.type.startsWith('image/') ? (
+                            <img src={URL.createObjectURL(file)} alt={file.name} />
+                          ) : (
+                            <span className="attachment-icon">📄</span>
+                          )}
+                          <div className="pending-spinner" />
+                        </div>
+                        <span className="attachment-filename" title={file.name}>
+                          {file.name.length > 20 ? file.name.slice(0, 17) + '...' : file.name}
+                        </span>
+                      </div>
+                    ))}
+                    {/* Uploaded attachments */}
                     {attachments.map(att => (
                       <div
                         key={att.id}
