@@ -12,8 +12,6 @@ import type { Trade } from './TradeLogPanel';
 
 const JOURNAL_API = 'http://localhost:3002';
 
-type EditorMode = 'entry' | 'retrospective';
-
 // Base props shared by both modes
 interface BaseEditorProps {
   loading: boolean;
@@ -258,8 +256,8 @@ function formatDate(dateStr: string): string {
   const [year, month, day] = dateStr.split('-').map(Number);
   const date = new Date(year, month - 1, day);
   const weekday = WEEKDAY_NAMES[date.getDay()];
-  const monthName = MONTH_NAMES[month - 1];
-  return `${weekday}, ${monthName} ${day}, ${year}`;
+  const monthShort = MONTH_NAMES[month - 1].slice(0, 3);
+  return `${weekday} · ${monthShort} ${day}, ${year}`;
 }
 
 function formatPeriod(type: 'weekly' | 'monthly', start: string, end: string): string {
@@ -271,7 +269,7 @@ function formatPeriod(type: 'weekly' | 'monthly', start: string, end: string): s
     const endStr = startMonth === endMonth
       ? `${endDay}`
       : `${MONTH_NAMES[endMonth - 1].slice(0, 3)} ${endDay}`;
-    return `Week of ${startStr} - ${endStr}, ${startYear}`;
+    return `Week of ${startStr}–${endStr}, ${startYear}`;
   } else {
     return `${MONTH_NAMES[startMonth - 1]} ${startYear}`;
   }
@@ -413,7 +411,7 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
   const handleSave = useCallback(async () => {
     if (!editor) return;
     setSaving(true);
-    const markdownStorage = editor.storage.markdown as { getMarkdown: () => string };
+    const markdownStorage = (editor.storage as unknown as Record<string, { getMarkdown: () => string }>).markdown;
     const content = markdownStorage.getMarkdown();
 
     let success = false;
@@ -508,9 +506,6 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
   // Get list of already linked trade IDs
   const linkedTradeIds = new Set(entry?.trade_refs?.map(r => r.trade_id) || []);
 
-  // Get available trades (not yet linked)
-  const availableTrades = tradesForDate.filter(t => !linkedTradeIds.has(t.id));
-
   // Group trades by log
   const tradesByLog = tradesForDate.reduce((acc, trade) => {
     const logName = trade.log_name || 'Unknown Log';
@@ -521,39 +516,27 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
     return acc;
   }, {} as Record<string, typeof tradesForDate>);
 
-  // Group available trades by log
-  const availableByLog = availableTrades.reduce((acc, trade) => {
-    const logName = trade.log_name || 'Unknown Log';
-    if (!acc[logName]) {
-      acc[logName] = [];
-    }
-    acc[logName].push(trade);
-    return acc;
-  }, {} as Record<string, typeof availableTrades>);
-
-  // Group linked trades by log (need to match with tradesForDate to get log_name)
-  const linkedByLog = (entry?.trade_refs || []).reduce((acc, ref) => {
-    const trade = tradesForDate.find(t => t.id === ref.trade_id);
-    const logName = trade?.log_name || 'Unknown Log';
-    if (!acc[logName]) {
-      acc[logName] = [];
-    }
-    acc[logName].push({ ref, trade });
-    return acc;
-  }, {} as Record<string, Array<{ ref: typeof entry.trade_refs[0]; trade: typeof tradesForDate[0] | undefined }>>);
-
-  // Compute header title based on mode
+  // Compute header title and entry type based on mode
   const headerTitle = isEntryMode && date
     ? formatDate(date)
     : (!isEntryMode && retroType && periodStart && periodEnd)
       ? formatPeriod(retroType, periodStart, periodEnd)
       : '';
 
+  const entryTypeLabel = isEntryMode
+    ? 'Daily'
+    : retroType === 'weekly'
+      ? 'Weekly Retrospective'
+      : 'Monthly Retrospective';
+
   if (loading) {
     return (
       <div className="journal-entry-editor">
         <div className="entry-header">
-          <h3>{headerTitle}</h3>
+          <div className="entry-time-anchor">
+            <span className="entry-type-label">{entryTypeLabel}</span>
+            <h3 className="entry-time-header">{headerTitle}</h3>
+          </div>
         </div>
         <div className="entry-loading">Loading...</div>
       </div>
@@ -563,7 +546,10 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
   return (
     <div className="journal-entry-editor">
       <div className="entry-header">
-        <h3>{headerTitle}</h3>
+        <div className="entry-time-anchor">
+          <span className="entry-type-label">{entryTypeLabel}</span>
+          <h3 className="entry-time-header">{headerTitle}</h3>
+        </div>
         {currentData && (
           <span className="entry-meta">
             Last updated: {new Date(currentData.updated_at).toLocaleString()}

@@ -592,6 +592,29 @@
   align-items: baseline;
 }
 
+/* Time Anchoring Visuals */
+.entry-time-anchor {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.entry-type-label {
+  font-size: 9px;
+  font-weight: 500;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.entry-time-header {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 500;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+}
+
 .entry-header h3 {
   margin: 0;
   font-size: 14px;

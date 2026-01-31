@@ -3,13 +3,11 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useJournal } from '../hooks/useJournal';
 import JournalCalendar from './JournalCalendar';
 import JournalEntryEditor from './JournalEntryEditor';
-import JournalRetrospectiveEditor from './JournalRetrospectiveEditor';
 import '../styles/journal.css';
 
 interface JournalModalProps {
   isOpen: boolean;
   onClose: () => void;
-  selectedLogId: string | null;
 }
 
 type Tab = 'entries' | 'retrospectives';
@@ -47,7 +45,7 @@ function getMonthEnd(year: number, month: number): Date {
   return new Date(year, month, 0);
 }
 
-export default function JournalModal({ isOpen, onClose, selectedLogId }: JournalModalProps) {
+export default function JournalModal({ isOpen, onClose }: JournalModalProps) {
   // Tab state
   const [activeTab, setActiveTab] = useState<Tab>('entries');
 
@@ -106,13 +104,11 @@ export default function JournalModal({ isOpen, onClose, selectedLogId }: Journal
   useEffect(() => {
     if (activeTab === 'entries' && selectedDate) {
       journal.fetchEntry(selectedDate);
-      if (selectedLogId) {
-        journal.fetchTradesForDate(selectedLogId, selectedDate);
-      }
+      journal.fetchTradesForDate(selectedDate);
     } else if (activeTab === 'entries') {
       journal.clearEntry();
     }
-  }, [activeTab, selectedDate, selectedLogId]);
+  }, [activeTab, selectedDate]);
 
   // Fetch retrospective when period is selected
   useEffect(() => {
@@ -227,6 +223,7 @@ export default function JournalModal({ isOpen, onClose, selectedLogId }: Journal
               <div className="journal-main">
                 {selectedDate ? (
                   <JournalEntryEditor
+                    mode="entry"
                     date={selectedDate}
                     entry={journal.currentEntry}
                     loading={journal.loadingEntry}
@@ -276,13 +273,14 @@ export default function JournalModal({ isOpen, onClose, selectedLogId }: Journal
 
               <div className="journal-main">
                 {selectedPeriod ? (
-                  <JournalRetrospectiveEditor
-                    type={retroType}
+                  <JournalEntryEditor
+                    mode="retrospective"
+                    retroType={retroType}
                     periodStart={selectedPeriod.start}
                     periodEnd={selectedPeriod.end}
                     retrospective={journal.currentRetrospective}
                     loading={journal.loadingRetrospective}
-                    onSave={handleSaveRetrospective}
+                    onSaveRetro={handleSaveRetrospective}
                   />
                 ) : (
                   <div className="journal-empty">
