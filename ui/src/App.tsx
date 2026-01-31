@@ -19,7 +19,7 @@ import LogManagerModal from './components/LogManagerModal';
 import TradeDetailModal from './components/TradeDetailModal';
 import ReportingView from './components/ReportingView';
 import SettingsModal from './components/SettingsModal';
-import JournalModal from './components/JournalModal';
+import JournalView from './components/JournalView';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -3958,7 +3958,12 @@ function App() {
           <span className="close-bar-label">Close</span>
         </div>
         <div className="trade-log-panel-inner">
-          {reportingLogId ? (
+          {journalOpen ? (
+            <JournalView
+              selectedLogId={selectedLog?.id || null}
+              onClose={() => setJournalOpen(false)}
+            />
+          ) : reportingLogId ? (
             <ReportingView
               logId={reportingLogId}
               logName={selectedLog?.name || 'Trade Log'}
@@ -4008,11 +4013,6 @@ function App() {
       {/* Settings Modal */}
       {settingsOpen && (
         <SettingsModal onClose={() => setSettingsOpen(false)} />
-      )}
-
-      {/* Journal Modal */}
-      {journalOpen && (
-        <JournalModal isOpen={journalOpen} onClose={() => setJournalOpen(false)} selectedLogId={selectedLog?.id || null} />
       )}
 
       {/* Strategy Popup Modal */}
