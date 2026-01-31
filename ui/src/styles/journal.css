@@ -393,3 +393,131 @@
   font-size: 16px;
   padding: 0;
 }
+
+/* Trade Linking Section */
+.entry-trades-section {
+  padding-top: 12px;
+  border-top: 1px solid #222;
+}
+
+.entry-trades-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.linked-trades,
+.available-trades {
+  margin-bottom: 12px;
+}
+
+.trades-label {
+  display: block;
+  font-size: 10px;
+  color: #666;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.trade-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trade-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.trade-item.linked {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.trade-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.trade-symbol {
+  font-size: 11px;
+  font-weight: 600;
+  color: #e5e5e5;
+  min-width: 50px;
+}
+
+.trade-details {
+  font-size: 10px;
+  color: #888;
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trade-pnl {
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 60px;
+  text-align: right;
+}
+
+.trade-pnl.profit {
+  color: #22c55e;
+}
+
+.trade-pnl.loss {
+  color: #ef4444;
+}
+
+.link-btn,
+.unlink-btn {
+  background: none;
+  border: 1px solid #444;
+  color: #888;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 8px;
+  transition: all 0.1s;
+}
+
+.link-btn:hover:not(:disabled) {
+  background: #22c55e;
+  border-color: #22c55e;
+  color: #fff;
+}
+
+.unlink-btn:hover {
+  background: #ef4444;
+  border-color: #ef4444;
+  color: #fff;
+}
+
+.link-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.no-trades {
+  font-size: 11px;
+  color: #555;
+  padding: 8px 0;
+}

@@ -4018,7 +4018,7 @@ function App() {
 
       {/* Journal Modal */}
       {journalOpen && (
-        <JournalModal isOpen={journalOpen} onClose={() => setJournalOpen(false)} />
+        <JournalModal isOpen={journalOpen} onClose={() => setJournalOpen(false)} selectedLogId={selectedLog?.id || null} />
       )}
 
       {/* Strategy Popup Modal */}

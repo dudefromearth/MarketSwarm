@@ -8,9 +8,10 @@ import '../styles/journal.css';
 interface JournalModalProps {
   isOpen: boolean;
   onClose: () => void;
+  selectedLogId: string | null;
 }
 
-export default function JournalModal({ isOpen, onClose }: JournalModalProps) {
+export default function JournalModal({ isOpen, onClose, selectedLogId }: JournalModalProps) {
   // Initialize to current month
   const [viewMonth, setViewMonth] = useState(() => {
     const now = new Date();
@@ -27,14 +28,17 @@ export default function JournalModal({ isOpen, onClose }: JournalModalProps) {
     }
   }, [isOpen, viewMonth.year, viewMonth.month]);
 
-  // Fetch entry when date is selected
+  // Fetch entry and trades when date is selected
   useEffect(() => {
     if (selectedDate) {
       journal.fetchEntry(selectedDate);
+      if (selectedLogId) {
+        journal.fetchTradesForDate(selectedLogId, selectedDate);
+      }
     } else {
       journal.clearEntry();
     }
-  }, [selectedDate]);
+  }, [selectedDate, selectedLogId]);
 
   // Keyboard: Escape to close
   useEffect(() => {
@@ -67,6 +71,14 @@ export default function JournalModal({ isOpen, onClose }: JournalModalProps) {
     return success;
   }, [selectedDate, viewMonth.year, viewMonth.month, journal]);
 
+  const handleLinkTrade = useCallback(async (entryId: string, tradeId: string): Promise<boolean> => {
+    return journal.linkTrade(entryId, tradeId);
+  }, [journal]);
+
+  const handleUnlinkTrade = useCallback(async (refId: string): Promise<boolean> => {
+    return journal.unlinkTrade(refId);
+  }, [journal]);
+
   if (!isOpen) return null;
 
   return (
@@ -97,6 +109,10 @@ export default function JournalModal({ isOpen, onClose }: JournalModalProps) {
                 entry={journal.currentEntry}
                 loading={journal.loadingEntry}
                 onSave={handleSaveEntry}
+                tradesForDate={journal.tradesForDate}
+                loadingTrades={journal.loadingTrades}
+                onLinkTrade={handleLinkTrade}
+                onUnlinkTrade={handleUnlinkTrade}
               />
             ) : (
               <div className="journal-empty">
