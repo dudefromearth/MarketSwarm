@@ -3204,10 +3204,45 @@ function App() {
                     );
                   })}
 
-                  {/* AI Theta/Gamma zone visualization - only shows when profit threshold met */}
-                  {riskGraphAlerts.filter(a => a.enabled && a.type === 'ai_theta_gamma' && a.isZoneActive).map((alert) => {
-                    const zoneLow = alert.zoneLow || 0;
-                    const zoneHigh = alert.zoneHigh || 0;
+                  {/* AI Theta/Gamma zone visualization - DYNAMIC calculation on every render */}
+                  {riskGraphAlerts.filter(a => a.enabled && a.type === 'ai_theta_gamma').map((alert) => {
+                    // Find the linked strategy
+                    const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
+                    const effectiveSpot = simulatedSpot || currentSpot;
+                    if (!strategy || !effectiveSpot) return null;
+
+                    // Calculate ALL values dynamically based on current simulation state
+                    const entryDebit = alert.entryDebit || strategy.debit || 1;
+                    const vix = spot?.['I:VIX']?.value || 20;
+                    const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
+                    const volatility = Math.max(0.05, adjustedVix) / 100;
+                    const timeOffset = timeMachineEnabled ? simTimeOffsetHours : 0;
+
+                    // Calculate theoretical P&L at current simulated conditions
+                    const theoreticalPnL = calculateStrategyTheoreticalPnL(strategy, effectiveSpot, volatility, 0.05, timeOffset);
+                    const currentProfit = theoreticalPnL / 100;
+                    const profitPercent = entryDebit > 0 ? currentProfit / entryDebit : 0;
+                    const minProfitThreshold = alert.minProfitThreshold || 0.5;
+
+                    // Only show zone if profit threshold is met
+                    if (profitPercent < minProfitThreshold) return null;
+
+                    // Calculate zone width based on EFFECTIVE time remaining (dynamic!)
+                    const nominalDTE = strategy.dte || 0;
+                    const effectiveDTE = Math.max(0, nominalDTE - (timeOffset / 24));
+
+                    // Time factor: zone shrinks as we approach expiration
+                    const timeFactor = Math.min(1.5, Math.max(0.3, Math.sqrt(effectiveDTE) * 0.75));
+                    const gammaFactor = strategy.strategy === 'butterfly' ? 0.6 : strategy.strategy === 'vertical' ? 0.8 : 1.0;
+                    const profitBuffer = effectiveDTE > 1 ? (1 + Math.max(0, profitPercent) * 0.3) : 1;
+
+                    const baseWidth = 20 * timeFactor * gammaFactor * profitBuffer;
+                    const zoneHalfWidth = Math.max(3, baseWidth);
+
+                    // Zone bounds centered on current effective spot
+                    const zoneLow = effectiveSpot - zoneHalfWidth;
+                    const zoneHigh = effectiveSpot + zoneHalfWidth;
+
                     const xLow = 50 + ((zoneLow - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
                     const xHigh = 50 + ((zoneHigh - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
 
@@ -3218,9 +3253,7 @@ function App() {
 
                     if (width <= 0) return null;
 
-                    const profitPercent = alert.highWaterMarkProfit && alert.entryDebit
-                      ? (alert.highWaterMarkProfit / alert.entryDebit) * 100
-                      : 0;
+                    const displayProfit = profitPercent * 100;
 
                     return (
                       <g key={alert.id} className="ai-theta-gamma-zone">
@@ -3255,9 +3288,9 @@ function App() {
                         {/* Zone label at top */}
                         <g transform={`translate(${(clampedXLow + clampedXHigh) / 2}, 15)`}>
                           <rect
-                            x="-32"
+                            x="-40"
                             y="-10"
-                            width="64"
+                            width="80"
                             height="14"
                             fill={alert.color || ALERT_COLORS[4]}
                             rx="2"
@@ -3271,7 +3304,7 @@ function App() {
                             fontSize="8"
                             fontWeight="bold"
                           >
-                            {`AI +${profitPercent.toFixed(0)}%`}
+                            {`AI ${displayProfit >= 0 ? '+' : ''}${displayProfit.toFixed(0)}% | ±${zoneHalfWidth.toFixed(0)}`}
                           </text>
                         </g>
                       </g>
