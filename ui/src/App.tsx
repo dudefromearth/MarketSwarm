@@ -3204,40 +3204,63 @@ function App() {
                     );
                   })}
 
-                  {/* AI Theta/Gamma zone visualization - DYNAMIC calculation on every render */}
+                  {/* AI Theta/Gamma zone visualization - DYNAMIC 3D calculation */}
                   {riskGraphAlerts.filter(a => a.enabled && a.type === 'ai_theta_gamma').map((alert) => {
                     // Find the linked strategy
                     const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
                     const effectiveSpot = simulatedSpot || currentSpot;
                     if (!strategy || !effectiveSpot) return null;
 
-                    // Calculate ALL values dynamically based on current simulation state
+                    // === DIMENSION 1: Current simulation state ===
                     const entryDebit = alert.entryDebit || strategy.debit || 1;
                     const vix = spot?.['I:VIX']?.value || 20;
                     const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
                     const volatility = Math.max(0.05, adjustedVix) / 100;
                     const timeOffset = timeMachineEnabled ? simTimeOffsetHours : 0;
 
-                    // Calculate theoretical P&L at current simulated conditions
-                    const theoreticalPnL = calculateStrategyTheoreticalPnL(strategy, effectiveSpot, volatility, 0.05, timeOffset);
-                    const currentProfit = theoreticalPnL / 100;
+                    // === DIMENSION 2: P&L at current spot (and neighbors for gamma) ===
+                    const pnlAtSpot = calculateStrategyTheoreticalPnL(strategy, effectiveSpot, volatility, 0.05, timeOffset);
+                    const pnlAtSpotMinus = calculateStrategyTheoreticalPnL(strategy, effectiveSpot - 1, volatility, 0.05, timeOffset);
+                    const pnlAtSpotPlus = calculateStrategyTheoreticalPnL(strategy, effectiveSpot + 1, volatility, 0.05, timeOffset);
+
+                    // Calculate numerical gamma (second derivative of P&L w.r.t. price)
+                    // Gamma = (P&L(S+1) - 2*P&L(S) + P&L(S-1)) / 1^2
+                    const numericalGamma = Math.abs(pnlAtSpotPlus - 2 * pnlAtSpot + pnlAtSpotMinus);
+
+                    const currentProfit = pnlAtSpot / 100;
                     const profitPercent = entryDebit > 0 ? currentProfit / entryDebit : 0;
                     const minProfitThreshold = alert.minProfitThreshold || 0.5;
 
                     // Only show zone if profit threshold is met
                     if (profitPercent < minProfitThreshold) return null;
 
-                    // Calculate zone width based on EFFECTIVE time remaining (dynamic!)
+                    // === DIMENSION 3: Time to expiration ===
                     const nominalDTE = strategy.dte || 0;
                     const effectiveDTE = Math.max(0, nominalDTE - (timeOffset / 24));
 
-                    // Time factor: zone shrinks as we approach expiration
-                    const timeFactor = Math.min(1.5, Math.max(0.3, Math.sqrt(effectiveDTE) * 0.75));
-                    const gammaFactor = strategy.strategy === 'butterfly' ? 0.6 : strategy.strategy === 'vertical' ? 0.8 : 1.0;
-                    const profitBuffer = effectiveDTE > 1 ? (1 + Math.max(0, profitPercent) * 0.3) : 1;
+                    // === ZONE WIDTH CALCULATION: All 3 dimensions ===
 
-                    const baseWidth = 20 * timeFactor * gammaFactor * profitBuffer;
-                    const zoneHalfWidth = Math.max(3, baseWidth);
+                    // 1. TIME FACTOR: Less time = narrower zone
+                    // At 0 DTE: 0.25, At 1 DTE: 0.5, At 3 DTE: 0.85, At 7 DTE: 1.3
+                    const timeFactor = Math.min(1.5, Math.max(0.25, Math.sqrt(effectiveDTE) * 0.5));
+
+                    // 2. GAMMA FACTOR: Higher gamma = narrower zone
+                    // Gamma in cents per point^2, normalize to reasonable scale
+                    // High gamma (~50+) = very sensitive = narrow zone
+                    // Low gamma (~5) = less sensitive = wider zone
+                    const normalizedGamma = Math.min(1, numericalGamma / 50); // 0 to 1 scale
+                    const gammaZoneFactor = Math.max(0.3, 1 - normalizedGamma * 0.7);
+
+                    // 3. VOLATILITY FACTOR: Higher vol = expect bigger moves = narrower zone
+                    // VIX 15 = wide zone, VIX 25 = moderate, VIX 35+ = tight zone
+                    const volFactor = Math.max(0.5, Math.min(1.2, 1.5 - (adjustedVix / 30)));
+
+                    // 4. PROFIT BUFFER: More profit gives slightly more room (but diminishing)
+                    const profitBuffer = 1 + Math.min(0.3, Math.max(0, profitPercent) * 0.2);
+
+                    // Combine all factors: base width scaled by each dimension
+                    const baseWidth = 25; // Base zone half-width in points
+                    const zoneHalfWidth = Math.max(2, baseWidth * timeFactor * gammaZoneFactor * volFactor * profitBuffer);
 
                     // Zone bounds centered on current effective spot
                     const zoneLow = effectiveSpot - zoneHalfWidth;
