@@ -21,6 +21,7 @@ import ReportingView from './components/ReportingView';
 import SettingsModal from './components/SettingsModal';
 import JournalView from './components/JournalView';
 import PlaybookView from './components/PlaybookView';
+import AlertCreationModal from './components/AlertCreationModal';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -150,17 +151,6 @@ interface RiskGraphAlert {
   zoneLow?: number;             // Current safe zone lower bound (price)
   zoneHigh?: number;            // Current safe zone upper bound (price)
   isZoneActive?: boolean;       // Whether minimum profit threshold was met
-}
-
-// Draft alert for entry mode
-interface AlertDraft {
-  strategyId: string;
-  type: AlertType;
-  condition: 'above' | 'below' | 'at';
-  targetValue: string;
-  color: string;
-  behavior: AlertBehavior;
-  minProfitThreshold?: string;  // For AI Theta/Gamma
 }
 
 // Visual price alert line on risk graph
@@ -538,8 +528,7 @@ function App() {
       return [];
     }
   });
-  const [showAlertForm, setShowAlertForm] = useState<string | null>(null); // strategyId or null
-  const [alertDraft, setAlertDraft] = useState<AlertDraft | null>(null); // New alert being created
+  const [alertModalStrategy, setAlertModalStrategy] = useState<string | null>(null); // strategyId for modal
   const [editingAlertId, setEditingAlertId] = useState<string | null>(null); // Alert being edited
   const [tosCopied, setTosCopied] = useState(false);
   const [crosshairPos, setCrosshairPos] = useState<{ x: number; price: number; pnl: number } | null>(null);
@@ -792,8 +781,7 @@ function App() {
     };
 
     setRiskGraphAlerts(prev => [...prev, newAlert]);
-    setAlertDraft(null);
-    setShowAlertForm(null);
+    setAlertModalStrategy(null);
   };
 
   const updateAlert = (alertId: string, updates: Partial<Pick<RiskGraphAlert, 'type' | 'condition' | 'targetValue' | 'color'>>) => {
@@ -805,21 +793,13 @@ function App() {
 
   const startEditingAlert = (alertId: string) => {
     setEditingAlertId(alertId);
-    setAlertDraft(null); // Clear any new draft
+    setAlertModalStrategy(null); // Close modal if open
   };
 
   const startNewAlert = (strategyId: string) => {
     const strategy = riskGraphStrategies.find(s => s.id === strategyId);
     if (!strategy) return;
-
-    setAlertDraft({
-      strategyId,
-      type: 'price',
-      condition: 'below',
-      targetValue: currentSpot?.toFixed(0) || '',
-      color: ALERT_COLORS[0],
-      behavior: 'once_only',
-    });
+    setAlertModalStrategy(strategyId);
     setEditingAlertId(null); // Clear any editing
   };
 
@@ -2918,119 +2898,7 @@ function App() {
                           </div>
                         ))}
 
-                        {/* New Alert Entry Box */}
-                        {alertDraft && (
-                          <div className="alert-item alert-entry-mode">
-                            <div className="alert-edit-form">
-                              <div className="alert-form-header">
-                                New Alert for {riskGraphStrategies.find(s => s.id === alertDraft.strategyId)?.strategy === 'butterfly' ? 'BF' :
-                                  riskGraphStrategies.find(s => s.id === alertDraft.strategyId)?.strategy === 'vertical' ? 'VS' : 'SGL'} {
-                                  riskGraphStrategies.find(s => s.id === alertDraft.strategyId)?.strike}
-                              </div>
-                              <div className="alert-form-row">
-                                <select
-                                  value={alertDraft.type}
-                                  onChange={(e) => setAlertDraft({ ...alertDraft, type: e.target.value as AlertDraft['type'] })}
-                                >
-                                  <option value="price">Spot Price</option>
-                                  <option value="debit">Debit</option>
-                                  <option value="profit_target">Profit Target</option>
-                                  <option value="trailing_stop">Trailing Stop</option>
-                                  <option value="ai_theta_gamma">AI Theta/Gamma</option>
-                                </select>
-                                {alertDraft.type !== 'ai_theta_gamma' && (
-                                  <>
-                                    <select
-                                      value={alertDraft.condition}
-                                      onChange={(e) => setAlertDraft({ ...alertDraft, condition: e.target.value as AlertDraft['condition'] })}
-                                    >
-                                      <option value="above">≥</option>
-                                      <option value="below">≤</option>
-                                      <option value="at">≈</option>
-                                    </select>
-                                    <input
-                                      type="number"
-                                      value={alertDraft.targetValue}
-                                      placeholder={currentSpot?.toFixed(0) || '0'}
-                                      step="0.01"
-                                      className="alert-value-input"
-                                      onChange={(e) => setAlertDraft({ ...alertDraft, targetValue: e.target.value })}
-                                    />
-                                  </>
-                                )}
-                              </div>
-                              {alertDraft.type === 'ai_theta_gamma' && (
-                                <div className="alert-form-row ai-alert-row">
-                                  <span className="color-label">Min profit:</span>
-                                  <input
-                                    type="number"
-                                    value={alertDraft.minProfitThreshold || '50'}
-                                    step="5"
-                                    min="10"
-                                    max="200"
-                                    className="alert-value-input"
-                                    onChange={(e) => setAlertDraft({ ...alertDraft, minProfitThreshold: e.target.value })}
-                                  />
-                                  <span className="color-label">% of debit to activate</span>
-                                </div>
-                              )}
-                              <div className="alert-form-row">
-                                <span className="color-label">Color:</span>
-                                <div className="color-picker-inline">
-                                  {ALERT_COLORS.map(color => (
-                                    <button
-                                      key={color}
-                                      className={`color-dot ${alertDraft.color === color ? 'selected' : ''}`}
-                                      style={{ backgroundColor: color }}
-                                      onClick={() => setAlertDraft({ ...alertDraft, color })}
-                                    />
-                                  ))}
-                                </div>
-                              </div>
-                              <div className="alert-form-row">
-                                <span className="color-label">On trigger:</span>
-                                <select
-                                  value={alertDraft.behavior}
-                                  onChange={(e) => setAlertDraft({ ...alertDraft, behavior: e.target.value as AlertBehavior })}
-                                  className="behavior-select"
-                                >
-                                  <option value="remove_on_hit">Remove after hit</option>
-                                  <option value="once_only">Alert once, keep</option>
-                                  <option value="repeat">Alert every cross</option>
-                                </select>
-                              </div>
-                              <div className="alert-form-actions">
-                                <button
-                                  className="btn-save-alert"
-                                  onClick={() => {
-                                    const value = alertDraft.type === 'ai_theta_gamma' ? 0 : parseFloat(alertDraft.targetValue);
-                                    if (alertDraft.type === 'ai_theta_gamma' || !isNaN(value)) {
-                                      const minProfitThreshold = alertDraft.type === 'ai_theta_gamma'
-                                        ? parseFloat(alertDraft.minProfitThreshold || '50') / 100
-                                        : undefined;
-                                      createAlert(
-                                        alertDraft.strategyId,
-                                        alertDraft.type,
-                                        alertDraft.condition,
-                                        value,
-                                        alertDraft.color,
-                                        alertDraft.behavior,
-                                        minProfitThreshold
-                                      );
-                                    }
-                                  }}
-                                >
-                                  Save
-                                </button>
-                                <button className="btn-cancel-alert" onClick={() => setAlertDraft(null)}>
-                                  Cancel
-                                </button>
-                              </div>
-                            </div>
-                          </div>
-                        )}
-
-                        {riskGraphAlerts.length === 0 && priceAlertLines.length === 0 && !alertDraft && (
+                        {riskGraphAlerts.length === 0 && priceAlertLines.length === 0 && (
                           <div className="alerts-empty">No alerts set<br/><span className="hint">Click Alert on a strategy or right-click chart</span></div>
                         )}
                       </div>
@@ -4148,6 +4016,33 @@ function App() {
         prefillData={tradeEntryPrefill}
         editTrade={editingTrade}
         currentSpot={currentSpot}
+      />
+
+      {/* Alert Creation Modal */}
+      <AlertCreationModal
+        isOpen={alertModalStrategy !== null}
+        onClose={() => setAlertModalStrategy(null)}
+        onSave={(alertData) => {
+          if (alertModalStrategy) {
+            createAlert(
+              alertModalStrategy,
+              alertData.type,
+              alertData.condition,
+              alertData.targetValue,
+              alertData.color,
+              alertData.behavior,
+              alertData.minProfitThreshold
+            );
+          }
+        }}
+        strategyLabel={(() => {
+          const strat = riskGraphStrategies.find(s => s.id === alertModalStrategy);
+          if (!strat) return '';
+          const typeLabel = strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL';
+          return `${typeLabel} ${strat.strike}`;
+        })()}
+        currentSpot={currentSpot}
+        currentDebit={riskGraphStrategies.find(s => s.id === alertModalStrategy)?.debit || null}
       />
     </div>
   );

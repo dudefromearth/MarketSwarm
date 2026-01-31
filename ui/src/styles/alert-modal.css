@@ -1,0 +1,253 @@
+/* Alert Creation Modal */
+.alert-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.alert-modal {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  width: 480px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+.alert-modal-header {
+  display: flex;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #333;
+  background: #111;
+}
+
+.alert-modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.alert-modal-strategy {
+  margin-left: 12px;
+  padding: 2px 8px;
+  background: #3b82f6;
+  color: white;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.alert-modal-close {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.alert-modal-close:hover {
+  color: #e5e5e5;
+}
+
+.alert-modal-body {
+  padding: 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Alert Type Selection */
+.alert-type-section {
+  margin-bottom: 24px;
+}
+
+.alert-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.alert-type-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.alert-type-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 12px 16px;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s ease;
+}
+
+.alert-type-btn:hover {
+  border-color: #444;
+  background: #1a1a1a;
+}
+
+.alert-type-btn.selected {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.alert-type-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e5e5;
+  margin-bottom: 2px;
+}
+
+.alert-type-btn.selected .alert-type-name {
+  color: #3b82f6;
+}
+
+.alert-type-desc {
+  font-size: 11px;
+  color: #666;
+}
+
+/* Settings Sections */
+.alert-settings-section {
+  margin-bottom: 20px;
+}
+
+.alert-threshold-row,
+.alert-condition-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.alert-input {
+  width: 80px;
+  padding: 8px 12px;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e5e5e5;
+  font-size: 14px;
+}
+
+.alert-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.alert-input-suffix {
+  font-size: 12px;
+  color: #888;
+}
+
+.alert-select {
+  padding: 8px 12px;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e5e5e5;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.alert-select:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.alert-select.full-width {
+  width: 100%;
+}
+
+.alert-help {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: #666;
+}
+
+/* Color Selection */
+.alert-color-grid {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.alert-color-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.alert-color-btn:hover {
+  transform: scale(1.1);
+}
+
+.alert-color-btn.selected {
+  border-color: white;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.3);
+}
+
+/* Footer */
+.alert-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 20px;
+  border-top: 1px solid #333;
+  background: #111;
+}
+
+.alert-btn-cancel {
+  padding: 10px 20px;
+  background: none;
+  border: 1px solid #444;
+  border-radius: 6px;
+  color: #888;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.alert-btn-cancel:hover {
+  border-color: #666;
+  color: #e5e5e5;
+}
+
+.alert-btn-save {
+  padding: 10px 24px;
+  background: #3b82f6;
+  border: none;
+  border-radius: 6px;
+  color: white;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.alert-btn-save:hover {
+  background: #2563eb;
+}
