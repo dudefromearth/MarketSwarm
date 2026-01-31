@@ -72,19 +72,24 @@ const JOURNAL_TEMPLATES: JournalTemplate[] = [
     content: `## End of Day Reflection
 
 ### Market Context
--
+How did the market behave today? Any notable moves?
+
 
 ### What I Did Well
--
+What trades or decisions am I proud of?
+
 
 ### What I Could Improve
--
+Where did I deviate from my plan or make mistakes?
+
 
 ### Key Observations
--
+Patterns, correlations, or insights worth noting.
+
 
 ### Tomorrow's Focus
--
+What will I prioritize tomorrow?
+
 `,
   },
   {
@@ -117,23 +122,23 @@ What would I do differently? What worked?
     content: `## Weekly Retrospective
 
 ### Performance Summary
-- Total trades:
-- Win rate:
-- P&L:
+Total trades, win rate, and P&L for the week.
+
 
 ### Best Trade
-What made it work?
+What setup worked? Why did it succeed?
 
 
 ### Worst Trade
-What went wrong?
+What went wrong? Was it process or luck?
 
 
 ### Patterns Noticed
--
+Recurring themes, market behaviors, or personal tendencies.
+
 
 ### Adjustments for Next Week
--
+What will I do differently?
 
 `,
   },
@@ -144,26 +149,27 @@ What went wrong?
     content: `## Monthly Retrospective
 
 ### Month Overview
-- Trading days:
-- Total trades:
-- Net P&L:
+Trading days, total trades, and net P&L.
+
 
 ### Goals Review
 What did I set out to accomplish? Did I achieve it?
 
 
 ### Biggest Wins
--
+Best trades or improvements this month.
+
 
 ### Biggest Lessons
--
+Key takeaways that will shape future trading.
+
 
 ### Process Changes
 What am I doing differently now vs. start of month?
 
 
 ### Next Month Focus
--
+Primary goals and areas of improvement.
 
 `,
   },
@@ -205,22 +211,19 @@ What am I doing differently now vs. start of month?
     content: `## Performance Analysis
 
 ### By Strategy
-| Strategy | Trades | Win Rate | P&L |
-|----------|--------|----------|-----|
-|          |        |          |     |
+Which strategies performed best/worst?
+
 
 ### By Time of Day
-- Morning session:
-- Afternoon session:
-- Closing:
+When did I trade best? Morning, afternoon, or close?
+
 
 ### By Market Condition
-- Trending days:
-- Range days:
-- High volatility:
+How did I perform in trending vs range-bound markets?
+
 
 ### Key Insights
--
+What patterns emerged from this analysis?
 
 `,
   },
@@ -231,23 +234,23 @@ What am I doing differently now vs. start of month?
     content: `## Lessons Learned
 
 ### What Worked
-1.
-2.
-3.
+Strategies, setups, or behaviors that led to good outcomes.
+
 
 ### What Didn't Work
-1.
-2.
-3.
+Mistakes, bad habits, or losing patterns to avoid.
+
 
 ### Rules to Add/Modify
--
+New rules or adjustments to existing rules.
+
 
 ### Habits to Build
--
+Behaviors to reinforce and practice.
+
 
 ### Habits to Break
--
+Patterns to eliminate from my trading.
 
 `,
   },
