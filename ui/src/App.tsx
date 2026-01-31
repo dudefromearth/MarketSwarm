@@ -3499,19 +3499,19 @@ function App() {
                           >
                             {timeMachineEnabled ? 'ON' : 'OFF'}
                           </button>
+                          {timeMachineEnabled && (
+                            <button
+                              className="btn-reset"
+                              onClick={() => {
+                                setSimTimeOffsetHours(0);
+                                setSimVolatilityOffset(0);
+                                setSimSpotOffset(0);
+                              }}
+                            >
+                              Reset
+                            </button>
+                          )}
                         </div>
-                        {timeMachineEnabled && (
-                          <button
-                            className="btn-reset"
-                            onClick={() => {
-                              setSimTimeOffsetHours(0);
-                              setSimVolatilityOffset(0);
-                              setSimSpotOffset(0);
-                            }}
-                          >
-                            Reset
-                          </button>
-                        )}
                       </div>
                       <div className={`time-machine-controls ${!timeMachineEnabled ? 'disabled' : ''}`}>
                         {(() => {
@@ -3604,7 +3604,7 @@ function App() {
                                   </div>
                                 </div>
                               </div>
-                              {/* Right column: VIX (vertical slider) */}
+                              {/* Right column: VIX (vertical slider) - absolute range 5-30 */}
                               <div className="vertical-control vol-control">
                                 <div className="vol-label">
                                   <span className="control-icon">📊</span>
@@ -3612,21 +3612,22 @@ function App() {
                                 </div>
                                 <div className="vol-value">{currentVix.toFixed(1)}</div>
                                 <div className="vertical-slider-container">
-                                  <span className="vol-tick">+30</span>
+                                  <span className="vol-tick">30</span>
                                   <input
                                     type="range"
-                                    min="-15"
+                                    min="5"
                                     max="30"
                                     step="0.5"
-                                    value={simVolatilityOffset}
-                                    onChange={(e) => setSimVolatilityOffset(parseFloat(e.target.value))}
+                                    value={currentVix}
+                                    onChange={(e) => {
+                                      const newVix = parseFloat(e.target.value);
+                                      const realVix = spot?.['I:VIX']?.value || 20;
+                                      setSimVolatilityOffset(newVix - realVix);
+                                    }}
                                     className="vol-slider-vertical"
                                     disabled={!timeMachineEnabled}
                                   />
-                                  <span className="vol-tick">-15</span>
-                                </div>
-                                <div className="vol-offset">
-                                  {simVolatilityOffset >= 0 ? '+' : ''}{simVolatilityOffset.toFixed(1)}
+                                  <span className="vol-tick">5</span>
                                 </div>
                               </div>
                             </>

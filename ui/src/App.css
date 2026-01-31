@@ -2394,7 +2394,11 @@ body {
 .time-machine-switch {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
+}
+
+.time-machine-switch .btn-reset {
+  margin-left: 8px;
 }
 
 .switch-label {
@@ -2458,7 +2462,7 @@ body {
   display: flex;
   gap: 20px;
   transition: opacity 0.2s;
-  min-height: 100px;
+  min-height: 110px;
 }
 
 .time-machine-controls.disabled {
@@ -2583,15 +2587,15 @@ body {
 .time-machine-controls .vol-slider-vertical {
   writing-mode: vertical-lr;
   direction: rtl;
-  width: 80px;
+  width: 90px;
   height: 8px;
   -webkit-appearance: none;
   appearance: none;
-  background: linear-gradient(to top, #22c55e 0%, #333 33%, #333 66%, #ef4444 100%);
+  background: linear-gradient(to top, #22c55e 0%, #eab308 50%, #ef4444 100%);
   border-radius: 4px;
   outline: none;
   cursor: pointer;
-  margin: 4px 0;
+  margin: 6px 0;
 }
 
 .time-machine-controls .vol-slider-vertical::-webkit-slider-thumb {
