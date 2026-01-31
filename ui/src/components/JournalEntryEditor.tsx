@@ -413,102 +413,85 @@ export default function JournalEntryEditor({
         </div>
       </div>
 
-      {/* Trades Section */}
+      {/* Trades Section - Always show trades for the day */}
       <div className="entry-trades-section">
-        <h4>Trades on This Day</h4>
+        <div className="trades-section-header">
+          <h4>Trades on This Day</h4>
+          {!loadingTrades && tradesForDate.length > 0 && (
+            <span className="trades-summary">
+              {tradesForDate.length} trade{tradesForDate.length !== 1 ? 's' : ''}
+              {' '}({tradesForDate.filter(t => t.status === 'open').length} open, {tradesForDate.filter(t => t.status === 'closed').length} closed)
+            </span>
+          )}
+        </div>
 
-        {/* Linked Trades - grouped by log */}
-        {entry && Object.keys(linkedByLog).length > 0 && (
-          <div className="linked-trades">
-            <span className="trades-label">Linked</span>
-            {Object.entries(linkedByLog).map(([logName, items]) => (
-              <div key={logName} className="trades-log-group">
-                {Object.keys(linkedByLog).length > 1 && (
-                  <span className="log-group-name">{logName}</span>
-                )}
-                <ul className="trade-list">
-                  {items.map(({ ref, trade }) => (
-                    <li key={ref.id} className="trade-item linked">
-                      <div className="trade-info">
-                        <span className="trade-symbol">{trade?.symbol || ref.trade_id.slice(0, 8)}</span>
-                        {trade && (
-                          <>
-                            <span className="trade-details">
-                              {trade.side} {trade.strategy} @ {formatTime(trade.entry_time)}
-                            </span>
-                            <span className={`trade-pnl ${(trade.pnl_dollars ?? 0) >= 0 ? 'profit' : 'loss'}`}>
-                              {formatPnl(trade.pnl_dollars)}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                      <button
-                        className="unlink-btn"
-                        onClick={() => handleUnlinkTrade(ref.id)}
-                        title="Unlink trade"
-                      >
-                        &times;
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Available Trades to Link - grouped by log */}
-        {entry && Object.keys(availableByLog).length > 0 && (
-          <div className="available-trades">
-            <span className="trades-label">Available to Link</span>
-            {Object.entries(availableByLog).map(([logName, trades]) => (
-              <div key={logName} className="trades-log-group">
-                {Object.keys(availableByLog).length > 1 && (
-                  <span className="log-group-name">{logName}</span>
-                )}
-                <ul className="trade-list">
-                  {trades.map(trade => (
-                    <li key={trade.id} className="trade-item available">
-                      <div className="trade-info">
-                        <span className="trade-symbol">{trade.symbol}</span>
-                        <span className="trade-details">
-                          {trade.side} {trade.strategy} @ {formatTime(trade.entry_time)}
-                          <span className={`trade-status ${trade.status}`}>
-                            {trade.status === 'open' ? ' (open)' : ''}
-                          </span>
-                        </span>
-                        <span className={`trade-pnl ${trade.status === 'open' ? 'open' : (trade.pnl_dollars ?? 0) >= 0 ? 'profit' : 'loss'}`}>
-                          {trade.status === 'open' ? 'OPEN' : formatPnl(trade.pnl_dollars)}
-                        </span>
-                      </div>
-                      <button
-                        className="link-btn"
-                        onClick={() => handleLinkTrade(trade.id)}
-                        disabled={linkingTradeId === trade.id}
-                        title="Link trade"
-                      >
-                        {linkingTradeId === trade.id ? '...' : '+'}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* No trades message */}
-        {!loadingTrades && tradesForDate.length === 0 && (
+        {loadingTrades ? (
+          <div className="trades-loading">Loading trades from all logs...</div>
+        ) : tradesForDate.length === 0 ? (
           <div className="no-trades">No trades existed on this day</div>
-        )}
+        ) : (
+          <>
+            {/* Show all trades grouped by log */}
+            {Object.entries(tradesByLog).map(([logName, trades]) => (
+              <div key={logName} className="trades-log-group">
+                <span className="log-group-name">{logName}</span>
+                <ul className="trade-list">
+                  {trades.map(trade => {
+                    const isLinked = linkedTradeIds.has(trade.id);
+                    const linkedRef = entry?.trade_refs?.find(r => r.trade_id === trade.id);
 
-        {/* Must save first message */}
-        {!entry && tradesForDate.length > 0 && (
-          <div className="no-trades">Save entry first to link trades</div>
-        )}
+                    return (
+                      <li key={trade.id} className={`trade-item ${isLinked ? 'linked' : 'available'}`}>
+                        <div className="trade-info">
+                          <span className="trade-symbol">{trade.symbol}</span>
+                          <span className="trade-dte-badge">
+                            {trade.dte !== undefined ? `${trade.dte}DTE` : ''}
+                          </span>
+                          <span className="trade-details">
+                            {trade.side} {trade.strategy} @ {formatTime(trade.entry_time)}
+                          </span>
+                          <span className={`trade-pnl ${trade.status === 'open' ? 'open' : (trade.pnl_dollars ?? 0) >= 0 ? 'profit' : 'loss'}`}>
+                            {trade.status === 'open' ? 'OPEN' : formatPnl(trade.pnl_dollars)}
+                          </span>
+                        </div>
+                        {entry ? (
+                          isLinked && linkedRef ? (
+                            <button
+                              className="unlink-btn"
+                              onClick={() => handleUnlinkTrade(linkedRef.id)}
+                              title="Unlink from entry"
+                            >
+                              &times;
+                            </button>
+                          ) : (
+                            <button
+                              className="link-btn"
+                              onClick={() => handleLinkTrade(trade.id)}
+                              disabled={linkingTradeId === trade.id}
+                              title="Link to entry"
+                            >
+                              {linkingTradeId === trade.id ? '...' : '+'}
+                            </button>
+                          )
+                        ) : (
+                          <span className="link-hint" title="Save entry to link trades">
 
-        {loadingTrades && (
-          <div className="no-trades">Loading trades from all logs...</div>
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            ))}
+
+            {/* Hint to save entry if no entry exists */}
+            {!entry && (
+              <div className="trades-link-hint">
+                Save your journal entry to link these trades
+              </div>
+            )}
+          </>
         )}
       </div>
 

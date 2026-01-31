@@ -835,6 +835,60 @@
   font-weight: 500;
 }
 
+/* Trades section header */
+.trades-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.trades-section-header h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.trades-summary {
+  font-size: 10px;
+  color: #666;
+}
+
+.trades-loading {
+  font-size: 11px;
+  color: #666;
+  padding: 12px 0;
+  text-align: center;
+}
+
+.trade-dte-badge {
+  font-size: 9px;
+  font-weight: 600;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.15);
+  padding: 1px 4px;
+  border-radius: 2px;
+  margin-left: 4px;
+}
+
+.link-hint {
+  width: 24px;
+  display: inline-block;
+}
+
+.trades-link-hint {
+  font-size: 10px;
+  color: #666;
+  text-align: center;
+  padding: 8px;
+  margin-top: 8px;
+  background: #1a1a1a;
+  border-radius: 4px;
+  border: 1px dashed #333;
+}
+
 /* Journal Tabs */
 .journal-tabs {
   display: flex;

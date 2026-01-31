@@ -11,6 +11,7 @@ export interface JournalTrade {
   symbol: string;
   strategy: string;
   side: string;
+  dte?: number;
   quantity: number;
   entry_time: string;
   exit_time: string | null;
