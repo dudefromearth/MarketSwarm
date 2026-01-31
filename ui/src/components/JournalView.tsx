@@ -196,8 +196,8 @@ export default function JournalView({ selectedLogId, onClose }: JournalViewProps
 
       <div className="journal-content">
         {activeTab === 'entries' ? (
-          <>
-            <div className="journal-sidebar">
+          <div className="journal-entries-layout">
+            <div className="journal-calendar-section">
               <JournalCalendar
                 year={viewMonth.year}
                 month={viewMonth.month}
@@ -209,7 +209,7 @@ export default function JournalView({ selectedLogId, onClose }: JournalViewProps
               />
             </div>
 
-            <div className="journal-main">
+            <div className="journal-editor-section">
               {selectedDate ? (
                 <JournalEntryEditor
                   date={selectedDate}
@@ -227,7 +227,7 @@ export default function JournalView({ selectedLogId, onClose }: JournalViewProps
                 </div>
               )}
             </div>
-          </>
+          </div>
         ) : (
           <>
             <div className="journal-sidebar">

@@ -92,7 +92,29 @@
   overflow: hidden;
 }
 
-/* Sidebar - Calendar */
+/* Entries Layout - Calendar on top, Editor below */
+.journal-entries-layout {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.journal-calendar-section {
+  padding: 16px;
+  background: #0d0d0d;
+  border-bottom: 1px solid #333;
+}
+
+.journal-editor-section {
+  flex: 1;
+  padding: 16px;
+  overflow-y: auto;
+  background: #111;
+  min-height: 200px;
+}
+
+/* Sidebar - for Retrospectives */
 .journal-sidebar {
   width: 260px;
   min-width: 260px;
@@ -119,11 +141,12 @@
   font-size: 13px;
 }
 
-/* Calendar Component */
+/* Calendar Component - Large format */
 .journal-calendar-container {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  max-width: 700px;
 }
 
 .journal-calendar-container.loading {
@@ -135,11 +158,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
 }
 
 .calendar-title {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   color: #e5e5e5;
   text-align: center;
@@ -150,11 +173,11 @@
   background: none;
   border: 1px solid #333;
   color: #888;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border-radius: 4px;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -170,11 +193,12 @@
   background: #1a1a1a;
   border: 1px solid #333;
   color: #888;
-  padding: 4px 12px;
+  padding: 6px 16px;
   border-radius: 4px;
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
-  width: 100%;
+  width: auto;
+  align-self: flex-start;
 }
 
 .calendar-today-btn:hover {
@@ -186,39 +210,39 @@
 .calendar-weekdays {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 2px;
+  gap: 4px;
 }
 
 .calendar-weekday {
   text-align: center;
-  font-size: 10px;
+  font-size: 12px;
   color: #666;
-  padding: 4px 0;
+  padding: 8px 0;
   font-weight: 600;
 }
 
 .journal-calendar {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 2px;
+  gap: 4px;
 }
 
 .calendar-day {
-  aspect-ratio: 1;
+  min-height: 60px;
   background: #1a1a1a;
-  border: 1px solid transparent;
-  border-radius: 4px;
+  border: 1px solid #2a2a2a;
+  border-radius: 6px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 3px;
+  padding: 6px;
   cursor: pointer;
   transition: all 0.1s;
 }
 
 .calendar-day.empty {
   background: transparent;
+  border-color: transparent;
   cursor: default;
 }
 
@@ -232,25 +256,35 @@
   border-color: #3b82f6;
 }
 
+.calendar-day.today {
+  border-color: #3b82f6;
+}
+
 .calendar-day.today .calendar-day-number {
   color: #3b82f6;
   font-weight: 700;
 }
 
 .calendar-day-number {
-  font-size: 11px;
-  color: #888;
+  font-size: 14px;
+  color: #666;
+  margin-bottom: 4px;
 }
 
 .calendar-day.has-entry .calendar-day-number {
   color: #e5e5e5;
+  font-weight: 600;
+}
+
+.calendar-day.has-entry {
+  background: rgba(59, 130, 246, 0.08);
 }
 
 .calendar-dot {
-  width: 5px;
-  height: 5px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  background: #333;
+  background: transparent;
 }
 
 .calendar-dot.filled {
@@ -259,6 +293,15 @@
 
 .calendar-dot.playbook {
   background: #22c55e;
+}
+
+/* Entry indicator text for days with entries */
+.calendar-day.has-entry::after {
+  content: '•••';
+  font-size: 8px;
+  color: #3b82f6;
+  letter-spacing: 1px;
+  margin-top: 2px;
 }
 
 /* Entry Editor */
