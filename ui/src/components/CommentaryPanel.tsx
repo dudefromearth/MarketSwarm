@@ -51,7 +51,7 @@ export default function CommentaryPanel({
   useEffect(() => {
     const connect = () => {
       // Use full URL for SSE endpoint
-      const baseUrl = import.meta.env.VITE_SSE_URL || 'http://localhost:3001';
+      const baseUrl = import.meta.env.VITE_SSE_URL || 'http://localhost:8085';
       const fullUrl = `${baseUrl}${sseUrl}`;
 
       const eventSource = new EventSource(fullUrl);
