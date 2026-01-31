@@ -4241,6 +4241,13 @@ body {
   color: #e2e8f0;
 }
 
+.tools-separator {
+  width: 1px;
+  height: 20px;
+  background: #444;
+  margin: 0 4px;
+}
+
 .trade-log-filters select {
   background: #1a1a1a;
   border: 1px solid #333;

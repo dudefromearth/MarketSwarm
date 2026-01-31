@@ -348,6 +348,17 @@ export default function TradeLogPanel({
           >
             + Add Trade
           </button>
+          <label className="btn-import" title="Import trades">
+            Import
+            <input
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              onChange={handleImport}
+              disabled={!selectedLogId}
+              style={{ display: 'none' }}
+            />
+          </label>
+          <span className="tools-separator" />
           <button
             className="btn-export"
             onClick={() => handleExport('csv')}
@@ -364,16 +375,6 @@ export default function TradeLogPanel({
           >
             Excel
           </button>
-          <label className="btn-import" title="Import trades">
-            Import
-            <input
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              onChange={handleImport}
-              disabled={!selectedLogId}
-              style={{ display: 'none' }}
-            />
-          </label>
         </div>
       </div>
 
