@@ -133,17 +133,33 @@ Bottom line: [Single sentence structural read]"""
         self.logger = logger
         self.config = config
 
-        # Read API keys and assistant ID from config (with env fallback)
-        env = config.get("env", {})
-        self.openai_key = env.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
-        self.xai_key = env.get("XAI_API_KEY") or os.getenv("XAI_API_KEY") or ""
-        self.assistant_id = env.get("CONVEXITY_ASSISTANT_ID") or os.getenv("CONVEXITY_ASSISTANT_ID") or ""
+        # Read API keys and assistant ID from config (check top-level and env dict) with env fallback
+        # SetupBase injects env vars at top level, but vexy_ai.json has them in "env" dict
+        env = config.get("env", {}) or {}
+        self.openai_key = (
+            config.get("OPENAI_API_KEY") or
+            env.get("OPENAI_API_KEY") or
+            os.getenv("OPENAI_API_KEY") or ""
+        )
+        self.xai_key = (
+            config.get("XAI_API_KEY") or
+            env.get("XAI_API_KEY") or
+            os.getenv("XAI_API_KEY") or ""
+        )
+        self.assistant_id = (
+            config.get("CONVEXITY_ASSISTANT_ID") or
+            env.get("CONVEXITY_ASSISTANT_ID") or
+            os.getenv("CONVEXITY_ASSISTANT_ID") or ""
+        )
 
         # Determine which API to use
         if self.assistant_id and self.openai_key:
             # Use OpenAI Assistants API
             self.mode = "assistant"
             self.api_key = self.openai_key
+            # Set chat fallback for methods that need it (snapshot, weekend digest)
+            self.api_base = "https://api.openai.com/v1"
+            self.model = "gpt-4o-mini"
             self._log(f"using OpenAI Assistant: {self.assistant_id[:20]}...")
         elif self.xai_key:
             # Use XAI chat completions
