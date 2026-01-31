@@ -545,6 +545,27 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
     return attachment.mime_type?.startsWith('image/');
   };
 
+  // Preview overlay state
+  const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
+
+  // Open preview overlay
+  const openPreview = useCallback((attachment: Attachment) => {
+    setPreviewAttachment(attachment);
+  }, []);
+
+  // Close preview overlay
+  const closePreview = useCallback(() => {
+    setPreviewAttachment(null);
+  }, []);
+
+  // Insert reference to attachment at cursor
+  const insertAttachmentReference = useCallback((attachment: Attachment) => {
+    if (!editor) return;
+    const refText = `[📎 ${attachment.filename}]`;
+    editor.chain().focus().insertContent(refText).run();
+    setDirty(true);
+  }, [editor]);
+
   const handlePlaybookChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setIsPlaybook(e.target.checked);
     setDirty(true);
@@ -1055,46 +1076,62 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
                   Drag & drop files here, paste screenshots, or use the 📎 button
                 </div>
               ) : (
-                <div className="attachment-tiles">
-                  {attachments.map(att => (
-                    <div key={att.id} className="attachment-tile">
-                      {isImageAttachment(att) ? (
-                        <a
-                          href={getAttachmentUrl(att.id)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="attachment-thumbnail"
-                        >
-                          <img
-                            src={getAttachmentUrl(att.id)}
-                            alt={att.filename}
-                          />
-                        </a>
-                      ) : (
-                        <a
-                          href={getAttachmentUrl(att.id)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="attachment-icon"
-                        >
-                          📄
-                        </a>
-                      )}
-                      <span className="attachment-filename" title={att.filename}>
-                        {att.filename.length > 20
-                          ? att.filename.slice(0, 17) + '...'
-                          : att.filename}
-                      </span>
-                      <button
-                        className="attachment-delete"
-                        onClick={() => deleteAttachment(att.id)}
-                        title="Delete attachment"
+                <>
+                  <div className="attachment-tiles">
+                    {attachments.map(att => (
+                      <div
+                        key={att.id}
+                        className="attachment-tile"
+                        data-attachment-id={att.id}
                       >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                        {isImageAttachment(att) ? (
+                          <div
+                            className="attachment-thumbnail"
+                            onClick={() => openPreview(att)}
+                            title="Click to preview"
+                          >
+                            <img
+                              src={getAttachmentUrl(att.id)}
+                              alt={att.filename}
+                            />
+                          </div>
+                        ) : (
+                          <div
+                            className="attachment-icon"
+                            onClick={() => openPreview(att)}
+                            title="Click to preview"
+                          >
+                            📄
+                          </div>
+                        )}
+                        <span className="attachment-filename" title={att.filename}>
+                          {att.filename.length > 20
+                            ? att.filename.slice(0, 17) + '...'
+                            : att.filename}
+                        </span>
+                        <div className="attachment-actions">
+                          <button
+                            className="attachment-ref-btn"
+                            onClick={() => insertAttachmentReference(att)}
+                            title="Insert reference at cursor"
+                          >
+                            ↗
+                          </button>
+                          <button
+                            className="attachment-delete"
+                            onClick={() => deleteAttachment(att.id)}
+                            title="Delete attachment"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="attachment-snapshot-notice">
+                    Attachments are snapshots and do not update.
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -1109,6 +1146,35 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
           onClose={handleTradeModalClose}
           onTradeUpdated={handleTradeUpdated}
         />
+      )}
+
+      {/* Attachment Preview Overlay */}
+      {previewAttachment && (
+        <div className="attachment-preview-overlay" onClick={closePreview}>
+          <div className="attachment-preview-content" onClick={e => e.stopPropagation()}>
+            <button className="preview-close" onClick={closePreview}>×</button>
+            {isImageAttachment(previewAttachment) ? (
+              <img
+                src={getAttachmentUrl(previewAttachment.id)}
+                alt={previewAttachment.filename}
+                className="preview-image"
+              />
+            ) : (
+              <div className="preview-file">
+                <span className="preview-file-icon">📄</span>
+                <span className="preview-file-name">{previewAttachment.filename}</span>
+                <a
+                  href={getAttachmentUrl(previewAttachment.id)}
+                  download={previewAttachment.filename}
+                  className="preview-download-btn"
+                >
+                  Download
+                </a>
+              </div>
+            )}
+            <div className="preview-filename">{previewAttachment.filename}</div>
+          </div>
+        </div>
       )}
     </div>
   );

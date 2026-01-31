@@ -1604,3 +1604,162 @@
   background: #ef4444;
   color: white;
 }
+
+/* Attachment Actions (ref + delete) */
+.attachment-actions {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.attachment-tile:hover .attachment-actions {
+  opacity: 1;
+}
+
+.attachment-ref-btn {
+  width: 16px;
+  height: 16px;
+  background: #3b82f6;
+  border: none;
+  border-radius: 50%;
+  color: white;
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.attachment-ref-btn:hover {
+  background: #2563eb;
+}
+
+/* Update delete button to work with actions container */
+.attachment-actions .attachment-delete {
+  position: static;
+  opacity: 1;
+}
+
+/* Snapshot Integrity Notice */
+.attachment-snapshot-notice {
+  font-size: 10px;
+  color: #555;
+  text-align: center;
+  margin-top: 8px;
+  font-style: italic;
+}
+
+/* Attachment Tile Highlight (for scroll-to) */
+.attachment-tile.highlight {
+  animation: tile-highlight 1.5s ease-out;
+}
+
+@keyframes tile-highlight {
+  0% { box-shadow: 0 0 0 2px #3b82f6; }
+  100% { box-shadow: none; }
+}
+
+/* Make thumbnail/icon clickable cursor */
+.attachment-thumbnail,
+.attachment-icon {
+  cursor: pointer;
+}
+
+/* Attachment Preview Overlay */
+.attachment-preview-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.attachment-preview-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.preview-close {
+  position: absolute;
+  top: -40px;
+  right: 0;
+  width: 32px;
+  height: 32px;
+  background: #333;
+  border: none;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 20px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.preview-close:hover {
+  background: #444;
+}
+
+.preview-image {
+  max-width: 90vw;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: 4px;
+}
+
+.preview-file {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 40px 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.preview-file-icon {
+  font-size: 64px;
+}
+
+.preview-file-name {
+  font-size: 14px;
+  color: #e5e5e5;
+  max-width: 300px;
+  word-break: break-all;
+  text-align: center;
+}
+
+.preview-download-btn {
+  background: #3b82f6;
+  color: white;
+  padding: 8px 20px;
+  border-radius: 4px;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.preview-download-btn:hover {
+  background: #2563eb;
+}
+
+.preview-filename {
+  margin-top: 12px;
+  font-size: 12px;
+  color: #888;
+  max-width: 400px;
+  text-align: center;
+  word-break: break-all;
+}
