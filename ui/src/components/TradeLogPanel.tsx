@@ -332,11 +332,11 @@ export default function TradeLogPanel({
                     <td className="trade-datetime">{formatDateTime(trade.entry_time)}</td>
                     <td className="trade-symbol">{trade.symbol}</td>
                     <td className="trade-strategy">
-                      <span className={`strategy-badge ${trade.strategy}`}>
-                        {getStrategyLabel(trade.strategy)}
+                      <span className={`strategy-badge ${trade.strategy || ''}`}>
+                        {getStrategyLabel(trade.strategy || '')}
                       </span>
-                      <span className={`side-badge ${trade.side}`}>
-                        {trade.side.charAt(0).toUpperCase()}
+                      <span className={`side-badge ${trade.side || ''}`}>
+                        {trade.side ? trade.side.charAt(0).toUpperCase() : '-'}
                       </span>
                     </td>
                     <td className="trade-qty">{trade.quantity}</td>

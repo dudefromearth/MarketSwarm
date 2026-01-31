@@ -182,10 +182,10 @@ export default function TradeDetailModal({
           <div className="trade-detail-content">
             <div className="trade-detail-summary">
               <div className="trade-detail-title">
-                {trade.symbol} {trade.strategy.charAt(0).toUpperCase() + trade.strategy.slice(1)}{' '}
+                {trade.symbol} {trade.strategy ? trade.strategy.charAt(0).toUpperCase() + trade.strategy.slice(1) : ''}{' '}
                 {trade.strike}
                 {trade.width ? `/${trade.width}` : ''}{' '}
-                {trade.side.toUpperCase()}
+                {trade.side ? trade.side.toUpperCase() : ''}
               </div>
               <div className="trade-detail-meta">
                 <span>@ ${(trade.entry_price / 100).toFixed(2)}</span>
@@ -239,8 +239,8 @@ export default function TradeDetailModal({
               <h4>Events</h4>
               <div className="events-list">
                 {events.map(event => (
-                  <div key={event.id} className={`event-item event-${event.event_type}`}>
-                    <span className="event-type">{event.event_type.toUpperCase()}</span>
+                  <div key={event.id} className={`event-item event-${event.event_type || 'unknown'}`}>
+                    <span className="event-type">{event.event_type ? event.event_type.toUpperCase() : 'EVENT'}</span>
                     <span className="event-time">{formatDateTime(event.event_time)}</span>
                     {event.price && (
                       <span className="event-price">@ {formatPrice(event.price)}</span>
