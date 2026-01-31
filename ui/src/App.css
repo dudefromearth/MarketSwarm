@@ -4176,18 +4176,25 @@ body {
 }
 
 .btn-add-trade {
-  background: #22c55e;
-  border: none;
-  color: #000;
-  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid #22c55e;
+  color: #22c55e;
+  padding: 5px 10px;
   border-radius: 4px;
   cursor: pointer;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
 }
 
-.btn-add-trade:hover {
-  background: #16a34a;
+.btn-add-trade:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.1);
+  color: #4ade80;
+  border-color: #4ade80;
+}
+
+.btn-add-trade:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .trade-log-filters {
@@ -4206,18 +4213,20 @@ body {
 }
 
 .btn-export {
-  background: #1a1a1a;
-  border: 1px solid #444;
+  background: transparent;
+  border: 1px solid #64748b;
   color: #94a3b8;
   padding: 5px 10px;
   border-radius: 4px;
   font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
 }
 
 .btn-export:hover:not(:disabled) {
-  background: #2a2a2a;
+  background: rgba(100, 116, 139, 0.1);
   color: #e2e8f0;
+  border-color: #94a3b8;
 }
 
 .btn-export:disabled {
@@ -4226,19 +4235,21 @@ body {
 }
 
 .btn-import {
-  background: #1a1a1a;
-  border: 1px solid #444;
+  background: transparent;
+  border: 1px solid #64748b;
   color: #94a3b8;
   padding: 5px 10px;
   border-radius: 4px;
   font-size: 11px;
+  font-weight: 500;
   cursor: pointer;
   display: inline-block;
 }
 
 .btn-import:hover {
-  background: #2a2a2a;
+  background: rgba(100, 116, 139, 0.1);
   color: #e2e8f0;
+  border-color: #94a3b8;
 }
 
 .tools-separator {
