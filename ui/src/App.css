@@ -4197,6 +4197,39 @@ body {
   cursor: not-allowed;
 }
 
+.trade-log-status-bar {
+  display: flex;
+  gap: 16px;
+  padding: 8px 12px;
+  background: #0d0d0d;
+  border-bottom: 1px solid #222;
+}
+
+.status-bar-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.status-bar-label {
+  color: #64748b;
+  font-weight: 500;
+}
+
+.status-bar-value {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+.status-bar-value.profit {
+  color: #4ade80;
+}
+
+.status-bar-value.loss {
+  color: #f87171;
+}
+
 .trade-log-filters {
   display: flex;
   justify-content: space-between;

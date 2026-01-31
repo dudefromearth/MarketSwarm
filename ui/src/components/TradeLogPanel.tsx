@@ -64,6 +64,7 @@ interface TradeLogPanelProps {
   onManageLogs: () => void;
   onOpenJournal: () => void;
   selectedLogId: string | null;
+  selectedLog: TradeLog | null;
   onSelectLog: (log: TradeLog) => void;
   refreshTrigger?: number;
 }
@@ -79,6 +80,7 @@ export default function TradeLogPanel({
   onManageLogs,
   onOpenJournal,
   selectedLogId,
+  selectedLog,
   onSelectLog,
   refreshTrigger = 0
 }: TradeLogPanelProps) {
@@ -318,6 +320,29 @@ export default function TradeLogPanel({
           )}
         </div>
       </div>
+
+      {selectedLog && (
+        <div className="trade-log-status-bar">
+          <span className="status-bar-item">
+            <span className="status-bar-label">P&L:</span>
+            <span className={`status-bar-value ${selectedLog.total_pnl >= 0 ? 'profit' : 'loss'}`}>
+              {selectedLog.total_pnl >= 0 ? '+' : ''}${(selectedLog.total_pnl / 100).toFixed(0)}
+            </span>
+          </span>
+          <span className="status-bar-item">
+            <span className="status-bar-label">Trades:</span>
+            <span className="status-bar-value">{selectedLog.total_trades}</span>
+          </span>
+          <span className="status-bar-item">
+            <span className="status-bar-label">Open:</span>
+            <span className="status-bar-value">{selectedLog.open_trades}</span>
+          </span>
+          <span className="status-bar-item">
+            <span className="status-bar-label">Closed:</span>
+            <span className="status-bar-value">{selectedLog.closed_trades}</span>
+          </span>
+        </div>
+      )}
 
       <div className="trade-log-filters">
         <div className="status-tabs">

@@ -3976,6 +3976,7 @@ function App() {
                     onManageLogs={handleManageLogs}
                     onOpenJournal={() => setJournalOpen(true)}
                     selectedLogId={selectedLog?.id || null}
+                    selectedLog={selectedLog}
                     onSelectLog={handleSelectLog}
                     refreshTrigger={tradeRefreshTrigger}
                   />

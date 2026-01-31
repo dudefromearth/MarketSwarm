@@ -65,8 +65,6 @@ export default function LogSelector({
     fetchLogs();
   }, [refreshTrigger, selectedLogId, onSelectLog]);
 
-  const selectedLog = logs.find(l => l.id === selectedLogId);
-
   if (loading) {
     return (
       <div className="log-selector">
@@ -96,17 +94,6 @@ export default function LogSelector({
           ))
         )}
       </select>
-
-      {selectedLog && (
-        <span className="log-summary">
-          <span className={`log-pnl ${selectedLog.total_pnl >= 0 ? 'profit' : 'loss'}`}>
-            {selectedLog.total_pnl >= 0 ? '+' : ''}${(selectedLog.total_pnl / 100).toFixed(0)}
-          </span>
-          <span className="log-trade-count">
-            {selectedLog.total_trades} trades
-          </span>
-        </span>
-      )}
 
       <button
         className="btn-manage-logs"
