@@ -9,43 +9,65 @@ type Props = {
 export default function VixRegimeCard({ vix, ts }: Props) {
   const vixValue = typeof vix === "number" ? vix : 14.67;
 
+  // Time-based detection for special conditions
+  const currentHour = new Date().getHours();
+  const isAfternoon = currentHour >= 14;
+
   const lowerCut = 17;
   const upperCut = 32;
-  const hardMax = 40;
+  const batmanCut = 40;
+  const hardMax = 50;
 
+  // Determine regime and special conditions
   let regime: "ZombieLand" | "Goldilocks" | "Chaos" = "ZombieLand";
-  let nextBoundaryLabel = `${(lowerCut - vixValue).toFixed(2)} pts to ${lowerCut}`;
-  if (vixValue >= lowerCut && vixValue < upperCut) {
-    regime = "Goldilocks";
-    const distToLower = vixValue - lowerCut;
-    const distToUpper = upperCut - vixValue;
-    nextBoundaryLabel =
-      distToLower < distToUpper
-        ? `${distToLower.toFixed(2)} pts above ${lowerCut}`
-        : `${distToUpper.toFixed(2)} pts below ${upperCut}`;
-  } else if (vixValue >= upperCut) {
+  let specialCondition: string | null = null;
+  let specialIcon: string = "";
+
+  if (vixValue >= upperCut) {
     regime = "Chaos";
-    nextBoundaryLabel = `${(vixValue - upperCut).toFixed(2)} pts above ${upperCut}`;
+    if (vixValue >= batmanCut) {
+      specialCondition = "BATMAN";
+      specialIcon = "🦇";
+    }
+  } else if (vixValue >= lowerCut) {
+    regime = "Goldilocks";
+  } else {
+    regime = "ZombieLand";
+    if (vixValue <= 15 && !isAfternoon) {
+      specialCondition = "TIMEWARP";
+      specialIcon = "⏰";
+    } else if (isAfternoon) {
+      specialCondition = "GAMMA SCALP";
+      specialIcon = "⚡";
+    }
   }
 
-  const clampedVix = Math.min(Math.max(vixValue, 0), hardMax);
+  // Distance to boundary
+  let nextBoundaryLabel = "";
+  if (vixValue < lowerCut) {
+    nextBoundaryLabel = `${(lowerCut - vixValue).toFixed(1)} to Goldilocks`;
+  } else if (vixValue < upperCut) {
+    const distToLower = vixValue - lowerCut;
+    const distToUpper = upperCut - vixValue;
+    nextBoundaryLabel = distToLower < distToUpper
+      ? `${distToLower.toFixed(1)} above Zombie`
+      : `${distToUpper.toFixed(1)} to Chaos`;
+  } else {
+    nextBoundaryLabel = `${(vixValue - upperCut).toFixed(1)} into Chaos`;
+  }
+
+  const clampedVix = Math.min(Math.max(vixValue, 10), hardMax);
   let markerTopPct = 0;
 
   if (clampedVix < lowerCut) {
-    const local = clampedVix / lowerCut;
-    const zoneStart = 100 - 33.333;
-    const zoneSpan = 33.333;
-    markerTopPct = zoneStart + (1 - local) * zoneSpan;
+    const local = (clampedVix - 10) / (lowerCut - 10);
+    markerTopPct = 100 - (local * 33.333);
   } else if (clampedVix < upperCut) {
     const local = (clampedVix - lowerCut) / (upperCut - lowerCut);
-    const zoneStart = 100 - 66.666;
-    const zoneSpan = 33.333;
-    markerTopPct = zoneStart + (1 - local) * zoneSpan;
+    markerTopPct = 66.666 - (local * 33.333);
   } else {
-    const local = (clampedVix - upperCut) / (hardMax - upperCut || 1);
-    const zoneStart = 0;
-    const zoneSpan = 33.333;
-    markerTopPct = zoneStart + (1 - Math.min(local, 1)) * zoneSpan;
+    const local = (clampedVix - upperCut) / (hardMax - upperCut);
+    markerTopPct = 33.333 - (Math.min(local, 1) * 33.333);
   }
 
   const chaosActive = regime === "Chaos";
@@ -55,26 +77,32 @@ export default function VixRegimeCard({ vix, ts }: Props) {
   const guideRows = [
     {
       id: "Chaos" as const,
-      title: "Chaos zone",
-      range: "VIX \u2265 32",
-      widthGuide: "50+ wide flies / hedges",
-      dteGuide: "Focus: 0-1 DTE, defensive structures",
+      title: "Chaos",
+      range: "VIX ≥32",
+      widthGuide: "50+w flies",
+      debitGuide: "$2.50-6.50",
+      dteGuide: "0 DTE",
+      special: vixValue >= batmanCut ? "🦇 Batman: bracket spot" : null,
       colorClass: "vix-color-chaos",
     },
     {
       id: "Goldilocks" as const,
       title: "Goldilocks",
-      range: "VIX ~17-32",
-      widthGuide: "30-50 wide, classic OTM flies",
-      dteGuide: "Focus: 0-1 DTE (OTM / Batman), 0-2 DTE runners",
+      range: "VIX 17-32",
+      widthGuide: vixValue <= 23 ? "30-40w" : "40-50w",
+      debitGuide: vixValue <= 23 ? "$1.50-4" : "$2-5",
+      dteGuide: "0-1 DTE",
+      special: null,
       colorClass: "vix-color-goldilocks",
     },
     {
       id: "ZombieLand" as const,
       title: "ZombieLand",
-      range: "VIX ~12-17",
-      widthGuide: "30-20 wide, narrower flies",
-      dteGuide: "Focus: 0-1 DTE, 0-3 DTE, smaller sizes",
+      range: "VIX ≤17",
+      widthGuide: isAfternoon ? "10-20w" : "20-30w",
+      debitGuide: isAfternoon ? "<$2" : "$1-3",
+      dteGuide: vixValue <= 15 && !isAfternoon ? "1-2 DTE" : "0-1 DTE",
+      special: specialCondition && regime === "ZombieLand" ? `${specialIcon} ${specialCondition}` : null,
       colorClass: "vix-color-zombie",
     },
   ];
@@ -89,6 +117,9 @@ export default function VixRegimeCard({ vix, ts }: Props) {
           <span className={`vix-regime-label ${regime.toLowerCase()}`}>
             {regime}
           </span>
+          {specialCondition && (
+            <span className="vix-special-badge">{specialIcon} {specialCondition}</span>
+          )}
           <br />
           <span className="vix-regime-boundary">{nextBoundaryLabel}</span>
           {ts && <div className="vix-regime-ts">as of {ts}</div>}
@@ -113,7 +144,7 @@ export default function VixRegimeCard({ vix, ts }: Props) {
           </div>
 
           <div className={`vix-zone zombie ${zombieActive ? "active" : ""}`}>
-            <span className="vix-zone-label">ZombieLand</span>
+            <span className="vix-zone-label">Zombie</span>
           </div>
 
           {/* Current VIX marker */}
@@ -137,11 +168,16 @@ export default function VixRegimeCard({ vix, ts }: Props) {
                   <span className="vix-guide-range">({row.range})</span>
                 </div>
                 <div className="vix-guide-detail">
-                  <span className="vix-guide-label">Fly width: </span>
+                  <span className="vix-guide-label">Fly: </span>
                   <span className={row.colorClass}>{row.widthGuide}</span>
+                  <span className="vix-guide-label"> • Debit: </span>
+                  <span>{row.debitGuide}</span>
                 </div>
                 <div className="vix-guide-detail vix-guide-dte">
                   {row.dteGuide}
+                  {row.special && (
+                    <span className="vix-guide-special"> • {row.special}</span>
+                  )}
                 </div>
               </div>
             );
