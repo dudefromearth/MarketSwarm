@@ -724,3 +724,121 @@ Give the read, then end with "Bottom line:" followed by a single sentence takeaw
         system_prompt = self._build_system_prompt("Observer", "casual", ["tldr"], 80)
 
         return self._synthesize_chat_with_system(user_prompt, system_prompt, f"snapshot:{symbol}")
+
+    def synthesize_weekend_digest(
+        self,
+        articles: List[Dict[str, Any]],
+        epoch_name: str = "Weekend Digest",
+        focus: str = "weekend_digest",
+    ) -> Optional[str]:
+        """
+        Synthesize a weekend digest of top stories for options traders.
+
+        Args:
+            articles: List of article dicts with title, summary, category, sentiment
+            epoch_name: Name of the digest epoch
+            focus: Focus type (weekend_digest, developing_stories, week_ahead_digest)
+
+        Returns:
+            Digest commentary with numbered stories and bottom line
+        """
+        if not self.mode:
+            return None
+
+        if not articles:
+            return None
+
+        # Categorize and prioritize articles
+        categories = self.config.get("non_trading_days", {}).get("story_categories", {})
+        categorized = self._categorize_articles(articles, categories)
+
+        # Build article list for prompt
+        story_lines = []
+        for i, article in enumerate(categorized[:5], 1):
+            title = article.get("title", "")
+            summary = article.get("summary", "")
+            category = article.get("matched_category", "")
+            sentiment = article.get("sentiment", "")
+
+            cat_label = f"[{category}] " if category else ""
+            sent_label = f" ({sentiment})" if sentiment and sentiment != "neutral" else ""
+
+            story_lines.append(f"{i}. {cat_label}{title}{sent_label}")
+            if summary:
+                # Truncate summary
+                short_summary = summary[:150] + "..." if len(summary) > 150 else summary
+                story_lines.append(f"   {short_summary}")
+
+        stories_text = "\n".join(story_lines)
+
+        # Build focus-specific instruction
+        if focus == "week_ahead_digest":
+            focus_instruction = "Focus on what matters for Monday's open. What should traders watch?"
+        elif focus == "developing_stories":
+            focus_instruction = "Any developing themes or stories gaining momentum?"
+        else:
+            focus_instruction = "Summarize the top stories. What's the market narrative?"
+
+        user_prompt = f"""Weekend Stories for Options Traders:
+
+{stories_text}
+
+{focus_instruction}
+
+Give a brief summary of what matters, then end with "Bottom line:" and a single sentence takeaway."""
+
+        system_prompt = """You are Vexy, summarizing weekend news for options traders.
+
+STYLE:
+- Brief and scannable
+- Group related themes if possible
+- Highlight anything that could move markets Monday
+- Plain language, no jargon
+
+FORMAT:
+Brief summary (2-3 sentences), then:
+Bottom line: [Single sentence - what's the one thing to know]"""
+
+        return self._synthesize_chat_with_system(user_prompt, system_prompt, f"digest:{epoch_name}")
+
+    def _categorize_articles(
+        self,
+        articles: List[Dict[str, Any]],
+        categories: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """
+        Categorize and prioritize articles based on keywords.
+
+        Returns articles sorted by priority with matched_category added.
+        """
+        scored_articles = []
+
+        for article in articles:
+            title = (article.get("title") or "").lower()
+            summary = (article.get("summary") or "").lower()
+            text = f"{title} {summary}"
+
+            best_category = ""
+            best_priority = 99
+
+            for cat_name, cat_config in categories.items():
+                keywords = cat_config.get("keywords", [])
+                priority = cat_config.get("priority", 5)
+                label = cat_config.get("label", cat_name)
+
+                # Check if any keyword matches
+                if any(kw.lower() in text for kw in keywords):
+                    if priority < best_priority:
+                        best_priority = priority
+                        best_category = label
+
+            scored_articles.append({
+                **article,
+                "matched_category": best_category,
+                "priority": best_priority,
+            })
+
+        # Sort by priority (lower is better), then by original order
+        scored_articles.sort(key=lambda x: x["priority"])
+
+        return scored_articles

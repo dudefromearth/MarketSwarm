@@ -186,31 +186,66 @@ async def run(config: Dict[str, Any], logger) -> None:
                 emit("epoch", "epoch_check", f"Checking {len(epochs)} epoch triggers…")
                 epoch = should_speak_epoch(current_time, epochs)
                 if epoch and epoch["name"] != last_epoch_name:
-                    # Fetch current market state
-                    market_state = market_reader.get_market_state()
+                    epoch_type = epoch.get("type", "standard")
+                    prompt_focus = epoch.get("prompt_focus", "")
 
-                    # Fetch recent articles for synthesis
-                    recent_articles = article_reader.get_recent_articles(max_count=8, max_age_hours=6)
-                    articles_text = article_reader.format_for_prompt(recent_articles)
+                    # Non-trading day digest epochs
+                    if not trading_day and epoch_type == "digest":
+                        # Weekend/holiday digest - summarize top stories
+                        digest_config = config.get("non_trading_days", {}).get("weekend_digest", {})
+                        lookback = digest_config.get("lookback_hours", 48)
+                        max_stories = digest_config.get("max_stories", 5)
 
-                    # Try LLM synthesis first, fall back to template
-                    commentary = synthesizer.synthesize(epoch, market_state, articles_text)
-                    if not commentary:
-                        emit("epoch", "warn", "LLM synthesis failed — using template fallback")
-                        commentary = generate_epoch_commentary(epoch, market_state)
+                        recent_articles = article_reader.get_recent_articles(
+                            max_count=max_stories * 2,  # Get extra for filtering
+                            max_age_hours=lookback,
+                        )
 
-                    # Include epoch config in meta for downstream use
-                    publish("epoch", commentary, {
-                        "epoch": epoch["name"],
-                        "voice": epoch.get("voice", "Observer"),
-                        "partitions": epoch.get("partitions", []),
-                        "reflection_dial": epoch.get("reflection_dial", 0.4),
-                        "market_state": market_state,
-                        "articles_used": len(recent_articles),
-                        "schedule_type": schedule_type,
-                    })
-                    last_epoch_name = epoch["name"]
-                    emit("epoch", "epoch_speak", f"[{epoch.get('voice', 'Observer')}] {commentary[:100]}…")
+                        commentary = synthesizer.synthesize_weekend_digest(
+                            recent_articles,
+                            epoch_name=epoch["name"],
+                            focus=prompt_focus,
+                        )
+
+                        if commentary:
+                            publish("epoch", commentary, {
+                                "epoch": epoch["name"],
+                                "voice": epoch.get("voice", "Observer"),
+                                "type": "digest",
+                                "articles_used": len(recent_articles),
+                                "schedule_type": schedule_type,
+                            })
+                            last_epoch_name = epoch["name"]
+                            emit("epoch", "epoch_speak", f"[Digest] {commentary[:100]}…")
+                        else:
+                            emit("epoch", "warn", f"No stories for {epoch['name']} digest")
+
+                    else:
+                        # Trading day or standard epoch - use market data synthesis
+                        market_state = market_reader.get_market_state()
+
+                        # Fetch recent articles for synthesis
+                        recent_articles = article_reader.get_recent_articles(max_count=8, max_age_hours=6)
+                        articles_text = article_reader.format_for_prompt(recent_articles)
+
+                        # Try LLM synthesis first, fall back to template
+                        commentary = synthesizer.synthesize(epoch, market_state, articles_text)
+                        if not commentary:
+                            emit("epoch", "warn", "LLM synthesis failed — using template fallback")
+                            commentary = generate_epoch_commentary(epoch, market_state)
+
+                        # Include epoch config in meta for downstream use
+                        publish("epoch", commentary, {
+                            "epoch": epoch["name"],
+                            "voice": epoch.get("voice", "Observer"),
+                            "partitions": epoch.get("partitions", []),
+                            "reflection_dial": epoch.get("reflection_dial", 0.4),
+                            "market_state": market_state,
+                            "articles_used": len(recent_articles),
+                            "schedule_type": schedule_type,
+                        })
+                        last_epoch_name = epoch["name"]
+                        emit("epoch", "epoch_speak", f"[{epoch.get('voice', 'Observer')}] {commentary[:100]}…")
 
             # -----------------------------
             # Events (trading days only for real-time events)

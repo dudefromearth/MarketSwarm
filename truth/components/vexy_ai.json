@@ -285,54 +285,81 @@
       "response_clarity": "accessible",
       "presentation_mode": "direct"
     },
-    "article_trigger": {
-      "min_articles": 2,
-      "batch_window_minutes": 60,
-      "max_messages_per_day": 6,
-      "cooldown_minutes": 60
+    "story_categories": {
+      "macro": {
+        "keywords": ["fed", "fomc", "treasury", "rates", "inflation", "cpi", "ppi", "gdp", "employment", "jobs", "nfp", "economic"],
+        "priority": 1,
+        "label": "Macro"
+      },
+      "central_banks": {
+        "keywords": ["fed", "fomc", "ecb", "boj", "powell", "yellen", "rate decision", "monetary policy"],
+        "priority": 1,
+        "label": "Central Banks"
+      },
+      "volatility": {
+        "keywords": ["vix", "volatility", "options", "gamma", "hedging", "derivatives"],
+        "priority": 2,
+        "label": "Volatility"
+      },
+      "geopolitical": {
+        "keywords": ["tariff", "china", "trade war", "sanctions", "geopolitical", "war", "conflict"],
+        "priority": 2,
+        "label": "Geopolitical"
+      },
+      "earnings": {
+        "keywords": ["earnings", "revenue", "guidance", "beat", "miss", "eps"],
+        "priority": 3,
+        "label": "Earnings"
+      },
+      "market_structure": {
+        "keywords": ["dealer", "positioning", "flows", "liquidity", "market maker", "0dte"],
+        "priority": 2,
+        "label": "Market Structure"
+      }
+    },
+    "weekend_digest": {
+      "enabled": true,
+      "max_stories": 5,
+      "lookback_hours": 48,
+      "format": "numbered_list",
+      "include_bottom_line": true
     },
     "scheduled_epochs": [
       {
-        "name": "Morning Check",
+        "name": "Morning Digest",
         "time": "09:00",
-        "context": "Weekend morning. Global headlines.",
-        "prompt_focus": "global_digest",
+        "context": "Weekend morning. Top stories for options traders.",
+        "prompt_focus": "weekend_digest",
+        "type": "digest",
         "voice": "Observer",
-        "partitions": ["tldr"],
         "reflection_dial": 0.2
       },
       {
-        "name": "Afternoon",
+        "name": "Afternoon Update",
         "time": "14:00",
-        "context": "Weekend afternoon. Week ahead themes.",
-        "prompt_focus": "week_ahead",
+        "context": "Weekend afternoon. Any developing stories.",
+        "prompt_focus": "developing_stories",
+        "type": "digest",
         "voice": "Observer",
-        "partitions": ["tldr"],
         "reflection_dial": 0.3
       },
       {
         "name": "Sunday Prep",
         "time": "18:00",
         "day": "sunday",
-        "context": "Sunday evening. Asia opens soon.",
-        "prompt_focus": "week_positioning",
+        "context": "Sunday evening. Week ahead - what matters for Monday.",
+        "prompt_focus": "week_ahead_digest",
+        "type": "digest",
         "voice": "Convexity",
-        "partitions": ["tldr", "structure"],
         "reflection_dial": 0.4
       }
     ],
     "article_commentary": {
       "enabled": true,
       "voice": "Observer",
-      "partitions": ["tldr"],
       "reflection_dial": 0.2,
-      "bias_transparency": {
-        "enabled": true,
-        "show_source_lean": true,
-        "cross_reference": false
-      },
       "format": {
-        "max_length": 80,
+        "max_length": 100,
         "style": "brief"
       }
     }
