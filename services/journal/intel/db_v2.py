@@ -7,13 +7,16 @@ import json
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from .models_v2 import TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint, Symbol, Setting
+from .models_v2 import (
+    TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint, Symbol, Setting,
+    JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment
+)
 
 
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 4
+    SCHEMA_VERSION = 5
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -135,6 +138,9 @@ class JournalDBv2:
 
             if current_version < 4:
                 self._migrate_to_v4(conn)
+
+            if current_version < 5:
+                self._migrate_to_v5(conn)
 
             conn.commit()
         finally:
@@ -318,6 +324,95 @@ class JournalDBv2:
             # ADD FOREIGN KEY (user_id) REFERENCES users(id)
 
             self._set_schema_version(conn, 4)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v5(self, conn):
+        """Migrate to v5: Add journal tables (entries, retrospectives, trade refs, attachments)."""
+        cursor = conn.cursor()
+        try:
+            # Create journal_entries table
+            if not self._table_exists(conn, 'journal_entries'):
+                cursor.execute("""
+                    CREATE TABLE journal_entries (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+
+                        entry_date DATE NOT NULL,
+                        content LONGTEXT,
+
+                        is_playbook_material TINYINT DEFAULT 0,
+
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+                        updated_at VARCHAR(32) DEFAULT (NOW()),
+
+                        UNIQUE INDEX idx_entries_user_date (user_id, entry_date),
+                        INDEX idx_entries_playbook (is_playbook_material)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create journal_retrospectives table
+            if not self._table_exists(conn, 'journal_retrospectives'):
+                cursor.execute("""
+                    CREATE TABLE journal_retrospectives (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+
+                        retro_type ENUM('weekly', 'monthly') NOT NULL,
+                        period_start DATE NOT NULL,
+                        period_end DATE NOT NULL,
+                        content LONGTEXT,
+
+                        is_playbook_material TINYINT DEFAULT 0,
+
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+                        updated_at VARCHAR(32) DEFAULT (NOW()),
+
+                        UNIQUE INDEX idx_retro_user_period (user_id, retro_type, period_start),
+                        INDEX idx_retro_playbook (is_playbook_material)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create journal_trade_refs table
+            if not self._table_exists(conn, 'journal_trade_refs'):
+                cursor.execute("""
+                    CREATE TABLE journal_trade_refs (
+                        id VARCHAR(36) PRIMARY KEY,
+
+                        source_type ENUM('entry', 'retrospective') NOT NULL,
+                        source_id VARCHAR(36) NOT NULL,
+                        trade_id VARCHAR(36) NOT NULL,
+
+                        note TEXT,
+
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+
+                        INDEX idx_refs_source (source_type, source_id),
+                        INDEX idx_refs_trade (trade_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create journal_attachments table
+            if not self._table_exists(conn, 'journal_attachments'):
+                cursor.execute("""
+                    CREATE TABLE journal_attachments (
+                        id VARCHAR(36) PRIMARY KEY,
+
+                        source_type ENUM('entry', 'retrospective') NOT NULL,
+                        source_id VARCHAR(36) NOT NULL,
+
+                        filename VARCHAR(255) NOT NULL,
+                        file_path VARCHAR(512) NOT NULL,
+                        mime_type VARCHAR(100),
+                        file_size INT,
+
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+
+                        INDEX idx_attach_source (source_type, source_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 5)
         finally:
             cursor.close()
 
@@ -1120,6 +1215,548 @@ class JournalDBv2:
                 'avg_r_multiple': pnl_stats[11] or 0,
                 'first_trade': dates[0],
                 'last_trade': dates[1]
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Journal Entry CRUD ====================
+
+    def create_entry(self, entry: JournalEntry) -> JournalEntry:
+        """Create a new journal entry."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = entry.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO journal_entries ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return entry
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_entry(self, entry_id: str) -> Optional[JournalEntry]:
+        """Get a single journal entry by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM journal_entries WHERE id = %s",
+                (entry_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return JournalEntry.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_entry_by_date(self, user_id: int, date: str) -> Optional[JournalEntry]:
+        """Get a journal entry by user and date."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM journal_entries WHERE user_id = %s AND entry_date = %s",
+                (user_id, date)
+            )
+            row = cursor.fetchone()
+            if row:
+                return JournalEntry.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_entries(
+        self,
+        user_id: int,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        playbook_only: bool = False,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[JournalEntry]:
+        """List journal entries for a user with optional filters."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM journal_entries WHERE user_id = %s"
+            params: List[Any] = [user_id]
+
+            if from_date:
+                query += " AND entry_date >= %s"
+                params.append(from_date)
+
+            if to_date:
+                query += " AND entry_date <= %s"
+                params.append(to_date)
+
+            if playbook_only:
+                query += " AND is_playbook_material = 1"
+
+            query += " ORDER BY entry_date DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [JournalEntry.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_entry(self, entry_id: str, updates: Dict[str, Any]) -> Optional[JournalEntry]:
+        """Update a journal entry."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Prevent updating immutable fields
+            immutable = {'id', 'user_id', 'entry_date', 'created_at'}
+            updates = {k: v for k, v in updates.items() if k not in immutable}
+
+            if not updates:
+                return self.get_entry(entry_id)
+
+            updates['updated_at'] = datetime.utcnow().isoformat()
+
+            # Handle boolean conversion
+            if 'is_playbook_material' in updates:
+                updates['is_playbook_material'] = 1 if updates['is_playbook_material'] else 0
+
+            set_clause = ', '.join(f"{k} = %s" for k in updates.keys())
+            params = list(updates.values()) + [entry_id]
+
+            cursor.execute(
+                f"UPDATE journal_entries SET {set_clause} WHERE id = %s",
+                params
+            )
+            conn.commit()
+            return self.get_entry(entry_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def upsert_entry(self, entry: JournalEntry) -> JournalEntry:
+        """Create or update entry by date (upsert)."""
+        existing = self.get_entry_by_date(entry.user_id, entry.entry_date)
+        if existing:
+            updates = {
+                'content': entry.content,
+                'is_playbook_material': entry.is_playbook_material
+            }
+            return self.update_entry(existing.id, updates)
+        return self.create_entry(entry)
+
+    def delete_entry(self, entry_id: str) -> bool:
+        """Delete a journal entry and its attachments/trade refs."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Delete related records first
+            cursor.execute(
+                "DELETE FROM journal_trade_refs WHERE source_type = 'entry' AND source_id = %s",
+                (entry_id,)
+            )
+            cursor.execute(
+                "DELETE FROM journal_attachments WHERE source_type = 'entry' AND source_id = %s",
+                (entry_id,)
+            )
+            cursor.execute("DELETE FROM journal_entries WHERE id = %s", (entry_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Journal Retrospective CRUD ====================
+
+    def create_retrospective(self, retro: JournalRetrospective) -> JournalRetrospective:
+        """Create a new retrospective."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = retro.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO journal_retrospectives ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return retro
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_retrospective(self, retro_id: str) -> Optional[JournalRetrospective]:
+        """Get a single retrospective by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM journal_retrospectives WHERE id = %s",
+                (retro_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return JournalRetrospective.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_retrospective_by_period(
+        self,
+        user_id: int,
+        retro_type: str,
+        period_start: str
+    ) -> Optional[JournalRetrospective]:
+        """Get a retrospective by user, type, and period start date."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM journal_retrospectives WHERE user_id = %s AND retro_type = %s AND period_start = %s",
+                (user_id, retro_type, period_start)
+            )
+            row = cursor.fetchone()
+            if row:
+                return JournalRetrospective.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_retrospectives(
+        self,
+        user_id: int,
+        retro_type: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        playbook_only: bool = False
+    ) -> List[JournalRetrospective]:
+        """List retrospectives for a user with optional filters."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM journal_retrospectives WHERE user_id = %s"
+            params: List[Any] = [user_id]
+
+            if retro_type:
+                query += " AND retro_type = %s"
+                params.append(retro_type)
+
+            if from_date:
+                query += " AND period_start >= %s"
+                params.append(from_date)
+
+            if to_date:
+                query += " AND period_end <= %s"
+                params.append(to_date)
+
+            if playbook_only:
+                query += " AND is_playbook_material = 1"
+
+            query += " ORDER BY period_start DESC"
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [JournalRetrospective.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_retrospective(self, retro_id: str, updates: Dict[str, Any]) -> Optional[JournalRetrospective]:
+        """Update a retrospective."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Prevent updating immutable fields
+            immutable = {'id', 'user_id', 'retro_type', 'period_start', 'period_end', 'created_at'}
+            updates = {k: v for k, v in updates.items() if k not in immutable}
+
+            if not updates:
+                return self.get_retrospective(retro_id)
+
+            updates['updated_at'] = datetime.utcnow().isoformat()
+
+            # Handle boolean conversion
+            if 'is_playbook_material' in updates:
+                updates['is_playbook_material'] = 1 if updates['is_playbook_material'] else 0
+
+            set_clause = ', '.join(f"{k} = %s" for k in updates.keys())
+            params = list(updates.values()) + [retro_id]
+
+            cursor.execute(
+                f"UPDATE journal_retrospectives SET {set_clause} WHERE id = %s",
+                params
+            )
+            conn.commit()
+            return self.get_retrospective(retro_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_retrospective(self, retro_id: str) -> bool:
+        """Delete a retrospective and its attachments/trade refs."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Delete related records first
+            cursor.execute(
+                "DELETE FROM journal_trade_refs WHERE source_type = 'retrospective' AND source_id = %s",
+                (retro_id,)
+            )
+            cursor.execute(
+                "DELETE FROM journal_attachments WHERE source_type = 'retrospective' AND source_id = %s",
+                (retro_id,)
+            )
+            cursor.execute("DELETE FROM journal_retrospectives WHERE id = %s", (retro_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Journal Trade References ====================
+
+    def add_trade_ref(self, ref: JournalTradeRef) -> JournalTradeRef:
+        """Add a trade reference to an entry or retrospective."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = ref.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO journal_trade_refs ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return ref
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_trade_refs(self, source_type: str, source_id: str) -> List[JournalTradeRef]:
+        """List trade references for an entry or retrospective."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM journal_trade_refs WHERE source_type = %s AND source_id = %s ORDER BY created_at",
+                (source_type, source_id)
+            )
+            rows = cursor.fetchall()
+            return [JournalTradeRef.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_trade_refs_by_trade(self, trade_id: str) -> List[JournalTradeRef]:
+        """List all journal references to a specific trade."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM journal_trade_refs WHERE trade_id = %s ORDER BY created_at",
+                (trade_id,)
+            )
+            rows = cursor.fetchall()
+            return [JournalTradeRef.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_trade_ref(self, ref_id: str) -> bool:
+        """Delete a trade reference."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM journal_trade_refs WHERE id = %s", (ref_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Journal Attachments ====================
+
+    def create_attachment(self, attachment: JournalAttachment) -> JournalAttachment:
+        """Create a new attachment record."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = attachment.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO journal_attachments ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return attachment
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_attachment(self, attachment_id: str) -> Optional[JournalAttachment]:
+        """Get a single attachment by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM journal_attachments WHERE id = %s",
+                (attachment_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return JournalAttachment.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_attachments(self, source_type: str, source_id: str) -> List[JournalAttachment]:
+        """List attachments for an entry or retrospective."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM journal_attachments WHERE source_type = %s AND source_id = %s ORDER BY created_at",
+                (source_type, source_id)
+            )
+            rows = cursor.fetchall()
+            return [JournalAttachment.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_attachment(self, attachment_id: str) -> bool:
+        """Delete an attachment record (caller should delete file)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM journal_attachments WHERE id = %s", (attachment_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Calendar Queries (Temporal Gravity) ====================
+
+    def get_calendar_month(self, user_id: int, year: int, month: int) -> Dict[str, Any]:
+        """Get calendar view for a month showing which days have entries."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Get entries for the month
+            cursor.execute("""
+                SELECT entry_date, is_playbook_material
+                FROM journal_entries
+                WHERE user_id = %s
+                AND YEAR(entry_date) = %s AND MONTH(entry_date) = %s
+                ORDER BY entry_date
+            """, (user_id, year, month))
+            entries = cursor.fetchall()
+
+            days = {}
+            for row in entries:
+                date_str = row[0].strftime('%Y-%m-%d') if hasattr(row[0], 'strftime') else str(row[0])
+                days[date_str] = {
+                    'has_entry': True,
+                    'is_playbook_material': bool(row[1])
+                }
+
+            # Get retrospectives that overlap this month
+            month_start = f"{year}-{month:02d}-01"
+            if month == 12:
+                month_end = f"{year + 1}-01-01"
+            else:
+                month_end = f"{year}-{month + 1:02d}-01"
+
+            cursor.execute("""
+                SELECT retro_type, period_start
+                FROM journal_retrospectives
+                WHERE user_id = %s
+                AND period_start >= %s AND period_start < %s
+            """, (user_id, month_start, month_end))
+            retros = cursor.fetchall()
+
+            weekly = []
+            monthly_retro = None
+            for row in retros:
+                date_str = row[1].strftime('%Y-%m-%d') if hasattr(row[1], 'strftime') else str(row[1])
+                if row[0] == 'weekly':
+                    weekly.append(date_str)
+                else:
+                    monthly_retro = date_str
+
+            return {
+                'year': year,
+                'month': month,
+                'days': days,
+                'retrospectives': {
+                    'weekly': weekly if weekly else [],
+                    'monthly': monthly_retro
+                }
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_calendar_week(self, user_id: int, week_start: str) -> Dict[str, Any]:
+        """Get calendar view for a week showing which days have entries."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Calculate week end (7 days from start)
+            from datetime import timedelta
+            start_date = datetime.strptime(week_start, '%Y-%m-%d')
+            end_date = start_date + timedelta(days=6)
+            week_end = end_date.strftime('%Y-%m-%d')
+
+            # Get entries for the week
+            cursor.execute("""
+                SELECT entry_date, is_playbook_material
+                FROM journal_entries
+                WHERE user_id = %s
+                AND entry_date >= %s AND entry_date <= %s
+                ORDER BY entry_date
+            """, (user_id, week_start, week_end))
+            entries = cursor.fetchall()
+
+            days = {}
+            for row in entries:
+                date_str = row[0].strftime('%Y-%m-%d') if hasattr(row[0], 'strftime') else str(row[0])
+                days[date_str] = {
+                    'has_entry': True,
+                    'is_playbook_material': bool(row[1])
+                }
+
+            # Check if there's a weekly retrospective for this period
+            cursor.execute("""
+                SELECT id FROM journal_retrospectives
+                WHERE user_id = %s AND retro_type = 'weekly' AND period_start = %s
+            """, (user_id, week_start))
+            retro = cursor.fetchone()
+
+            return {
+                'week_start': week_start,
+                'week_end': week_end,
+                'days': days,
+                'has_retrospective': retro is not None
             }
         finally:
             cursor.close()

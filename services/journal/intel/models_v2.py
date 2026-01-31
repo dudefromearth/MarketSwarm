@@ -335,3 +335,141 @@ class Setting:
     def set_value(self, val):
         """Encode value as JSON."""
         self.value = json.dumps(val)
+
+
+# ==================== Journal Models ====================
+
+@dataclass
+class JournalEntry:
+    """A daily journal entry anchored to a calendar date."""
+    id: str
+    user_id: int
+    entry_date: str  # YYYY-MM-DD (one entry per date)
+    content: Optional[str] = None  # Rich text (HTML/Markdown)
+    is_playbook_material: bool = False
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new entry ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        d['is_playbook_material'] = 1 if d['is_playbook_material'] else 0
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'JournalEntry':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if 'is_playbook_material' in d:
+            d['is_playbook_material'] = bool(d['is_playbook_material'])
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return asdict(self)
+
+
+@dataclass
+class JournalRetrospective:
+    """A weekly or monthly retrospective review."""
+    id: str
+    user_id: int
+    retro_type: str  # 'weekly' | 'monthly'
+    period_start: str  # YYYY-MM-DD
+    period_end: str  # YYYY-MM-DD
+    content: Optional[str] = None
+    is_playbook_material: bool = False
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new retrospective ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        d['is_playbook_material'] = 1 if d['is_playbook_material'] else 0
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'JournalRetrospective':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if 'is_playbook_material' in d:
+            d['is_playbook_material'] = bool(d['is_playbook_material'])
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return asdict(self)
+
+
+@dataclass
+class JournalTradeRef:
+    """A reference linking a journal entry/retrospective to a trade."""
+    id: str
+    source_type: str  # 'entry' | 'retrospective'
+    source_id: str  # FK to entries or retrospectives
+    trade_id: str  # FK to trades
+    note: Optional[str] = None  # Optional context for this reference
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new trade ref ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'JournalTradeRef':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return asdict(self)
+
+
+@dataclass
+class JournalAttachment:
+    """A file attachment for a journal entry or retrospective."""
+    id: str
+    source_type: str  # 'entry' | 'retrospective'
+    source_id: str
+    filename: str
+    file_path: str  # Storage path
+    mime_type: Optional[str] = None
+    file_size: Optional[int] = None
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new attachment ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'JournalAttachment':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format (excludes file_path for security)."""
+        d = asdict(self)
+        d.pop('file_path', None)  # Don't expose internal path
+        return d

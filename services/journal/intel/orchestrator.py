@@ -5,6 +5,8 @@ import asyncio
 import csv
 import io
 import json
+import os
+from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
@@ -13,7 +15,10 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 
 from .db_v2 import JournalDBv2
-from .models_v2 import TradeLog, Trade, TradeEvent, Symbol, Setting
+from .models_v2 import (
+    TradeLog, Trade, TradeEvent, Symbol, Setting,
+    JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment
+)
 from .analytics_v2 import AnalyticsV2
 from .auth import JournalAuth, require_auth, optional_auth
 
@@ -28,6 +33,12 @@ class JournalOrchestrator:
         self.db = JournalDBv2(config)
         self.analytics = AnalyticsV2(self.db)
         self.auth = JournalAuth(config, self.db._pool)
+
+        # Journal attachments storage
+        default_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'attachments')
+        self.attachments_path = Path(config.get('JOURNAL_ATTACHMENTS_PATH', default_path))
+        self.attachments_path.mkdir(parents=True, exist_ok=True)
+        self.max_attachment_size = 10 * 1024 * 1024  # 10MB
 
     def _json_response(self, data: Any, status: int = 200) -> web.Response:
         """Create a JSON response with CORS headers."""
@@ -1048,6 +1059,882 @@ class JournalOrchestrator:
             self.logger.error(f"delete_setting error: {e}")
             return self._error_response(str(e), 500)
 
+    # ==================== Journal Entry Endpoints ====================
+
+    async def list_journal_entries(self, request: web.Request) -> web.Response:
+        """GET /api/journal/entries - List journal entries for authenticated user."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            params = request.query
+            entries = self.db.list_entries(
+                user_id=user['id'],
+                from_date=params.get('from'),
+                to_date=params.get('to'),
+                playbook_only=params.get('playbook_only', '').lower() == 'true',
+                limit=int(params.get('limit', 100)),
+                offset=int(params.get('offset', 0))
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': [e.to_api_dict() for e in entries],
+                'count': len(entries)
+            })
+        except Exception as e:
+            self.logger.error(f"list_journal_entries error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_journal_entry(self, request: web.Request) -> web.Response:
+        """GET /api/journal/entries/:id - Get a single journal entry with attachments and trade refs."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            # Get related data
+            trade_refs = self.db.list_trade_refs('entry', entry_id)
+            attachments = self.db.list_attachments('entry', entry_id)
+
+            data = entry.to_api_dict()
+            data['trade_refs'] = [r.to_api_dict() for r in trade_refs]
+            data['attachments'] = [a.to_api_dict() for a in attachments]
+
+            return self._json_response({
+                'success': True,
+                'data': data
+            })
+        except Exception as e:
+            self.logger.error(f"get_journal_entry error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_journal_entry_by_date(self, request: web.Request) -> web.Response:
+        """GET /api/journal/entries/date/:date - Get entry by date (YYYY-MM-DD)."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            date = request.match_info['date']
+            entry = self.db.get_entry_by_date(user['id'], date)
+
+            if not entry:
+                return self._error_response('Entry not found', 404)
+
+            # Get related data
+            trade_refs = self.db.list_trade_refs('entry', entry.id)
+            attachments = self.db.list_attachments('entry', entry.id)
+
+            data = entry.to_api_dict()
+            data['trade_refs'] = [r.to_api_dict() for r in trade_refs]
+            data['attachments'] = [a.to_api_dict() for a in attachments]
+
+            return self._json_response({
+                'success': True,
+                'data': data
+            })
+        except Exception as e:
+            self.logger.error(f"get_journal_entry_by_date error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def create_journal_entry(self, request: web.Request) -> web.Response:
+        """POST /api/journal/entries - Create or update entry (upsert by date)."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            body = await request.json()
+
+            if 'entry_date' not in body:
+                return self._error_response('entry_date is required')
+
+            entry = JournalEntry(
+                id=JournalEntry.new_id(),
+                user_id=user['id'],
+                entry_date=body['entry_date'],
+                content=body.get('content'),
+                is_playbook_material=body.get('is_playbook_material', False)
+            )
+
+            result = self.db.upsert_entry(entry)
+            self.logger.info(f"Upserted journal entry for {body['entry_date']}", emoji="📓")
+
+            return self._json_response({
+                'success': True,
+                'data': result.to_api_dict()
+            }, 201)
+        except Exception as e:
+            self.logger.error(f"create_journal_entry error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def update_journal_entry(self, request: web.Request) -> web.Response:
+        """PUT /api/journal/entries/:id - Update an entry."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            body = await request.json()
+            updated = self.db.update_entry(entry_id, body)
+
+            return self._json_response({
+                'success': True,
+                'data': updated.to_api_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"update_journal_entry error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def delete_journal_entry(self, request: web.Request) -> web.Response:
+        """DELETE /api/journal/entries/:id - Delete an entry."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            # Delete attachment files
+            attachments = self.db.list_attachments('entry', entry_id)
+            for att in attachments:
+                try:
+                    file_path = Path(att.file_path)
+                    if file_path.exists():
+                        file_path.unlink()
+                except Exception:
+                    pass  # Best effort deletion
+
+            deleted = self.db.delete_entry(entry_id)
+            self.logger.info(f"Deleted journal entry {entry_id}", emoji="🗑️")
+
+            return self._json_response({
+                'success': True,
+                'message': 'Entry deleted'
+            })
+        except Exception as e:
+            self.logger.error(f"delete_journal_entry error: {e}")
+            return self._error_response(str(e), 500)
+
+    # ==================== Journal Retrospective Endpoints ====================
+
+    async def list_retrospectives(self, request: web.Request) -> web.Response:
+        """GET /api/journal/retrospectives - List retrospectives."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            params = request.query
+            retros = self.db.list_retrospectives(
+                user_id=user['id'],
+                retro_type=params.get('type'),
+                from_date=params.get('from'),
+                to_date=params.get('to'),
+                playbook_only=params.get('playbook_only', '').lower() == 'true'
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': [r.to_api_dict() for r in retros],
+                'count': len(retros)
+            })
+        except Exception as e:
+            self.logger.error(f"list_retrospectives error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_retrospective(self, request: web.Request) -> web.Response:
+        """GET /api/journal/retrospectives/:id - Get a single retrospective."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            retro_id = request.match_info['id']
+            retro = self.db.get_retrospective(retro_id)
+
+            if not retro:
+                return self._error_response('Retrospective not found', 404)
+
+            if retro.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            # Get related data
+            trade_refs = self.db.list_trade_refs('retrospective', retro_id)
+            attachments = self.db.list_attachments('retrospective', retro_id)
+
+            data = retro.to_api_dict()
+            data['trade_refs'] = [r.to_api_dict() for r in trade_refs]
+            data['attachments'] = [a.to_api_dict() for a in attachments]
+
+            return self._json_response({
+                'success': True,
+                'data': data
+            })
+        except Exception as e:
+            self.logger.error(f"get_retrospective error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_retrospective_by_period(self, request: web.Request) -> web.Response:
+        """GET /api/journal/retrospectives/:type/:periodStart - Get by type and period."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            retro_type = request.match_info['type']
+            period_start = request.match_info['periodStart']
+
+            if retro_type not in ('weekly', 'monthly'):
+                return self._error_response('Invalid retrospective type', 400)
+
+            retro = self.db.get_retrospective_by_period(user['id'], retro_type, period_start)
+
+            if not retro:
+                return self._error_response('Retrospective not found', 404)
+
+            # Get related data
+            trade_refs = self.db.list_trade_refs('retrospective', retro.id)
+            attachments = self.db.list_attachments('retrospective', retro.id)
+
+            data = retro.to_api_dict()
+            data['trade_refs'] = [r.to_api_dict() for r in trade_refs]
+            data['attachments'] = [a.to_api_dict() for a in attachments]
+
+            return self._json_response({
+                'success': True,
+                'data': data
+            })
+        except Exception as e:
+            self.logger.error(f"get_retrospective_by_period error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def create_retrospective(self, request: web.Request) -> web.Response:
+        """POST /api/journal/retrospectives - Create a retrospective."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            body = await request.json()
+
+            required = ['retro_type', 'period_start', 'period_end']
+            for field in required:
+                if field not in body:
+                    return self._error_response(f'{field} is required')
+
+            if body['retro_type'] not in ('weekly', 'monthly'):
+                return self._error_response('retro_type must be weekly or monthly')
+
+            # Check if one already exists for this period
+            existing = self.db.get_retrospective_by_period(
+                user['id'], body['retro_type'], body['period_start']
+            )
+            if existing:
+                return self._error_response('Retrospective already exists for this period', 409)
+
+            retro = JournalRetrospective(
+                id=JournalRetrospective.new_id(),
+                user_id=user['id'],
+                retro_type=body['retro_type'],
+                period_start=body['period_start'],
+                period_end=body['period_end'],
+                content=body.get('content'),
+                is_playbook_material=body.get('is_playbook_material', False)
+            )
+
+            created = self.db.create_retrospective(retro)
+            self.logger.info(f"Created {body['retro_type']} retrospective for {body['period_start']}", emoji="📅")
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201)
+        except Exception as e:
+            self.logger.error(f"create_retrospective error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def update_retrospective(self, request: web.Request) -> web.Response:
+        """PUT /api/journal/retrospectives/:id - Update a retrospective."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            retro_id = request.match_info['id']
+            retro = self.db.get_retrospective(retro_id)
+
+            if not retro:
+                return self._error_response('Retrospective not found', 404)
+
+            if retro.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            body = await request.json()
+            updated = self.db.update_retrospective(retro_id, body)
+
+            return self._json_response({
+                'success': True,
+                'data': updated.to_api_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"update_retrospective error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def delete_retrospective(self, request: web.Request) -> web.Response:
+        """DELETE /api/journal/retrospectives/:id - Delete a retrospective."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            retro_id = request.match_info['id']
+            retro = self.db.get_retrospective(retro_id)
+
+            if not retro:
+                return self._error_response('Retrospective not found', 404)
+
+            if retro.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            # Delete attachment files
+            attachments = self.db.list_attachments('retrospective', retro_id)
+            for att in attachments:
+                try:
+                    file_path = Path(att.file_path)
+                    if file_path.exists():
+                        file_path.unlink()
+                except Exception:
+                    pass
+
+            deleted = self.db.delete_retrospective(retro_id)
+            self.logger.info(f"Deleted retrospective {retro_id}", emoji="🗑️")
+
+            return self._json_response({
+                'success': True,
+                'message': 'Retrospective deleted'
+            })
+        except Exception as e:
+            self.logger.error(f"delete_retrospective error: {e}")
+            return self._error_response(str(e), 500)
+
+    # ==================== Journal Trade Reference Endpoints ====================
+
+    async def list_entry_trade_refs(self, request: web.Request) -> web.Response:
+        """GET /api/journal/entries/:id/trades - List trade refs for an entry."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            refs = self.db.list_trade_refs('entry', entry_id)
+
+            return self._json_response({
+                'success': True,
+                'data': [r.to_api_dict() for r in refs],
+                'count': len(refs)
+            })
+        except Exception as e:
+            self.logger.error(f"list_entry_trade_refs error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def add_entry_trade_ref(self, request: web.Request) -> web.Response:
+        """POST /api/journal/entries/:id/trades - Add trade reference to entry."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            body = await request.json()
+            if 'trade_id' not in body:
+                return self._error_response('trade_id is required')
+
+            ref = JournalTradeRef(
+                id=JournalTradeRef.new_id(),
+                source_type='entry',
+                source_id=entry_id,
+                trade_id=body['trade_id'],
+                note=body.get('note')
+            )
+
+            created = self.db.add_trade_ref(ref)
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201)
+        except Exception as e:
+            self.logger.error(f"add_entry_trade_ref error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def list_retro_trade_refs(self, request: web.Request) -> web.Response:
+        """GET /api/journal/retrospectives/:id/trades - List trade refs for a retrospective."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            retro_id = request.match_info['id']
+            retro = self.db.get_retrospective(retro_id)
+
+            if not retro:
+                return self._error_response('Retrospective not found', 404)
+
+            if retro.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            refs = self.db.list_trade_refs('retrospective', retro_id)
+
+            return self._json_response({
+                'success': True,
+                'data': [r.to_api_dict() for r in refs],
+                'count': len(refs)
+            })
+        except Exception as e:
+            self.logger.error(f"list_retro_trade_refs error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def add_retro_trade_ref(self, request: web.Request) -> web.Response:
+        """POST /api/journal/retrospectives/:id/trades - Add trade reference to retrospective."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            retro_id = request.match_info['id']
+            retro = self.db.get_retrospective(retro_id)
+
+            if not retro:
+                return self._error_response('Retrospective not found', 404)
+
+            if retro.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            body = await request.json()
+            if 'trade_id' not in body:
+                return self._error_response('trade_id is required')
+
+            ref = JournalTradeRef(
+                id=JournalTradeRef.new_id(),
+                source_type='retrospective',
+                source_id=retro_id,
+                trade_id=body['trade_id'],
+                note=body.get('note')
+            )
+
+            created = self.db.add_trade_ref(ref)
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201)
+        except Exception as e:
+            self.logger.error(f"add_retro_trade_ref error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def delete_trade_ref(self, request: web.Request) -> web.Response:
+        """DELETE /api/journal/trade-refs/:id - Remove a trade reference."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            ref_id = request.match_info['id']
+
+            # We don't have direct ownership check on refs, but the delete is safe
+            deleted = self.db.delete_trade_ref(ref_id)
+            if not deleted:
+                return self._error_response('Trade reference not found', 404)
+
+            return self._json_response({
+                'success': True,
+                'message': 'Trade reference deleted'
+            })
+        except Exception as e:
+            self.logger.error(f"delete_trade_ref error: {e}")
+            return self._error_response(str(e), 500)
+
+    # ==================== Journal Attachment Endpoints ====================
+
+    def _get_storage_path(self, user_id: int, filename: str) -> Path:
+        """Generate storage path for an attachment."""
+        now = datetime.utcnow()
+        import uuid
+        unique_name = f"{uuid.uuid4()}_{filename}"
+        path = self.attachments_path / str(user_id) / str(now.year) / f"{now.month:02d}"
+        path.mkdir(parents=True, exist_ok=True)
+        return path / unique_name
+
+    async def list_entry_attachments(self, request: web.Request) -> web.Response:
+        """GET /api/journal/entries/:id/attachments - List attachments for an entry."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            attachments = self.db.list_attachments('entry', entry_id)
+
+            return self._json_response({
+                'success': True,
+                'data': [a.to_api_dict() for a in attachments],
+                'count': len(attachments)
+            })
+        except Exception as e:
+            self.logger.error(f"list_entry_attachments error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def upload_entry_attachment(self, request: web.Request) -> web.Response:
+        """POST /api/journal/entries/:id/attachments - Upload attachment to entry."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            entry_id = request.match_info['id']
+            entry = self.db.get_entry(entry_id)
+
+            if not entry:
+                return self._error_response('Entry not found', 404)
+
+            if entry.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            # Read multipart data
+            reader = await request.multipart()
+            field = await reader.next()
+
+            if not field:
+                return self._error_response('No file uploaded', 400)
+
+            filename = field.filename or 'upload'
+            content_type = field.headers.get('Content-Type', 'application/octet-stream')
+
+            # Read file with size limit
+            chunks = []
+            size = 0
+            while True:
+                chunk = await field.read_chunk()
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > self.max_attachment_size:
+                    return self._error_response(f'File too large (max {self.max_attachment_size // 1024 // 1024}MB)', 400)
+                chunks.append(chunk)
+
+            content = b''.join(chunks)
+
+            # Save file
+            storage_path = self._get_storage_path(user['id'], filename)
+            with open(storage_path, 'wb') as f:
+                f.write(content)
+
+            # Create attachment record
+            attachment = JournalAttachment(
+                id=JournalAttachment.new_id(),
+                source_type='entry',
+                source_id=entry_id,
+                filename=filename,
+                file_path=str(storage_path),
+                mime_type=content_type,
+                file_size=size
+            )
+
+            created = self.db.create_attachment(attachment)
+            self.logger.info(f"Uploaded attachment '{filename}' to entry {entry_id}", emoji="📎")
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201)
+        except Exception as e:
+            self.logger.error(f"upload_entry_attachment error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def list_retro_attachments(self, request: web.Request) -> web.Response:
+        """GET /api/journal/retrospectives/:id/attachments - List attachments for a retrospective."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            retro_id = request.match_info['id']
+            retro = self.db.get_retrospective(retro_id)
+
+            if not retro:
+                return self._error_response('Retrospective not found', 404)
+
+            if retro.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            attachments = self.db.list_attachments('retrospective', retro_id)
+
+            return self._json_response({
+                'success': True,
+                'data': [a.to_api_dict() for a in attachments],
+                'count': len(attachments)
+            })
+        except Exception as e:
+            self.logger.error(f"list_retro_attachments error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def upload_retro_attachment(self, request: web.Request) -> web.Response:
+        """POST /api/journal/retrospectives/:id/attachments - Upload attachment to retrospective."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            retro_id = request.match_info['id']
+            retro = self.db.get_retrospective(retro_id)
+
+            if not retro:
+                return self._error_response('Retrospective not found', 404)
+
+            if retro.user_id != user['id']:
+                return self._error_response('Access denied', 403)
+
+            # Read multipart data
+            reader = await request.multipart()
+            field = await reader.next()
+
+            if not field:
+                return self._error_response('No file uploaded', 400)
+
+            filename = field.filename or 'upload'
+            content_type = field.headers.get('Content-Type', 'application/octet-stream')
+
+            # Read file with size limit
+            chunks = []
+            size = 0
+            while True:
+                chunk = await field.read_chunk()
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > self.max_attachment_size:
+                    return self._error_response(f'File too large (max {self.max_attachment_size // 1024 // 1024}MB)', 400)
+                chunks.append(chunk)
+
+            content = b''.join(chunks)
+
+            # Save file
+            storage_path = self._get_storage_path(user['id'], filename)
+            with open(storage_path, 'wb') as f:
+                f.write(content)
+
+            # Create attachment record
+            attachment = JournalAttachment(
+                id=JournalAttachment.new_id(),
+                source_type='retrospective',
+                source_id=retro_id,
+                filename=filename,
+                file_path=str(storage_path),
+                mime_type=content_type,
+                file_size=size
+            )
+
+            created = self.db.create_attachment(attachment)
+            self.logger.info(f"Uploaded attachment '{filename}' to retrospective {retro_id}", emoji="📎")
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201)
+        except Exception as e:
+            self.logger.error(f"upload_retro_attachment error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def download_attachment(self, request: web.Request) -> web.Response:
+        """GET /api/journal/attachments/:id - Download an attachment."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            attachment_id = request.match_info['id']
+            attachment = self.db.get_attachment(attachment_id)
+
+            if not attachment:
+                return self._error_response('Attachment not found', 404)
+
+            # Verify ownership through parent entry/retrospective
+            if attachment.source_type == 'entry':
+                entry = self.db.get_entry(attachment.source_id)
+                if not entry or entry.user_id != user['id']:
+                    return self._error_response('Access denied', 403)
+            else:
+                retro = self.db.get_retrospective(attachment.source_id)
+                if not retro or retro.user_id != user['id']:
+                    return self._error_response('Access denied', 403)
+
+            file_path = Path(attachment.file_path)
+            if not file_path.exists():
+                return self._error_response('File not found', 404)
+
+            with open(file_path, 'rb') as f:
+                content = f.read()
+
+            return web.Response(
+                body=content,
+                content_type=attachment.mime_type or 'application/octet-stream',
+                headers={
+                    'Content-Disposition': f'attachment; filename="{attachment.filename}"',
+                    'Access-Control-Allow-Origin': '*',
+                }
+            )
+        except Exception as e:
+            self.logger.error(f"download_attachment error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def delete_attachment(self, request: web.Request) -> web.Response:
+        """DELETE /api/journal/attachments/:id - Delete an attachment."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            attachment_id = request.match_info['id']
+            attachment = self.db.get_attachment(attachment_id)
+
+            if not attachment:
+                return self._error_response('Attachment not found', 404)
+
+            # Verify ownership through parent entry/retrospective
+            if attachment.source_type == 'entry':
+                entry = self.db.get_entry(attachment.source_id)
+                if not entry or entry.user_id != user['id']:
+                    return self._error_response('Access denied', 403)
+            else:
+                retro = self.db.get_retrospective(attachment.source_id)
+                if not retro or retro.user_id != user['id']:
+                    return self._error_response('Access denied', 403)
+
+            # Delete file
+            try:
+                file_path = Path(attachment.file_path)
+                if file_path.exists():
+                    file_path.unlink()
+            except Exception:
+                pass  # Best effort
+
+            # Delete record
+            self.db.delete_attachment(attachment_id)
+            self.logger.info(f"Deleted attachment {attachment_id}", emoji="🗑️")
+
+            return self._json_response({
+                'success': True,
+                'message': 'Attachment deleted'
+            })
+        except Exception as e:
+            self.logger.error(f"delete_attachment error: {e}")
+            return self._error_response(str(e), 500)
+
+    # ==================== Calendar View Endpoints (Temporal Gravity) ====================
+
+    async def get_calendar_month(self, request: web.Request) -> web.Response:
+        """GET /api/journal/calendar/:year/:month - Get month view with entry indicators."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            year = int(request.match_info['year'])
+            month = int(request.match_info['month'])
+
+            if month < 1 or month > 12:
+                return self._error_response('Invalid month', 400)
+
+            data = self.db.get_calendar_month(user['id'], year, month)
+
+            return self._json_response({
+                'success': True,
+                'data': data
+            })
+        except ValueError:
+            return self._error_response('Invalid year or month', 400)
+        except Exception as e:
+            self.logger.error(f"get_calendar_month error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_calendar_week(self, request: web.Request) -> web.Response:
+        """GET /api/journal/calendar/week/:weekStart - Get week view with entry indicators."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401)
+
+            week_start = request.match_info['weekStart']
+
+            # Validate date format
+            try:
+                datetime.strptime(week_start, '%Y-%m-%d')
+            except ValueError:
+                return self._error_response('Invalid date format (use YYYY-MM-DD)', 400)
+
+            data = self.db.get_calendar_week(user['id'], week_start)
+
+            return self._json_response({
+                'success': True,
+                'data': data
+            })
+        except Exception as e:
+            self.logger.error(f"get_calendar_week error: {e}")
+            return self._error_response(str(e), 500)
+
     # ==================== Legacy Endpoints (for backwards compatibility) ====================
 
     async def legacy_list_trades(self, request: web.Request) -> web.Response:
@@ -1213,6 +2100,41 @@ class JournalOrchestrator:
         app.router.add_get('/api/settings/{key}', self.get_setting)
         app.router.add_put('/api/settings/{key}', self.set_setting)
         app.router.add_delete('/api/settings/{key}', self.delete_setting)
+
+        # Journal Entries
+        app.router.add_get('/api/journal/entries', self.list_journal_entries)
+        app.router.add_get('/api/journal/entries/date/{date}', self.get_journal_entry_by_date)
+        app.router.add_get('/api/journal/entries/{id}', self.get_journal_entry)
+        app.router.add_post('/api/journal/entries', self.create_journal_entry)
+        app.router.add_put('/api/journal/entries/{id}', self.update_journal_entry)
+        app.router.add_delete('/api/journal/entries/{id}', self.delete_journal_entry)
+
+        # Journal Retrospectives
+        app.router.add_get('/api/journal/retrospectives', self.list_retrospectives)
+        app.router.add_get('/api/journal/retrospectives/{type}/{periodStart}', self.get_retrospective_by_period)
+        app.router.add_get('/api/journal/retrospectives/{id}', self.get_retrospective)
+        app.router.add_post('/api/journal/retrospectives', self.create_retrospective)
+        app.router.add_put('/api/journal/retrospectives/{id}', self.update_retrospective)
+        app.router.add_delete('/api/journal/retrospectives/{id}', self.delete_retrospective)
+
+        # Journal Trade References
+        app.router.add_get('/api/journal/entries/{id}/trades', self.list_entry_trade_refs)
+        app.router.add_post('/api/journal/entries/{id}/trades', self.add_entry_trade_ref)
+        app.router.add_get('/api/journal/retrospectives/{id}/trades', self.list_retro_trade_refs)
+        app.router.add_post('/api/journal/retrospectives/{id}/trades', self.add_retro_trade_ref)
+        app.router.add_delete('/api/journal/trade-refs/{id}', self.delete_trade_ref)
+
+        # Journal Attachments
+        app.router.add_get('/api/journal/entries/{id}/attachments', self.list_entry_attachments)
+        app.router.add_post('/api/journal/entries/{id}/attachments', self.upload_entry_attachment)
+        app.router.add_get('/api/journal/retrospectives/{id}/attachments', self.list_retro_attachments)
+        app.router.add_post('/api/journal/retrospectives/{id}/attachments', self.upload_retro_attachment)
+        app.router.add_get('/api/journal/attachments/{id}', self.download_attachment)
+        app.router.add_delete('/api/journal/attachments/{id}', self.delete_attachment)
+
+        # Journal Calendar Views (Temporal Gravity)
+        app.router.add_get('/api/journal/calendar/{year}/{month}', self.get_calendar_month)
+        app.router.add_get('/api/journal/calendar/week/{weekStart}', self.get_calendar_week)
 
         # Legacy endpoints (backwards compatibility)
         app.router.add_get('/api/trades', self.legacy_list_trades)

@@ -32,6 +32,7 @@
     "JOURNAL_MYSQL_USER": "fotw_app",
     "JOURNAL_MYSQL_PASSWORD": "PfedKtaTaAa2iV21QTZp",
     "JOURNAL_MYSQL_DATABASE": "fotw_app",
-    "APP_SESSION_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0"
+    "APP_SESSION_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0",
+    "JOURNAL_ATTACHMENTS_PATH": "services/journal/data/attachments"
   }
 }
