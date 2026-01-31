@@ -1534,20 +1534,32 @@ function App() {
             // Zone only appears when profit threshold is met
             const profitThresholdMet = profitPercent >= minProfitThreshold;
 
-            // Calculate dynamic zone width based on:
-            // - DTE (more time = wider zone due to theta decay buffer)
-            // - Profit level (higher profit = can afford wider zone)
-            // - Strategy type (butterflies have narrower profit range)
-            const daysToExpiry = strategy.dte || 0;
-            const thetaFactor = Math.max(1.5, Math.sqrt(daysToExpiry + 1) * 1.2);
-            const profitFactor = 1 + Math.max(0, profitPercent) * 0.5;
-            const gammaFactor = strategy.strategy === 'butterfly' ? 0.7 : strategy.strategy === 'vertical' ? 0.85 : 1.0;
+            // Calculate dynamic zone width based on EFFECTIVE time remaining
+            // As expiration approaches, gamma increases and zone SHRINKS
+            // - Less time = higher gamma = narrower safe zone (price moves hurt more)
+            // - More time = lower gamma = wider safe zone (time to recover)
+            const nominalDTE = strategy.dte || 0;
+            const effectiveDTE = Math.max(0, nominalDTE - (timeOffset / 24));
 
-            // Base zone width: 15 points for SPX-scale, scaled by factors
-            const baseWidth = 15 * thetaFactor * profitFactor * gammaFactor;
-            const zoneHalfWidth = Math.min(80, Math.max(10, baseWidth));
+            // Time factor: zone shrinks as we approach expiration
+            // At 0 DTE: factor ~0.3 (very tight zone)
+            // At 1 DTE: factor ~0.6
+            // At 3 DTE: factor ~1.0
+            // At 7+ DTE: factor ~1.5 (wider zone, more buffer)
+            const timeFactor = Math.min(1.5, Math.max(0.3, Math.sqrt(effectiveDTE) * 0.75));
 
-            // Track high water mark profit
+            // Gamma factor: butterflies have extreme gamma near center, need tighter zone
+            const gammaFactor = strategy.strategy === 'butterfly' ? 0.6 : strategy.strategy === 'vertical' ? 0.8 : 1.0;
+
+            // Profit factor: slightly more buffer with profit, but less impact near expiration
+            const profitBuffer = effectiveDTE > 1 ? (1 + Math.max(0, profitPercent) * 0.3) : 1;
+
+            // Base zone width: starts at 20 points, scaled by factors
+            // Near expiration (0 DTE), this could be as low as 20 * 0.3 * 0.6 = 3.6 points
+            const baseWidth = 20 * timeFactor * gammaFactor * profitBuffer;
+            const zoneHalfWidth = Math.max(3, baseWidth); // Minimum 3 points
+
+            // Track high water mark profit (but don't expand zone from it)
             const hwmProfit = alert.highWaterMarkProfit || 0;
             let newHwmProfit = hwmProfit;
             if (currentProfit > hwmProfit) {
@@ -1555,9 +1567,8 @@ function App() {
               hasChanges = true;
             }
 
-            // Zone expands as profit increases (locked gains concept)
-            const zoneExpansion = Math.max(0, newHwmProfit / entryDebit) * 15;
-            const finalZoneWidth = zoneHalfWidth + zoneExpansion;
+            // Zone width is purely based on time/gamma risk - no expansion
+            const finalZoneWidth = zoneHalfWidth;
 
             // Calculate zone bounds centered on effective spot (simulated or real)
             const newZoneLow = effectiveSpot - finalZoneWidth;
