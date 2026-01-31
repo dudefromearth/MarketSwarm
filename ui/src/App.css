@@ -4477,6 +4477,37 @@ body {
   font-size: 10px;
 }
 
+.trade-dte {
+  text-align: center;
+}
+
+.dte-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+.dte-badge.dte-0 {
+  background: rgba(251, 191, 36, 0.2);
+  color: #fbbf24;
+}
+
+.dte-badge.dte-1 {
+  background: rgba(59, 130, 246, 0.2);
+  color: #3b82f6;
+}
+
+.trade-duration {
+  color: #888;
+  font-family: 'SF Mono', Monaco, monospace;
+  font-size: 10px;
+  text-align: center;
+}
+
 /* Trade Log Pagination */
 .trade-log-pagination {
   display: flex;
@@ -5408,6 +5439,15 @@ body {
 
 .info-value.profit { color: #4ade80; }
 .info-value.loss { color: #f87171; }
+
+.info-value.dte-value {
+  color: #fbbf24;
+  font-weight: 600;
+}
+
+.info-value.duration-value {
+  color: #a78bfa;
+}
 
 .r-multiple {
   margin-left: 6px;

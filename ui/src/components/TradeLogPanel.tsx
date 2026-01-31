@@ -292,6 +292,24 @@ export default function TradeLogPanel({
     return r2r.toFixed(1);
   };
 
+  const formatDuration = (entryTime: string, exitTime: string | null): string => {
+    const start = new Date(entryTime).getTime();
+    const end = exitTime ? new Date(exitTime).getTime() : Date.now();
+    const diffMs = end - start;
+
+    const minutes = Math.floor(diffMs / (1000 * 60));
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) {
+      return `${days}d`;
+    } else if (hours > 0) {
+      return `${hours}h`;
+    } else {
+      return `${minutes}m`;
+    }
+  };
+
   return (
     <div className="trade-log-panel">
       <div className="trade-log-header">
@@ -428,12 +446,13 @@ export default function TradeLogPanel({
                     Date/Time {sortOrder === 'recent' ? '↓' : '↑'}
                   </th>
                   <th>Symbol</th>
+                  <th>DTE</th>
                   <th>Strategy</th>
                   <th>Qty</th>
                   <th>Entry</th>
                   <th>Exit</th>
                   <th>P&L</th>
-                  <th>R2R</th>
+                  <th>Dur</th>
                 </tr>
               </thead>
               <tbody>
@@ -445,6 +464,11 @@ export default function TradeLogPanel({
                   >
                     <td className="trade-datetime">{formatDateTime(trade.entry_time)}</td>
                     <td className="trade-symbol">{trade.symbol}</td>
+                    <td className="trade-dte">
+                      <span className={`dte-badge ${trade.dte === 0 ? 'dte-0' : trade.dte === 1 ? 'dte-1' : ''}`}>
+                        {trade.dte !== null ? trade.dte : '-'}
+                      </span>
+                    </td>
                     <td className="trade-strategy">
                       <span className={`strategy-badge ${trade.strategy || ''}`}>
                         {getStrategyLabel(trade.strategy || '')}
@@ -476,7 +500,7 @@ export default function TradeLogPanel({
                         formatPnL(trade.pnl)
                       )}
                     </td>
-                    <td className="trade-r2r">{formatR2R(trade)}</td>
+                    <td className="trade-duration">{formatDuration(trade.entry_time, trade.exit_time)}</td>
                   </tr>
                 ))}
               </tbody>

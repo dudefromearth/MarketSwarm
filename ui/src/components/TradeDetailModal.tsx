@@ -213,6 +213,35 @@ export default function TradeDetailModal({
     return dollars >= 0 ? `+$${formatted}` : `-$${formatted}`;
   };
 
+  // Calculate duration between entry and exit (or now if still open)
+  const calculateDuration = (entryTime: string, exitTime: string | null): string => {
+    const start = new Date(entryTime).getTime();
+    const end = exitTime ? new Date(exitTime).getTime() : Date.now();
+    const diffMs = end - start;
+
+    const minutes = Math.floor(diffMs / (1000 * 60));
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) {
+      const remainingHours = hours % 24;
+      return `${days}d ${remainingHours}h`;
+    } else if (hours > 0) {
+      const remainingMinutes = minutes % 60;
+      return `${hours}h ${remainingMinutes}m`;
+    } else {
+      return `${minutes}m`;
+    }
+  };
+
+  // Format DTE label
+  const formatDTE = (dte: number | null): string => {
+    if (dte === null) return '-';
+    if (dte === 0) return '0DTE';
+    if (dte === 1) return '1DTE';
+    return `${dte}DTE`;
+  };
+
   if (!isOpen || !trade) return null;
 
   return (
@@ -247,6 +276,10 @@ export default function TradeDetailModal({
                 </span>
               </div>
               <div className="info-row">
+                <span className="info-label">DTE at Entry:</span>
+                <span className="info-value dte-value">{formatDTE(trade.dte)}</span>
+              </div>
+              <div className="info-row">
                 <span className="info-label">Opened:</span>
                 <span className="info-value">{trade.entry_time ? formatDateTime(trade.entry_time) : '-'}</span>
               </div>
@@ -256,6 +289,12 @@ export default function TradeDetailModal({
                   <span className="info-value">{formatDateTime(trade.exit_time)}</span>
                 </div>
               )}
+              <div className="info-row">
+                <span className="info-label">{trade.status === 'open' ? 'Time Open:' : 'Duration:'}</span>
+                <span className="info-value duration-value">
+                  {trade.entry_time ? calculateDuration(trade.entry_time, trade.exit_time) : '-'}
+                </span>
+              </div>
               {trade.entry_spot != null && (
                 <div className="info-row">
                   <span className="info-label">Spot at Entry:</span>
