@@ -1,29 +1,55 @@
 // src/components/JournalEntryEditor.tsx
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Underline from '@tiptap/extension-underline';
 import TextAlign from '@tiptap/extension-text-align';
 import Highlight from '@tiptap/extension-highlight';
 import { Markdown } from 'tiptap-markdown';
-import type { JournalEntry, JournalTrade } from '../hooks/useJournal';
+import type { JournalEntry, JournalTrade, Retrospective } from '../hooks/useJournal';
 import TradeDetailModal from './TradeDetailModal';
 import type { Trade } from './TradeLogPanel';
 
 const JOURNAL_API = 'http://localhost:3002';
 
-interface JournalEntryEditorProps {
+type EditorMode = 'entry' | 'retrospective';
+
+// Base props shared by both modes
+interface BaseEditorProps {
+  loading: boolean;
+  onTradesUpdated?: () => void;
+}
+
+// Props for daily entry mode
+interface EntryModeProps extends BaseEditorProps {
+  mode: 'entry';
   date: string;
   entry: JournalEntry | null;
-  loading: boolean;
   onSave: (content: string, isPlaybook: boolean) => Promise<boolean>;
   // Trade linking
   tradesForDate: JournalTrade[];
   loadingTrades: boolean;
   onLinkTrade: (entryId: string, tradeId: string) => Promise<boolean>;
   onUnlinkTrade: (refId: string) => Promise<boolean>;
-  onTradesUpdated?: () => void;
 }
+
+// Props for retrospective mode
+interface RetroModeProps extends BaseEditorProps {
+  mode: 'retrospective';
+  retroType: 'weekly' | 'monthly';
+  periodStart: string;
+  periodEnd: string;
+  retrospective: Retrospective | null;
+  onSaveRetro: (retro: {
+    retro_type: 'weekly' | 'monthly';
+    period_start: string;
+    period_end: string;
+    content: string;
+    is_playbook_material: boolean;
+  }) => Promise<boolean>;
+}
+
+type JournalEntryEditorProps = EntryModeProps | RetroModeProps;
 
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const MONTH_NAMES = [
@@ -36,12 +62,14 @@ interface JournalTemplate {
   id: string;
   name: string;
   content: string;
+  category: 'daily' | 'weekly' | 'monthly' | 'all';
 }
 
 const JOURNAL_TEMPLATES: JournalTemplate[] = [
   {
     id: 'end-of-day',
     name: 'End of Day',
+    category: 'daily',
     content: `## End of Day Reflection
 
 ### Market Context
@@ -63,6 +91,7 @@ const JOURNAL_TEMPLATES: JournalTemplate[] = [
   {
     id: 'trade-reflection',
     name: 'Trade Reflection',
+    category: 'daily',
     content: `## Trade Reflection
 
 ### Setup
@@ -85,6 +114,7 @@ What would I do differently? What worked?
   {
     id: 'weekly-retro',
     name: 'Weekly Retrospective',
+    category: 'weekly',
     content: `## Weekly Retrospective
 
 ### Performance Summary
@@ -111,6 +141,7 @@ What went wrong?
   {
     id: 'monthly-retro',
     name: 'Monthly Retrospective',
+    category: 'monthly',
     content: `## Monthly Retrospective
 
 ### Month Overview
@@ -140,6 +171,7 @@ What am I doing differently now vs. start of month?
   {
     id: 'pre-market',
     name: 'Pre-Market Plan',
+    category: 'daily',
     content: `## Pre-Market Plan
 
 ### Overnight/Globex Summary
@@ -167,6 +199,59 @@ What am I doing differently now vs. start of month?
 
 `,
   },
+  {
+    id: 'performance-deep-dive',
+    name: 'Performance Deep Dive',
+    category: 'all',
+    content: `## Performance Analysis
+
+### By Strategy
+| Strategy | Trades | Win Rate | P&L |
+|----------|--------|----------|-----|
+|          |        |          |     |
+
+### By Time of Day
+- Morning session:
+- Afternoon session:
+- Closing:
+
+### By Market Condition
+- Trending days:
+- Range days:
+- High volatility:
+
+### Key Insights
+-
+
+`,
+  },
+  {
+    id: 'lessons-learned',
+    name: 'Lessons Learned',
+    category: 'all',
+    content: `## Lessons Learned
+
+### What Worked
+1.
+2.
+3.
+
+### What Didn't Work
+1.
+2.
+3.
+
+### Rules to Add/Modify
+-
+
+### Habits to Build
+-
+
+### Habits to Break
+-
+
+`,
+  },
 ];
 
 function formatDate(dateStr: string): string {
@@ -175,6 +260,21 @@ function formatDate(dateStr: string): string {
   const weekday = WEEKDAY_NAMES[date.getDay()];
   const monthName = MONTH_NAMES[month - 1];
   return `${weekday}, ${monthName} ${day}, ${year}`;
+}
+
+function formatPeriod(type: 'weekly' | 'monthly', start: string, end: string): string {
+  const [startYear, startMonth, startDay] = start.split('-').map(Number);
+  const [, endMonth, endDay] = end.split('-').map(Number);
+
+  if (type === 'weekly') {
+    const startStr = `${MONTH_NAMES[startMonth - 1].slice(0, 3)} ${startDay}`;
+    const endStr = startMonth === endMonth
+      ? `${endDay}`
+      : `${MONTH_NAMES[endMonth - 1].slice(0, 3)} ${endDay}`;
+    return `Week of ${startStr} - ${endStr}, ${startYear}`;
+  } else {
+    return `${MONTH_NAMES[startMonth - 1]} ${startYear}`;
+  }
 }
 
 function formatPnl(pnlCents: number | null): string {
@@ -216,17 +316,30 @@ function ToolbarButton({
   );
 }
 
-export default function JournalEntryEditor({
-  date,
-  entry,
-  loading,
-  onSave,
-  tradesForDate,
-  loadingTrades,
-  onLinkTrade,
-  onUnlinkTrade,
-  onTradesUpdated,
-}: JournalEntryEditorProps) {
+export default function JournalEntryEditor(props: JournalEntryEditorProps) {
+  // Extract common props
+  const { mode, loading, onTradesUpdated } = props;
+
+  // Mode-specific data
+  const isEntryMode = mode === 'entry';
+  const date = isEntryMode ? props.date : undefined;
+  const entry = isEntryMode ? props.entry : undefined;
+  const onSave = isEntryMode ? props.onSave : undefined;
+  const tradesForDate = isEntryMode ? props.tradesForDate : [];
+  const loadingTrades = isEntryMode ? props.loadingTrades : false;
+  const onLinkTrade = isEntryMode ? props.onLinkTrade : undefined;
+  const onUnlinkTrade = isEntryMode ? props.onUnlinkTrade : undefined;
+
+  const retroType = !isEntryMode ? props.retroType : undefined;
+  const periodStart = !isEntryMode ? props.periodStart : undefined;
+  const periodEnd = !isEntryMode ? props.periodEnd : undefined;
+  const retrospective = !isEntryMode ? props.retrospective : undefined;
+  const onSaveRetro = !isEntryMode ? props.onSaveRetro : undefined;
+
+  // Determine current content source
+  const currentData = isEntryMode ? entry : retrospective;
+  const dataKey = isEntryMode ? date : periodStart;
+
   const [isPlaybook, setIsPlaybook] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -234,6 +347,17 @@ export default function JournalEntryEditor({
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [showTradeModal, setShowTradeModal] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+
+  // Filter templates based on mode
+  const availableTemplates = useMemo(() => {
+    if (isEntryMode) {
+      return JOURNAL_TEMPLATES.filter(t => t.category === 'daily' || t.category === 'all');
+    } else if (retroType === 'weekly') {
+      return JOURNAL_TEMPLATES.filter(t => t.category === 'weekly' || t.category === 'all');
+    } else {
+      return JOURNAL_TEMPLATES.filter(t => t.category === 'monthly' || t.category === 'all');
+    }
+  }, [isEntryMode, retroType]);
 
   // Initialize TipTap editor with Markdown support
   const editor = useEditor({
@@ -251,9 +375,9 @@ export default function JournalEntryEditor({
         multicolor: false,
       }),
       Markdown.configure({
-        html: false, // Don't parse HTML in Markdown
-        transformPastedText: true, // Transform pasted Markdown
-        transformCopiedText: true, // Copy as Markdown
+        html: false,
+        transformPastedText: true,
+        transformCopiedText: true,
       }),
     ],
     content: '',
@@ -267,19 +391,19 @@ export default function JournalEntryEditor({
     },
   });
 
-  // Sync form state with entry data
+  // Sync form state with entry/retrospective data
   useEffect(() => {
     if (editor) {
-      if (entry) {
-        editor.commands.setContent(entry.content || '');
-        setIsPlaybook(entry.is_playbook_material);
+      if (currentData) {
+        editor.commands.setContent(currentData.content || '');
+        setIsPlaybook(currentData.is_playbook_material);
       } else {
         editor.commands.setContent('');
         setIsPlaybook(false);
       }
       setDirty(false);
     }
-  }, [entry, date, editor]);
+  }, [currentData, dataKey, editor]);
 
   const handlePlaybookChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setIsPlaybook(e.target.checked);
@@ -289,24 +413,37 @@ export default function JournalEntryEditor({
   const handleSave = useCallback(async () => {
     if (!editor) return;
     setSaving(true);
-    // Save as Markdown for portability and LLM compatibility
     const markdownStorage = editor.storage.markdown as { getMarkdown: () => string };
     const content = markdownStorage.getMarkdown();
-    const success = await onSave(content, isPlaybook);
+
+    let success = false;
+    if (isEntryMode && onSave) {
+      success = await onSave(content, isPlaybook);
+    } else if (!isEntryMode && onSaveRetro && retroType && periodStart && periodEnd) {
+      success = await onSaveRetro({
+        retro_type: retroType,
+        period_start: periodStart,
+        period_end: periodEnd,
+        content,
+        is_playbook_material: isPlaybook,
+      });
+    }
+
     setSaving(false);
     if (success) {
       setDirty(false);
     }
-  }, [editor, isPlaybook, onSave]);
+  }, [editor, isPlaybook, isEntryMode, onSave, onSaveRetro, retroType, periodStart, periodEnd]);
 
   const handleLinkTrade = async (tradeId: string) => {
-    if (!entry) return;
+    if (!entry || !onLinkTrade) return;
     setLinkingTradeId(tradeId);
     await onLinkTrade(entry.id, tradeId);
     setLinkingTradeId(null);
   };
 
   const handleUnlinkTrade = async (refId: string) => {
+    if (!onUnlinkTrade) return;
     await onUnlinkTrade(refId);
   };
 
@@ -405,11 +542,18 @@ export default function JournalEntryEditor({
     return acc;
   }, {} as Record<string, Array<{ ref: typeof entry.trade_refs[0]; trade: typeof tradesForDate[0] | undefined }>>);
 
+  // Compute header title based on mode
+  const headerTitle = isEntryMode && date
+    ? formatDate(date)
+    : (!isEntryMode && retroType && periodStart && periodEnd)
+      ? formatPeriod(retroType, periodStart, periodEnd)
+      : '';
+
   if (loading) {
     return (
       <div className="journal-entry-editor">
         <div className="entry-header">
-          <h3>{formatDate(date)}</h3>
+          <h3>{headerTitle}</h3>
         </div>
         <div className="entry-loading">Loading...</div>
       </div>
@@ -419,10 +563,10 @@ export default function JournalEntryEditor({
   return (
     <div className="journal-entry-editor">
       <div className="entry-header">
-        <h3>{formatDate(date)}</h3>
-        {entry && (
+        <h3>{headerTitle}</h3>
+        {currentData && (
           <span className="entry-meta">
-            Last updated: {new Date(entry.updated_at).toLocaleString()}
+            Last updated: {new Date(currentData.updated_at).toLocaleString()}
           </span>
         )}
       </div>
@@ -599,7 +743,7 @@ export default function JournalEntryEditor({
             </button>
             {showTemplateMenu && (
               <div className="template-menu">
-                {JOURNAL_TEMPLATES.map(template => (
+                {availableTemplates.map(template => (
                   <button
                     key={template.id}
                     type="button"
@@ -641,7 +785,8 @@ export default function JournalEntryEditor({
         </div>
       </div>
 
-      {/* Trades Section - Always show trades for the day */}
+      {/* Trades Section - Only show in entry mode */}
+      {isEntryMode && (
       <div className="entry-trades-section">
         <div className="trades-section-header">
           <h4>Trades on This Day</h4>
@@ -726,8 +871,9 @@ export default function JournalEntryEditor({
           </>
         )}
       </div>
+      )}
 
-      {entry && entry.attachments && entry.attachments.length > 0 && (
+      {isEntryMode && entry && entry.attachments && entry.attachments.length > 0 && (
         <div className="entry-attachments">
           <h4>Attachments</h4>
           <ul>
@@ -741,13 +887,15 @@ export default function JournalEntryEditor({
         </div>
       )}
 
-      {/* Trade Detail Modal */}
-      <TradeDetailModal
-        trade={selectedTrade}
-        isOpen={showTradeModal}
-        onClose={handleTradeModalClose}
-        onTradeUpdated={handleTradeUpdated}
-      />
+      {/* Trade Detail Modal - Only in entry mode */}
+      {isEntryMode && (
+        <TradeDetailModal
+          trade={selectedTrade}
+          isOpen={showTradeModal}
+          onClose={handleTradeModalClose}
+          onTradeUpdated={handleTradeUpdated}
+        />
+      )}
     </div>
   );
 }

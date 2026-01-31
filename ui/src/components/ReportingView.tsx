@@ -101,7 +101,6 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
   const drawdownChartRef = useRef<HTMLDivElement | null>(null);
   const equityChartApiRef = useRef<IChartApi | null>(null);
   const drawdownChartApiRef = useRef<IChartApi | null>(null);
-  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const [analytics, setAnalytics] = useState<LogAnalytics | null>(null);
   const [equityData, setEquityData] = useState<EquityPoint[]>([]);
@@ -109,8 +108,6 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
   const [distributionData, setDistributionData] = useState<DistributionBin[]>([]);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<TimeRange>('ALL');
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{ imported: number; errors: number } | null>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -152,46 +149,6 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
   useEffect(() => {
     fetchData();
   }, [fetchData]);
-
-  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setImporting(true);
-    setImportResult(null);
-
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const response = await fetch(`${JOURNAL_API}/api/logs/${logId}/import`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        setImportResult({
-          imported: result.imported,
-          errors: result.total_errors || 0,
-        });
-        // Refresh data after import
-        fetchData();
-      } else {
-        setImportResult({ imported: 0, errors: 1 });
-      }
-    } catch (err) {
-      console.error('Import error:', err);
-      setImportResult({ imported: 0, errors: 1 });
-    } finally {
-      setImporting(false);
-      // Reset file input
-      if (importInputRef.current) {
-        importInputRef.current.value = '';
-      }
-    }
-  };
 
   const filterByTimeRange = <T extends { time: string }>(data: T[], range: TimeRange): T[] => {
     if (range === 'ALL') return data;
@@ -408,54 +365,16 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
           &larr; Back
         </button>
         <h2>{logName} - Performance Review</h2>
-        <div className="header-actions">
-          <div className="export-buttons">
-            <a
-              href={`${JOURNAL_API}/api/logs/${logId}/export?format=csv`}
-              className="btn-export"
-              download
-            >
-              Export CSV
-            </a>
-            <a
-              href={`${JOURNAL_API}/api/logs/${logId}/export?format=xlsx`}
-              className="btn-export"
-              download
-            >
-              Export Excel
-            </a>
-            <input
-              ref={importInputRef}
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              onChange={handleImport}
-              className="import-input"
-            />
+        <div className="time-range-buttons">
+          {(['1M', '3M', 'ALL'] as TimeRange[]).map(range => (
             <button
-              className="btn-import"
-              onClick={() => importInputRef.current?.click()}
-              disabled={importing}
+              key={range}
+              className={`range-btn ${timeRange === range ? 'active' : ''}`}
+              onClick={() => setTimeRange(range)}
             >
-              {importing ? 'Importing...' : 'Import'}
+              {range}
             </button>
-          </div>
-          {importResult && (
-            <div className={`import-result ${importResult.errors > 0 ? 'has-errors' : ''}`}>
-              Imported {importResult.imported} trades
-              {importResult.errors > 0 && ` (${importResult.errors} errors)`}
-            </div>
-          )}
-          <div className="time-range-buttons">
-            {(['1M', '3M', 'ALL'] as TimeRange[]).map(range => (
-              <button
-                key={range}
-                className={`range-btn ${timeRange === range ? 'active' : ''}`}
-                onClick={() => setTimeRange(range)}
-              >
-                {range}
-              </button>
-            ))}
-          </div>
+          ))}
         </div>
       </div>
 

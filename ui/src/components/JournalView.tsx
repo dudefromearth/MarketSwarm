@@ -3,7 +3,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useJournal } from '../hooks/useJournal';
 import JournalCalendar from './JournalCalendar';
 import JournalEntryEditor from './JournalEntryEditor';
-import JournalRetrospectiveEditor from './JournalRetrospectiveEditor';
 import '../styles/journal.css';
 
 interface JournalViewProps {
@@ -209,6 +208,7 @@ export default function JournalView({ onClose }: JournalViewProps) {
             <div className="journal-editor-section">
               {selectedDate ? (
                 <JournalEntryEditor
+                  mode="entry"
                   date={selectedDate}
                   entry={journal.currentEntry}
                   loading={journal.loadingEntry}
@@ -227,8 +227,8 @@ export default function JournalView({ onClose }: JournalViewProps) {
             </div>
           </div>
         ) : (
-          <>
-            <div className="journal-sidebar">
+          <div className="journal-entries-layout">
+            <div className="journal-retro-nav">
               <div className="retro-type-toggle">
                 <button
                   className={`retro-type-btn ${retroType === 'weekly' ? 'active' : ''}`}
@@ -257,15 +257,16 @@ export default function JournalView({ onClose }: JournalViewProps) {
               </div>
             </div>
 
-            <div className="journal-main">
+            <div className="journal-editor-section">
               {selectedPeriod ? (
-                <JournalRetrospectiveEditor
-                  type={retroType}
+                <JournalEntryEditor
+                  mode="retrospective"
+                  retroType={retroType}
                   periodStart={selectedPeriod.start}
                   periodEnd={selectedPeriod.end}
                   retrospective={journal.currentRetrospective}
                   loading={journal.loadingRetrospective}
-                  onSave={handleSaveRetrospective}
+                  onSaveRetro={handleSaveRetrospective}
                 />
               ) : (
                 <div className="journal-empty">
@@ -273,7 +274,7 @@ export default function JournalView({ onClose }: JournalViewProps) {
                 </div>
               )}
             </div>
-          </>
+          </div>
         )}
       </div>
 
