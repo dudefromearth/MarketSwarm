@@ -26,7 +26,7 @@ from .commentary_prompts import (
     get_category_for_trigger,
 )
 from .mel_models import MELSnapshot
-from .ai_providers import AIProviderManager, AIProviderConfig
+from .ai_providers import AIProviderManager, AIProviderConfig, AIMessage, create_provider
 
 
 class CommentaryOrchestrator:
@@ -253,7 +253,7 @@ class CommentaryOrchestrator:
             system = f"{SYSTEM_PROMPT}\n\n{FOTW_CONTEXT}"
 
             # Generate via AI
-            messages = [{"role": "user", "content": prompt}]
+            messages = [AIMessage(role="user", content=prompt)]
 
             response = await self.ai_manager.generate(
                 messages=messages,
@@ -315,8 +315,9 @@ class CommentaryService:
         self.config = config
         self.logger = logger or logging.getLogger("CommentaryService")
 
-        # AI provider
-        self.ai_manager = AIProviderManager(ai_config, logger=self.logger)
+        # AI provider - create provider instance from config
+        primary_provider = create_provider(ai_config, self.logger)
+        self.ai_manager = AIProviderManager(primary_provider, logger=self.logger)
 
         # Orchestrator
         self.orchestrator = CommentaryOrchestrator(

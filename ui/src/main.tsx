@@ -7,17 +7,20 @@ import AuthWrapper from './AuthWrapper.tsx'
 import AppLayout from './components/AppLayout.tsx'
 import ProfilePage from './pages/Profile.tsx'
 import WorkbenchPage from './pages/Workbench.tsx'
+import { AlertProvider } from './contexts/AlertContext.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
-      <AuthWrapper>
-        <Routes>
-          <Route path="/" element={<AppLayout><App /></AppLayout>} />
-          <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/workbench" element={<WorkbenchPage />} />
-        </Routes>
-      </AuthWrapper>
+      <AlertProvider>
+        <AuthWrapper>
+          <Routes>
+            <Route path="/" element={<AppLayout><App /></AppLayout>} />
+            <Route path="/profile" element={<ProfilePage />} />
+            <Route path="/workbench" element={<WorkbenchPage />} />
+          </Routes>
+        </AuthWrapper>
+      </AlertProvider>
     </BrowserRouter>
   </StrictMode>,
 )

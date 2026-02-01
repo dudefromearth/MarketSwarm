@@ -35,6 +35,10 @@ export function buildKeyMap(config) {
       keyMap.bias_lfi = key;
     } else if (key.startsWith("vexy:model:playbyplay")) {
       keyMap.vexy = key;
+    } else if (key.startsWith("copilot:alerts:events")) {
+      keyMap.alerts_events = key;
+    } else if (key.startsWith("copilot:alerts:latest")) {
+      keyMap.alerts_latest = key;
     }
   }
 
@@ -138,6 +142,29 @@ export class KeyResolver {
     return this.keyMap.bias_lfi ? `${this.keyMap.bias_lfi}:latest` : "massive:bias_lfi:model:latest";
   }
 
+  // Alerts - keys from copilot service
+  alertsChannel() {
+    return this.keyMap.alerts_events || "copilot:alerts:events";
+  }
+
+  alertsLatestKey() {
+    return this.keyMap.alerts_latest || "copilot:alerts:latest";
+  }
+
+  alertKey(alertId) {
+    const prefix = this.keyMap.alerts_latest
+      ? this.keyMap.alerts_latest.replace(":latest", "")
+      : "copilot:alerts";
+    return `${prefix}:${alertId}`;
+  }
+
+  alertsPattern() {
+    const prefix = this.keyMap.alerts_latest
+      ? this.keyMap.alerts_latest.replace(":latest", "")
+      : "copilot:alerts";
+    return `${prefix}:*`;
+  }
+
   // Debug: log all resolved keys
   logKeys() {
     console.log("[keys] Resolved key patterns from config:");
@@ -150,6 +177,8 @@ export class KeyResolver {
     console.log(`  vix_regime: ${this.vixRegimeKey()}`);
     console.log(`  bias_lfi: ${this.biasLfiKey()}`);
     console.log(`  volume_profile: ${this.volumeProfileKey()}`);
+    console.log(`  alerts channel: ${this.alertsChannel()}`);
+    console.log(`  alerts latest: ${this.alertsLatestKey()}`);
   }
 }
 

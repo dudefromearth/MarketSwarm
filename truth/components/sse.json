@@ -27,7 +27,9 @@
       { "bus": "market-redis", "key": "massive:bias_lfi:model" },
       { "bus": "market-redis", "key": "vexy:model:playbyplay" },
       { "bus": "market-redis", "key": "copilot:mel:snapshot" },
-      { "bus": "market-redis", "key": "copilot:commentary:message" }
+      { "bus": "market-redis", "key": "copilot:commentary:message" },
+      { "bus": "market-redis", "key": "copilot:alerts:events" },
+      { "bus": "market-redis", "key": "copilot:alerts:latest" }
     ]
   },
   "dependencies": [

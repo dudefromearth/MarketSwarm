@@ -23,7 +23,9 @@ from .adi_api import ADIAPIHandler
 from .commentary import CommentaryService
 from .commentary_models import CommentaryConfig
 from .commentary_api import CommentaryAPIHandler
-from .ai_providers import AIProviderConfig
+from .ai_providers import AIProviderConfig, AIProviderManager, create_provider
+from .alert_engine import AlertEngine, AlertEngineConfig
+from .alert_evaluators import create_all_evaluators
 
 
 class CopilotOrchestrator:
@@ -44,6 +46,7 @@ class CopilotOrchestrator:
         self.mel_enabled = config.get("COPILOT_MEL_ENABLED", "true") == "true"
         self.adi_enabled = config.get("COPILOT_ADI_ENABLED", "true") == "true"
         self.commentary_enabled = config.get("COPILOT_COMMENTARY_ENABLED", "false") == "true"
+        self.alerts_enabled = config.get("COPILOT_ALERTS_ENABLED", "true") == "true"
 
         # MEL thresholds from config
         self.mel_threshold_valid = int(config.get("COPILOT_MEL_THRESHOLD_VALID", "70"))
@@ -68,6 +71,8 @@ class CopilotOrchestrator:
         self.adi_api: ADIAPIHandler | None = None
         self.commentary: CommentaryService | None = None
         self.commentary_api: CommentaryAPIHandler | None = None
+        self.alert_engine: AlertEngine | None = None
+        self.ai_manager: AIProviderManager | None = None
 
         # Web app
         self.app: web.Application | None = None
@@ -269,6 +274,9 @@ class CopilotOrchestrator:
                         except Exception as e:
                             self.logger.warn(f"GEX transform error: {e}", emoji="⚠️")
 
+                    # Notify alert engine of market data update
+                    self._on_market_data_update()
+
             except Exception as e:
                 self.logger.warn(f"market data poll error: {e}", emoji="⚠️")
 
@@ -364,6 +372,91 @@ class CopilotOrchestrator:
 
         self.logger.ok("Commentary service initialized", emoji="💬")
 
+    async def setup_alerts(self):
+        """Initialize Alert Engine subsystem."""
+        if not self.alerts_enabled:
+            self.logger.info("Alerts disabled by config", emoji="⏸️")
+            return
+
+        alerts_settings = self.config.get("alerts", {})
+        keys_config = alerts_settings.get("keys", {})
+
+        # Setup AI provider manager for AI-powered alerts
+        ai_config = AIProviderConfig(
+            provider=alerts_settings.get("provider", "anthropic"),
+            api_key=os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+            model=alerts_settings.get("model"),
+        )
+
+        try:
+            primary_provider = create_provider(ai_config, self.logger)
+            self.ai_manager = AIProviderManager(
+                primary=primary_provider,
+                fallback=None,
+                logger=self.logger,
+            )
+            self.logger.info(f"AI provider configured: {alerts_settings.get('provider', 'anthropic')}", emoji="🤖")
+        except Exception as e:
+            self.logger.warn(f"AI provider setup failed: {e}, AI alerts will be disabled", emoji="⚠️")
+            self.ai_manager = None
+
+        # Create alert engine config from Truth settings
+        alert_config = AlertEngineConfig(
+            enabled=True,
+            fast_loop_interval_ms=int(self.config.get(
+                "COPILOT_ALERTS_FAST_LOOP_MS",
+                alerts_settings.get("fastLoopIntervalMs", 1000)
+            )),
+            slow_loop_interval_ms=int(self.config.get(
+                "COPILOT_ALERTS_SLOW_LOOP_MS",
+                alerts_settings.get("slowLoopIntervalMs", 5000)
+            )),
+            # Redis keys from Truth config
+            redis_key_prefix=keys_config.get("alertPrefix", "copilot:alerts"),
+            publish_channel=keys_config.get("events", "copilot:alerts:events"),
+            latest_key=keys_config.get("latest", "copilot:alerts:latest"),
+            # Role gating from Truth config
+            role_gating=alerts_settings.get("roleGating"),
+            limits=alerts_settings.get("limits"),
+            max_alerts_per_user=alerts_settings.get("maxAlertsPerUser", 50),
+        )
+
+        self.logger.info(
+            f"Alert config: fast={alert_config.fast_loop_interval_ms}ms, "
+            f"slow={alert_config.slow_loop_interval_ms}ms, "
+            f"channel={alert_config.publish_channel}",
+            emoji="⚙️"
+        )
+
+        # Initialize alert engine
+        self.alert_engine = AlertEngine(
+            config=alert_config,
+            redis=self.market_redis,
+            logger=self.logger,
+        )
+
+        # Register all evaluators
+        evaluators = create_all_evaluators(self.ai_manager)
+        for evaluator in evaluators:
+            self.alert_engine.register_evaluator(evaluator)
+
+        # Log role gating config
+        if alert_config.role_gating:
+            ai_types = [t for t in alert_config.role_gating.keys() if t.startswith("ai_")]
+            self.logger.info(f"Role gating enabled for {len(ai_types)} AI alert types", emoji="🔐")
+
+        self.logger.ok("Alert engine initialized", emoji="🔔")
+
+    def _on_market_data_update(self) -> None:
+        """Called after market data is updated - notifies alert engine."""
+        if self.alert_engine:
+            market_data = self.get_market_data()
+            # Use asyncio.create_task to avoid blocking the poll loop
+            asyncio.create_task(
+                self.alert_engine.update_market_data(market_data),
+                name="alert-market-update"
+            )
+
     async def health_check(self, request: web.Request) -> web.Response:
         """Health check endpoint."""
         return web.json_response({
@@ -373,6 +466,8 @@ class CopilotOrchestrator:
             "mel_enabled": self.mel_enabled,
             "adi_enabled": self.adi_enabled,
             "commentary_enabled": self.commentary_enabled,
+            "alerts_enabled": self.alerts_enabled,
+            "alerts_count": len(self.alert_engine.get_alerts()) if self.alert_engine else 0,
         })
 
     async def debug_market_data(self, request: web.Request) -> web.Response:
@@ -438,6 +533,7 @@ class CopilotOrchestrator:
         await self.setup_mel()
         await self.setup_adi()
         await self.setup_commentary()
+        await self.setup_alerts()
 
         # Setup web app
         await self.setup_web_app()
@@ -456,6 +552,10 @@ class CopilotOrchestrator:
         if self.commentary:
             await self.commentary.start()
 
+        # Start Alert Engine
+        if self.alert_engine:
+            await self.alert_engine.start()
+
         # Start web server
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
@@ -468,6 +568,8 @@ class CopilotOrchestrator:
         """Stop all subsystems."""
         self.logger.info("shutting down...", emoji="🛑")
 
+        if self.alert_engine:
+            await self.alert_engine.stop()
         if self.commentary:
             await self.commentary.stop()
         if self.mel:

@@ -22,9 +22,9 @@ import SettingsModal from './components/SettingsModal';
 import JournalView from './components/JournalView';
 import PlaybookView from './components/PlaybookView';
 import AlertCreationModal, { type EditingAlertData } from './components/AlertCreationModal';
-import RiskGraphDemo from './components/RiskGraphDemo';
-import PnLChart, { type PnLChartHandle, type PriceAlertType } from './components/PnLChart';
-import { useRiskGraphCalculations } from './hooks/useRiskGraphCalculations';
+import RiskGraphPanel from './components/RiskGraphPanel';
+import { useAlerts } from './contexts/AlertContext';
+import type { AlertType, AlertBehavior } from './types/alerts';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -121,12 +121,7 @@ interface RiskGraphStrategy extends SelectedStrategy {
   visible: boolean;
 }
 
-// Alert behavior when triggered
-type AlertBehavior = 'remove_on_hit' | 'once_only' | 'repeat';
-
-// Alert types including AI Theta/Gamma
-type AlertType = 'price' | 'debit' | 'profit_target' | 'trailing_stop' | 'ai_theta_gamma';
-
+// Legacy RiskGraphAlert for local alert evaluation (will be migrated to backend)
 interface RiskGraphAlert {
   id: string;
   strategyId: string;
@@ -165,20 +160,6 @@ interface PriceAlertLine {
   createdAt: number;
 }
 
-const ALERT_COLORS = [
-  // Row 1
-  '#ef4444', // red
-  '#f97316', // orange
-  '#eab308', // yellow
-  // Row 2
-  '#22c55e', // green
-  '#3b82f6', // blue
-  '#8b5cf6', // purple
-  // Row 3 - grayscale
-  '#ffffff', // white
-  '#9ca3af', // light gray
-  '#4b5563', // dark gray
-];
 
 // Gaussian smoothing for volume profile
 function gaussianSmooth(data: number[], kernelSize: number = 5): number[] {
@@ -385,68 +366,14 @@ function calculateStrategyTheoreticalPnL(
   return 0;
 }
 
-// Calculate P&L for a single strategy at a given underlying price (at expiration)
-function calculateStrategyPnL(
-  strat: { strategy: Strategy; side: Side; strike: number; width: number; debit: number | null },
-  underlyingPrice: number
-): number {
-  const debit = strat.debit ?? 0;
-  const multiplier = 100; // SPX options multiplier
-
-  if (strat.strategy === 'single') {
-    if (strat.side === 'call') {
-      // Long call: max(0, price - strike) - premium
-      const intrinsic = Math.max(0, underlyingPrice - strat.strike);
-      return (intrinsic - debit) * multiplier;
-    } else {
-      // Long put: max(0, strike - price) - premium
-      const intrinsic = Math.max(0, strat.strike - underlyingPrice);
-      return (intrinsic - debit) * multiplier;
-    }
-  }
-
-  if (strat.strategy === 'vertical') {
-    if (strat.side === 'call') {
-      // Bull call spread: long lower strike, short higher strike
-      const longStrike = strat.strike;
-      const shortStrike = strat.strike + strat.width;
-      const longValue = Math.max(0, underlyingPrice - longStrike);
-      const shortValue = Math.max(0, underlyingPrice - shortStrike);
-      return (longValue - shortValue - debit) * multiplier;
-    } else {
-      // Bear put spread: long higher strike, short lower strike
-      const longStrike = strat.strike;
-      const shortStrike = strat.strike - strat.width;
-      const longValue = Math.max(0, longStrike - underlyingPrice);
-      const shortValue = Math.max(0, shortStrike - underlyingPrice);
-      return (longValue - shortValue - debit) * multiplier;
-    }
-  }
-
-  if (strat.strategy === 'butterfly') {
-    const lowerStrike = strat.strike - strat.width;
-    const middleStrike = strat.strike;
-    const upperStrike = strat.strike + strat.width;
-
-    if (strat.side === 'call') {
-      // Long call butterfly: long 1 lower, short 2 middle, long 1 upper
-      const lowerValue = Math.max(0, underlyingPrice - lowerStrike);
-      const middleValue = Math.max(0, underlyingPrice - middleStrike);
-      const upperValue = Math.max(0, underlyingPrice - upperStrike);
-      return (lowerValue - 2 * middleValue + upperValue - debit) * multiplier;
-    } else {
-      // Long put butterfly: long 1 upper, short 2 middle, long 1 lower
-      const lowerValue = Math.max(0, lowerStrike - underlyingPrice);
-      const middleValue = Math.max(0, middleStrike - underlyingPrice);
-      const upperValue = Math.max(0, upperStrike - underlyingPrice);
-      return (upperValue - 2 * middleValue + lowerValue - debit) * multiplier;
-    }
-  }
-
-  return 0;
-}
-
 function App() {
+  // Shared alert context (alerts read by RiskGraphPanel, deleteAlert used by context directly)
+  const {
+    createAlert: contextCreateAlert,
+    updateAlert: contextUpdateAlert,
+    getAlert: contextGetAlert,
+  } = useAlerts();
+
   const [spot, setSpot] = useState<SpotData | null>(null);
   const [heatmap, setHeatmap] = useState<HeatmapData | null>(null);
   const [gexCalls, setGexCalls] = useState<GexData | null>(null);
@@ -584,29 +511,15 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
   const [playbookOpen, setPlaybookOpen] = useState(false);
-  const [riskGraphDemoOpen, setRiskGraphDemoOpen] = useState(false);
   const [playbookSource, setPlaybookSource] = useState<'journal' | 'tradelog' | null>(null);
 
   // Commentary panel state
   const [commentaryCollapsed, setCommentaryCollapsed] = useState(true);
 
-  // Keyboard shortcut for Risk Graph Demo (Ctrl+Shift+G)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === 'G') {
-        e.preventDefault();
-        setRiskGraphDemoOpen(prev => !prev);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
   const heatmapScrollRef = useRef<HTMLDivElement>(null);
   const isScrolling = useRef<boolean>(false); // Prevent scroll event loops
-  const pnlChartRef = useRef<PnLChartHandle>(null);
 
   // Available DTEs from data
   const availableDtes = useMemo(() => {
@@ -705,11 +618,6 @@ function App() {
     ));
   };
 
-  // Clear all strategies from risk graph
-  const clearRiskGraph = () => {
-    setRiskGraphStrategies([]);
-  };
-
   // Persist risk graph strategies to localStorage
   useEffect(() => {
     localStorage.setItem('riskGraphStrategies', JSON.stringify(riskGraphStrategies));
@@ -738,56 +646,19 @@ function App() {
   }, []);
 
   // Price alert line management
-  const updatePriceAlertColor = (alertId: string, color: string) => {
-    setPriceAlertLines(prev => prev.map(a =>
-      a.id === alertId ? { ...a, color } : a
-    ));
-  };
-
   const deletePriceAlertLine = (alertId: string) => {
     setPriceAlertLines(prev => prev.filter(a => a.id !== alertId));
   };
 
-  // Alert management functions
-  const createAlert = (strategyId: string, type: AlertType, condition: 'above' | 'below' | 'at', targetValue: number, color: string, behavior: AlertBehavior, minProfitThreshold?: number) => {
-    const strategy = riskGraphStrategies.find(s => s.id === strategyId);
-    if (!strategy) return;
-
-    const strategyLabel = `${strategy.strategy === 'butterfly' ? 'BF' : strategy.strategy === 'vertical' ? 'VS' : 'SGL'} ${strategy.strike}${strategy.width > 0 ? '/' + strategy.width : ''} ${strategy.side.charAt(0).toUpperCase()}`;
-
-    const newAlert: RiskGraphAlert = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      strategyId,
-      type,
-      condition,
-      targetValue,
-      enabled: true,
-      triggered: false,
-      createdAt: Date.now(),
-      strategyLabel,
-      // For trailing stop, initialize high water mark with current debit
-      highWaterMark: type === 'trailing_stop' && strategy.debit ? strategy.debit : undefined,
-      color,
-      behavior,
-      wasOnOtherSide: false,
-      // AI Theta/Gamma initialization
-      minProfitThreshold: type === 'ai_theta_gamma' ? (minProfitThreshold || 0.5) : undefined,
-      entryDebit: type === 'ai_theta_gamma' && strategy.debit ? strategy.debit : undefined,
-      highWaterMarkProfit: type === 'ai_theta_gamma' ? 0 : undefined,
-      zoneLow: type === 'ai_theta_gamma' && currentSpot ? currentSpot - 20 : undefined,
-      zoneHigh: type === 'ai_theta_gamma' && currentSpot ? currentSpot + 20 : undefined,
-      isZoneActive: false,
-    };
-
-    setRiskGraphAlerts(prev => [...prev, newAlert]);
-    setAlertModalStrategy(null);
-  };
-
   const startEditingAlert = (alertId: string) => {
-    const alert = riskGraphAlerts.find(a => a.id === alertId);
+    const alert = contextGetAlert(alertId);
     if (!alert) return;
+    // Get strategyId from source or type-specific field
+    const strategyId = 'strategyId' in alert ? alert.strategyId : alert.source.id;
+    // Get minProfitThreshold for AI alerts
+    const minProfitThreshold = 'minProfitThreshold' in alert ? alert.minProfitThreshold : undefined;
     // Set up the modal for editing
-    setAlertModalStrategy(alert.strategyId);
+    setAlertModalStrategy(strategyId);
     setAlertModalEditingAlert({
       id: alert.id,
       type: alert.type,
@@ -795,7 +666,7 @@ function App() {
       targetValue: alert.targetValue,
       color: alert.color,
       behavior: alert.behavior,
-      minProfitThreshold: alert.minProfitThreshold,
+      minProfitThreshold,
     });
     setAlertModalInitialPrice(null); // Clear any right-click price
   };
@@ -805,20 +676,6 @@ function App() {
     if (!strategy) return;
     setAlertModalStrategy(strategyId);
     setAlertModalEditingAlert(null); // Clear any editing
-  };
-
-  const deleteAlert = (alertId: string) => {
-    setRiskGraphAlerts(prev => prev.filter(a => a.id !== alertId));
-  };
-
-  const toggleAlert = (alertId: string) => {
-    setRiskGraphAlerts(prev => prev.map(a =>
-      a.id === alertId ? { ...a, enabled: !a.enabled } : a
-    ));
-  };
-
-  const clearTriggeredAlerts = () => {
-    setRiskGraphAlerts(prev => prev.map(a => ({ ...a, triggered: false })));
   };
 
   // Update strategy debit (for when actual fill differs from quoted price)
@@ -896,178 +753,6 @@ function App() {
     gexScrollRef.current.scrollTop = heatmapScrollRef.current.scrollTop;
     requestAnimationFrame(() => { isScrolling.current = false; });
   }, [scrollLocked]);
-
-  // Calculate risk graph data points (only visible strategies)
-  // Includes both expiration P&L and real-time theoretical P&L
-  const riskGraphData = useMemo(() => {
-    const visibleStrategies = riskGraphStrategies.filter(s => s.visible);
-    if (visibleStrategies.length === 0) return {
-      points: [],
-      theoreticalPoints: [],
-      minPnL: 0,
-      maxPnL: 0,
-      minPrice: 0,
-      maxPrice: 0,
-      breakevens: [],
-      theoreticalBreakevens: [],
-      fullMinPrice: 0,
-      fullMaxPrice: 0,
-      theoreticalPnLAtSpot: 0,
-      marketPnL: null
-    };
-
-    // Use VIX as volatility (convert from percentage to decimal)
-    // Apply time machine volatility offset if enabled
-    const vix = spot?.['I:VIX']?.value || 20;
-    const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
-    const volatility = Math.max(0.05, adjustedVix) / 100; // Min 5% vol
-
-    // Time offset for 3D analysis (hours forward)
-    const timeOffset = timeMachineEnabled ? simTimeOffsetHours : 0;
-
-    // Determine base price range based on visible strategies
-    const allStrikes = visibleStrategies.flatMap(s => {
-      if (s.strategy === 'butterfly') {
-        return [s.strike - s.width, s.strike, s.strike + s.width];
-      } else if (s.strategy === 'vertical') {
-        return [s.strike, s.side === 'call' ? s.strike + s.width : s.strike - s.width];
-      }
-      return [s.strike];
-    });
-
-    const minStrike = Math.min(...allStrikes);
-    const maxStrike = Math.max(...allStrikes);
-    const range = maxStrike - minStrike || 100;
-
-    // Visible viewport padding (what the user sees at once)
-    const viewportPadding = Math.max(range * 0.5, 50);
-    const viewportSize = (maxStrike - minStrike) + viewportPadding * 2;
-
-    // Full data range (3x wider for panning)
-    const fullPadding = Math.max(range * 1.5, 150);
-    const fullMinPrice = minStrike - fullPadding;
-    const fullMaxPrice = maxStrike + fullPadding;
-
-    // Visible window centered on strikes
-    const centerPrice = (minStrike + maxStrike) / 2;
-    const minPrice = centerPrice - viewportSize / 2;
-    const maxPrice = centerPrice + viewportSize / 2;
-
-    // Generate P&L points for the FULL range (expiration and theoretical)
-    const numPoints = 400; // More points for wider range
-    const step = (fullMaxPrice - fullMinPrice) / numPoints;
-    const points: { price: number; pnl: number }[] = [];
-    const theoreticalPoints: { price: number; pnl: number }[] = [];
-    let minPnL = Infinity;
-    let maxPnL = -Infinity;
-
-    for (let i = 0; i <= numPoints; i++) {
-      const price = fullMinPrice + i * step;
-
-      // Expiration P&L
-      let totalPnL = 0;
-      for (const strat of visibleStrategies) {
-        totalPnL += calculateStrategyPnL(strat, price);
-      }
-      points.push({ price, pnl: totalPnL });
-
-      // Theoretical (real-time) P&L using Black-Scholes
-      // Pass time offset for time machine simulation
-      let theoreticalPnL = 0;
-      for (const strat of visibleStrategies) {
-        theoreticalPnL += calculateStrategyTheoreticalPnL(strat, price, volatility, 0.05, timeOffset);
-      }
-      theoreticalPoints.push({ price, pnl: theoreticalPnL });
-
-      // Track min/max P&L only within visible viewport for better scaling
-      if (price >= minPrice && price <= maxPrice) {
-        minPnL = Math.min(minPnL, totalPnL, theoreticalPnL);
-        maxPnL = Math.max(maxPnL, totalPnL, theoreticalPnL);
-      }
-    }
-
-    // Fallback if no points in viewport
-    if (minPnL === Infinity) minPnL = -100;
-    if (maxPnL === -Infinity) maxPnL = 100;
-
-    // Find breakeven points for expiration curve
-    const breakevens: number[] = [];
-    for (let i = 1; i < points.length; i++) {
-      const prev = points[i - 1];
-      const curr = points[i];
-      if ((prev.pnl < 0 && curr.pnl >= 0) || (prev.pnl >= 0 && curr.pnl < 0)) {
-        const t = -prev.pnl / (curr.pnl - prev.pnl);
-        const bePrice = prev.price + t * (curr.price - prev.price);
-        breakevens.push(bePrice);
-      }
-    }
-
-    // Find breakeven points for theoretical curve
-    const theoreticalBreakevens: number[] = [];
-    for (let i = 1; i < theoreticalPoints.length; i++) {
-      const prev = theoreticalPoints[i - 1];
-      const curr = theoreticalPoints[i];
-      if ((prev.pnl < 0 && curr.pnl >= 0) || (prev.pnl >= 0 && curr.pnl < 0)) {
-        const t = -prev.pnl / (curr.pnl - prev.pnl);
-        const bePrice = prev.price + t * (curr.price - prev.price);
-        theoreticalBreakevens.push(bePrice);
-      }
-    }
-
-    // Calculate theoretical P&L at current spot price (interpolate from theoreticalPoints)
-    let theoreticalPnLAtSpot = 0;
-    const spotPrice = spot?.[underlying]?.value || 0;
-    if (spotPrice > 0 && theoreticalPoints.length > 1) {
-      // Find the two points surrounding the spot price
-      for (let i = 1; i < theoreticalPoints.length; i++) {
-        const prev = theoreticalPoints[i - 1];
-        const curr = theoreticalPoints[i];
-        if (prev.price <= spotPrice && curr.price >= spotPrice) {
-          // Linear interpolation
-          const t = (spotPrice - prev.price) / (curr.price - prev.price);
-          theoreticalPnLAtSpot = prev.pnl + t * (curr.pnl - prev.pnl);
-          break;
-        }
-      }
-    }
-
-    // Calculate market-based P&L using live heatmap tile prices
-    // This is more accurate for 0-DTE where theoretical = intrinsic
-    let marketPnL: number | null = null;
-    if (heatmap?.tiles && visibleStrategies.length > 0) {
-      let totalMarketPnL = 0;
-      let allFound = true;
-
-      for (const strat of visibleStrategies) {
-        // Build tile key: strategy:dte:width:strike
-        const tileKey = `${strat.strategy}:${strat.dte}:${strat.width}:${Math.round(strat.strike)}`;
-        const tile = heatmap.tiles[tileKey];
-
-        if (tile) {
-          // Get current debit from tile
-          const sideData = strat.side === 'call' ? tile.call : tile.put;
-          const currentDebit = sideData?.debit;
-          const entryDebit = strat.debit;
-
-          if (currentDebit != null && entryDebit != null) {
-            // P&L = (current value - entry cost) * multiplier
-            // For long positions: current > entry = profit
-            totalMarketPnL += (currentDebit - entryDebit) * 100;
-          } else {
-            allFound = false;
-          }
-        } else {
-          allFound = false;
-        }
-      }
-
-      if (allFound) {
-        marketPnL = totalMarketPnL;
-      }
-    }
-
-    return { points, theoreticalPoints, minPnL, maxPnL, minPrice, maxPrice, breakevens, theoreticalBreakevens, fullMinPrice, fullMaxPrice, theoreticalPnLAtSpot, marketPnL };
-  }, [riskGraphStrategies, spot, heatmap, underlying, timeMachineEnabled, simTimeOffsetHours, simVolatilityOffset]);
 
   // SSE connection
   useEffect(() => {
@@ -1335,38 +1020,6 @@ function App() {
   }, [underlying, spot?.[underlying]?.value]);
 
   const currentSpot = spot?.[underlying]?.value || null;
-
-  // Calculate P&L data for PnLChart
-  const pnlChartData = useRiskGraphCalculations({
-    strategies: riskGraphStrategies.map(s => ({
-      id: s.id,
-      strike: s.strike,
-      width: s.width,
-      side: s.side,
-      strategy: s.strategy,
-      debit: s.debit,
-      visible: s.visible,
-      dte: s.dte,
-      expiration: s.expiration,
-    })),
-    spotPrice: currentSpot || 6000,
-    vix: spot?.['I:VIX']?.value || 20,
-    timeMachineEnabled,
-    simVolatilityOffset,
-    simTimeOffsetHours,
-  });
-
-  // Extract strikes from strategies
-  const chartStrikes = useMemo(() => {
-    return riskGraphStrategies.filter(s => s.visible).flatMap(strat => {
-      if (strat.strategy === 'butterfly') {
-        return [strat.strike - strat.width, strat.strike, strat.strike + strat.width];
-      } else if (strat.strategy === 'vertical') {
-        return [strat.strike, strat.side === 'call' ? strat.strike + strat.width : strat.strike - strat.width];
-      }
-      return [strat.strike];
-    });
-  }, [riskGraphStrategies]);
 
   // Simulated spot for 3D of Options (actual spot + offset when enabled)
   const simulatedSpot = currentSpot && timeMachineEnabled
@@ -2498,395 +2151,39 @@ function App() {
           )}
         </div>
 
-        {/* Consolidated Risk Graph Panel */}
-        <div className={`panel echarts-risk-graph-panel ${riskGraphCollapsed ? 'collapsed' : ''}`}>
-          <div className="panel-header" onClick={() => setRiskGraphCollapsed(!riskGraphCollapsed)}>
-            <span className="panel-toggle">{riskGraphCollapsed ? '▶' : '▼'}</span>
-            <h3>Risk Graph {riskGraphStrategies.length > 0 && `(${riskGraphStrategies.length})`}</h3>
-            <div className="panel-header-actions" onClick={e => e.stopPropagation()}>
-              {riskGraphStrategies.length > 0 && (
-                <div className="chart-controls-inline">
-                  <button onClick={() => pnlChartRef.current?.autoFit()} title="Auto-Fit">⊡</button>
-                </div>
-              )}
-              {priceAlertLines.length > 0 && (
-                <button className="btn-small" onClick={() => setPriceAlertLines([])}>
-                  Clear Lines ({priceAlertLines.length})
-                </button>
-              )}
-              {riskGraphStrategies.length > 0 && (
-                <button className="btn-small btn-danger" onClick={clearRiskGraph}>Clear All</button>
-              )}
-            </div>
-          </div>
-          {!riskGraphCollapsed && (
-            <div className="panel-content risk-graph-consolidated">
-              {riskGraphStrategies.length === 0 ? (
-                <div className="risk-graph-empty">
-                  <p>No strategies added yet.</p>
-                  <p className="hint">Click on a heatmap tile and select "Add to Risk Graph"</p>
-                </div>
-              ) : (
-                <>
-                  {/* Main content: Chart + Sidebar */}
-                  <div className="risk-graph-main">
-                    {/* Chart Area */}
-                    <div className="risk-graph-chart-area">
-                      <PnLChart
-                        ref={pnlChartRef}
-                        expirationData={pnlChartData.expirationPoints}
-                        theoreticalData={pnlChartData.theoreticalPoints}
-                        spotPrice={currentSpot || 6000}
-                        expirationBreakevens={pnlChartData.expirationBreakevens}
-                        theoreticalBreakevens={pnlChartData.theoreticalBreakevens}
-                        strikes={chartStrikes}
-                        onOpenAlertDialog={(price, type) => {
-                          // Map PriceAlertType to condition
-                          const conditionMap: Record<PriceAlertType, 'above' | 'below' | 'at'> = {
-                            'price_above': 'above',
-                            'price_below': 'below',
-                            'price_touch': 'at',
-                          };
-                          // Use first strategy or a placeholder
-                          const strategyId = riskGraphStrategies[0]?.id || 'chart-alert';
-                          setAlertModalStrategy(strategyId);
-                          setAlertModalInitialPrice(Math.round(price));
-                          setAlertModalInitialCondition(conditionMap[type]);
-                        }}
-                        alertLines={priceAlertLines.map(line => ({
-                          price: line.price,
-                          color: line.color,
-                          label: line.label,
-                        }))}
-                      />
-                      <div className="chart-controls-hint">
-                        Scroll: zoom | Drag: pan | Drag axis: zoom | Right-click: alert
-                      </div>
-                    </div>
-
-                    {/* Sidebar: Strategies + Alerts */}
-                    <div className="risk-graph-sidebar">
-                      {/* Strategy List */}
-                      <div className="risk-graph-strategies">
-                        <div className="section-header">Strategies</div>
-                        {riskGraphStrategies.map(strat => (
-                          <div key={strat.id} className={`risk-graph-strategy-item ${!strat.visible ? 'hidden-strategy' : ''}`}>
-                            <div className="strategy-content">
-                              <div className="strategy-row-top">
-                                <span className="strategy-type">
-                                  {strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL'}
-                                </span>
-                                <span className="strategy-strike">
-                                  {strat.strike}{strat.width > 0 ? `/${strat.width}` : ''}
-                                </span>
-                                <span className={`strategy-side ${strat.side}`}>
-                                  {strat.side}
-                                </span>
-                                <span className="strategy-dte">{strat.dte}d</span>
-                                <span className="strategy-debit">
-                                  $<input
-                                    type="number"
-                                    className="debit-input"
-                                    defaultValue={strat.debit !== null ? strat.debit.toFixed(2) : ''}
-                                    key={`debit-${strat.id}-${strat.debit}`}
-                                    step="0.01"
-                                    min="0"
-                                    onBlur={(e) => {
-                                      const val = parseFloat(e.target.value);
-                                      updateStrategyDebit(strat.id, isNaN(val) ? null : val);
-                                    }}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        e.currentTarget.blur();
-                                      }
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
-                                </span>
-                              </div>
-                              <div className="strategy-row-bottom">
-                                <button
-                                  className={`btn-toggle-visibility ${strat.visible ? 'visible' : 'hidden'}`}
-                                  onClick={() => toggleStrategyVisibility(strat.id)}
-                                >
-                                  {strat.visible ? 'Hide' : 'Show'}
-                                </button>
-                                <button
-                                  className="btn-alert"
-                                  onClick={() => startNewAlert(strat.id)}
-                                  title="Set alert"
-                                >
-                                  Alert
-                                </button>
-                                <button className="btn-remove" onClick={() => removeFromRiskGraph(strat.id)}>×</button>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-
-                      {/* Alerts Section */}
-                      <div className="risk-graph-alerts">
-                        <div className="section-header">
-                          Alerts
-                          {riskGraphAlerts.filter(a => a.triggered).length > 0 && (
-                            <button className="btn-clear-triggered" onClick={clearTriggeredAlerts}>
-                              Clear
-                            </button>
-                          )}
-                        </div>
-                        <div className="alerts-list">
-                          {riskGraphAlerts.map(alert => (
-                            <div
-                              key={alert.id}
-                              className={`alert-item ${alert.triggered ? 'triggered' : ''} ${!alert.enabled ? 'disabled' : ''}`}
-                            >
-                              <div className="alert-info">
-                                <div
-                                  className="alert-color-dot"
-                                  style={{ backgroundColor: alert.color || ALERT_COLORS[0] }}
-                                />
-                                <span className="alert-condition">
-                                  {alert.type === 'price' && `${alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} ${alert.targetValue.toFixed(0)}`}
-                                  {alert.type === 'debit' && `$${alert.targetValue.toFixed(2)}`}
-                                  {alert.type === 'profit_target' && `+$${alert.targetValue.toFixed(2)}`}
-                                  {alert.type === 'trailing_stop' && `Trail $${alert.targetValue.toFixed(2)}`}
-                                  {alert.type === 'ai_theta_gamma' && `AI θ/γ`}
-                                </span>
-                              </div>
-                              <div className="alert-actions">
-                                <button
-                                  className="btn-edit-alert"
-                                  onClick={() => startEditingAlert(alert.id)}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  className={`btn-toggle-alert ${alert.enabled ? 'on' : 'off'}`}
-                                  onClick={() => toggleAlert(alert.id)}
-                                >
-                                  {alert.enabled ? 'On' : 'Off'}
-                                </button>
-                                <button
-                                  className="btn-delete-alert"
-                                  onClick={() => deleteAlert(alert.id)}
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-
-                          {/* Price Line Alerts */}
-                          {priceAlertLines.map(alert => (
-                            <div key={alert.id} className="alert-item price-line-alert">
-                              <div className="alert-info">
-                                <div
-                                  className="alert-color-dot"
-                                  style={{ backgroundColor: alert.color }}
-                                />
-                                <span className="alert-condition">
-                                  Line @ {alert.price.toFixed(0)}
-                                </span>
-                              </div>
-                              <div className="alert-actions">
-                                <div className="color-picker-inline compact">
-                                  {ALERT_COLORS.slice(0, 6).map(color => (
-                                    <button
-                                      key={color}
-                                      className={`color-dot ${alert.color === color ? 'selected' : ''}`}
-                                      style={{ backgroundColor: color }}
-                                      onClick={() => updatePriceAlertColor(alert.id, color)}
-                                    />
-                                  ))}
-                                </div>
-                                <button
-                                  className="btn-delete-alert"
-                                  onClick={() => deletePriceAlertLine(alert.id)}
-                                >
-                                  ×
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-
-                          {riskGraphAlerts.length === 0 && priceAlertLines.length === 0 && (
-                            <div className="alerts-empty">No alerts<br/><span className="hint">Right-click chart for price line</span></div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 3D of Options Controls */}
-                  <div className={`time-machine-panel ${timeMachineEnabled ? 'active' : ''}`}>
-                    <div className="time-machine-header">
-                      <div className="time-machine-switch">
-                        <span className="switch-label">📐 3D of Options</span>
-                        <button
-                          className={`switch-toggle ${timeMachineEnabled ? 'on' : 'off'}`}
-                          onClick={() => setTimeMachineEnabled(!timeMachineEnabled)}
-                        >
-                          {timeMachineEnabled ? 'ON' : 'OFF'}
-                        </button>
-                        {timeMachineEnabled && (
-                          <button
-                            className="btn-reset"
-                            onClick={() => {
-                              setSimTimeOffsetHours(0);
-                              setSimVolatilityOffset(0);
-                              setSimSpotOffset(0);
-                            }}
-                          >
-                            Reset
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                    <div className={`time-machine-controls ${!timeMachineEnabled ? 'disabled' : ''}`}>
-                      {(() => {
-                        const visibleStrategies = riskGraphStrategies.filter(s => s.visible);
-                        const minDTE = visibleStrategies.length > 0
-                          ? Math.min(...visibleStrategies.map(s => s.dte))
-                          : 1;
-                        const maxHours = Math.max(1, minDTE) * 24;
-                        const hoursRemaining = maxHours - simTimeOffsetHours;
-                        const effectiveHoursRemaining = Math.max(0, hoursRemaining);
-
-                        const formatDTE = (hours: number) => {
-                          if (hours <= 0) return '0m';
-                          if (hours < 4) {
-                            const mins = Math.round(hours * 60);
-                            if (mins < 60) return `${mins}m`;
-                            const h = Math.floor(mins / 60);
-                            const m = mins % 60;
-                            return m > 0 ? `${h}h ${m}m` : `${h}h`;
-                          }
-                          if (hours < 24) return `${hours.toFixed(0)}h`;
-                          const days = hours / 24;
-                          if (days < 1.5) {
-                            const h = Math.round(hours % 24);
-                            return `1d ${h}h`;
-                          }
-                          return `${days.toFixed(1)}d`;
-                        };
-
-                        const stepSize = effectiveHoursRemaining <= 4 ? 0.25 : 1;
-                        const currentVix = (spot?.['I:VIX']?.value || 20) + simVolatilityOffset;
-
-                        return (
-                          <>
-                            <div className="horizontal-controls">
-                              <div className="control-group time-control">
-                                <div className="slider-row">
-                                  <span className="control-label">Time</span>
-                                  <input
-                                    type="range"
-                                    min="0"
-                                    max={maxHours}
-                                    step={stepSize}
-                                    value={simTimeOffsetHours}
-                                    onChange={(e) => setSimTimeOffsetHours(parseFloat(e.target.value))}
-                                    className="time-slider"
-                                    disabled={!timeMachineEnabled}
-                                  />
-                                  <span className="control-readout time-readout">
-                                    {formatDTE(effectiveHoursRemaining)}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="control-group spot-control">
-                                <div className="slider-row">
-                                  <span className="control-label">Spot</span>
-                                  <div className="slider-with-thumb-value">
-                                    <input
-                                      type="range"
-                                      min="-150"
-                                      max="150"
-                                      step="1"
-                                      value={simSpotOffset}
-                                      onChange={(e) => setSimSpotOffset(parseFloat(e.target.value))}
-                                      className="spot-slider"
-                                      disabled={!timeMachineEnabled}
-                                    />
-                                    <div
-                                      className="thumb-value"
-                                      style={{ left: `${((simSpotOffset + 150) / 300) * 100}%` }}
-                                    >
-                                      {simulatedSpot?.toFixed(0) || '-'}
-                                    </div>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="vertical-control vol-control">
-                              <div className="vol-label-left">
-                                <span className="vol-label-text">VIX</span>
-                                <span className="vol-value">{currentVix.toFixed(1)}</span>
-                              </div>
-                              <div className="vertical-slider-container">
-                                <span className="vol-tick">30</span>
-                                <input
-                                  type="range"
-                                  min="5"
-                                  max="30"
-                                  step="0.5"
-                                  value={currentVix}
-                                  onChange={(e) => {
-                                    const newVix = parseFloat(e.target.value);
-                                    const realVix = spot?.['I:VIX']?.value || 20;
-                                    setSimVolatilityOffset(newVix - realVix);
-                                  }}
-                                  className="vol-slider-vertical"
-                                  disabled={!timeMachineEnabled}
-                                />
-                                <span className="vol-tick">5</span>
-                              </div>
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-                  </div>
-
-                  {/* Summary Stats */}
-                  <div className="risk-graph-stats">
-                    <div className="stat highlight">
-                      <span className="stat-label">Real-Time P&L</span>
-                      {(() => {
-                        const pnl = riskGraphData.marketPnL ?? riskGraphData.theoreticalPnLAtSpot;
-                        return (
-                          <span className={`stat-value ${pnl >= 0 ? 'profit' : 'loss'}`}>
-                            ${(pnl / 100).toFixed(2)}
-                          </span>
-                        );
-                      })()}
-                    </div>
-                    <div className="stat-divider" />
-                    <div className="stat">
-                      <span className="stat-label">Max Profit</span>
-                      <span className="stat-value profit">${(riskGraphData.maxPnL / 100).toFixed(2)}</span>
-                    </div>
-                    <div className="stat">
-                      <span className="stat-label">Max Loss</span>
-                      <span className="stat-value loss">${(riskGraphData.minPnL / 100).toFixed(2)}</span>
-                    </div>
-                    <div className="stat">
-                      <span className="stat-label">Breakevens</span>
-                      <span className="stat-value">{riskGraphData.theoreticalBreakevens.map(b => b.toFixed(0)).join(', ') || '-'}</span>
-                    </div>
-                    {currentSpot && (
-                      <div className="stat">
-                        <span className="stat-label">Spot</span>
-                        <span className="stat-value">{currentSpot.toFixed(2)}</span>
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+        {/* Risk Graph Panel */}
+        <RiskGraphPanel
+          strategies={riskGraphStrategies}
+          onRemoveStrategy={removeFromRiskGraph}
+          onToggleStrategyVisibility={toggleStrategyVisibility}
+          onUpdateStrategyDebit={updateStrategyDebit}
+          onStartNewAlert={startNewAlert}
+          onStartEditingAlert={startEditingAlert}
+          priceAlertLines={priceAlertLines}
+          onDeletePriceAlertLine={deletePriceAlertLine}
+          onOpenAlertDialog={(strategyId, price, condition) => {
+            setAlertModalStrategy(strategyId);
+            setAlertModalInitialPrice(price);
+            setAlertModalInitialCondition(condition);
+          }}
+          spotPrice={currentSpot || 6000}
+          vix={spot?.['I:VIX']?.value || 20}
+          timeMachineEnabled={timeMachineEnabled}
+          onTimeMachineToggle={() => setTimeMachineEnabled(!timeMachineEnabled)}
+          simTimeOffsetHours={simTimeOffsetHours}
+          onSimTimeChange={setSimTimeOffsetHours}
+          simVolatilityOffset={simVolatilityOffset}
+          onSimVolatilityChange={setSimVolatilityOffset}
+          simSpotOffset={simSpotOffset}
+          onSimSpotChange={setSimSpotOffset}
+          onResetSimulation={() => {
+            setSimTimeOffsetHours(0);
+            setSimVolatilityOffset(0);
+            setSimSpotOffset(0);
+          }}
+          collapsed={riskGraphCollapsed}
+          onToggleCollapse={() => setRiskGraphCollapsed(!riskGraphCollapsed)}
+        />
 
       </div>
 
@@ -3135,32 +2432,39 @@ function App() {
         }}
         onSave={(alertData) => {
           if (alertModalStrategy) {
+            const strategy = riskGraphStrategies.find(s => s.id === alertModalStrategy);
+            const strategyLabel = strategy
+              ? `${strategy.strategy === 'butterfly' ? 'BF' : strategy.strategy === 'vertical' ? 'VS' : 'SGL'} ${strategy.strike}${strategy.width > 0 ? '/' + strategy.width : ''} ${strategy.side.charAt(0).toUpperCase()}`
+              : 'Chart Alert';
+
             if (alertData.id) {
-              // Update existing alert
-              setRiskGraphAlerts(prev => prev.map(a =>
-                a.id === alertData.id
-                  ? {
-                      ...a,
-                      type: alertData.type,
-                      condition: alertData.condition,
-                      targetValue: alertData.targetValue,
-                      color: alertData.color,
-                      behavior: alertData.behavior,
-                      minProfitThreshold: alertData.minProfitThreshold,
-                    }
-                  : a
-              ));
+              // Update existing alert via context
+              contextUpdateAlert({
+                id: alertData.id,
+                type: alertData.type,
+                condition: alertData.condition,
+                targetValue: alertData.targetValue,
+                color: alertData.color,
+                behavior: alertData.behavior,
+                minProfitThreshold: alertData.minProfitThreshold,
+              });
             } else {
-              // Create new alert
-              createAlert(
-                alertModalStrategy,
-                alertData.type,
-                alertData.condition,
-                alertData.targetValue,
-                alertData.color,
-                alertData.behavior,
-                alertData.minProfitThreshold
-              );
+              // Create new alert via context
+              contextCreateAlert({
+                type: alertData.type,
+                source: {
+                  type: 'strategy',
+                  id: alertModalStrategy,
+                  label: strategyLabel,
+                },
+                condition: alertData.condition,
+                targetValue: alertData.targetValue,
+                color: alertData.color,
+                behavior: alertData.behavior,
+                strategyId: alertModalStrategy,
+                entryDebit: strategy?.debit || undefined,
+                minProfitThreshold: alertData.minProfitThreshold,
+              });
             }
           }
         }}
@@ -3176,39 +2480,6 @@ function App() {
         initialCondition={alertModalInitialCondition}
         editingAlert={alertModalEditingAlert}
       />
-
-      {/* Risk Graph ECharts Demo (Ctrl+Shift+G to toggle) */}
-      {riskGraphDemoOpen && (
-        <div
-          className="popup-overlay"
-          onClick={() => setRiskGraphDemoOpen(false)}
-          onKeyDown={(e) => e.key === 'Escape' && setRiskGraphDemoOpen(false)}
-        >
-          <div
-            style={{
-              width: '90%',
-              maxWidth: '1200px',
-              maxHeight: '90vh',
-              overflow: 'auto',
-              background: '#111',
-              borderRadius: '12px',
-              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
-            }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid #333' }}>
-              <span style={{ color: '#888', fontSize: '12px' }}>Press Escape or click outside to close</span>
-              <button
-                onClick={() => setRiskGraphDemoOpen(false)}
-                style={{ background: 'none', border: 'none', color: '#888', fontSize: '24px', cursor: 'pointer' }}
-              >
-                &times;
-              </button>
-            </div>
-            <RiskGraphDemo />
-          </div>
-        </div>
-      )}
     </div>
   );
 }

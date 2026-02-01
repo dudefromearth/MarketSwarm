@@ -9,7 +9,7 @@ import { loadConfig, getFallbackConfig, getConfig } from "./config.js";
 import { initRedis, closeRedis } from "./redis.js";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
 import { setConfig as setKeyConfig } from "./keys.js";
-import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, stopPolling, getClientStats } from "./routes/sse.js";
+import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, subscribeAlertsPubSub, stopPolling, getClientStats } from "./routes/sse.js";
 import modelsRoutes from "./routes/models.js";
 import authRoutes from "./routes/auth.js";
 import { authMiddleware, logAuthConfig } from "./auth.js";
@@ -107,6 +107,7 @@ async function main() {
   await startPolling(config);
   subscribeVexyPubSub();
   subscribeHeatmapDiffs(["I:SPX", "I:NDX"]);
+  subscribeAlertsPubSub();
 
   // Start server
   const port = config.env.SSE_PORT;
@@ -129,6 +130,7 @@ async function main() {
     console.log(`   GET /sse/gex/:sym           - Stream GEX updates`);
     console.log(`   GET /sse/heatmap/:sym       - Stream heatmap updates`);
     console.log(`   GET /sse/vexy               - Stream commentary`);
+    console.log(`   GET /sse/alerts             - Stream alert events`);
     console.log(`   GET /sse/all                - Combined stream`);
     console.log("═══════════════════════════════════════════════════════");
 

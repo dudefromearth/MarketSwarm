@@ -16,6 +16,7 @@ const clients = {
   vexy: new Set(),
   bias_lfi: new Set(),
   market_mode: new Set(),
+  alerts: new Set(),
   all: new Set(),
 };
 
@@ -28,6 +29,7 @@ const modelState = {
   vexy: null, // { epoch, event } - combined latest messages
   bias_lfi: null,
   market_mode: null,
+  alerts: null, // Latest alerts state
 };
 
 // SSE helper - send event to client
@@ -200,6 +202,23 @@ router.get("/all", (req, res) => {
 
   req.on("close", () => {
     clients.all.delete(res);
+  });
+});
+
+// GET /sse/alerts - Real-time alert updates
+router.get("/alerts", (req, res) => {
+  sseHeaders(res);
+  clients.alerts.add(res);
+
+  // Send current alerts state if available
+  if (modelState.alerts) {
+    sendEvent(res, "alerts", modelState.alerts);
+  }
+
+  sendEvent(res, "connected", { channel: "alerts", ts: Date.now() });
+
+  req.on("close", () => {
+    clients.alerts.delete(res);
   });
 });
 
@@ -536,6 +555,44 @@ export function subscribeVexyPubSub() {
   });
 }
 
+// Subscribe to alerts:events pub/sub for real-time alert updates
+export function subscribeAlertsPubSub() {
+  const sub = getMarketRedisSub();
+  const keys = getKeys();
+  const alertsChannel = keys.alertsChannel();
+
+  sub.subscribe(alertsChannel, (err) => {
+    if (err) {
+      console.error(`[sse] Failed to subscribe to ${alertsChannel}:`, err.message);
+    } else {
+      console.log(`[sse] Subscribed to ${alertsChannel}`);
+    }
+  });
+
+  sub.on("message", (channel, message) => {
+    if (channel === alertsChannel) {
+      try {
+        const event = JSON.parse(message);
+        // Events: alert_triggered, alert_updated, alert_added, ai_evaluation
+        const eventType = event.type || "alert_update";
+        const eventData = event.data || event;
+
+        // Update modelState with latest
+        modelState.alerts = {
+          ...modelState.alerts,
+          lastEvent: event,
+          ts: Date.now(),
+        };
+
+        // Broadcast to alert subscribers
+        broadcastToChannel("alerts", eventType, eventData);
+      } catch (err) {
+        console.error("[sse] alerts:events parse error:", err.message);
+      }
+    }
+  });
+}
+
 // Stats tracking
 let diffStats = {
   received: 0,
@@ -647,8 +704,9 @@ export function getClientStats() {
       candles: candlesCount,
       vexy: clients.vexy.size,
       bias_lfi: clients.bias_lfi.size,
+      alerts: clients.alerts.size,
       all: clients.all.size,
-      total: clients.spot.size + gexCount + heatmapCount + candlesCount + clients.vexy.size + clients.bias_lfi.size + clients.all.size,
+      total: clients.spot.size + gexCount + heatmapCount + candlesCount + clients.vexy.size + clients.bias_lfi.size + clients.alerts.size + clients.all.size,
     },
   };
 }

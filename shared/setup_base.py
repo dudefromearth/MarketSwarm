@@ -27,6 +27,7 @@ class SetupBase:
         "mel",
         "adi",
         "commentary",
+        "alerts",
         # future extensions:
         # "tiles",
         # "campaigns",

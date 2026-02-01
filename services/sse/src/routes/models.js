@@ -206,6 +206,58 @@ router.get("/vexy/latest", async (req, res) => {
   }
 });
 
+// GET /api/models/vexy/history - Today's message history
+router.get("/vexy/history", async (req, res) => {
+  try {
+    const redis = getMarketRedis();
+
+    // Get today's date in UTC
+    const today = new Date().toISOString().split('T')[0];
+    const historyKey = `vexy:messages:${today}`;
+
+    // Get all messages from today's list
+    const messagesRaw = await redis.lrange(historyKey, 0, -1);
+
+    const messages = messagesRaw.map(m => {
+      try {
+        return JSON.parse(m);
+      } catch {
+        return null;
+      }
+    }).filter(Boolean);
+
+    res.json({ success: true, data: messages, ts: Date.now() });
+  } catch (err) {
+    console.error("[models] /vexy/history error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// DELETE /api/models/vexy/clear - Clear today's messages (admin only)
+router.delete("/vexy/clear", async (req, res) => {
+  try {
+    const redis = getMarketRedis();
+    const keys = getKeys();
+
+    // Get today's date in UTC
+    const today = new Date().toISOString().split('T')[0];
+    const historyKey = `vexy:messages:${today}`;
+
+    // Clear all vexy keys
+    await Promise.all([
+      redis.del(historyKey),
+      redis.del(keys.vexyEpochKey()),
+      redis.del(keys.vexyEventKey()),
+    ]);
+
+    console.log("[models] Vexy messages cleared");
+    res.json({ success: true, message: "Messages cleared", ts: Date.now() });
+  } catch (err) {
+    console.error("[models] /vexy/clear error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // GET /api/models/market_mode - Market mode model
 router.get("/market_mode", async (req, res) => {
   try {
