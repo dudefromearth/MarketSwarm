@@ -16,7 +16,7 @@ from openpyxl.utils import get_column_letter
 
 from .db_v2 import JournalDBv2
 from .models_v2 import (
-    TradeLog, Trade, TradeEvent, Symbol, Setting,
+    TradeLog, Trade, TradeEvent, Symbol, Setting, Tag,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
     PlaybookEntry, PlaybookSourceRef
 )
@@ -969,6 +969,245 @@ class JournalOrchestrator:
             self.logger.error(f"delete_symbol error: {e}")
             return self._error_response(str(e), 500)
 
+    # ==================== Tags (Vocabulary System) ====================
+
+    async def list_tags(self, request: web.Request) -> web.Response:
+        """GET /api/tags - List all tags for the current user."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response("Authentication required", 401)
+
+            params = request.query
+            include_retired = params.get('include_retired', '').lower() == 'true'
+
+            # Check if user has any tags, seed if not
+            tag_count = self.db.count_tags(user['id'])
+            if tag_count == 0:
+                self.db.seed_example_tags(user['id'])
+
+            tags = self.db.list_tags(user['id'], include_retired=include_retired)
+
+            return self._json_response({
+                'success': True,
+                'data': [t.to_api_dict() for t in tags],
+                'count': len(tags)
+            })
+        except Exception as e:
+            self.logger.error(f"list_tags error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def get_tag(self, request: web.Request) -> web.Response:
+        """GET /api/tags/:id - Get a single tag."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response("Authentication required", 401)
+
+            tag_id = request.match_info['id']
+            tag = self.db.get_tag(tag_id)
+
+            if not tag:
+                return self._error_response("Tag not found", 404)
+
+            # Verify ownership
+            if tag.user_id != user['id']:
+                return self._error_response("Tag not found", 404)
+
+            return self._json_response({
+                'success': True,
+                'data': tag.to_api_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"get_tag error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def create_tag(self, request: web.Request) -> web.Response:
+        """POST /api/tags - Create a new tag."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response("Authentication required", 401)
+
+            body = await request.json()
+
+            if 'name' not in body or not body['name'].strip():
+                return self._error_response("Tag name is required", 400)
+
+            name = body['name'].strip()
+
+            # Check for duplicate name
+            existing = self.db.get_tag_by_name(user['id'], name)
+            if existing:
+                return self._error_response(f"Tag '{name}' already exists", 409)
+
+            tag = Tag(
+                id=Tag.new_id(),
+                user_id=user['id'],
+                name=name,
+                description=body.get('description', '').strip() or None
+            )
+
+            created = self.db.create_tag(tag)
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201)
+        except Exception as e:
+            self.logger.error(f"create_tag error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def update_tag(self, request: web.Request) -> web.Response:
+        """PUT /api/tags/:id - Update a tag (name, description)."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response("Authentication required", 401)
+
+            tag_id = request.match_info['id']
+            tag = self.db.get_tag(tag_id)
+
+            if not tag:
+                return self._error_response("Tag not found", 404)
+
+            # Verify ownership
+            if tag.user_id != user['id']:
+                return self._error_response("Tag not found", 404)
+
+            body = await request.json()
+
+            # If renaming, check for duplicate
+            if 'name' in body and body['name'].strip() != tag.name:
+                existing = self.db.get_tag_by_name(user['id'], body['name'].strip())
+                if existing:
+                    return self._error_response(f"Tag '{body['name']}' already exists", 409)
+
+            updates = {}
+            if 'name' in body:
+                updates['name'] = body['name'].strip()
+            if 'description' in body:
+                updates['description'] = body['description'].strip() or None
+
+            updated = self.db.update_tag(tag_id, updates)
+
+            return self._json_response({
+                'success': True,
+                'data': updated.to_api_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"update_tag error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def retire_tag(self, request: web.Request) -> web.Response:
+        """PUT /api/tags/:id/retire - Retire a tag (hide from suggestions)."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response("Authentication required", 401)
+
+            tag_id = request.match_info['id']
+            tag = self.db.get_tag(tag_id)
+
+            if not tag:
+                return self._error_response("Tag not found", 404)
+
+            # Verify ownership
+            if tag.user_id != user['id']:
+                return self._error_response("Tag not found", 404)
+
+            retired = self.db.retire_tag(tag_id)
+
+            return self._json_response({
+                'success': True,
+                'data': retired.to_api_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"retire_tag error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def restore_tag(self, request: web.Request) -> web.Response:
+        """PUT /api/tags/:id/restore - Restore a retired tag."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response("Authentication required", 401)
+
+            tag_id = request.match_info['id']
+            tag = self.db.get_tag(tag_id)
+
+            if not tag:
+                return self._error_response("Tag not found", 404)
+
+            # Verify ownership
+            if tag.user_id != user['id']:
+                return self._error_response("Tag not found", 404)
+
+            restored = self.db.restore_tag(tag_id)
+
+            return self._json_response({
+                'success': True,
+                'data': restored.to_api_dict()
+            })
+        except Exception as e:
+            self.logger.error(f"restore_tag error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def delete_tag(self, request: web.Request) -> web.Response:
+        """DELETE /api/tags/:id - Delete a tag (only if unused)."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response("Authentication required", 401)
+
+            tag_id = request.match_info['id']
+            tag = self.db.get_tag(tag_id)
+
+            if not tag:
+                return self._error_response("Tag not found", 404)
+
+            # Verify ownership
+            if tag.user_id != user['id']:
+                return self._error_response("Tag not found", 404)
+
+            # Check if tag has been used
+            if tag.usage_count > 0:
+                return self._error_response(
+                    f"Cannot delete tag with {tag.usage_count} uses. Retire it instead.",
+                    400
+                )
+
+            deleted = self.db.delete_tag(tag_id)
+            if not deleted:
+                return self._error_response("Failed to delete tag", 500)
+
+            return self._json_response({
+                'success': True,
+                'message': f"Tag '{tag.name}' deleted"
+            })
+        except Exception as e:
+            self.logger.error(f"delete_tag error: {e}")
+            return self._error_response(str(e), 500)
+
+    async def seed_tags(self, request: web.Request) -> web.Response:
+        """POST /api/tags/seed - Seed example tags for the current user."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response("Authentication required", 401)
+
+            created = self.db.seed_example_tags(user['id'])
+
+            return self._json_response({
+                'success': True,
+                'data': [t.to_api_dict() for t in created],
+                'count': len(created),
+                'message': f"Seeded {len(created)} example tags" if created else "Tags already exist"
+            })
+        except Exception as e:
+            self.logger.error(f"seed_tags error: {e}")
+            return self._error_response(str(e), 500)
+
     # ==================== Settings ====================
 
     async def get_settings(self, request: web.Request) -> web.Response:
@@ -1182,15 +1421,28 @@ class JournalOrchestrator:
             if 'entry_date' not in body:
                 return self._error_response('entry_date is required')
 
+            # Get tags and track which ones are new
+            new_tags = body.get('tags', [])
+
             entry = JournalEntry(
                 id=JournalEntry.new_id(),
                 user_id=user['id'],
                 entry_date=body['entry_date'],
                 content=body.get('content'),
-                is_playbook_material=body.get('is_playbook_material', False)
+                is_playbook_material=body.get('is_playbook_material', False),
+                tags=new_tags
             )
 
+            # Check existing entry to diff tags for usage tracking
+            existing = self.db.get_entry_by_date(user['id'], body['entry_date'])
+            old_tags = existing.tags if existing else []
+
             result = self.db.upsert_entry(entry)
+
+            # Increment usage for newly added tags
+            added_tags = set(new_tags) - set(old_tags)
+            for tag_id in added_tags:
+                self.db.increment_tag_usage(tag_id)
             self.logger.info(f"Upserted journal entry for {body['entry_date']}", emoji="📓")
 
             # Get related data to return complete entry
@@ -2469,6 +2721,16 @@ class JournalOrchestrator:
         app.router.add_post('/api/symbols', self.add_symbol)
         app.router.add_put('/api/symbols/{symbol}', self.update_symbol)
         app.router.add_delete('/api/symbols/{symbol}', self.delete_symbol)
+
+        # Tags (Vocabulary System)
+        app.router.add_get('/api/tags', self.list_tags)
+        app.router.add_get('/api/tags/{id}', self.get_tag)
+        app.router.add_post('/api/tags', self.create_tag)
+        app.router.add_post('/api/tags/seed', self.seed_tags)
+        app.router.add_put('/api/tags/{id}', self.update_tag)
+        app.router.add_put('/api/tags/{id}/retire', self.retire_tag)
+        app.router.add_put('/api/tags/{id}/restore', self.restore_tag)
+        app.router.add_delete('/api/tags/{id}', self.delete_tag)
 
         # Settings
         app.router.add_get('/api/settings', self.get_settings)

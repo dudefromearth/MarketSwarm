@@ -347,6 +347,7 @@ class JournalEntry:
     entry_date: str  # YYYY-MM-DD (one entry per date)
     content: Optional[str] = None  # Rich text (HTML/Markdown)
     is_playbook_material: bool = False
+    tags: List[str] = field(default_factory=list)  # List of tag IDs
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
@@ -359,6 +360,7 @@ class JournalEntry:
         """Convert to dictionary for storage."""
         d = asdict(self)
         d['is_playbook_material'] = 1 if d['is_playbook_material'] else 0
+        d['tags'] = json.dumps(d['tags']) if d['tags'] else '[]'
         return d
 
     @classmethod
@@ -367,6 +369,10 @@ class JournalEntry:
         d = dict(d)
         if 'is_playbook_material' in d:
             d['is_playbook_material'] = bool(d['is_playbook_material'])
+        if isinstance(d.get('tags'), str):
+            d['tags'] = json.loads(d['tags']) if d['tags'] else []
+        elif d.get('tags') is None:
+            d['tags'] = []
         return cls(**d)
 
     def to_api_dict(self) -> dict:
@@ -543,3 +549,51 @@ class PlaybookSourceRef:
     def to_api_dict(self) -> dict:
         """Convert to API response format."""
         return asdict(self)
+
+
+@dataclass
+class Tag:
+    """A semantic tag representing trader vocabulary.
+
+    Tags are personal markers that answer "Why did this matter to me?"
+    They form the foundation layer for the Playbook system.
+    """
+    id: str
+    user_id: int
+    name: str  # Short, human-readable (e.g., "overtrading")
+    description: Optional[str] = None  # What this tag means to the trader
+    is_retired: bool = False  # Hidden from suggestions but preserved on history
+    is_example: bool = False  # True for seeded example tags
+    usage_count: int = 0  # Read-only, auto-incremented when tag is applied
+    last_used_at: Optional[str] = None  # Auto-updated when tag is applied
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new tag ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        d['is_retired'] = 1 if d['is_retired'] else 0
+        d['is_example'] = 1 if d['is_example'] else 0
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'Tag':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        # Handle MySQL integer booleans
+        if 'is_retired' in d:
+            d['is_retired'] = bool(d['is_retired'])
+        if 'is_example' in d:
+            d['is_example'] = bool(d['is_example'])
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        d = asdict(self)
+        # Booleans stay as booleans for API
+        return d

@@ -58,9 +58,17 @@
   cursor: pointer;
 }
 
-.btn-playbook-link:hover {
+.btn-playbook-link:hover:not(.disabled) {
   background: #581c87;
   color: #d8b4fe;
+}
+
+.btn-playbook-link.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: #555;
+  background: #1a1a1a;
+  color: #666;
 }
 
 /* Journal Modal Styles */
@@ -689,6 +697,15 @@
   color: #22c55e;
 }
 
+.playbook-toggle.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.playbook-toggle.disabled input {
+  cursor: not-allowed;
+}
+
 .entry-actions {
   display: flex;
   align-items: center;
@@ -1033,6 +1050,29 @@
   background: #1a1a1a;
   border-color: #333;
   color: #e5e5e5;
+}
+
+/* Retrospectives Tab - Make it prominent as it's a critical growth tool */
+.journal-tab.retro-tab {
+  border: 1px solid #3b82f6;
+  color: #60a5fa;
+  background: rgba(59, 130, 246, 0.1);
+  font-weight: 500;
+  box-shadow: 0 0 8px rgba(59, 130, 246, 0.2), 0 0 16px rgba(59, 130, 246, 0.1);
+}
+
+.journal-tab.retro-tab:hover {
+  background: rgba(59, 130, 246, 0.2);
+  color: #93c5fd;
+  border-color: #60a5fa;
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.3), 0 0 24px rgba(59, 130, 246, 0.15);
+}
+
+.journal-tab.retro-tab.active {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: #60a5fa;
+  color: #fff;
+  box-shadow: 0 0 16px rgba(59, 130, 246, 0.4), 0 0 32px rgba(59, 130, 246, 0.2);
 }
 
 /* Retrospectives Sidebar */
@@ -1830,4 +1870,92 @@
   max-width: 400px;
   text-align: center;
   word-break: break-all;
+}
+
+/* ===== Tag Selector (Journal Entry) ===== */
+
+.entry-tags-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #222;
+}
+
+.tags-section-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  padding: 4px 0;
+}
+
+.tags-section-header:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tags-section-header .collapse-icon {
+  font-size: 10px;
+  color: #666;
+  width: 12px;
+}
+
+.tags-section-header .tags-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.tags-section-header .tags-count {
+  font-size: 10px;
+  color: #666;
+  margin-left: auto;
+}
+
+.tags-selector {
+  margin-top: 8px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+}
+
+.tags-loading,
+.tags-empty {
+  font-size: 11px;
+  color: #666;
+  text-align: center;
+  padding: 12px;
+}
+
+.tags-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-chip {
+  background: #1e1e1e;
+  border: 1px solid #333;
+  border-radius: 12px;
+  padding: 4px 10px;
+  font-size: 11px;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tag-chip:hover {
+  background: #2a2a2a;
+  border-color: #444;
+}
+
+.tag-chip.selected {
+  background: #1e3a5f;
+  border-color: #3b82f6;
+  color: #93c5fd;
+}
+
+.tag-chip.selected:hover {
+  background: #1e4d7a;
 }

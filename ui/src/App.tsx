@@ -10,7 +10,7 @@ import type { RawSnapshot } from './components/LightweightPriceChart';
 import BiasLfiQuadrantCard from './components/BiasLfiQuadrantCard';
 import MarketModeGaugeCard from './components/MarketModeGaugeCard';
 import VixRegimeCard from './components/VixRegimeCard';
-import TradeLogPanel from './components/TradeLogPanel';
+import TradeLogPanel, { type TradeReflectionContext } from './components/TradeLogPanel';
 import type { Trade } from './components/TradeLogPanel';
 import type { TradeLog } from './components/LogSelector';
 import TradeEntryModal from './components/TradeEntryModal';
@@ -22,7 +22,7 @@ import SettingsModal from './components/SettingsModal';
 import JournalView from './components/JournalView';
 import PlaybookView from './components/PlaybookView';
 import AlertCreationModal, { type EditingAlertData } from './components/AlertCreationModal';
-import RiskGraphPanel from './components/RiskGraphPanel';
+import RiskGraphPanel, { type RiskGraphPanelHandle } from './components/RiskGraphPanel';
 import { useAlerts } from './contexts/AlertContext';
 import type { AlertType, AlertBehavior } from './types/alerts';
 
@@ -382,8 +382,7 @@ function App() {
   const [biasLfi, setBiasLfi] = useState<BiasLfiData | null>(null);
   const [marketMode, setMarketMode] = useState<MarketModeData | null>(null);
   const [connected, setConnected] = useState(false);
-  const [updateCount, setUpdateCount] = useState(0);
-  const [lastUpdateTime, setLastUpdateTime] = useState<number | null>(null);
+  const [heartbeatPulse, setHeartbeatPulse] = useState(false);
 
   // Controls
   const [underlying, setUnderlying] = useState<'I:SPX' | 'I:NDX'>('I:SPX');
@@ -434,6 +433,17 @@ function App() {
   const [gexMode, setGexMode] = useState<GexMode>('net');
   const [threshold, setThreshold] = useState(50); // % change threshold for blue/red transition
   const [volumeProfile, setVolumeProfile] = useState<VolumeProfileData | null>(null);
+
+  // Heatmap display modes and overlays
+  const [heatmapDisplayMode, setHeatmapDisplayMode] = useState<'debit' | 'r2r' | 'pct_diff'>('debit');
+  const [showEMBoundary, setShowEMBoundary] = useState(true);
+  const [optimalZoneThreshold, setOptimalZoneThreshold] = useState(45); // % change threshold for optimal zone outline
+  const [blueCompression, setBlueCompression] = useState(0); // 0-100%, compress low-convexity rows
+
+  // Strike column drag-to-compress state
+  const [strikesDragActive, setStrikesDragActive] = useState(false);
+  const strikesDragStart = useRef({ y: 0, compression: 0 });
+
   const [vpSmoothing, setVpSmoothing] = useState(5); // Gaussian kernel size (3, 5, 7, 9)
   const [vpOpacity, setVpOpacity] = useState(0.4); // Volume profile opacity
 
@@ -467,7 +477,8 @@ function App() {
   // Panel collapse and layout state
   const [gexCollapsed, setGexCollapsed] = useState(false);
   const [heatmapCollapsed, setHeatmapCollapsed] = useState(false);
-  const [riskGraphCollapsed, setRiskGraphCollapsed] = useState(false);
+  const [widgetsRowCollapsed, setWidgetsRowCollapsed] = useState(false);
+  const prevWidgetsCollapsed = useRef(widgetsRowCollapsed);
   const [priceAlertLines, setPriceAlertLines] = useState<PriceAlertLine[]>(() => {
     try {
       const saved = localStorage.getItem('priceAlertLines');
@@ -490,7 +501,6 @@ function App() {
   const [sideExpanded, setSideExpanded] = useState(false);
   const [dteExpanded, setDteExpanded] = useState(false);
   const [gexExpanded, setGexExpanded] = useState(false);
-  const [scrollExpanded, setScrollExpanded] = useState(false);
   const [vexyAdvisorTab, setVexyAdvisorTab] = useState<'vexy' | 'advisor'>('vexy');
 
   // Dealer Gravity snapshot data for LightweightPriceChart
@@ -510,6 +520,7 @@ function App() {
   const [reportingLogId, setReportingLogId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
+  const [journalTradeContext, setJournalTradeContext] = useState<TradeReflectionContext | null>(null);
   const [playbookOpen, setPlaybookOpen] = useState(false);
   const [playbookSource, setPlaybookSource] = useState<'journal' | 'tradelog' | null>(null);
 
@@ -519,12 +530,47 @@ function App() {
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
   const heatmapScrollRef = useRef<HTMLDivElement>(null);
+  const riskGraphRef = useRef<RiskGraphPanelHandle>(null);
   const isScrolling = useRef<boolean>(false); // Prevent scroll event loops
+
+  // Auto-fit Risk Graph when widgets row collapses or expands (chart size changes)
+  useEffect(() => {
+    if (prevWidgetsCollapsed.current !== widgetsRowCollapsed) {
+      // Widgets just collapsed or expanded - give the chart a moment to resize, then auto-fit
+      setTimeout(() => riskGraphRef.current?.autoFit(), 100);
+    }
+    prevWidgetsCollapsed.current = widgetsRowCollapsed;
+  }, [widgetsRowCollapsed]);
 
   // Available DTEs from data
   const availableDtes = useMemo(() => {
     return heatmap?.dtes_available || [0];
   }, [heatmap]);
+
+  // Auto-select first DTE with data (outside market hours, 0 DTE may be stale/empty)
+  useEffect(() => {
+    if (!heatmap?.tiles || availableDtes.length === 0) return;
+
+    // Count tiles for current DTE
+    const currentDteTileCount = Object.keys(heatmap.tiles).filter(key => {
+      const parts = key.split(':');
+      return parts.length >= 2 && parseInt(parts[1]) === dte;
+    }).length;
+
+    // If current DTE has no tiles, find first DTE with tiles
+    if (currentDteTileCount === 0) {
+      for (const d of availableDtes) {
+        const tileCount = Object.keys(heatmap.tiles).filter(key => {
+          const parts = key.split(':');
+          return parts.length >= 2 && parseInt(parts[1]) === d;
+        }).length;
+        if (tileCount > 0) {
+          setDte(d);
+          break;
+        }
+      }
+    }
+  }, [heatmap, availableDtes, dte]);
 
   // Get expiration date string for current DTE
   const currentExpiration = useMemo(() => {
@@ -754,6 +800,44 @@ function App() {
     requestAnimationFrame(() => { isScrolling.current = false; });
   }, [scrollLocked]);
 
+  // Strike column drag handlers for compression
+  const handleStrikesDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setStrikesDragActive(true);
+    strikesDragStart.current = { y: e.clientY, compression: blueCompression };
+  }, [blueCompression]);
+
+  const handleStrikesDragMove = useCallback((e: MouseEvent) => {
+    if (!strikesDragActive) return;
+    const dy = e.clientY - strikesDragStart.current.y;
+    // Drag down = more compression (collapse blue, pull outliers to spot)
+    // Drag up = less compression (expand back to normal)
+    // 100px drag = full range (0-100%)
+    const newCompression = Math.max(0, Math.min(100, strikesDragStart.current.compression + dy));
+    setBlueCompression(Math.round(newCompression));
+  }, [strikesDragActive]);
+
+  const handleStrikesDragEnd = useCallback(() => {
+    setStrikesDragActive(false);
+  }, []);
+
+  // Global mouse events for strike drag
+  useEffect(() => {
+    if (strikesDragActive) {
+      window.addEventListener('mousemove', handleStrikesDragMove);
+      window.addEventListener('mouseup', handleStrikesDragEnd);
+      return () => {
+        window.removeEventListener('mousemove', handleStrikesDragMove);
+        window.removeEventListener('mouseup', handleStrikesDragEnd);
+      };
+    }
+  }, [strikesDragActive, handleStrikesDragMove, handleStrikesDragEnd]);
+
+  // Heartbeat animation - CSS handles the infinite loop, JS just toggles on/off
+  useEffect(() => {
+    setHeartbeatPulse(connected);
+  }, [connected]);
+
   // SSE connection
   useEffect(() => {
     const es = new EventSource(`${SSE_BASE}/sse/all`);
@@ -765,8 +849,6 @@ function App() {
       try {
         const spotData = JSON.parse(e.data);
         setSpot(spotData);
-        setUpdateCount(c => c + 1);
-        setLastUpdateTime(Date.now());
 
         // Update Dealer Gravity snapshot with current spot (for selected underlying)
         // The component will build candles from live updates
@@ -818,8 +900,6 @@ function App() {
           (window as any).__gexCache[data.symbol] = data;
         }
         window.dispatchEvent(new CustomEvent('gex-update', { detail: data }));
-        setUpdateCount(c => c + 1);
-        setLastUpdateTime(Date.now());
       } catch {}
     });
 
@@ -832,8 +912,6 @@ function App() {
           (window as any).__heatmapCache[data.symbol] = data;
         }
         window.dispatchEvent(new CustomEvent('heatmap-update', { detail: data }));
-        setUpdateCount(c => c + 1);
-        setLastUpdateTime(Date.now());
       } catch {}
     });
 
@@ -842,32 +920,24 @@ function App() {
         const diff = JSON.parse(e.data);
         // Dispatch for underlying-aware handling
         window.dispatchEvent(new CustomEvent('heatmap-diff-update', { detail: diff }));
-        setUpdateCount(c => c + 1);
-        setLastUpdateTime(Date.now());
       } catch {}
     });
 
     es.addEventListener('vexy', (e: MessageEvent) => {
       try {
         setVexy(JSON.parse(e.data));
-        setUpdateCount(c => c + 1);
-        setLastUpdateTime(Date.now());
       } catch {}
     });
 
     es.addEventListener('bias_lfi', (e: MessageEvent) => {
       try {
         setBiasLfi(JSON.parse(e.data));
-        setUpdateCount(c => c + 1);
-        setLastUpdateTime(Date.now());
       } catch {}
     });
 
     es.addEventListener('market_mode', (e: MessageEvent) => {
       try {
         setMarketMode(JSON.parse(e.data));
-        setUpdateCount(c => c + 1);
-        setLastUpdateTime(Date.now());
       } catch {}
     });
 
@@ -1371,6 +1441,103 @@ function App() {
     return { strikes, gexByStrike, heatmapGrid, changeGrid, maxGex, maxNetGex };
   }, [gexCalls, gexPuts, heatmap, strategy, side, dte, underlying, spot]);
 
+  // Calculate Expected Move based on VIX and DTE
+  const expectedMove = useMemo(() => {
+    const spotPrice = currentSpot || 6000;
+    const vix = spot?.['I:VIX']?.value || 20;
+    // EM = Spot * (VIX/100) * sqrt(DTE/365)
+    // For 0 DTE, use fraction of trading day (6.5 hours = ~0.018 years)
+    const dteYears = dte === 0 ? 1/365 : (dte + 1) / 365;
+    const em = spotPrice * (vix / 100) * Math.sqrt(dteYears);
+    return Math.round(em * 10) / 10; // Round to 0.1
+  }, [currentSpot, spot, dte]);
+
+  // Calculate EM boundary strikes (upper and lower)
+  const emBoundaryStrikes = useMemo(() => {
+    const spotPrice = currentSpot || 6000;
+    return {
+      upper: spotPrice + expectedMove,
+      lower: spotPrice - expectedMove,
+    };
+  }, [currentSpot, expectedMove]);
+
+  // Helper to check if a strike is at the EM boundary (within 5 points)
+  const isAtEMBoundary = useCallback((strike: number) => {
+    return Math.abs(strike - emBoundaryStrikes.upper) <= 5 ||
+           Math.abs(strike - emBoundaryStrikes.lower) <= 5;
+  }, [emBoundaryStrikes]);
+
+  // Helper to check if strike is in optimal convexity zone
+  const isInOptimalZone = useCallback((strike: number, width: number) => {
+    const pctChange = changeGrid[strike]?.[width] ?? 0;
+    return pctChange >= optimalZoneThreshold;
+  }, [changeGrid, optimalZoneThreshold]);
+
+  // Get maximum convexity (% change) at a strike across all widths
+  const getMaxConvexity = useCallback((strike: number) => {
+    const widthsForStrategy = WIDTHS[underlying][strategy];
+    let maxPct = 0;
+    for (const w of widthsForStrategy) {
+      const pct = changeGrid[strike]?.[w] ?? 0;
+      if (pct > maxPct) maxPct = pct;
+    }
+    return maxPct;
+  }, [changeGrid, underlying, strategy]);
+
+  // Calculate row height based on convexity and compression setting
+  const getRowHeight = useCallback((strike: number) => {
+    if (blueCompression === 0) return 24; // Default height, no compression
+
+    // Only compress tiles INSIDE the expected move range
+    // Tiles at or beyond EM boundaries stay full height
+    const isInsideEM = strike > emBoundaryStrikes.lower && strike < emBoundaryStrikes.upper;
+
+    // Also keep EM boundary highlighted rows at full height
+    const atEMBoundary = isAtEMBoundary(strike);
+
+    if (!isInsideEM || atEMBoundary) {
+      return 24; // Full height for anything at or beyond EM, or highlighted as EM boundary
+    }
+
+    const maxConvexity = getMaxConvexity(strike);
+    const isHighConvexity = maxConvexity >= optimalZoneThreshold;
+
+    // Keep full height for high-convexity rows even inside EM
+    if (isHighConvexity) {
+      return 24;
+    }
+
+    // Compress low-convexity rows inside EM range
+    // At 100% compression, blue rows shrink to 1px (nearly invisible)
+    const minHeight = 1;
+    const compressionFactor = blueCompression / 100;
+    return Math.max(minHeight, Math.round(24 - (24 - minHeight) * compressionFactor));
+  }, [blueCompression, getMaxConvexity, optimalZoneThreshold, emBoundaryStrikes, isAtEMBoundary]);
+
+  // Calculate R2R (Risk to Reward) for a given debit and width
+  const calculateR2R = useCallback((debit: number | null, width: number) => {
+    if (debit === null || debit <= 0 || width <= 0) return null;
+    const maxProfit = width - debit;
+    return maxProfit / debit;
+  }, []);
+
+  // Get display value based on mode
+  const getDisplayValue = useCallback((strike: number, width: number) => {
+    const debit = heatmapGrid[strike]?.[width] ?? null;
+    const pctChange = changeGrid[strike]?.[width] ?? 0;
+
+    switch (heatmapDisplayMode) {
+      case 'r2r':
+        const r2r = calculateR2R(debit, width);
+        return r2r !== null ? r2r.toFixed(1) : '-';
+      case 'pct_diff':
+        return pctChange > 0 ? pctChange.toFixed(0) : '-';
+      case 'debit':
+      default:
+        return debit !== null && debit > 0 ? debit.toFixed(2) : '-';
+    }
+  }, [heatmapGrid, changeGrid, heatmapDisplayMode, calculateR2R]);
+
   // Process volume profile with smoothing - keep full $0.10 resolution
   // vpByPrice: key is price * 10 (e.g., 60001 = $6000.10)
   const vpByPrice = useMemo(() => {
@@ -1424,39 +1591,56 @@ function App() {
   // Filter strikes around ATM
   const strikeIncrement = STRIKE_INCREMENT[underlying];
   const visibleStrikes = useMemo(() => {
+    let baseStrikes: number[];
+
     if (strikes.length > 0) {
-      if (!currentSpot) return strikes.slice(0, 50);
-
-      const atmIndex = strikes.findIndex(s => s <= currentSpot);
-      const rangeStart = Math.max(0, atmIndex - 25);
-      const rangeEnd = Math.min(strikes.length, atmIndex + 25);
-      return strikes.slice(rangeStart, rangeEnd);
+      if (!currentSpot) {
+        baseStrikes = strikes.slice(0, 50);
+      } else {
+        const atmIndex = strikes.findIndex(s => s <= currentSpot);
+        const rangeStart = Math.max(0, atmIndex - 25);
+        const rangeEnd = Math.min(strikes.length, atmIndex + 25);
+        baseStrikes = strikes.slice(rangeStart, rangeEnd);
+      }
+    } else {
+      // Fallback placeholder strikes when no data
+      const defaultSpot = underlying === 'I:NDX' ? 21000 : 6000;
+      const basePrice = currentSpot || defaultSpot;
+      const roundedBase = Math.round(basePrice / strikeIncrement) * strikeIncrement;
+      const placeholderStrikes: number[] = [];
+      for (let i = 25; i >= -25; i--) {
+        placeholderStrikes.push(roundedBase + i * strikeIncrement);
+      }
+      baseStrikes = placeholderStrikes;
     }
 
-    // Fallback placeholder strikes when no data
-    const defaultSpot = underlying === 'I:NDX' ? 21000 : 6000;
-    const basePrice = currentSpot || defaultSpot;
-    const roundedBase = Math.round(basePrice / strikeIncrement) * strikeIncrement;
-    const placeholderStrikes: number[] = [];
-    for (let i = 25; i >= -25; i--) {
-      placeholderStrikes.push(roundedBase + i * strikeIncrement);
-    }
-    return placeholderStrikes;
+    return baseStrikes;
   }, [strikes, currentSpot, underlying, strikeIncrement]);
 
   // Scroll to ATM function
   const scrollToAtm = useCallback(() => {
     if (!currentSpot || visibleStrikes.length === 0) return;
 
-    const atmIndex = visibleStrikes.findIndex(s => s <= currentSpot);
-    if (atmIndex === -1) return;
+    // Find the strike closest to current spot
+    let closestIndex = 0;
+    let closestDiff = Math.abs(visibleStrikes[0] - currentSpot);
+    for (let i = 1; i < visibleStrikes.length; i++) {
+      const diff = Math.abs(visibleStrikes[i] - currentSpot);
+      if (diff < closestDiff) {
+        closestDiff = diff;
+        closestIndex = i;
+      }
+    }
 
-    const rowHeight = 24; // Height of each row in pixels
-    const scrollPosition = atmIndex * rowHeight;
+    // Calculate scroll position accounting for variable row heights
+    let scrollPosition = 0;
+    for (let i = 0; i < closestIndex; i++) {
+      scrollPosition += getRowHeight(visibleStrikes[i]);
+    }
 
     // Center the ATM in the viewport
     const viewportHeight = gexScrollRef.current?.clientHeight || 600;
-    const centeredPosition = Math.max(0, scrollPosition - viewportHeight / 2);
+    const centeredPosition = Math.max(0, scrollPosition - viewportHeight / 2 + 12);
 
     if (gexScrollRef.current) {
       gexScrollRef.current.scrollTop = centeredPosition;
@@ -1464,7 +1648,7 @@ function App() {
     if (heatmapScrollRef.current) {
       heatmapScrollRef.current.scrollTop = centeredPosition;
     }
-  }, [currentSpot, visibleStrikes]);
+  }, [currentSpot, visibleStrikes, getRowHeight]);
 
   // Scroll to ATM on first load only
   useEffect(() => {
@@ -1562,18 +1746,11 @@ function App() {
             Hi, {userProfile?.display_name || 'User'}
           </span>
           <button
-            className="header-account-btn"
-            onClick={() => setSettingsOpen(true)}
-            title="My Account"
-          >
-            My Account
-          </button>
-          <button
             className="header-settings-btn"
             onClick={() => setSettingsOpen(true)}
             title="Settings"
           >
-            ⚙️
+            Settings
           </button>
         </div>
         <div className="header-center">
@@ -1604,20 +1781,67 @@ function App() {
             )}
           </div>
         </div>
-        <div className="connection-status">
-          <span className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
-          <span>{connected ? 'Live' : 'Disconnected'}</span>
-          <span className="update-count">#{updateCount}</span>
-          {lastUpdateTime && (
-            <span className="last-update">
-              {new Date(lastUpdateTime).toLocaleTimeString()}
-            </span>
-          )}
+        <div className={`connection-status ${connected && heartbeatPulse ? 'alive' : ''} ${!connected ? 'offline' : ''}`}>
+          <div className="heartbeat-monitor">
+            <svg viewBox="0 0 60 20" className={`heartbeat-line ${heartbeatPulse ? 'pulse' : ''}`}>
+              {connected ? (
+                <polyline
+                  className={`heartbeat-trace ${heartbeatPulse ? 'pulse' : ''}`}
+                  points="0,10 6,10 10,7 14,10 18,2 22,16 26,10 30,6 34,10 60,10"
+                  fill="none"
+                  strokeWidth="1.5"
+                />
+              ) : (
+                <line className="flatline" x1="0" y1="10" x2="60" y2="10" strokeWidth="1.5" />
+              )}
+            </svg>
+          </div>
+          <span className="status-text">{connected ? 'LIVE' : 'OFFLINE'}</span>
         </div>
       </header>
 
       {/* Widget Row - Indicator Widgets */}
-      <div className="widget-row">
+      <div className={`widget-row-container ${widgetsRowCollapsed ? 'collapsed' : ''}`}>
+        <div
+          className="widget-row-header"
+          onClick={() => setWidgetsRowCollapsed(!widgetsRowCollapsed)}
+          style={{ cursor: 'pointer' }}
+        >
+          <span className="panel-toggle">{widgetsRowCollapsed ? '▶' : '▼'}</span>
+          <h3>Indicators</h3>
+          {widgetsRowCollapsed && (
+            <div className="widget-row-summary">
+              <span className="summary-item">
+                <span className="summary-label">Mode</span>
+                <span className={`summary-value ${(marketMode?.score ?? 50) >= 60 ? 'bullish' : (marketMode?.score ?? 50) <= 40 ? 'bearish' : ''}`}>
+                  {marketMode?.score?.toFixed(0) ?? '--'}
+                </span>
+              </span>
+              <span className="summary-item">
+                <span className="summary-label">VIX</span>
+                <span className={`summary-value ${(spot?.['I:VIX']?.value ?? 20) > 25 ? 'elevated' : ''}`}>
+                  {spot?.['I:VIX']?.value?.toFixed(1) ?? '--'}
+                </span>
+              </span>
+              <span className="summary-item">
+                <span className="summary-label">Bias</span>
+                <span className={`summary-value ${(biasLfi?.directional_strength ?? 0) > 0 ? 'bullish' : (biasLfi?.directional_strength ?? 0) < 0 ? 'bearish' : ''}`}>
+                  {(biasLfi?.directional_strength ?? 0) > 0 ? '▲' : (biasLfi?.directional_strength ?? 0) < 0 ? '▼' : '—'} {Math.abs(biasLfi?.directional_strength ?? 0).toFixed(0)}%
+                </span>
+              </span>
+              <span className="summary-item">
+                <span className="summary-label">LFI</span>
+                <span className="summary-value">{biasLfi?.lfi_score?.toFixed(0) ?? '--'}</span>
+              </span>
+              <span className="summary-item">
+                <span className="summary-label">SPX</span>
+                <span className="summary-value">{spot?.['I:SPX']?.value?.toFixed(2) ?? '--'}</span>
+              </span>
+            </div>
+          )}
+        </div>
+        {!widgetsRowCollapsed && (
+        <div className="widget-row">
         {/* Market Mode Score Widget */}
         <div className="widget market-mode-widget">
           <MarketModeGaugeCard score={marketMode?.score ?? 50} />
@@ -1795,6 +2019,8 @@ function App() {
             })()
           )}
         </div>
+        </div>
+        )}
       </div>
 
       {/* Controls Row - GEX/Heatmap settings */}
@@ -1940,29 +2166,6 @@ function App() {
           )}
         </div>
 
-        {/* Scroll - collapsible */}
-        <div className={`control-group collapsible-control ${scrollExpanded ? 'expanded' : ''}`}>
-          <button
-            className={`control-toggle ${scrollExpanded ? 'active' : ''}`}
-            onClick={() => setScrollExpanded(!scrollExpanded)}
-          >
-            Scroll
-          </button>
-          {scrollExpanded && (
-            <div className="button-group">
-              <button
-                className={scrollLocked ? 'active' : ''}
-                onClick={() => setScrollLocked(!scrollLocked)}
-              >
-                {scrollLocked ? 'Locked' : 'Unlocked'}
-              </button>
-              <button onClick={scrollToAtm}>
-                Center ATM
-              </button>
-            </div>
-          )}
-        </div>
-
         {/* Gradient */}
         <div className="control-group">
           <label>Gradient {threshold}%</label>
@@ -1972,6 +2175,45 @@ function App() {
             max="100"
             value={threshold}
             onChange={(e) => setThreshold(parseInt(e.target.value))}
+            className="threshold-slider"
+          />
+        </div>
+
+        <div className="control-separator" />
+
+        {/* Heatmap Display Controls */}
+        <div className="control-group">
+          <label>Display</label>
+          <select
+            value={heatmapDisplayMode}
+            onChange={(e) => setHeatmapDisplayMode(e.target.value as 'debit' | 'r2r' | 'pct_diff')}
+            className="control-select"
+          >
+            <option value="debit">Debit</option>
+            <option value="r2r">R2R</option>
+            <option value="pct_diff">% Diff</option>
+          </select>
+        </div>
+
+        <div className="control-group">
+          <label className="checkbox-label">
+            <input
+              type="checkbox"
+              checked={showEMBoundary}
+              onChange={(e) => setShowEMBoundary(e.target.checked)}
+            />
+            EM ±{expectedMove.toFixed(0)}
+          </label>
+        </div>
+
+        <div className="control-group">
+          <label>Optimal {optimalZoneThreshold}%</label>
+          <input
+            type="range"
+            min="20"
+            max="75"
+            value={optimalZoneThreshold}
+            onChange={(e) => setOptimalZoneThreshold(Number(e.target.value))}
             className="threshold-slider"
           />
         </div>
@@ -2003,14 +2245,25 @@ function App() {
                 ref={gexScrollRef}
                 onScroll={handleGexScroll}
               >
-                {visibleStrikes.map(strike => {
+                {visibleStrikes.map((strike, idx) => {
                   const gex = gexByStrike[strike] || { calls: 0, puts: 0 };
                   const netGex = gex.calls - gex.puts;
-                  const isAtm = currentSpot && Math.abs(strike - currentSpot) < 5;
+                  // ATM: both strikes adjacent to spot (spot falls between them)
+                  const prevStrike = idx > 0 ? visibleStrikes[idx - 1] : Infinity;
+                  const nextStrike = idx < visibleStrikes.length - 1 ? visibleStrikes[idx + 1] : -Infinity;
+                  const isAtmBelow = currentSpot && strike <= currentSpot && prevStrike > currentSpot;
+                  const isAtmAbove = currentSpot && strike > currentSpot && nextStrike <= currentSpot;
+                  const isAtm = isAtmBelow || isAtmAbove;
+                  const rowHeight = getRowHeight(strike);
+                  const isCompressed = rowHeight < 16;
 
                   return (
-                    <div key={strike} className={`gex-row ${isAtm ? 'atm' : ''}`}>
-                      <div className="gex-cell-standalone">
+                    <div
+                      key={strike}
+                      className={`gex-row ${isAtm ? 'atm' : ''} ${isAtmBelow ? 'atm-line' : ''} ${isCompressed ? 'compressed' : ''}`}
+                      style={{ height: `${rowHeight}px`, minHeight: `${rowHeight}px` }}
+                    >
+                      <div className="gex-cell-standalone" style={{ height: `${rowHeight}px` }}>
                         {/* Volume profile */}
                         {getVpLevelsForStrike(strike).map((level, idx) => (
                           <div
@@ -2071,7 +2324,9 @@ function App() {
                           )}
                         </div>
                       </div>
-                      <div className={`strike-label ${isAtm ? 'atm' : ''}`}>{strike}</div>
+                      <div className={`strike-label ${isAtm ? 'atm' : ''}`} style={{ height: `${rowHeight}px` }}>
+                        {!isCompressed && strike}
+                      </div>
                     </div>
                   );
                 })}
@@ -2082,12 +2337,36 @@ function App() {
 
         {/* Heatmap Panel */}
         <div className={`panel heatmap-panel ${heatmapCollapsed ? 'collapsed' : ''}`}>
-          <div className="panel-header" onClick={() => setHeatmapCollapsed(!heatmapCollapsed)}>
+          <div className="panel-header" onClick={() => setHeatmapCollapsed(!heatmapCollapsed)} style={{ cursor: 'pointer' }}>
             <span className="panel-toggle">{heatmapCollapsed ? '▶' : '▼'}</span>
             <h3>Heatmap</h3>
+            {!heatmapCollapsed && (
+              <div className="panel-header-icons">
+                <button
+                  className={`header-icon ${scrollLocked ? 'active' : ''}`}
+                  onClick={(e) => { e.stopPropagation(); setScrollLocked(!scrollLocked); }}
+                  title={scrollLocked ? 'Unlock scroll' : 'Lock scroll'}
+                >
+                  {scrollLocked ? '🔒' : '🔓'}
+                </button>
+                <button
+                  className="header-icon"
+                  onClick={(e) => { e.stopPropagation(); scrollToAtm(); }}
+                  title="Center on ATM"
+                >
+                  ◎
+                </button>
+              </div>
+            )}
           </div>
           {!heatmapCollapsed && (
             <div className="panel-content">
+              {/* Invisible drag overlay for strike column */}
+              <div
+                className={`strike-drag-overlay ${strikesDragActive ? 'drag-active' : ''}`}
+                onMouseDown={handleStrikesDragStart}
+              />
+
               {/* Heatmap Header - outside scroll container */}
               <div className="heatmap-header">
                 <div className="header-strike">Strike</div>
@@ -2105,13 +2384,30 @@ function App() {
                 ref={heatmapScrollRef}
                 onScroll={handleHeatmapScroll}
               >
-                {visibleStrikes.map(strike => {
-                    const isAtm = currentSpot && Math.abs(strike - currentSpot) < 5;
+                {visibleStrikes.map((strike, idx) => {
+                    // ATM: both strikes adjacent to spot (spot falls between them)
+                    const prevStrike = idx > 0 ? visibleStrikes[idx - 1] : Infinity;
+                    const nextStrike = idx < visibleStrikes.length - 1 ? visibleStrikes[idx + 1] : -Infinity;
+                    const isAtmBelow = currentSpot && strike <= currentSpot && prevStrike > currentSpot;
+                    const isAtmAbove = currentSpot && strike > currentSpot && nextStrike <= currentSpot;
+                    const isAtm = isAtmBelow || isAtmAbove;
                     const strikeData = heatmapGrid[strike] || {};
+                    const atEMBoundary = showEMBoundary && isAtEMBoundary(strike);
+                    const rowHeight = getRowHeight(strike);
+                    const isCompressed = rowHeight < 16; // Hide text when too compressed
 
                     return (
-                      <div key={strike} className={`heatmap-row ${isAtm ? 'atm' : ''}`}>
-                        <div className={`strike-cell ${isAtm ? 'atm' : ''}`}>{strike}</div>
+                      <div
+                        key={strike}
+                        className={`heatmap-row ${isAtm ? 'atm' : ''} ${isAtmBelow ? 'atm-line' : ''} ${atEMBoundary ? 'em-boundary' : ''} ${isCompressed ? 'compressed' : ''}`}
+                        style={{ height: `${rowHeight}px`, minHeight: `${rowHeight}px` }}
+                      >
+                        <div
+                          className={`strike-cell ${isAtm ? 'atm' : ''} ${atEMBoundary ? 'em-boundary' : ''}`}
+                          style={{ height: `${rowHeight}px` }}
+                        >
+                          {!isCompressed && strike}
+                        </div>
                         {strategy === 'single' ? (
                           (() => {
                             const val = strikeData[0] ?? null;
@@ -2119,10 +2415,10 @@ function App() {
                             return (
                               <div
                                 className="width-cell clickable"
-                                style={{ backgroundColor: debitColor(val, changeGrid[strike]?.[0] ?? 0) }}
+                                style={{ backgroundColor: debitColor(val, changeGrid[strike]?.[0] ?? 0), height: `${rowHeight}px` }}
                                 onClick={() => handleTileClick(strike, 0, val)}
                               >
-                                {isValid ? val.toFixed(2) : '-'}
+                                {!isCompressed && (isValid ? val.toFixed(2) : '-')}
                               </div>
                             );
                           })()
@@ -2130,15 +2426,22 @@ function App() {
                           widths.map(w => {
                             const val = strikeData[w] ?? null;
                             const pctChange = changeGrid[strike]?.[w] ?? 0;
-                            const isValid = val !== null && val > 0;
+                            const inOptimalZone = isInOptimalZone(strike, w);
+                            const tileClasses = [
+                              'width-cell',
+                              'clickable',
+                              inOptimalZone ? 'optimal-zone' : '',
+                              atEMBoundary ? 'em-boundary-tile' : '',
+                            ].filter(Boolean).join(' ');
+
                             return (
                               <div
                                 key={w}
-                                className="width-cell clickable"
-                                style={{ backgroundColor: debitColor(val, pctChange) }}
+                                className={tileClasses}
+                                style={{ backgroundColor: debitColor(val, pctChange), height: `${rowHeight}px` }}
                                 onClick={() => handleTileClick(strike, w, val)}
                               >
-                                {isValid ? val.toFixed(2) : '-'}
+                                {!isCompressed && getDisplayValue(strike, w)}
                               </div>
                             );
                           })
@@ -2153,6 +2456,7 @@ function App() {
 
         {/* Risk Graph Panel */}
         <RiskGraphPanel
+          ref={riskGraphRef}
           strategies={riskGraphStrategies}
           onRemoveStrategy={removeFromRiskGraph}
           onToggleStrategyVisibility={toggleStrategyVisibility}
@@ -2181,8 +2485,7 @@ function App() {
             setSimVolatilityOffset(0);
             setSimSpotOffset(0);
           }}
-          collapsed={riskGraphCollapsed}
-          onToggleCollapse={() => setRiskGraphCollapsed(!riskGraphCollapsed)}
+          onOpenJournal={() => setJournalOpen(true)}
         />
 
       </div>
@@ -2246,8 +2549,12 @@ function App() {
             />
           ) : journalOpen ? (
             <JournalView
-              onClose={() => setJournalOpen(false)}
+              onClose={() => {
+                setJournalOpen(false);
+                setJournalTradeContext(null);
+              }}
               onOpenPlaybook={() => { setPlaybookSource('journal'); setPlaybookOpen(true); }}
+              tradeContext={journalTradeContext}
             />
           ) : reportingLogId ? (
             <ReportingView
@@ -2265,7 +2572,10 @@ function App() {
                     onEditTrade={openTradeEdit}
                     onViewReporting={handleViewReporting}
                     onManageLogs={handleManageLogs}
-                    onOpenJournal={() => setJournalOpen(true)}
+                    onOpenJournal={(tradeContext) => {
+                      setJournalTradeContext(tradeContext || null);
+                      setJournalOpen(true);
+                    }}
                     onOpenPlaybook={() => { setPlaybookSource('tradelog'); setPlaybookOpen(true); }}
                     selectedLogId={selectedLog?.id || null}
                     selectedLog={selectedLog}

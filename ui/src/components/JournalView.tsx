@@ -1,13 +1,16 @@
 // src/components/JournalView.tsx
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useJournal } from '../hooks/useJournal';
+import { useAuth } from '../AuthWrapper';
 import JournalCalendar from './JournalCalendar';
 import JournalEntryEditor from './JournalEntryEditor';
+import type { TradeReflectionContext } from './TradeLogPanel';
 import '../styles/journal.css';
 
 interface JournalViewProps {
   onClose: () => void;
   onOpenPlaybook?: () => void;
+  tradeContext?: TradeReflectionContext | null;
 }
 
 type Tab = 'entries' | 'retrospectives';
@@ -45,16 +48,45 @@ function getMonthEnd(year: number, month: number): Date {
   return new Date(year, month, 0);
 }
 
-export default function JournalView({ onClose, onOpenPlaybook }: JournalViewProps) {
+export default function JournalView({ onClose, onOpenPlaybook, tradeContext }: JournalViewProps) {
+  // Auth for role-based features
+  const { isAdmin } = useAuth();
+
   // Tab state
   const [activeTab, setActiveTab] = useState<Tab>('entries');
 
   // Calendar/entries state
   const [viewMonth, setViewMonth] = useState(() => {
+    // If trade context provided, use trade's close date for the view month
+    if (tradeContext?.closeDate) {
+      const closeDate = new Date(tradeContext.closeDate);
+      return { year: closeDate.getFullYear(), month: closeDate.getMonth() + 1 };
+    }
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() + 1 };
   });
-  const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  const [selectedDate, setSelectedDate] = useState<string | null>(() => {
+    // If trade context provided, anchor to trade's close date
+    if (tradeContext?.closeDate) {
+      return formatDateISO(new Date(tradeContext.closeDate));
+    }
+    // Auto-select today's date - tools should come up to meet the trader
+    return formatDateISO(new Date());
+  });
+
+  // Generate minimal context line for trade-based reflection
+  const tradeContextLine = useMemo(() => {
+    if (!tradeContext) return null;
+    const strategyLabel = tradeContext.strategy === 'butterfly' ? 'Butterfly'
+      : tradeContext.strategy === 'vertical' ? 'Vertical'
+      : tradeContext.strategy === 'single' ? 'Single'
+      : tradeContext.strategy || 'Trade';
+    const sideLabel = tradeContext.side?.charAt(0).toUpperCase() + tradeContext.side?.slice(1) || '';
+    const strikeDisplay = tradeContext.width
+      ? `${tradeContext.strike}/${tradeContext.width}w`
+      : `${tradeContext.strike}`;
+    return `Trade: ${tradeContext.symbol} ${sideLabel} ${strategyLabel} · ${strikeDisplay} · Closed\n\n`;
+  }, [tradeContext]);
 
   // Retrospectives state
   const [retroType, setRetroType] = useState<RetroType>('weekly');
@@ -141,9 +173,9 @@ export default function JournalView({ onClose, onOpenPlaybook }: JournalViewProp
     setSelectedDate(date);
   }, []);
 
-  const handleSaveEntry = useCallback(async (content: string, isPlaybook: boolean): Promise<boolean> => {
+  const handleSaveEntry = useCallback(async (content: string, isPlaybook: boolean, tags: string[]): Promise<boolean> => {
     if (!selectedDate) return false;
-    const success = await journal.saveEntry(selectedDate, content, isPlaybook);
+    const success = await journal.saveEntry(selectedDate, content, isPlaybook, tags);
     if (success) {
       journal.fetchCalendar(viewMonth.year, viewMonth.month);
     }
@@ -180,15 +212,20 @@ export default function JournalView({ onClose, onOpenPlaybook }: JournalViewProp
             Entries
           </button>
           <button
-            className={`journal-tab ${activeTab === 'retrospectives' ? 'active' : ''}`}
+            className={`journal-tab retro-tab ${activeTab === 'retrospectives' ? 'active' : ''}`}
             onClick={() => setActiveTab('retrospectives')}
           >
-            Retrospectives
+            ✨ Retrospectives
           </button>
         </div>
         <div className="journal-header-actions">
           {onOpenPlaybook && (
-            <button className="btn-playbook-link" onClick={onOpenPlaybook}>
+            <button
+              className={`btn-playbook-link ${!isAdmin ? 'disabled' : ''}`}
+              onClick={isAdmin ? onOpenPlaybook : undefined}
+              disabled={!isAdmin}
+              title={isAdmin ? 'Open Playbook' : 'Coming soon'}
+            >
               Playbook
             </button>
           )}
@@ -196,6 +233,19 @@ export default function JournalView({ onClose, onOpenPlaybook }: JournalViewProp
             ← Back to Trades
           </button>
         </div>
+      </div>
+
+      {/* Loop Indicator - Journal is where Reflection happens */}
+      <div className="improvement-loop-indicator">
+        <span className="loop-stage">Discovery</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage">Analysis</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage">Action</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage current">Reflection</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage">Distillation</span>
       </div>
 
       <div className="journal-content">
@@ -226,6 +276,7 @@ export default function JournalView({ onClose, onOpenPlaybook }: JournalViewProp
                   onLinkTrade={handleLinkTrade}
                   onUnlinkTrade={handleUnlinkTrade}
                   onTradesUpdated={() => journal.fetchTradesForDate(selectedDate)}
+                  initialContent={tradeContextLine || undefined}
                 />
               ) : (
                 <div className="journal-empty">

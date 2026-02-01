@@ -32,6 +32,7 @@ export interface JournalEntry {
   entry_date: string;
   content: string | null;
   is_playbook_material: boolean;
+  tags: string[];
   trade_refs: TradeRef[];
   attachments: Attachment[];
   created_at: string;
@@ -96,7 +97,7 @@ export interface UseJournalReturn {
   currentEntry: JournalEntry | null;
   loadingEntry: boolean;
   fetchEntry: (date: string) => Promise<void>;
-  saveEntry: (date: string, content: string, isPlaybook: boolean) => Promise<boolean>;
+  saveEntry: (date: string, content: string, isPlaybook: boolean, tags?: string[]) => Promise<boolean>;
   clearEntry: () => void;
 
   // Trades for linking (from all logs)
@@ -181,7 +182,7 @@ export function useJournal(): UseJournalReturn {
     }
   }, []);
 
-  const saveEntry = useCallback(async (date: string, content: string, isPlaybook: boolean): Promise<boolean> => {
+  const saveEntry = useCallback(async (date: string, content: string, isPlaybook: boolean, tags?: string[]): Promise<boolean> => {
     setError(null);
     try {
       const res = await fetch(`${JOURNAL_API}/api/journal/entries`, {
@@ -192,6 +193,7 @@ export function useJournal(): UseJournalReturn {
           entry_date: date,
           content,
           is_playbook_material: isPlaybook,
+          tags: tags || [],
         }),
       });
       const data = await res.json();

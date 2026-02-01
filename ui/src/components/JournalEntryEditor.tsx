@@ -10,6 +10,7 @@ import { Markdown } from 'tiptap-markdown';
 import type { JournalEntry, JournalTrade, Retrospective } from '../hooks/useJournal';
 import TradeDetailModal from './TradeDetailModal';
 import type { Trade } from './TradeLogPanel';
+import { useAuth } from '../AuthWrapper';
 
 const JOURNAL_API = 'http://localhost:3002';
 
@@ -19,17 +20,28 @@ interface BaseEditorProps {
   onTradesUpdated?: () => void;
 }
 
+// Tag type for the selector
+interface Tag {
+  id: string;
+  name: string;
+  description: string | null;
+  is_example: boolean;
+  usage_count: number;
+}
+
 // Props for daily entry mode
 interface EntryModeProps extends BaseEditorProps {
   mode: 'entry';
   date: string;
   entry: JournalEntry | null;
-  onSave: (content: string, isPlaybook: boolean) => Promise<boolean>;
+  onSave: (content: string, isPlaybook: boolean, tags: string[]) => Promise<boolean>;
   // Trade linking
   tradesForDate: JournalTrade[];
   loadingTrades: boolean;
   onLinkTrade: (entryId: string, tradeId: string) => Promise<boolean>;
   onUnlinkTrade: (refId: string) => Promise<boolean>;
+  // Initial content for new entries (e.g., trade context line)
+  initialContent?: string;
 }
 
 // Props for retrospective mode
@@ -319,6 +331,9 @@ function ToolbarButton({
 }
 
 export default function JournalEntryEditor(props: JournalEntryEditorProps) {
+  // Auth for role-based features
+  const { isAdmin } = useAuth();
+
   // Extract common props
   const { mode, loading, onTradesUpdated } = props;
 
@@ -331,6 +346,7 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
   const loadingTrades = isEntryMode ? props.loadingTrades : false;
   const onLinkTrade = isEntryMode ? props.onLinkTrade : undefined;
   const onUnlinkTrade = isEntryMode ? props.onUnlinkTrade : undefined;
+  const initialContent = isEntryMode ? props.initialContent : undefined;
 
   const retroType = !isEntryMode ? props.retroType : undefined;
   const periodStart = !isEntryMode ? props.periodStart : undefined;
@@ -349,6 +365,12 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null);
   const [showTradeModal, setShowTradeModal] = useState(false);
   const [showTemplateMenu, setShowTemplateMenu] = useState(false);
+
+  // Tags state
+  const [availableTags, setAvailableTags] = useState<Tag[]>([]);
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const [tagsLoading, setTagsLoading] = useState(false);
+  const [showTagSelector, setShowTagSelector] = useState(false);
 
   // Attachment state
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -408,12 +430,17 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
         editor.commands.setContent(currentData.content || '');
         setIsPlaybook(currentData.is_playbook_material);
       } else {
-        editor.commands.setContent('');
+        // No existing entry - use initialContent if provided (e.g., trade context line)
+        editor.commands.setContent(initialContent || '');
         setIsPlaybook(false);
+        // Focus editor at end of content for immediate typing
+        if (initialContent) {
+          editor.commands.focus('end');
+        }
       }
       setDirty(false);
     }
-  }, [currentData, dataKey, editor]);
+  }, [currentData, dataKey, editor, initialContent]);
 
   // Sync attachments from entry/retrospective data
   useEffect(() => {
@@ -423,6 +450,38 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
       setAttachments([]);
     }
   }, [currentData, dataKey]);
+
+  // Fetch available tags (entry mode only)
+  useEffect(() => {
+    if (!isEntryMode) return;
+
+    const fetchTags = async () => {
+      setTagsLoading(true);
+      try {
+        const res = await fetch(`${JOURNAL_API}/api/tags`, {
+          credentials: 'include'
+        });
+        const data = await res.json();
+        if (data.success) {
+          setAvailableTags(data.data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch tags:', err);
+      } finally {
+        setTagsLoading(false);
+      }
+    };
+    fetchTags();
+  }, [isEntryMode]);
+
+  // Sync selected tags from entry data
+  useEffect(() => {
+    if (isEntryMode && entry && entry.tags) {
+      setSelectedTagIds(entry.tags);
+    } else {
+      setSelectedTagIds([]);
+    }
+  }, [isEntryMode, entry, dataKey]);
 
   // Get the source ID for attachment operations
   const attachmentSourceId = isEntryMode ? entry?.id : retrospective?.id;
@@ -604,7 +663,7 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
 
     let success = false;
     if (isEntryMode && onSave) {
-      success = await onSave(content, isPlaybook);
+      success = await onSave(content, isPlaybook, selectedTagIds);
     } else if (!isEntryMode && onSaveRetro && retroType && periodStart && periodEnd) {
       success = await onSaveRetro({
         retro_type: retroType,
@@ -619,7 +678,19 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
     if (success) {
       setDirty(false);
     }
-  }, [editor, isPlaybook, isEntryMode, onSave, onSaveRetro, retroType, periodStart, periodEnd]);
+  }, [editor, isPlaybook, selectedTagIds, isEntryMode, onSave, onSaveRetro, retroType, periodStart, periodEnd]);
+
+  // Tag toggle handler
+  const handleToggleTag = (tagId: string) => {
+    setSelectedTagIds(prev => {
+      if (prev.includes(tagId)) {
+        return prev.filter(id => id !== tagId);
+      } else {
+        return [...prev, tagId];
+      }
+    });
+    setDirty(true);
+  };
 
   const handleLinkTrade = async (tradeId: string) => {
     if (!entry || !onLinkTrade) return;
@@ -969,12 +1040,48 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
         )}
       </div>
 
+      {/* Tags Section - Entry mode only */}
+      {isEntryMode && (
+        <div className="entry-tags-section">
+          <div className="tags-section-header" onClick={() => setShowTagSelector(!showTagSelector)}>
+            <span className="collapse-icon">{showTagSelector ? '▼' : '▶'}</span>
+            <span className="tags-label">Tags</span>
+            {selectedTagIds.length > 0 && (
+              <span className="tags-count">{selectedTagIds.length} selected</span>
+            )}
+          </div>
+          {showTagSelector && (
+            <div className="tags-selector">
+              {tagsLoading ? (
+                <div className="tags-loading">Loading tags...</div>
+              ) : availableTags.length === 0 ? (
+                <div className="tags-empty">No tags available. Create tags in Settings.</div>
+              ) : (
+                <div className="tags-grid">
+                  {availableTags.map(tag => (
+                    <button
+                      key={tag.id}
+                      className={`tag-chip ${selectedTagIds.includes(tag.id) ? 'selected' : ''}`}
+                      onClick={() => handleToggleTag(tag.id)}
+                      title={tag.description || tag.name}
+                    >
+                      {tag.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="entry-footer">
-        <label className="playbook-toggle">
+        <label className={`playbook-toggle ${!isAdmin ? 'disabled' : ''}`} title={isAdmin ? 'Mark as playbook material' : 'Coming soon'}>
           <input
             type="checkbox"
             checked={isPlaybook}
             onChange={handlePlaybookChange}
+            disabled={!isAdmin}
           />
           <span>Playbook Material</span>
         </label>

@@ -16,7 +16,20 @@ interface SettingsModalProps {
   onClose: () => void;
 }
 
-type SettingsTab = 'profile' | 'symbols' | 'trading' | 'user' | 'display' | 'alerts';
+type SettingsTab = 'profile' | 'symbols' | 'tags' | 'trading' | 'user' | 'display' | 'alerts';
+
+interface Tag {
+  id: string;
+  user_id: number;
+  name: string;
+  description: string | null;
+  is_retired: boolean;
+  is_example: boolean;
+  usage_count: number;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 interface Profile {
   display_name: string;
@@ -52,6 +65,17 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   // Trading settings
   const [tradingSettings, setTradingSettings] = useState<Record<string, any>>({});
   const [userSettings, setUserSettings] = useState<Record<string, any>>({});
+
+  // Tags (Vocabulary System)
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [tagsLoading, setTagsLoading] = useState(true);
+  const [tagsSortBy, setTagsSortBy] = useState<'recent' | 'alpha'>('recent');
+  const [showRetiredTags, setShowRetiredTags] = useState(false);
+  const [showAddTag, setShowAddTag] = useState(false);
+  const [newTag, setNewTag] = useState({ name: '', description: '' });
+  const [tagError, setTagError] = useState<string | null>(null);
+  const [editingTagId, setEditingTagId] = useState<string | null>(null);
+  const [editingTagData, setEditingTagData] = useState({ name: '', description: '' });
 
   const fetchSymbols = useCallback(async () => {
     try {
@@ -93,14 +117,31 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     }
   }, []);
 
+  const fetchTags = useCallback(async () => {
+    setTagsLoading(true);
+    try {
+      const res = await fetch(`${JOURNAL_API}/api/tags?include_retired=true`, {
+        credentials: 'include'
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTags(data.data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch tags:', err);
+    } finally {
+      setTagsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
-      await Promise.all([fetchSymbols(), fetchSettings(), fetchProfile()]);
+      await Promise.all([fetchSymbols(), fetchSettings(), fetchProfile(), fetchTags()]);
       setLoading(false);
     };
     loadData();
-  }, [fetchSymbols, fetchSettings, fetchProfile]);
+  }, [fetchSymbols, fetchSettings, fetchProfile, fetchTags]);
 
   const handleAddSymbol = async () => {
     setAddError(null);
@@ -184,6 +225,151 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     }
   };
 
+  // Tag management handlers
+  const handleAddTag = async () => {
+    setTagError(null);
+    if (!newTag.name.trim()) {
+      setTagError('Tag name is required');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${JOURNAL_API}/api/tags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: newTag.name.trim(),
+          description: newTag.description.trim() || null
+        })
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setTags([data.data, ...tags]);
+        setShowAddTag(false);
+        setNewTag({ name: '', description: '' });
+      } else {
+        setTagError(data.error || 'Failed to add tag');
+      }
+    } catch (err) {
+      setTagError('Failed to add tag');
+    }
+  };
+
+  const handleUpdateTag = async (tagId: string) => {
+    setTagError(null);
+    if (!editingTagData.name.trim()) {
+      setTagError('Tag name is required');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${JOURNAL_API}/api/tags/${tagId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          name: editingTagData.name.trim(),
+          description: editingTagData.description.trim() || null
+        })
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setTags(tags.map(t => t.id === tagId ? data.data : t));
+        setEditingTagId(null);
+      } else {
+        setTagError(data.error || 'Failed to update tag');
+      }
+    } catch (err) {
+      setTagError('Failed to update tag');
+    }
+  };
+
+  const handleRetireTag = async (tagId: string) => {
+    try {
+      const res = await fetch(`${JOURNAL_API}/api/tags/${tagId}/retire`, {
+        method: 'PUT',
+        credentials: 'include'
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setTags(tags.map(t => t.id === tagId ? data.data : t));
+      }
+    } catch (err) {
+      console.error('Failed to retire tag:', err);
+    }
+  };
+
+  const handleRestoreTag = async (tagId: string) => {
+    try {
+      const res = await fetch(`${JOURNAL_API}/api/tags/${tagId}/restore`, {
+        method: 'PUT',
+        credentials: 'include'
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setTags(tags.map(t => t.id === tagId ? data.data : t));
+      }
+    } catch (err) {
+      console.error('Failed to restore tag:', err);
+    }
+  };
+
+  const handleDeleteTag = async (tag: Tag) => {
+    if (tag.usage_count > 0) {
+      alert('Cannot delete a tag that has been used. Retire it instead.');
+      return;
+    }
+    if (!confirm(`Delete tag "${tag.name}"?`)) return;
+
+    try {
+      const res = await fetch(`${JOURNAL_API}/api/tags/${tag.id}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setTags(tags.filter(t => t.id !== tag.id));
+      }
+    } catch (err) {
+      console.error('Failed to delete tag:', err);
+    }
+  };
+
+  const startEditingTag = (tag: Tag) => {
+    setEditingTagId(tag.id);
+    setEditingTagData({ name: tag.name, description: tag.description || '' });
+    setTagError(null);
+  };
+
+  const cancelEditingTag = () => {
+    setEditingTagId(null);
+    setEditingTagData({ name: '', description: '' });
+    setTagError(null);
+  };
+
+  // Filter and sort tags
+  const activeTags = tags.filter(t => !t.is_retired);
+  const retiredTags = tags.filter(t => t.is_retired);
+
+  const sortedActiveTags = [...activeTags].sort((a, b) => {
+    if (tagsSortBy === 'alpha') {
+      return a.name.localeCompare(b.name);
+    }
+    // Sort by most recently used, then by created date
+    if (a.last_used_at && b.last_used_at) {
+      return new Date(b.last_used_at).getTime() - new Date(a.last_used_at).getTime();
+    }
+    if (a.last_used_at) return -1;
+    if (b.last_used_at) return 1;
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+
   const filteredSymbols = symbols.filter(s =>
     assetFilter === 'all' || s.asset_type === assetFilter
   );
@@ -199,7 +385,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="settings-overlay" onClick={onClose}>
       <div className="settings-modal" onClick={e => e.stopPropagation()}>
         <div className="settings-header">
           <h2>Settings</h2>
@@ -218,6 +404,12 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
             onClick={() => setActiveTab('symbols')}
           >
             Symbols
+          </button>
+          <button
+            className={`settings-tab ${activeTab === 'tags' ? 'active' : ''}`}
+            onClick={() => setActiveTab('tags')}
+          >
+            Tags
           </button>
           <button
             className={`settings-tab ${activeTab === 'trading' ? 'active' : ''}`}
@@ -465,6 +657,193 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                   <div className="symbols-summary">
                     {filteredSymbols.length} symbols ({symbols.filter(s => s.enabled).length} enabled)
                   </div>
+                </div>
+              )}
+
+              {activeTab === 'tags' && (
+                <div className="settings-tags">
+                  <div className="tags-intro">
+                    <p><strong>Example tags</strong> — common patterns professionals notice.<br />Edit, rename, or delete freely.</p>
+                  </div>
+
+                  <div className="tags-toolbar">
+                    <div className="tags-sort">
+                      <label>Sort:</label>
+                      <select
+                        value={tagsSortBy}
+                        onChange={e => setTagsSortBy(e.target.value as 'recent' | 'alpha')}
+                      >
+                        <option value="recent">Most Recent</option>
+                        <option value="alpha">Alphabetical</option>
+                      </select>
+                    </div>
+                    <button
+                      className="btn-add-tag"
+                      onClick={() => setShowAddTag(true)}
+                    >
+                      + New Tag
+                    </button>
+                  </div>
+
+                  {showAddTag && (
+                    <div className="add-tag-form">
+                      <h4>Create Tag</h4>
+                      <div className="form-group">
+                        <label>Name</label>
+                        <input
+                          type="text"
+                          value={newTag.name}
+                          onChange={e => setNewTag({ ...newTag, name: e.target.value })}
+                          placeholder="e.g., overtrading"
+                          maxLength={100}
+                          autoFocus
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label>Description (optional)</label>
+                        <input
+                          type="text"
+                          value={newTag.description}
+                          onChange={e => setNewTag({ ...newTag, description: e.target.value })}
+                          placeholder="What this tag means to you"
+                        />
+                      </div>
+                      {tagError && <div className="form-error">{tagError}</div>}
+                      <div className="form-actions">
+                        <button className="btn-cancel" onClick={() => { setShowAddTag(false); setNewTag({ name: '', description: '' }); setTagError(null); }}>
+                          Cancel
+                        </button>
+                        <button className="btn-save" onClick={handleAddTag}>
+                          Create
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {tagsLoading ? (
+                    <div className="settings-loading">Loading tags...</div>
+                  ) : (
+                    <>
+                      <div className="tags-list">
+                        {sortedActiveTags.length === 0 ? (
+                          <div className="tags-empty">
+                            <p>No tags yet. Create your first tag to start building your vocabulary.</p>
+                          </div>
+                        ) : (
+                          sortedActiveTags.map(tag => (
+                            <div key={tag.id} className={`tag-item ${tag.is_example ? 'example' : ''}`}>
+                              {editingTagId === tag.id ? (
+                                <div className="tag-edit-form">
+                                  <div className="form-group">
+                                    <input
+                                      type="text"
+                                      value={editingTagData.name}
+                                      onChange={e => setEditingTagData({ ...editingTagData, name: e.target.value })}
+                                      placeholder="Tag name"
+                                      autoFocus
+                                    />
+                                  </div>
+                                  <div className="form-group">
+                                    <input
+                                      type="text"
+                                      value={editingTagData.description}
+                                      onChange={e => setEditingTagData({ ...editingTagData, description: e.target.value })}
+                                      placeholder="Description (optional)"
+                                    />
+                                  </div>
+                                  {tagError && <div className="form-error">{tagError}</div>}
+                                  <div className="tag-edit-actions">
+                                    <button className="btn-cancel" onClick={cancelEditingTag}>Cancel</button>
+                                    <button className="btn-save" onClick={() => handleUpdateTag(tag.id)}>Save</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="tag-info">
+                                    <span className="tag-name">{tag.name}</span>
+                                    {tag.is_example && <span className="tag-example-badge">(example)</span>}
+                                    <span className="tag-usage">{tag.usage_count} uses</span>
+                                  </div>
+                                  {tag.description && (
+                                    <div className="tag-description">{tag.description}</div>
+                                  )}
+                                  <div className="tag-actions">
+                                    <button
+                                      className="btn-edit-tag"
+                                      onClick={() => startEditingTag(tag)}
+                                      title="Edit tag"
+                                    >
+                                      Edit
+                                    </button>
+                                    <button
+                                      className="btn-retire-tag"
+                                      onClick={() => handleRetireTag(tag.id)}
+                                      title="Retire tag"
+                                    >
+                                      Retire
+                                    </button>
+                                    {tag.usage_count === 0 && (
+                                      <button
+                                        className="btn-delete-tag"
+                                        onClick={() => handleDeleteTag(tag)}
+                                        title="Delete tag"
+                                      >
+                                        Delete
+                                      </button>
+                                    )}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {retiredTags.length > 0 && (
+                        <div className="retired-tags-section">
+                          <button
+                            className="retired-tags-toggle"
+                            onClick={() => setShowRetiredTags(!showRetiredTags)}
+                          >
+                            <span className="collapse-icon">{showRetiredTags ? '▼' : '▶'}</span>
+                            Retired Tags ({retiredTags.length})
+                          </button>
+                          {showRetiredTags && (
+                            <>
+                              <p className="retired-tags-hint">Retired tags remain attached to historical content but are hidden from suggestions.</p>
+                              <div className="tags-list retired">
+                                {retiredTags.map(tag => (
+                                  <div key={tag.id} className="tag-item retired">
+                                    <div className="tag-info">
+                                      <span className="tag-name">{tag.name}</span>
+                                      <span className="tag-usage">{tag.usage_count} uses</span>
+                                    </div>
+                                    {tag.description && (
+                                      <div className="tag-description">{tag.description}</div>
+                                    )}
+                                    <div className="tag-actions">
+                                      <button
+                                        className="btn-restore-tag"
+                                        onClick={() => handleRestoreTag(tag.id)}
+                                        title="Restore tag"
+                                      >
+                                        Restore
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="tags-summary">
+                        {activeTags.length} active tag{activeTags.length !== 1 ? 's' : ''}
+                        {retiredTags.length > 0 && ` · ${retiredTags.length} retired`}
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 

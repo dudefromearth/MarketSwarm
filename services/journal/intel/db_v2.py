@@ -10,14 +10,14 @@ from datetime import datetime
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint, Symbol, Setting,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
-    PlaybookEntry, PlaybookSourceRef
+    PlaybookEntry, PlaybookSourceRef, Tag
 )
 
 
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 6
+    SCHEMA_VERSION = 8
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -50,6 +50,45 @@ class JournalDBv2:
         {'symbol': 'GOOGL', 'name': 'Alphabet Inc', 'asset_type': 'stock', 'multiplier': 100},
         {'symbol': 'META', 'name': 'Meta Platforms', 'asset_type': 'stock', 'multiplier': 100},
         {'symbol': 'MSFT', 'name': 'Microsoft Corp', 'asset_type': 'stock', 'multiplier': 100},
+    ]
+
+    # Default example tags for new users (vocabulary seeds)
+    # Organized by: Behavior, Context, Process, Insight
+    # These are behavioral, contextual, non-judgmental, non-outcome-based
+    DEFAULT_TAGS = [
+        # A. Behavior & Decision Quality - train self-awareness without shame
+        {'name': 'overtrading', 'description': 'Took more trades than planned'},
+        {'name': 'forced trade', 'description': 'Entered without clear thesis'},
+        {'name': 'late entry', 'description': 'Hesitated, entered after optimal point'},
+        {'name': 'early exit', 'description': 'Closed before thesis played out'},
+        {'name': 'hesitation', 'description': 'Delayed action when signal was clear'},
+        {'name': 'impatience', 'description': 'Rushed into or out of position'},
+        {'name': 'conviction trade', 'description': 'High confidence, sized appropriately'},
+        {'name': 'stayed disciplined', 'description': 'Followed the plan despite pressure'},
+
+        # B. Context & Environment - teach thinking in regimes
+        {'name': 'volatility mismatch', 'description': "Strategy didn't match vol regime"},
+        {'name': 'regime shift', 'description': 'Market character changed mid-trade'},
+        {'name': 'thin liquidity', 'description': 'Slippage or poor fills due to low volume'},
+        {'name': 'event-driven', 'description': 'Trade around scheduled catalyst'},
+        {'name': 'post-news distortion', 'description': 'Price action skewed by recent news'},
+        {'name': 'compressed volatility', 'description': 'Low vol environment, premium cheap'},
+        {'name': 'expanding volatility', 'description': 'Rising vol, premium expensive'},
+
+        # C. Process & Execution - anchor routine and mechanics
+        {'name': 'thesis drift', 'description': 'Changed rationale mid-trade'},
+        {'name': 'ignored context', 'description': 'Traded against broader conditions'},
+        {'name': 'followed process', 'description': 'Executed according to plan'},
+        {'name': 'broke rules', 'description': 'Deviated from established guidelines'},
+        {'name': 'sizing issue', 'description': 'Position size was inappropriate'},
+        {'name': 'risk misread', 'description': 'Misjudged the risk/reward'},
+
+        # D. Insight & Learning Moments - reinforce positive pattern recognition
+        {'name': 'clarity moment', 'description': 'Saw something clearly for the first time'},
+        {'name': 'pattern recognized', 'description': 'Identified a recurring setup'},
+        {'name': 'lesson learned', 'description': 'Key takeaway worth remembering'},
+        {'name': 'worked as expected', 'description': 'Outcome matched thesis'},
+        {'name': 'failed as expected', 'description': 'Loss was within anticipated scenario'},
     ]
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -145,6 +184,12 @@ class JournalDBv2:
 
             if current_version < 6:
                 self._migrate_to_v6(conn)
+
+            if current_version < 7:
+                self._migrate_to_v7(conn)
+
+            if current_version < 8:
+                self._migrate_to_v8(conn)
 
             conn.commit()
         finally:
@@ -505,6 +550,55 @@ class JournalDBv2:
                 """)
 
             self._set_schema_version(conn, 6)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v7(self, conn):
+        """Migrate to v7: Add tags table for trader vocabulary system."""
+        cursor = conn.cursor()
+        try:
+            # Create tags table if it doesn't exist
+            if not self._table_exists(conn, 'tags'):
+                cursor.execute("""
+                    CREATE TABLE tags (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+                        name VARCHAR(100) NOT NULL,
+                        description TEXT,
+                        is_retired TINYINT DEFAULT 0,
+                        is_example TINYINT DEFAULT 0,
+                        usage_count INT DEFAULT 0,
+                        last_used_at VARCHAR(32),
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+                        updated_at VARCHAR(32) DEFAULT (NOW()),
+
+                        UNIQUE INDEX idx_tags_user_name (user_id, name),
+                        INDEX idx_tags_user_retired (user_id, is_retired)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 7)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v8(self, conn):
+        """Migrate to v8: Add tags column to journal_entries for tagging support."""
+        cursor = conn.cursor()
+        try:
+            # Check if tags column already exists
+            cursor.execute("""
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                AND table_name = 'journal_entries'
+                AND column_name = 'tags'
+            """)
+            if cursor.fetchone()[0] == 0:
+                cursor.execute("""
+                    ALTER TABLE journal_entries
+                    ADD COLUMN tags TEXT DEFAULT '[]'
+                """)
+
+            self._set_schema_version(conn, 8)
         finally:
             cursor.close()
 
@@ -1092,6 +1186,217 @@ class JournalDBv2:
             cursor.close()
             conn.close()
 
+    # ==================== Tags (Vocabulary System) ====================
+
+    def list_tags(self, user_id: int, include_retired: bool = False) -> List[Tag]:
+        """List all tags for a user, optionally including retired tags."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if include_retired:
+                cursor.execute(
+                    "SELECT * FROM tags WHERE user_id = %s ORDER BY last_used_at DESC, created_at DESC",
+                    (user_id,)
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM tags WHERE user_id = %s AND is_retired = 0 ORDER BY last_used_at DESC, created_at DESC",
+                    (user_id,)
+                )
+            rows = cursor.fetchall()
+            return [Tag.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_tag(self, tag_id: str) -> Optional[Tag]:
+        """Get a tag by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM tags WHERE id = %s", (tag_id,))
+            row = cursor.fetchone()
+            if row:
+                return Tag.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_tag_by_name(self, user_id: int, name: str) -> Optional[Tag]:
+        """Get a tag by user ID and name."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM tags WHERE user_id = %s AND name = %s",
+                (user_id, name)
+            )
+            row = cursor.fetchone()
+            if row:
+                return Tag.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_tag(self, tag: Tag) -> Tag:
+        """Create a new tag."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = tag.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO tags ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return tag
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_tag(self, tag_id: str, updates: Dict[str, Any]) -> Optional[Tag]:
+        """Update a tag's editable fields (name, description)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Only allow updating name and description
+            allowed = {'name', 'description'}
+            updates = {k: v for k, v in updates.items() if k in allowed}
+
+            if not updates:
+                return self.get_tag(tag_id)
+
+            updates['updated_at'] = datetime.utcnow().isoformat()
+            set_clause = ', '.join(f"{k} = %s" for k in updates.keys())
+            params = list(updates.values()) + [tag_id]
+
+            cursor.execute(
+                f"UPDATE tags SET {set_clause} WHERE id = %s",
+                params
+            )
+            conn.commit()
+            return self.get_tag(tag_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def retire_tag(self, tag_id: str) -> Optional[Tag]:
+        """Retire a tag (hide from suggestions but preserve on history)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE tags SET is_retired = 1, updated_at = %s WHERE id = %s",
+                (datetime.utcnow().isoformat(), tag_id)
+            )
+            conn.commit()
+            return self.get_tag(tag_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def restore_tag(self, tag_id: str) -> Optional[Tag]:
+        """Restore a retired tag."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE tags SET is_retired = 0, updated_at = %s WHERE id = %s",
+                (datetime.utcnow().isoformat(), tag_id)
+            )
+            conn.commit()
+            return self.get_tag(tag_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_tag(self, tag_id: str) -> bool:
+        """Delete a tag (only if usage_count is 0)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Only delete if tag has never been used
+            cursor.execute(
+                "DELETE FROM tags WHERE id = %s AND usage_count = 0",
+                (tag_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def increment_tag_usage(self, tag_id: str) -> Optional[Tag]:
+        """Increment usage count and update last_used_at when tag is applied."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            now = datetime.utcnow().isoformat()
+            cursor.execute(
+                "UPDATE tags SET usage_count = usage_count + 1, last_used_at = %s, updated_at = %s WHERE id = %s",
+                (now, now, tag_id)
+            )
+            conn.commit()
+            return self.get_tag(tag_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def seed_example_tags(self, user_id: int) -> List[Tag]:
+        """Seed default example tags for a new user."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Check if user already has tags
+            cursor.execute("SELECT COUNT(*) FROM tags WHERE user_id = %s", (user_id,))
+            if cursor.fetchone()[0] > 0:
+                # User already has tags, don't seed
+                return []
+
+            now = datetime.utcnow().isoformat()
+            created_tags = []
+
+            for tag_data in self.DEFAULT_TAGS:
+                tag = Tag(
+                    id=Tag.new_id(),
+                    user_id=user_id,
+                    name=tag_data['name'],
+                    description=tag_data['description'],
+                    is_example=True,
+                    created_at=now,
+                    updated_at=now
+                )
+                data = tag.to_dict()
+                columns = ', '.join(data.keys())
+                placeholders = ', '.join(['%s'] * len(data))
+                cursor.execute(
+                    f"INSERT INTO tags ({columns}) VALUES ({placeholders})",
+                    list(data.values())
+                )
+                created_tags.append(tag)
+
+            conn.commit()
+            return created_tags
+        finally:
+            cursor.close()
+            conn.close()
+
+    def count_tags(self, user_id: int) -> int:
+        """Count total tags for a user."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT COUNT(*) FROM tags WHERE user_id = %s", (user_id,))
+            return cursor.fetchone()[0]
+        finally:
+            cursor.close()
+            conn.close()
+
     # ==================== Settings ====================
 
     def get_setting(self, key: str, scope: str = 'global') -> Optional[Setting]:
@@ -1422,6 +1727,10 @@ class JournalDBv2:
             if 'is_playbook_material' in updates:
                 updates['is_playbook_material'] = 1 if updates['is_playbook_material'] else 0
 
+            # Handle tags JSON conversion
+            if 'tags' in updates:
+                updates['tags'] = json.dumps(updates['tags']) if updates['tags'] else '[]'
+
             set_clause = ', '.join(f"{k} = %s" for k in updates.keys())
             params = list(updates.values()) + [entry_id]
 
@@ -1441,7 +1750,8 @@ class JournalDBv2:
         if existing:
             updates = {
                 'content': entry.content,
-                'is_playbook_material': entry.is_playbook_material
+                'is_playbook_material': entry.is_playbook_material,
+                'tags': entry.tags
             }
             return self.update_entry(existing.id, updates)
         return self.create_entry(entry)
