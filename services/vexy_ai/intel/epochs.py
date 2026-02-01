@@ -116,55 +116,145 @@ def generate_epoch_commentary(epoch: Dict[str, str], market_state: Dict[str, Any
     """
     Generate rich epoch commentary incorporating market data.
 
+    Uses standard Vexy markdown format:
+    - Blockquote for context
+    - Bold headers for sections
+    - Bullet lists for data
+    - Bottom line takeaway
+
     Args:
         epoch: The epoch definition (name, time, context)
         market_state: Current market state from MarketReader
 
     Returns:
-        Human-readable commentary string
+        Markdown-formatted commentary string
     """
     name = epoch["name"]
     context = epoch.get("context", "")
-    date_str = datetime.now().strftime("%A, %B %d")
 
     spots = market_state.get("spots", {})
     gex = market_state.get("gex", {})
     heatmap = market_state.get("heatmap", {})
 
-    # Build commentary sections
-    sections = []
+    lines = []
 
-    # Header
-    sections.append(f"**{name}** — {date_str}")
-
-    # Context
+    # Context as blockquote
     if context:
-        sections.append(context)
+        lines.append(f"> {context}")
+        lines.append("")
 
-    # Spot prices
-    spot_text = _format_spot(spots)
-    if spot_text and spot_text != "Spot data unavailable":
-        sections.append(f"Markets: {spot_text}.")
+    # Levels section
+    level_items = []
+    for symbol, data in spots.items():
+        if not data or data.get("value") is None:
+            continue
+        val = data["value"]
+        change = data.get("change_pct")
+        sym = symbol.replace("I:", "")
+        if change is not None:
+            sign = "+" if change > 0 else ""
+            level_items.append(f"- {sym}: {val:,.2f} ({sign}{change:.2f}%)")
+        else:
+            level_items.append(f"- {sym}: {val:,.2f}")
 
-    # VIX
+    if level_items:
+        lines.append("**Levels**")
+        lines.extend(level_items)
+        lines.append("")
+
+    # Structure section (GEX + VIX regime)
+    structure_items = []
+
+    # VIX regime
     vix_data = spots.get("I:VIX")
     if vix_data and vix_data.get("value"):
         vix = vix_data["value"]
         if vix > 25:
-            sections.append(f"VIX elevated at {vix:.1f} — heightened fear, expect wider swings.")
+            structure_items.append(f"- VIX elevated at {vix:.1f} — wider swings expected")
         elif vix < 15:
-            sections.append(f"VIX subdued at {vix:.1f} — complacency zone, watch for vol expansion.")
+            structure_items.append(f"- VIX subdued at {vix:.1f} — complacency zone")
         else:
-            sections.append(f"VIX at {vix:.1f} — normal range.")
+            structure_items.append(f"- VIX at {vix:.1f} — normal range")
 
     # GEX regime
-    gex_text = _format_gex(gex)
-    if gex_text:
-        sections.append(gex_text)
+    for symbol, data in gex.items():
+        if not data:
+            continue
+        regime = data.get("regime", "")
+        sym = symbol.replace("I:", "")
+        if regime == "positive_gamma":
+            structure_items.append(f"- {sym} positive gamma — dealers dampen moves")
+        elif regime == "negative_gamma":
+            structure_items.append(f"- {sym} negative gamma — dealers amplify moves")
 
-    # Heatmap opportunities
-    heatmap_text = _format_heatmap(heatmap, spots)
-    if heatmap_text:
-        sections.append(f"Convexity: {heatmap_text}")
+        key_levels = data.get("key_levels", [])
+        if key_levels:
+            top_level, _ = key_levels[0]
+            structure_items.append(f"- Key GEX wall at {int(top_level)}")
 
-    return " ".join(sections)
+    if structure_items:
+        lines.append("**Structure**")
+        lines.extend(structure_items)
+        lines.append("")
+
+    # Convexity section (heatmap sweet spots)
+    convexity_items = []
+    for symbol, data in heatmap.items():
+        if not data:
+            continue
+        sweet_spots = data.get("sweet_spots", [])
+        if not sweet_spots:
+            continue
+
+        spot_val = spots.get(symbol, {}).get("value")
+        best = sweet_spots[0]
+        strike = best["strike"]
+        width = best["width"]
+        debit = best["debit"]
+        side = best["side"]
+
+        if spot_val:
+            distance = abs(strike - spot_val)
+            direction = "above" if strike > spot_val else "below"
+            convexity_items.append(
+                f"- {width}w {side} fly at {strike} ({distance:.0f} pts {direction}) — ${debit:.2f}"
+            )
+
+    if convexity_items:
+        lines.append("**Convexity**")
+        lines.extend(convexity_items)
+        lines.append("")
+
+    # Bottom line
+    bottom_line = _generate_bottom_line(spots, gex)
+    lines.append(f"**Bottom line:** {bottom_line}")
+
+    return "\n".join(lines)
+
+
+def _generate_bottom_line(spots: Dict[str, Any], gex: Dict[str, Any]) -> str:
+    """Generate a brief bottom line takeaway based on market state."""
+    vix_data = spots.get("I:VIX", {})
+    vix = vix_data.get("value", 20) if vix_data else 20
+
+    # Determine gamma regime
+    gamma_regime = "neutral"
+    for data in gex.values():
+        if data:
+            regime = data.get("regime", "")
+            if regime in ("positive_gamma", "negative_gamma"):
+                gamma_regime = regime
+                break
+
+    if vix > 30:
+        return "Elevated vol — wide flies, patient entries."
+    elif vix < 15:
+        if gamma_regime == "positive_gamma":
+            return "Low vol, positive gamma — range-bound, narrow flies."
+        return "Subdued vol — watch for expansion."
+    elif gamma_regime == "negative_gamma":
+        return "Negative gamma zone — expect amplified moves."
+    elif gamma_regime == "positive_gamma":
+        return "Positive gamma — dealers dampen, structure holds."
+    else:
+        return "Standard conditions — follow the structure."

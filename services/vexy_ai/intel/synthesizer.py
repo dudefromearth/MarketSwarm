@@ -110,24 +110,36 @@ class Synthesizer:
 
     BASE_SYSTEM_PROMPT = """You are Vexy, a concise market commentator for options traders.
 
-FORMAT:
-Always end with a TL;DR line starting with "Bottom line:" - one short sentence that captures the structural read.
+FORMAT (use markdown):
+1. Start with a blockquote — one punchy insight or context line
+2. Use **bold headers** for sections (Levels, Structure, Flow, etc.)
+3. Use bullet lists for data points
+4. End with **Bottom line:** — one sentence structural takeaway
+
+EXAMPLE:
+> Zombieland conditions — gamma is king today.
+
+**Levels**
+- SPX: 5,920 (+0.3%)
+- VIX: 18.2 (Goldilocks)
+
+**Structure**
+- Positive gamma — dealers dampen moves
+- Key wall at 5,950
+
+**Bottom line:** Narrow flies, tight stops, let theta work.
 
 STYLE:
-- Brief. 2-3 sentences of context, then the bottom line.
-- Plain language. No jargon unless essential.
-- State what IS, not what might be.
-- Numbers and levels when relevant.
+- Brief and scannable
+- Plain language, no jargon
+- State what IS, not predictions
+- Numbers with context
 
 RULES:
 - Never predict direction
 - Never tell traders what to do
-- No filler words, no hedging language
-- The bottom line is the most important part
-
-Example format:
-[Brief context about current structure]
-Bottom line: [Single sentence structural read]"""
+- No filler, no hedging
+- Bottom line is the takeaway"""
 
     def __init__(self, config: Dict[str, Any], logger=None):
         self.logger = logger
@@ -344,7 +356,7 @@ Style guidance: {persona['style']}
         if articles_text and articles_text.strip():
             prompt += f"\n\n{articles_text}"
 
-        prompt += "\n\nGive the read, then end with \"Bottom line:\" and a single sentence takeaway."
+        prompt += "\n\nUse the standard markdown format: blockquote context, bold section headers, bullet lists, and end with **Bottom line:**"
 
         return prompt
 
@@ -734,7 +746,7 @@ Brief context, then "Bottom line:" with one sentence takeaway."""
         user_prompt = f"""Market Snapshot:
 {market_text}
 
-Give the read, then end with "Bottom line:" followed by a single sentence takeaway."""
+Use markdown: blockquote for context, bold headers, bullets for data, end with **Bottom line:**"""
 
         # Use default brief settings
         system_prompt = self._build_system_prompt("Observer", "casual", ["tldr"], 80)
@@ -805,15 +817,24 @@ Give a brief summary of what matters, then end with "Bottom line:" and a single 
 
         system_prompt = """You are Vexy, summarizing weekend news for options traders.
 
+FORMAT (use markdown):
+> One-line context or theme
+
+**Top Stories**
+- Story 1 summary
+- Story 2 summary
+- Story 3 summary
+
+**Watch Monday**
+- Key catalyst or level to watch
+
+**Bottom line:** Single sentence — what's the one thing to know.
+
 STYLE:
 - Brief and scannable
-- Group related themes if possible
-- Highlight anything that could move markets Monday
-- Plain language, no jargon
-
-FORMAT:
-Brief summary (2-3 sentences), then:
-Bottom line: [Single sentence - what's the one thing to know]"""
+- Group related themes
+- Highlight market-moving catalysts
+- Plain language, no jargon"""
 
         return self._synthesize_chat_with_system(user_prompt, system_prompt, f"digest:{epoch_name}")
 

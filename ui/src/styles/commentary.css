@@ -183,6 +183,50 @@
   line-height: 1.5;
 }
 
+/* Markdown content styles */
+.commentary-text p {
+  margin: 0 0 8px 0;
+}
+
+.commentary-text p:last-child {
+  margin-bottom: 0;
+}
+
+.commentary-text strong {
+  color: #fff;
+  font-weight: 600;
+}
+
+.commentary-text em {
+  color: #aaa;
+  font-style: italic;
+}
+
+.commentary-text ul,
+.commentary-text ol {
+  margin: 4px 0;
+  padding-left: 16px;
+}
+
+.commentary-text li {
+  margin: 2px 0;
+}
+
+.commentary-text blockquote {
+  margin: 8px 0;
+  padding: 4px 8px;
+  border-left: 2px solid #3b82f6;
+  background: #ffffff08;
+  color: #aaa;
+}
+
+.commentary-text code {
+  background: #333;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
 /* ========== Category Variants ========== */
 .commentary-observation {
   border-left-color: #3b82f6;

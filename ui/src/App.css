@@ -1633,10 +1633,11 @@ body {
 
 /* Consolidated Risk Graph Panel */
 .echarts-risk-graph-panel {
-  flex: 1 1 100%;
-  min-width: 800px;
+  flex: 1 1 0; /* Grow and shrink equally, start at 0 */
+  min-width: 400px; /* Reasonable minimum */
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .echarts-risk-graph-panel.collapsed {
@@ -1650,39 +1651,75 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 400px;
+  min-width: 0; /* Allow shrinking */
+  overflow: hidden;
 }
 
-/* Consolidated layout */
-.risk-graph-consolidated {
-  display: flex;
-  flex-direction: column;
+/* Consolidated layout - CSS Grid for sidebar to span full height on LEFT */
+.echarts-risk-graph-panel .risk-graph-consolidated {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr); /* minmax allows shrinking */
+  grid-template-rows: 1fr auto auto;
   gap: 12px;
   height: 100%;
+  overflow: hidden;
 }
 
-.risk-graph-main {
+.echarts-risk-graph-panel .risk-graph-sidebar {
+  grid-column: 1;
+  grid-row: 1 / 3; /* Span chart area AND 3D controls rows */
+}
+
+.echarts-risk-graph-panel .risk-graph-main {
+  grid-column: 2;
+  grid-row: 1;
   display: flex;
-  gap: 16px;
-  flex: 1;
+  flex-direction: column;
   min-height: 350px;
+  min-width: 0; /* Allow shrinking in grid */
+  overflow: hidden;
+}
+
+.echarts-risk-graph-panel .time-machine-panel {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0; /* Allow shrinking in grid */
+  overflow: hidden;
+}
+
+.echarts-risk-graph-panel .risk-graph-stats {
+  grid-column: 1 / 3; /* Full width */
+  grid-row: 3;
+  min-width: 0; /* Allow shrinking */
+  overflow: hidden;
 }
 
 .risk-graph-chart-area {
   flex: 1;
-  min-width: 400px;
+  min-width: 0; /* Allow shrinking */
   background: #0a0a0a;
   border-radius: 4px;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
-.chart-controls-hint {
-  font-size: 10px;
-  color: #555;
-  text-align: center;
-  padding: 4px;
-  background: #111;
-  border-top: 1px solid #222;
+.btn-auto-fit-header {
+  margin-left: auto;
+  padding: 3px 10px;
+  font-size: 11px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #888;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-auto-fit-header:hover {
+  background: #252525;
+  color: #fff;
+  border-color: #3b82f6;
 }
 
 .chart-controls-inline {
@@ -1718,20 +1755,31 @@ body {
 }
 
 .risk-graph-sidebar {
-  width: 260px;
-  min-width: 260px;
+  width: 240px;
+  min-width: 240px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
-  max-height: 100%;
+  gap: 8px;
+  height: 100%;
+  min-height: 0; /* Allow shrinking in grid */
 }
 
 .risk-graph-sidebar .risk-graph-strategies,
 .risk-graph-sidebar .risk-graph-alerts {
+  flex: 1;
+  min-height: 0; /* Allow shrinking */
   background: #111;
   border-radius: 4px;
   padding: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.risk-graph-sidebar .risk-graph-strategies .strategies-list,
+.risk-graph-sidebar .risk-graph-alerts .alerts-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .risk-graph-sidebar .section-header {
@@ -1794,11 +1842,6 @@ body {
   padding: 2px 4px;
 }
 
-.risk-graph-sidebar .alerts-list {
-  max-height: 200px;
-  overflow-y: auto;
-}
-
 .risk-graph-sidebar .alert-item {
   display: flex;
   justify-content: space-between;
@@ -1808,6 +1851,15 @@ body {
   border-radius: 4px;
   margin-bottom: 4px;
   font-size: 10px;
+  transition: background 0.15s;
+}
+
+.risk-graph-sidebar .alert-item.clickable {
+  cursor: pointer;
+}
+
+.risk-graph-sidebar .alert-item.clickable:hover {
+  background: #252525;
 }
 
 .risk-graph-sidebar .alert-info {

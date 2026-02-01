@@ -269,31 +269,6 @@ export default function TradeLogPanel({
     }
   };
 
-  const getMultiplier = (symbol: string): number => {
-    const multipliers: Record<string, number> = {
-      'SPX': 100,
-      'NDX': 100,
-      'XSP': 100,
-      'SPY': 100,
-      'ES': 50,
-      'MES': 50,
-      'NQ': 20,
-      'MNQ': 20,
-    };
-    return multipliers[symbol.toUpperCase()] || 100;
-  };
-
-  const formatR2R = (trade: Trade): string => {
-    if (trade.max_profit === null || trade.max_profit === 0) return '-';
-    if (trade.entry_price === 0) return '-';
-
-    const multiplier = getMultiplier(trade.symbol);
-    const cost = trade.entry_price * multiplier * trade.quantity;
-    const r2r = trade.max_profit / cost;
-
-    return r2r.toFixed(1);
-  };
-
   const formatDuration = (entryTime: string, exitTime: string | null): string => {
     const start = new Date(entryTime).getTime();
     const end = exitTime ? new Date(exitTime).getTime() : Date.now();

@@ -1,7 +1,8 @@
 // ui/src/AuthWrapper.tsx
 // Authentication wrapper for MarketSwarm
 
-import { useEffect, useState, ReactNode } from 'react';
+import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import LoginPage from './components/LoginPage';
 
 /* =========================================================

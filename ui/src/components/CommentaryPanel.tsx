@@ -6,6 +6,9 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useEditor, EditorContent } from '@tiptap/react';
+import StarterKit from '@tiptap/starter-kit';
+import { Markdown } from 'tiptap-markdown';
 
 interface VexyMessage {
   kind: 'epoch' | 'event';
@@ -24,6 +27,32 @@ interface CommentaryPanelProps {
   maxMessages?: number;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+}
+
+// Read-only markdown renderer using Tiptap
+function MarkdownContent({ content }: { content: string }) {
+  const editor = useEditor({
+    extensions: [
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3] },
+      }),
+      Markdown.configure({
+        html: false,
+      }),
+    ],
+    content: '',
+    editable: false,
+  });
+
+  // Load markdown content after editor is ready
+  useEffect(() => {
+    if (editor && content) {
+      editor.commands.setContent(content);
+    }
+  }, [editor, content]);
+
+  if (!editor) return null;
+  return <EditorContent editor={editor} />;
 }
 
 export default function CommentaryPanel({
@@ -50,11 +79,8 @@ export default function CommentaryPanel({
   // SSE connection
   useEffect(() => {
     const connect = () => {
-      // Use full URL for SSE endpoint
-      const baseUrl = import.meta.env.VITE_SSE_URL || 'http://localhost:3001';
-      const fullUrl = `${baseUrl}${sseUrl}`;
-
-      const eventSource = new EventSource(fullUrl);
+      // Use relative URL - Vite proxy handles /sse/* routing
+      const eventSource = new EventSource(sseUrl);
 
       eventSource.onopen = () => {
         setConnected(true);
@@ -209,7 +235,9 @@ export default function CommentaryPanel({
               )}
               <span className="commentary-time">{formatTime(msg.ts)}</span>
             </div>
-            <div className="commentary-text">{msg.text}</div>
+            <div className="commentary-text">
+              <MarkdownContent content={msg.text || ''} />
+            </div>
           </div>
         ))}
 

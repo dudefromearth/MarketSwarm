@@ -1,7 +1,7 @@
 // ui/src/components/AppLayout.tsx
 // Layout wrapper for app pages
 
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 interface AppLayoutProps {
   children: ReactNode;
