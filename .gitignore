@@ -17,6 +17,7 @@ node_modules/
 # Temp/lock files
 *.pid
 ~$*
+dump.rdb
 
 # Local data
 data/
