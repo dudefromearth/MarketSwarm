@@ -6,10 +6,22 @@ type AlertType = 'price' | 'debit' | 'profit_target' | 'trailing_stop' | 'ai_the
 type AlertCondition = 'above' | 'below' | 'at';
 type AlertBehavior = 'remove_on_hit' | 'once_only' | 'repeat';
 
+// For editing existing alerts
+export interface EditingAlertData {
+  id: string;
+  type: AlertType;
+  condition: AlertCondition;
+  targetValue: number;
+  color: string;
+  behavior: AlertBehavior;
+  minProfitThreshold?: number;
+}
+
 interface AlertCreationModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave: (alert: {
+    id?: string; // Present when editing
     type: AlertType;
     condition: AlertCondition;
     targetValue: number;
@@ -20,6 +32,11 @@ interface AlertCreationModalProps {
   strategyLabel: string;
   currentSpot: number | null;
   currentDebit: number | null;
+  // Pre-fill from right-click on chart
+  initialPrice?: number | null;
+  initialCondition?: AlertCondition;
+  // For editing existing alerts
+  editingAlert?: EditingAlertData | null;
 }
 
 const ALERT_COLORS = [
@@ -41,7 +58,10 @@ export default function AlertCreationModal({
   onSave,
   strategyLabel,
   currentSpot,
-  currentDebit,
+  currentDebit: _currentDebit,
+  initialPrice,
+  initialCondition,
+  editingAlert,
 }: AlertCreationModalProps) {
   const [type, setType] = useState<AlertType>('ai_theta_gamma');
   const [condition, setCondition] = useState<AlertCondition>('below');
@@ -53,14 +73,35 @@ export default function AlertCreationModal({
   // Reset form when opened
   useEffect(() => {
     if (isOpen) {
-      setType('ai_theta_gamma');
-      setCondition('below');
-      setTargetValue(currentSpot?.toFixed(0) || '');
-      setColor(ALERT_COLORS[5]);
-      setBehavior('once_only');
-      setMinProfitThreshold('50');
+      // If editing an existing alert, pre-fill all fields
+      if (editingAlert) {
+        setType(editingAlert.type);
+        setCondition(editingAlert.condition);
+        setTargetValue(editingAlert.targetValue.toString());
+        setColor(editingAlert.color);
+        setBehavior(editingAlert.behavior);
+        setMinProfitThreshold(editingAlert.minProfitThreshold !== undefined
+          ? (editingAlert.minProfitThreshold * 100).toString()
+          : '50');
+      }
+      // If opened from right-click with price, default to 'price' type
+      else if (initialPrice !== undefined && initialPrice !== null) {
+        setType('price');
+        setTargetValue(initialPrice.toFixed(0));
+        setCondition(initialCondition || 'below');
+        setColor(ALERT_COLORS[5]);
+        setBehavior('once_only');
+        setMinProfitThreshold('50');
+      } else {
+        setType('ai_theta_gamma');
+        setTargetValue(currentSpot?.toFixed(0) || '');
+        setCondition('below');
+        setColor(ALERT_COLORS[5]);
+        setBehavior('once_only');
+        setMinProfitThreshold('50');
+      }
     }
-  }, [isOpen, currentSpot]);
+  }, [isOpen, currentSpot, initialPrice, initialCondition, editingAlert]);
 
   if (!isOpen) return null;
 
@@ -68,6 +109,7 @@ export default function AlertCreationModal({
     const value = type === 'ai_theta_gamma' ? 0 : parseFloat(targetValue);
     if (type === 'ai_theta_gamma' || !isNaN(value)) {
       onSave({
+        id: editingAlert?.id, // Include id when editing
         type,
         condition,
         targetValue: value,
@@ -79,6 +121,8 @@ export default function AlertCreationModal({
     }
   };
 
+  const isEditing = !!editingAlert;
+
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       onClose();
@@ -89,7 +133,7 @@ export default function AlertCreationModal({
     <div className="alert-modal-backdrop" onClick={handleBackdropClick}>
       <div className="alert-modal">
         <div className="alert-modal-header">
-          <h3>Create Alert</h3>
+          <h3>{isEditing ? 'Edit Alert' : 'Create Alert'}</h3>
           <span className="alert-modal-strategy">{strategyLabel}</span>
           <button className="alert-modal-close" onClick={onClose}>&times;</button>
         </div>
@@ -192,7 +236,7 @@ export default function AlertCreationModal({
 
         <div className="alert-modal-footer">
           <button className="alert-btn-cancel" onClick={onClose}>Cancel</button>
-          <button className="alert-btn-save" onClick={handleSave}>Create Alert</button>
+          <button className="alert-btn-save" onClick={handleSave}>{isEditing ? 'Save Alert' : 'Create Alert'}</button>
         </div>
       </div>
     </div>

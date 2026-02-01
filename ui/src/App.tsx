@@ -21,7 +21,10 @@ import ReportingView from './components/ReportingView';
 import SettingsModal from './components/SettingsModal';
 import JournalView from './components/JournalView';
 import PlaybookView from './components/PlaybookView';
-import AlertCreationModal from './components/AlertCreationModal';
+import AlertCreationModal, { type EditingAlertData } from './components/AlertCreationModal';
+import RiskGraphDemo from './components/RiskGraphDemo';
+import PnLChart, { type PnLChartHandle, type PriceAlertType } from './components/PnLChart';
+import { useRiskGraphCalculations } from './hooks/useRiskGraphCalculations';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -529,15 +532,10 @@ function App() {
     }
   });
   const [alertModalStrategy, setAlertModalStrategy] = useState<string | null>(null); // strategyId for modal
-  const [editingAlertId, setEditingAlertId] = useState<string | null>(null); // Alert being edited
+  const [alertModalInitialPrice, setAlertModalInitialPrice] = useState<number | null>(null);
+  const [alertModalInitialCondition, setAlertModalInitialCondition] = useState<'above' | 'below' | 'at'>('below');
+  const [alertModalEditingAlert, setAlertModalEditingAlert] = useState<EditingAlertData | null>(null); // Alert being edited
   const [tosCopied, setTosCopied] = useState(false);
-  const [crosshairPos, setCrosshairPos] = useState<{ x: number; price: number; pnl: number } | null>(null);
-
-  // Risk graph panning state
-  const [panOffset, setPanOffset] = useState(0); // Offset in price units
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStartX, setDragStartX] = useState(0);
-  const [dragStartOffset, setDragStartOffset] = useState(0);
 
   // Panel collapse and layout state
   const [gexCollapsed, setGexCollapsed] = useState(false);
@@ -551,25 +549,12 @@ function App() {
       return [];
     }
   });
-  const [alertContextMenu, setAlertContextMenu] = useState<{ x: number; y: number; price: number } | null>(null);
-  const [alertLineContextMenu, setAlertLineContextMenu] = useState<{ x: number; y: number; alertId: string } | null>(null);
 
   // 3D of Options controls - analyze time, price, and volatility dimensions
   const [timeMachineEnabled, setTimeMachineEnabled] = useState(false);
   const [simTimeOffsetHours, setSimTimeOffsetHours] = useState(0); // Hours forward from now toward expiration
   const [simVolatilityOffset, setSimVolatilityOffset] = useState(0); // Percentage points offset from current VIX
   const [simSpotOffset, setSimSpotOffset] = useState(0); // Points offset from current spot price
-
-  // Close context menus on outside click
-  useEffect(() => {
-    if (!alertContextMenu && !alertLineContextMenu) return;
-    const handleClick = () => {
-      setAlertContextMenu(null);
-      setAlertLineContextMenu(null);
-    };
-    document.addEventListener('click', handleClick);
-    return () => document.removeEventListener('click', handleClick);
-  }, [alertContextMenu, alertLineContextMenu]);
 
   const [scrollLocked, setScrollLocked] = useState(true);
   const [hasScrolledToAtm, setHasScrolledToAtm] = useState(false);
@@ -599,15 +584,29 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
   const [playbookOpen, setPlaybookOpen] = useState(false);
+  const [riskGraphDemoOpen, setRiskGraphDemoOpen] = useState(false);
   const [playbookSource, setPlaybookSource] = useState<'journal' | 'tradelog' | null>(null);
 
   // Commentary panel state
   const [commentaryCollapsed, setCommentaryCollapsed] = useState(true);
 
+  // Keyboard shortcut for Risk Graph Demo (Ctrl+Shift+G)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey && e.shiftKey && e.key === 'G') {
+        e.preventDefault();
+        setRiskGraphDemoOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
   const heatmapScrollRef = useRef<HTMLDivElement>(null);
   const isScrolling = useRef<boolean>(false); // Prevent scroll event loops
+  const pnlChartRef = useRef<PnLChartHandle>(null);
 
   // Available DTEs from data
   const availableDtes = useMemo(() => {
@@ -784,23 +783,28 @@ function App() {
     setAlertModalStrategy(null);
   };
 
-  const updateAlert = (alertId: string, updates: Partial<Pick<RiskGraphAlert, 'type' | 'condition' | 'targetValue' | 'color'>>) => {
-    setRiskGraphAlerts(prev => prev.map(a =>
-      a.id === alertId ? { ...a, ...updates } : a
-    ));
-    setEditingAlertId(null);
-  };
-
   const startEditingAlert = (alertId: string) => {
-    setEditingAlertId(alertId);
-    setAlertModalStrategy(null); // Close modal if open
+    const alert = riskGraphAlerts.find(a => a.id === alertId);
+    if (!alert) return;
+    // Set up the modal for editing
+    setAlertModalStrategy(alert.strategyId);
+    setAlertModalEditingAlert({
+      id: alert.id,
+      type: alert.type,
+      condition: alert.condition,
+      targetValue: alert.targetValue,
+      color: alert.color,
+      behavior: alert.behavior,
+      minProfitThreshold: alert.minProfitThreshold,
+    });
+    setAlertModalInitialPrice(null); // Clear any right-click price
   };
 
   const startNewAlert = (strategyId: string) => {
     const strategy = riskGraphStrategies.find(s => s.id === strategyId);
     if (!strategy) return;
     setAlertModalStrategy(strategyId);
-    setEditingAlertId(null); // Clear any editing
+    setAlertModalEditingAlert(null); // Clear any editing
   };
 
   const deleteAlert = (alertId: string) => {
@@ -810,12 +814,6 @@ function App() {
   const toggleAlert = (alertId: string) => {
     setRiskGraphAlerts(prev => prev.map(a =>
       a.id === alertId ? { ...a, enabled: !a.enabled } : a
-    ));
-  };
-
-  const dismissAlert = (alertId: string) => {
-    setRiskGraphAlerts(prev => prev.map(a =>
-      a.id === alertId ? { ...a, triggered: false } : a
     ));
   };
 
@@ -883,91 +881,6 @@ function App() {
     setTradeRefreshTrigger(prev => prev + 1);
   }, []);
 
-  // Handle mouse down on risk graph chart (start drag)
-  const handleChartMouseDown = (e: React.MouseEvent<SVGSVGElement>) => {
-    // Deselect alert when clicking elsewhere (will re-select if clicking on an alert)
-    setIsDragging(true);
-    setDragStartX(e.clientX);
-    setDragStartOffset(panOffset);
-    setCrosshairPos(null);
-  };
-
-  // Handle mouse move on risk graph chart
-  const handleChartMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
-    const svg = e.currentTarget;
-    const rect = svg.getBoundingClientRect();
-
-    // Handle dragging
-    if (isDragging) {
-      const deltaX = e.clientX - dragStartX;
-      // Convert pixel delta to price delta (negative because drag right = pan left)
-      const priceRange = riskGraphData.maxPrice - riskGraphData.minPrice;
-      const priceDelta = -(deltaX / rect.width) * priceRange;
-      setPanOffset(dragStartOffset + priceDelta);
-      return;
-    }
-
-    if (riskGraphData.theoreticalPoints.length === 0) return;
-
-    const svgX = ((e.clientX - rect.left) / rect.width) * 600;
-
-    // Chart area is x: 50-580 (530px width)
-    if (svgX < 50 || svgX > 580) {
-      setCrosshairPos(null);
-      return;
-    }
-
-    const chartX = svgX - 50;
-    const priceRange = riskGraphData.maxPrice - riskGraphData.minPrice;
-    const price = riskGraphData.minPrice + (chartX / 530) * priceRange;
-
-    // Find the closest theoretical point to interpolate P&L
-    const points = riskGraphData.theoreticalPoints;
-    let pnl = 0;
-    for (let i = 1; i < points.length; i++) {
-      if (points[i].price >= price) {
-        const prev = points[i - 1];
-        const curr = points[i];
-        const t = (price - prev.price) / (curr.price - prev.price);
-        pnl = prev.pnl + t * (curr.pnl - prev.pnl);
-        break;
-      }
-    }
-
-    setCrosshairPos({ x: svgX, price, pnl });
-  };
-
-  // Handle mouse up on risk graph chart (end drag)
-  const handleChartMouseUp = () => {
-    setIsDragging(false);
-  };
-
-  // Handle right-click on risk graph chart to add alert
-  const handleChartContextMenu = (e: React.MouseEvent<SVGSVGElement>) => {
-    e.preventDefault();
-    const svg = e.currentTarget;
-    const rect = svg.getBoundingClientRect();
-    const svgX = ((e.clientX - rect.left) / rect.width) * 600;
-
-    // Only show context menu if clicking within the chart area (x: 50-580)
-    if (svgX >= 50 && svgX <= 580) {
-      const chartX = svgX - 50;
-      const priceRange = riskGraphData.maxPrice - riskGraphData.minPrice;
-      const price = riskGraphData.minPrice + (chartX / 530) * priceRange;
-      setAlertContextMenu({ x: e.clientX, y: e.clientY, price });
-    }
-  };
-
-  const handleChartMouseLeave = () => {
-    setCrosshairPos(null);
-    setIsDragging(false);
-  };
-
-  // Reset pan when strategies change
-  const resetPan = () => {
-    setPanOffset(0);
-  };
-
   // Scroll sync handler for GEX panel
   const handleGexScroll = useCallback(() => {
     if (!scrollLocked || isScrolling.current || !gexScrollRef.current || !heatmapScrollRef.current) return;
@@ -986,7 +899,6 @@ function App() {
 
   // Calculate risk graph data points (only visible strategies)
   // Includes both expiration P&L and real-time theoretical P&L
-  // Supports panning via panOffset
   const riskGraphData = useMemo(() => {
     const visibleStrategies = riskGraphStrategies.filter(s => s.visible);
     if (visibleStrategies.length === 0) return {
@@ -1036,8 +948,8 @@ function App() {
     const fullMinPrice = minStrike - fullPadding;
     const fullMaxPrice = maxStrike + fullPadding;
 
-    // Visible window with pan offset applied
-    const centerPrice = (minStrike + maxStrike) / 2 + panOffset;
+    // Visible window centered on strikes
+    const centerPrice = (minStrike + maxStrike) / 2;
     const minPrice = centerPrice - viewportSize / 2;
     const maxPrice = centerPrice + viewportSize / 2;
 
@@ -1155,7 +1067,7 @@ function App() {
     }
 
     return { points, theoreticalPoints, minPnL, maxPnL, minPrice, maxPrice, breakevens, theoreticalBreakevens, fullMinPrice, fullMaxPrice, theoreticalPnLAtSpot, marketPnL };
-  }, [riskGraphStrategies, spot, panOffset, heatmap, underlying, timeMachineEnabled, simTimeOffsetHours, simVolatilityOffset]);
+  }, [riskGraphStrategies, spot, heatmap, underlying, timeMachineEnabled, simTimeOffsetHours, simVolatilityOffset]);
 
   // SSE connection
   useEffect(() => {
@@ -1423,6 +1335,38 @@ function App() {
   }, [underlying, spot?.[underlying]?.value]);
 
   const currentSpot = spot?.[underlying]?.value || null;
+
+  // Calculate P&L data for PnLChart
+  const pnlChartData = useRiskGraphCalculations({
+    strategies: riskGraphStrategies.map(s => ({
+      id: s.id,
+      strike: s.strike,
+      width: s.width,
+      side: s.side,
+      strategy: s.strategy,
+      debit: s.debit,
+      visible: s.visible,
+      dte: s.dte,
+      expiration: s.expiration,
+    })),
+    spotPrice: currentSpot || 6000,
+    vix: spot?.['I:VIX']?.value || 20,
+    timeMachineEnabled,
+    simVolatilityOffset,
+    simTimeOffsetHours,
+  });
+
+  // Extract strikes from strategies
+  const chartStrikes = useMemo(() => {
+    return riskGraphStrategies.filter(s => s.visible).flatMap(strat => {
+      if (strat.strategy === 'butterfly') {
+        return [strat.strike - strat.width, strat.strike, strat.strike + strat.width];
+      } else if (strat.strategy === 'vertical') {
+        return [strat.strike, strat.side === 'call' ? strat.strike + strat.width : strat.strike - strat.width];
+      }
+      return [strat.strike];
+    });
+  }, [riskGraphStrategies]);
 
   // Simulated spot for 3D of Options (actual spot + offset when enabled)
   const simulatedSpot = currentSpot && timeMachineEnabled
@@ -2554,246 +2498,145 @@ function App() {
           )}
         </div>
 
-        {/* Risk Graph Panel */}
-        <div className={`panel risk-graph-panel ${riskGraphCollapsed ? 'collapsed' : ''}`}>
+        {/* Consolidated Risk Graph Panel */}
+        <div className={`panel echarts-risk-graph-panel ${riskGraphCollapsed ? 'collapsed' : ''}`}>
           <div className="panel-header" onClick={() => setRiskGraphCollapsed(!riskGraphCollapsed)}>
             <span className="panel-toggle">{riskGraphCollapsed ? '▶' : '▼'}</span>
             <h3>Risk Graph {riskGraphStrategies.length > 0 && `(${riskGraphStrategies.length})`}</h3>
             <div className="panel-header-actions" onClick={e => e.stopPropagation()}>
-              {panOffset !== 0 && (
-                <button className="btn-small" onClick={resetPan}>Reset View</button>
+              {riskGraphStrategies.length > 0 && (
+                <div className="chart-controls-inline">
+                  <button onClick={() => pnlChartRef.current?.autoFit()} title="Auto-Fit">⊡</button>
+                </div>
               )}
               {priceAlertLines.length > 0 && (
                 <button className="btn-small" onClick={() => setPriceAlertLines([])}>
-                  Clear Alerts ({priceAlertLines.length})
+                  Clear Lines ({priceAlertLines.length})
                 </button>
               )}
               {riskGraphStrategies.length > 0 && (
-                <button className="btn-small btn-danger" onClick={clearRiskGraph}>Clear</button>
+                <button className="btn-small btn-danger" onClick={clearRiskGraph}>Clear All</button>
               )}
             </div>
           </div>
           {!riskGraphCollapsed && (
-            <div className="panel-content risk-graph-content-panel">
+            <div className="panel-content risk-graph-consolidated">
               {riskGraphStrategies.length === 0 ? (
                 <div className="risk-graph-empty">
                   <p>No strategies added yet.</p>
                   <p className="hint">Click on a heatmap tile and select "Add to Risk Graph"</p>
                 </div>
               ) : (
-                <div className="risk-graph-content">
-                  {/* Strategy & Alerts Column - Left Side */}
-                  <div className="risk-graph-left-column">
-                    {/* Strategy List */}
-                    <div className="risk-graph-strategies">
-                      <div className="section-header">Strategies</div>
-                      {riskGraphStrategies.map(strat => (
-                        <div key={strat.id} className={`risk-graph-strategy-item ${!strat.visible ? 'hidden-strategy' : ''}`}>
-                          <div className="strategy-content">
-                            <div className="strategy-row-top">
-                              <span className="strategy-type">
-                                {strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL'}
-                              </span>
-                              <span className="strategy-strike">
-                                {strat.strike}{strat.width > 0 ? `/${strat.width}` : ''}
-                              </span>
-                              <span className={`strategy-side ${strat.side}`}>
-                                {strat.side}
-                              </span>
-                              <span className="strategy-dte">{strat.dte} DTE</span>
-                              <span className="strategy-debit">
-                                $<input
-                                  type="number"
-                                  className="debit-input"
-                                  defaultValue={strat.debit !== null ? strat.debit.toFixed(2) : ''}
-                                  key={`debit-${strat.id}-${strat.debit}`}
-                                  step="0.01"
-                                  min="0"
-                                  onBlur={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    updateStrategyDebit(strat.id, isNaN(val) ? null : val);
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      e.currentTarget.blur();
-                                    }
-                                  }}
-                                  onClick={(e) => e.stopPropagation()}
-                                />
-                              </span>
-                            </div>
-                            <div className="strategy-row-bottom">
-                              <button
-                                className={`btn-toggle-visibility ${strat.visible ? 'visible' : 'hidden'}`}
-                                onClick={() => toggleStrategyVisibility(strat.id)}
-                              >
-                                {strat.visible ? 'Hide' : 'Show'}
-                              </button>
-                              <button
-                                className="btn-alert"
-                                onClick={() => startNewAlert(strat.id)}
-                                title="Set price alert"
-                              >
-                                Alert
-                              </button>
-                              <button className="btn-remove" onClick={() => removeFromRiskGraph(strat.id)}>Remove</button>
-                              <button
-                                className="btn-log-trade"
-                                onClick={() => {
-                                  openTradeEntry({
-                                    symbol: underlying === 'I:SPX' ? 'SPX' : 'NDX',
-                                    underlying,
-                                    strategy: strat.strategy as 'single' | 'vertical' | 'butterfly',
-                                    side: strat.side as 'call' | 'put',
-                                    strike: strat.strike,
-                                    width: strat.width,
-                                    dte: strat.dte,
-                                    entry_price: strat.debit || undefined,
-                                    entry_spot: currentSpot || undefined,
-                                    source: 'risk_graph'
-                                  });
-                                }}
-                                title="Log this trade"
-                              >
-                                Log Trade
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+                <>
+                  {/* Main content: Chart + Sidebar */}
+                  <div className="risk-graph-main">
+                    {/* Chart Area */}
+                    <div className="risk-graph-chart-area">
+                      <PnLChart
+                        ref={pnlChartRef}
+                        expirationData={pnlChartData.expirationPoints}
+                        theoreticalData={pnlChartData.theoreticalPoints}
+                        spotPrice={currentSpot || 6000}
+                        expirationBreakevens={pnlChartData.expirationBreakevens}
+                        theoreticalBreakevens={pnlChartData.theoreticalBreakevens}
+                        strikes={chartStrikes}
+                        onOpenAlertDialog={(price, type) => {
+                          // Map PriceAlertType to condition
+                          const conditionMap: Record<PriceAlertType, 'above' | 'below' | 'at'> = {
+                            'price_above': 'above',
+                            'price_below': 'below',
+                            'price_touch': 'at',
+                          };
+                          // Use first strategy or a placeholder
+                          const strategyId = riskGraphStrategies[0]?.id || 'chart-alert';
+                          setAlertModalStrategy(strategyId);
+                          setAlertModalInitialPrice(Math.round(price));
+                          setAlertModalInitialCondition(conditionMap[type]);
+                        }}
+                        alertLines={priceAlertLines.map(line => ({
+                          price: line.price,
+                          color: line.color,
+                          label: line.label,
+                        }))}
+                      />
+                      <div className="chart-controls-hint">
+                        Scroll: zoom | Drag: pan | Drag axis: zoom | Right-click: alert
+                      </div>
                     </div>
 
-                    {/* Alerts Section */}
-                    <div className="risk-graph-alerts">
-                      <div className="section-header">
-                        Alerts
-                        {riskGraphAlerts.filter(a => a.triggered).length > 0 && (
-                          <button className="btn-clear-triggered" onClick={clearTriggeredAlerts}>
-                            Clear
-                          </button>
-                        )}
-                      </div>
-                      <div className="alerts-list">
-                        {/* Strategy Alerts */}
-                        {riskGraphAlerts.map(alert => (
-                          editingAlertId === alert.id ? (
-                            /* Edit Mode */
-                            <div key={alert.id} className="alert-item alert-edit-mode">
-                              <div className="alert-edit-form">
-                                <div className="alert-form-row">
-                                  <select
-                                    defaultValue={alert.type}
-                                    onChange={(e) => {
-                                      const newType = e.target.value as RiskGraphAlert['type'];
-                                      setRiskGraphAlerts(prev => prev.map(a =>
-                                        a.id === alert.id ? { ...a, type: newType } : a
-                                      ));
+                    {/* Sidebar: Strategies + Alerts */}
+                    <div className="risk-graph-sidebar">
+                      {/* Strategy List */}
+                      <div className="risk-graph-strategies">
+                        <div className="section-header">Strategies</div>
+                        {riskGraphStrategies.map(strat => (
+                          <div key={strat.id} className={`risk-graph-strategy-item ${!strat.visible ? 'hidden-strategy' : ''}`}>
+                            <div className="strategy-content">
+                              <div className="strategy-row-top">
+                                <span className="strategy-type">
+                                  {strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL'}
+                                </span>
+                                <span className="strategy-strike">
+                                  {strat.strike}{strat.width > 0 ? `/${strat.width}` : ''}
+                                </span>
+                                <span className={`strategy-side ${strat.side}`}>
+                                  {strat.side}
+                                </span>
+                                <span className="strategy-dte">{strat.dte}d</span>
+                                <span className="strategy-debit">
+                                  $<input
+                                    type="number"
+                                    className="debit-input"
+                                    defaultValue={strat.debit !== null ? strat.debit.toFixed(2) : ''}
+                                    key={`debit-${strat.id}-${strat.debit}`}
+                                    step="0.01"
+                                    min="0"
+                                    onBlur={(e) => {
+                                      const val = parseFloat(e.target.value);
+                                      updateStrategyDebit(strat.id, isNaN(val) ? null : val);
                                     }}
-                                  >
-                                    <option value="price">Spot Price</option>
-                                    <option value="debit">Debit</option>
-                                    <option value="profit_target">Profit Target</option>
-                                    <option value="trailing_stop">Trailing Stop</option>
-                                    <option value="ai_theta_gamma">AI Theta/Gamma</option>
-                                  </select>
-                                  {alert.type !== 'ai_theta_gamma' && (
-                                    <>
-                                      <select
-                                        defaultValue={alert.condition}
-                                        onChange={(e) => {
-                                          const newCondition = e.target.value as RiskGraphAlert['condition'];
-                                          setRiskGraphAlerts(prev => prev.map(a =>
-                                            a.id === alert.id ? { ...a, condition: newCondition } : a
-                                          ));
-                                        }}
-                                      >
-                                        <option value="above">≥</option>
-                                        <option value="below">≤</option>
-                                        <option value="at">≈</option>
-                                      </select>
-                                      <input
-                                        type="number"
-                                        defaultValue={alert.targetValue}
-                                        step="0.01"
-                                        className="alert-value-input"
-                                        onChange={(e) => {
-                                          const val = parseFloat(e.target.value);
-                                          if (!isNaN(val)) {
-                                            setRiskGraphAlerts(prev => prev.map(a =>
-                                              a.id === alert.id ? { ...a, targetValue: val } : a
-                                            ));
-                                          }
-                                        }}
-                                      />
-                                    </>
-                                  )}
-                                </div>
-                                {alert.type === 'ai_theta_gamma' && (
-                                  <div className="alert-form-row ai-alert-row">
-                                    <span className="color-label">Min profit:</span>
-                                    <input
-                                      type="number"
-                                      defaultValue={(alert.minProfitThreshold || 0.5) * 100}
-                                      step="5"
-                                      min="10"
-                                      max="200"
-                                      className="alert-value-input"
-                                      onChange={(e) => {
-                                        const val = parseFloat(e.target.value) / 100;
-                                        if (!isNaN(val)) {
-                                          setRiskGraphAlerts(prev => prev.map(a =>
-                                            a.id === alert.id ? { ...a, minProfitThreshold: val } : a
-                                          ));
-                                        }
-                                      }}
-                                    />
-                                    <span className="color-label">% of debit to activate</span>
-                                  </div>
-                                )}
-                                <div className="alert-form-row">
-                                  <span className="color-label">Color:</span>
-                                  <div className="color-picker-inline">
-                                    {ALERT_COLORS.map(color => (
-                                      <button
-                                        key={color}
-                                        className={`color-dot ${alert.color === color ? 'selected' : ''}`}
-                                        style={{ backgroundColor: color }}
-                                        onClick={() => setRiskGraphAlerts(prev => prev.map(a =>
-                                          a.id === alert.id ? { ...a, color } : a
-                                        ))}
-                                      />
-                                    ))}
-                                  </div>
-                                </div>
-                                <div className="alert-form-row">
-                                  <span className="color-label">On trigger:</span>
-                                  <select
-                                    value={alert.behavior || 'once_only'}
-                                    onChange={(e) => {
-                                      const newBehavior = e.target.value as AlertBehavior;
-                                      setRiskGraphAlerts(prev => prev.map(a =>
-                                        a.id === alert.id ? { ...a, behavior: newBehavior } : a
-                                      ));
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.currentTarget.blur();
+                                      }
                                     }}
-                                    className="behavior-select"
-                                  >
-                                    <option value="remove_on_hit">Remove after hit</option>
-                                    <option value="once_only">Alert once, keep</option>
-                                    <option value="repeat">Alert every cross</option>
-                                  </select>
-                                </div>
-                                <div className="alert-form-actions">
-                                  <button className="btn-save-alert" onClick={() => setEditingAlertId(null)}>
-                                    Save
-                                  </button>
-                                  <button className="btn-cancel-alert" onClick={() => setEditingAlertId(null)}>
-                                    Cancel
-                                  </button>
-                                </div>
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                </span>
+                              </div>
+                              <div className="strategy-row-bottom">
+                                <button
+                                  className={`btn-toggle-visibility ${strat.visible ? 'visible' : 'hidden'}`}
+                                  onClick={() => toggleStrategyVisibility(strat.id)}
+                                >
+                                  {strat.visible ? 'Hide' : 'Show'}
+                                </button>
+                                <button
+                                  className="btn-alert"
+                                  onClick={() => startNewAlert(strat.id)}
+                                  title="Set alert"
+                                >
+                                  Alert
+                                </button>
+                                <button className="btn-remove" onClick={() => removeFromRiskGraph(strat.id)}>×</button>
                               </div>
                             </div>
-                          ) : (
-                            /* Display Mode */
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Alerts Section */}
+                      <div className="risk-graph-alerts">
+                        <div className="section-header">
+                          Alerts
+                          {riskGraphAlerts.filter(a => a.triggered).length > 0 && (
+                            <button className="btn-clear-triggered" onClick={clearTriggeredAlerts}>
+                              Clear
+                            </button>
+                          )}
+                        </div>
+                        <div className="alerts-list">
+                          {riskGraphAlerts.map(alert => (
                             <div
                               key={alert.id}
                               className={`alert-item ${alert.triggered ? 'triggered' : ''} ${!alert.enabled ? 'disabled' : ''}`}
@@ -2803,985 +2646,243 @@ function App() {
                                   className="alert-color-dot"
                                   style={{ backgroundColor: alert.color || ALERT_COLORS[0] }}
                                 />
-                                <span className="alert-strategy">{alert.strategyLabel}</span>
                                 <span className="alert-condition">
-                                  {alert.type === 'price' && `Spot ${alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} ${alert.targetValue.toFixed(0)}`}
-                                  {alert.type === 'debit' && `Debit ${alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} $${alert.targetValue.toFixed(2)}`}
-                                  {alert.type === 'profit_target' && `Profit ≥ $${alert.targetValue.toFixed(2)}`}
-                                  {alert.type === 'trailing_stop' && `Trail $${alert.targetValue.toFixed(2)}${alert.highWaterMark ? ` (HWM: $${alert.highWaterMark.toFixed(2)})` : ''}`}
-                                  {alert.type === 'ai_theta_gamma' && (() => {
-                                    const profit = ((alert.highWaterMarkProfit || 0) / (alert.entryDebit || 1) * 100);
-                                    const threshold = (alert.minProfitThreshold || 0.5) * 100;
-                                    const isActive = alert.isZoneActive;
-                                    return `AI θ/γ ${isActive ? `+${profit.toFixed(0)}% (zone active)` : `${profit >= 0 ? '+' : ''}${profit.toFixed(0)}% (need ${threshold.toFixed(0)}%)`}`;
-                                  })()}
+                                  {alert.type === 'price' && `${alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈'} ${alert.targetValue.toFixed(0)}`}
+                                  {alert.type === 'debit' && `$${alert.targetValue.toFixed(2)}`}
+                                  {alert.type === 'profit_target' && `+$${alert.targetValue.toFixed(2)}`}
+                                  {alert.type === 'trailing_stop' && `Trail $${alert.targetValue.toFixed(2)}`}
+                                  {alert.type === 'ai_theta_gamma' && `AI θ/γ`}
                                 </span>
                               </div>
                               <div className="alert-actions">
-                                {alert.triggered && (
-                                  <button
-                                    className="btn-alert-action"
-                                    onClick={() => {
-                                      const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
-                                      if (strategy) {
-                                        openTradeEntry({
-                                          symbol: underlying === 'I:SPX' ? 'SPX' : 'NDX',
-                                          underlying,
-                                          strategy: strategy.strategy as 'single' | 'vertical' | 'butterfly',
-                                          side: strategy.side as 'call' | 'put',
-                                          strike: strategy.strike,
-                                          width: strategy.width,
-                                          dte: strategy.dte,
-                                          entry_price: strategy.debit || undefined,
-                                          entry_spot: currentSpot || undefined,
-                                          source: 'risk_graph'
-                                        });
-                                      }
-                                      dismissAlert(alert.id);
-                                    }}
-                                    title="Log trade"
-                                  >
-                                    Log
-                                  </button>
-                                )}
                                 <button
                                   className="btn-edit-alert"
                                   onClick={() => startEditingAlert(alert.id)}
-                                  title="Edit alert"
                                 >
                                   Edit
                                 </button>
                                 <button
                                   className={`btn-toggle-alert ${alert.enabled ? 'on' : 'off'}`}
                                   onClick={() => toggleAlert(alert.id)}
-                                  title={alert.enabled ? 'Disable' : 'Enable'}
                                 >
                                   {alert.enabled ? 'On' : 'Off'}
                                 </button>
                                 <button
                                   className="btn-delete-alert"
                                   onClick={() => deleteAlert(alert.id)}
-                                  title="Delete alert"
                                 >
                                   ×
                                 </button>
                               </div>
                             </div>
-                          )
-                        ))}
+                          ))}
 
-                        {/* Price Line Alerts */}
-                        {priceAlertLines.map(alert => (
-                          <div key={alert.id} className="alert-item price-line-alert">
-                            <div className="alert-info">
-                              <div
-                                className="price-line-color"
-                                style={{ backgroundColor: alert.color }}
-                              />
-                              <span className="alert-condition">
-                                Price Line @ {alert.price.toFixed(0)}
-                              </span>
-                            </div>
-                            <div className="alert-actions">
-                              <div className="color-picker-inline">
-                                {ALERT_COLORS.map(color => (
-                                  <button
-                                    key={color}
-                                    className={`color-dot ${alert.color === color ? 'selected' : ''}`}
-                                    style={{ backgroundColor: color }}
-                                    onClick={() => updatePriceAlertColor(alert.id, color)}
-                                  />
-                                ))}
+                          {/* Price Line Alerts */}
+                          {priceAlertLines.map(alert => (
+                            <div key={alert.id} className="alert-item price-line-alert">
+                              <div className="alert-info">
+                                <div
+                                  className="alert-color-dot"
+                                  style={{ backgroundColor: alert.color }}
+                                />
+                                <span className="alert-condition">
+                                  Line @ {alert.price.toFixed(0)}
+                                </span>
                               </div>
-                              <button
-                                className="btn-delete-alert"
-                                onClick={() => deletePriceAlertLine(alert.id)}
-                                title="Delete price line"
-                              >
-                                ×
-                              </button>
+                              <div className="alert-actions">
+                                <div className="color-picker-inline compact">
+                                  {ALERT_COLORS.slice(0, 6).map(color => (
+                                    <button
+                                      key={color}
+                                      className={`color-dot ${alert.color === color ? 'selected' : ''}`}
+                                      style={{ backgroundColor: color }}
+                                      onClick={() => updatePriceAlertColor(alert.id, color)}
+                                    />
+                                  ))}
+                                </div>
+                                <button
+                                  className="btn-delete-alert"
+                                  onClick={() => deletePriceAlertLine(alert.id)}
+                                >
+                                  ×
+                                </button>
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
 
-                        {riskGraphAlerts.length === 0 && priceAlertLines.length === 0 && (
-                          <div className="alerts-empty">No alerts set<br/><span className="hint">Click Alert on a strategy or right-click chart</span></div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* P&L Chart - Right Side */}
-                  <div className="risk-graph-chart-container">
-                    <div className="risk-graph-chart">
-                    <svg
-                  viewBox="0 0 600 300"
-                  preserveAspectRatio="xMidYMid meet"
-                  onMouseDown={handleChartMouseDown}
-                  onMouseMove={handleChartMouseMove}
-                  onMouseUp={handleChartMouseUp}
-                  onMouseLeave={handleChartMouseLeave}
-                  onContextMenu={handleChartContextMenu}
-                  style={{ cursor: isDragging ? 'grabbing' : 'crosshair' }}
-                >
-                  {/* Background */}
-                  <rect x="0" y="0" width="600" height="300" fill="#0a0a0a" />
-
-                  {/* Grid lines */}
-                  <g className="grid-lines">
-                    {[0, 60, 120, 180, 240, 300].map(y => (
-                      <line key={y} x1="50" y1={y} x2="580" y2={y} stroke="#222" strokeWidth="1" />
-                    ))}
-                    {[50, 150, 250, 350, 450, 550].map(x => (
-                      <line key={x} x1={x} y1="20" x2={x} y2="280" stroke="#222" strokeWidth="1" />
-                    ))}
-                  </g>
-
-                  {/* Zero line */}
-                  {riskGraphData.minPnL < 0 && riskGraphData.maxPnL > 0 && (
-                    <line
-                      x1="50"
-                      y1={20 + (riskGraphData.maxPnL / (riskGraphData.maxPnL - riskGraphData.minPnL)) * 260}
-                      x2="580"
-                      y2={20 + (riskGraphData.maxPnL / (riskGraphData.maxPnL - riskGraphData.minPnL)) * 260}
-                      stroke="#666"
-                      strokeWidth="1"
-                      strokeDasharray="4,4"
-                    />
-                  )}
-
-                  {/* Current/Simulated spot price line */}
-                  {(() => {
-                    const spotToShow = simulatedSpot || currentSpot;
-                    const isSimulated = timeMachineEnabled && simSpotOffset !== 0;
-                    if (!spotToShow || spotToShow < riskGraphData.minPrice || spotToShow > riskGraphData.maxPrice) return null;
-                    const x = 50 + ((spotToShow - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
-                    return (
-                      <g>
-                        <line
-                          x1={x}
-                          y1="20"
-                          x2={x}
-                          y2="280"
-                          stroke={isSimulated ? "#f97316" : "#fbbf24"}
-                          strokeWidth="1"
-                          strokeDasharray={isSimulated ? "2,2" : "4,4"}
-                        />
-                        {isSimulated && (
-                          <text x={x} y="15" textAnchor="middle" fill="#f97316" fontSize="8">SIM</text>
-                        )}
-                      </g>
-                    );
-                  })()}
-
-                  {/* Expiration P&L Line (blue) */}
-                  <path
-                    d={riskGraphData.points.map((p, i) => {
-                      const x = 50 + ((p.price - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
-                      const pnlRange = riskGraphData.maxPnL - riskGraphData.minPnL || 1;
-                      const y = 20 + ((riskGraphData.maxPnL - p.pnl) / pnlRange) * 260;
-                      return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
-                    }).join(' ')}
-                    fill="none"
-                    stroke="#3b82f6"
-                    strokeWidth="2"
-                  />
-
-                  {/* Real-Time P&L Line (magenta) */}
-                  {riskGraphData.theoreticalPoints.length > 0 && (
-                    <path
-                      d={riskGraphData.theoreticalPoints.map((p, i) => {
-                        const x = 50 + ((p.price - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
-                        const pnlRange = riskGraphData.maxPnL - riskGraphData.minPnL || 1;
-                        const y = 20 + ((riskGraphData.maxPnL - p.pnl) / pnlRange) * 260;
-                        return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
-                      }).join(' ')}
-                      fill="none"
-                      stroke="#e879f9"
-                      strokeWidth="2"
-                    />
-                  )}
-
-                  {/* Profit area fill */}
-                  <path
-                    d={(() => {
-                      const zeroY = riskGraphData.minPnL >= 0 ? 280 :
-                                   riskGraphData.maxPnL <= 0 ? 20 :
-                                   20 + (riskGraphData.maxPnL / (riskGraphData.maxPnL - riskGraphData.minPnL)) * 260;
-                      let path = '';
-                      riskGraphData.points.forEach((p) => {
-                        const x = 50 + ((p.price - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
-                        const pnlRange = riskGraphData.maxPnL - riskGraphData.minPnL || 1;
-                        const y = 20 + ((riskGraphData.maxPnL - p.pnl) / pnlRange) * 260;
-                        if (p.pnl > 0) {
-                          path += `${path ? 'L' : 'M'} ${x} ${y}`;
-                        } else if (path) {
-                          path += ` L ${x} ${zeroY} Z`;
-                          path = '';
-                        }
-                      });
-                      return path;
-                    })()}
-                    fill="rgba(74, 222, 128, 0.2)"
-                  />
-
-                  {/* Real-time breakeven lines (where magenta line crosses zero) */}
-                  {riskGraphData.theoreticalBreakevens.map((be, i) => {
-                    const x = 50 + ((be - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
-                    const zeroY = 20 + (riskGraphData.maxPnL / (riskGraphData.maxPnL - riskGraphData.minPnL)) * 260;
-                    return (
-                      <line
-                        key={i}
-                        x1={x}
-                        y1={zeroY - 20}
-                        x2={x}
-                        y2="280"
-                        stroke="#3b82f6"
-                        strokeWidth="1"
-                        strokeDasharray="4,4"
-                      />
-                    );
-                  })}
-
-                  {/* User-defined price alert lines */}
-                  {priceAlertLines.map((alert) => {
-                    const x = 50 + ((alert.price - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
-                    const isInView = alert.price >= riskGraphData.minPrice && alert.price <= riskGraphData.maxPrice;
-
-                    if (!isInView) return null;
-
-                    return (
-                      <g
-                        key={alert.id}
-                        className="alert-line-group"
-                        style={{ cursor: 'pointer' }}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setAlertLineContextMenu({ x: e.clientX, y: e.clientY, alertId: alert.id });
-                        }}
-                      >
-                        {/* Invisible wider hit area for easier right-click */}
-                        <line
-                          x1={x}
-                          y1="20"
-                          x2={x}
-                          y2="280"
-                          stroke="transparent"
-                          strokeWidth="12"
-                        />
-                        {/* Alert line */}
-                        <line
-                          x1={x}
-                          y1="20"
-                          x2={x}
-                          y2="280"
-                          stroke={alert.color}
-                          strokeWidth="1"
-                        />
-                        {/* Price label at top */}
-                        <g transform={`translate(${x}, 15)`}>
-                          <rect
-                            x="-22"
-                            y="-10"
-                            width="44"
-                            height="14"
-                            fill={alert.color}
-                            rx="2"
-                          />
-                          <text
-                            x="0"
-                            y="1"
-                            textAnchor="middle"
-                            fill="#fff"
-                            fontSize="9"
-                            fontWeight="bold"
-                          >
-                            {alert.price.toFixed(0)}
-                          </text>
-                        </g>
-                      </g>
-                    );
-                  })}
-
-                  {/* Strategy alert lines */}
-                  {riskGraphAlerts.filter(a => a.enabled && a.type === 'price').map((alert) => {
-                    const x = 50 + ((alert.targetValue - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
-                    const isInView = alert.targetValue >= riskGraphData.minPrice && alert.targetValue <= riskGraphData.maxPrice;
-
-                    if (!isInView) return null;
-
-                    return (
-                      <g key={alert.id} className="strategy-alert-line">
-                        {/* Target line - solid */}
-                        <line
-                          x1={x}
-                          y1="20"
-                          x2={x}
-                          y2="280"
-                          stroke={alert.color || ALERT_COLORS[0]}
-                          strokeWidth="1"
-                        />
-                        {/* Label at top */}
-                        <g transform={`translate(${x}, 15)`}>
-                          <rect
-                            x="-22"
-                            y="-10"
-                            width="44"
-                            height="14"
-                            fill={alert.color || ALERT_COLORS[0]}
-                            rx="2"
-                          />
-                          <text
-                            x="0"
-                            y="1"
-                            textAnchor="middle"
-                            fill="#fff"
-                            fontSize="9"
-                            fontWeight="bold"
-                          >
-                            {alert.targetValue.toFixed(0)}
-                          </text>
-                        </g>
-                      </g>
-                    );
-                  })}
-
-                  {/* Trailing stop alert lines (target solid, trail dashed) */}
-                  {riskGraphAlerts.filter(a => a.enabled && a.type === 'trailing_stop' && a.highWaterMark).map((alert) => {
-                    const trailPrice = alert.highWaterMark! - alert.targetValue;
-                    const targetX = 50 + ((alert.highWaterMark! - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
-                    const trailX = 50 + ((trailPrice - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
-                    const targetInView = alert.highWaterMark! >= riskGraphData.minPrice && alert.highWaterMark! <= riskGraphData.maxPrice;
-                    const trailInView = trailPrice >= riskGraphData.minPrice && trailPrice <= riskGraphData.maxPrice;
-
-                    return (
-                      <g key={alert.id} className="trailing-stop-lines">
-                        {/* High water mark - solid line */}
-                        {targetInView && (
-                          <>
-                            <line
-                              x1={targetX}
-                              y1="20"
-                              x2={targetX}
-                              y2="280"
-                              stroke={alert.color || ALERT_COLORS[0]}
-                              strokeWidth="1"
-                            />
-                            <g transform={`translate(${targetX}, 15)`}>
-                              <rect x="-16" y="-10" width="32" height="14" fill={alert.color || ALERT_COLORS[0]} rx="2" />
-                              <text x="0" y="1" textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold">HWM</text>
-                            </g>
-                          </>
-                        )}
-                        {/* Trail stop - dashed line */}
-                        {trailInView && (
-                          <>
-                            <line
-                              x1={trailX}
-                              y1="20"
-                              x2={trailX}
-                              y2="280"
-                              stroke={alert.color || ALERT_COLORS[0]}
-                              strokeWidth="1"
-                              strokeDasharray="6,4"
-                            />
-                            <g transform={`translate(${trailX}, 15)`}>
-                              <rect x="-18" y="-10" width="36" height="14" fill={alert.color || ALERT_COLORS[0]} rx="2" opacity="0.8" />
-                              <text x="0" y="1" textAnchor="middle" fill="#fff" fontSize="8" fontWeight="bold">STOP</text>
-                            </g>
-                          </>
-                        )}
-                      </g>
-                    );
-                  })}
-
-                  {/* AI Theta/Gamma zone visualization - DYNAMIC 3D calculation */}
-                  {riskGraphAlerts.filter(a => a.enabled && a.type === 'ai_theta_gamma').map((alert) => {
-                    // Find the linked strategy
-                    const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
-                    const effectiveSpot = simulatedSpot || currentSpot;
-                    if (!strategy || !effectiveSpot) return null;
-
-                    // === DIMENSION 1: Current simulation state ===
-                    const entryDebit = alert.entryDebit || strategy.debit || 1;
-                    const vix = spot?.['I:VIX']?.value || 20;
-                    const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
-                    const volatility = Math.max(0.05, adjustedVix) / 100;
-                    const timeOffset = timeMachineEnabled ? simTimeOffsetHours : 0;
-
-                    // === DIMENSION 2: P&L at current spot (and neighbors for gamma) ===
-                    const pnlAtSpot = calculateStrategyTheoreticalPnL(strategy, effectiveSpot, volatility, 0.05, timeOffset);
-                    const pnlAtSpotMinus = calculateStrategyTheoreticalPnL(strategy, effectiveSpot - 1, volatility, 0.05, timeOffset);
-                    const pnlAtSpotPlus = calculateStrategyTheoreticalPnL(strategy, effectiveSpot + 1, volatility, 0.05, timeOffset);
-
-                    // Calculate numerical delta (first derivative of P&L w.r.t. price)
-                    // Delta = (P&L(S+1) - P&L(S-1)) / 2 - the slope of the P&L curve
-                    const numericalDelta = (pnlAtSpotPlus - pnlAtSpotMinus) / 2;
-
-                    // Calculate numerical gamma (second derivative of P&L w.r.t. price)
-                    // Gamma = (P&L(S+1) - 2*P&L(S) + P&L(S-1)) / 1^2 - the curvature
-                    const numericalGamma = Math.abs(pnlAtSpotPlus - 2 * pnlAtSpot + pnlAtSpotMinus);
-
-                    const currentProfit = pnlAtSpot / 100;
-                    const profitPercent = entryDebit > 0 ? currentProfit / entryDebit : 0;
-                    const minProfitThreshold = alert.minProfitThreshold || 0.5;
-
-                    // Only show zone if profit threshold is met
-                    if (profitPercent < minProfitThreshold) return null;
-
-                    // === DIMENSION 3: Time to expiration ===
-                    const nominalDTE = strategy.dte || 0;
-                    const effectiveDTE = Math.max(0, nominalDTE - (timeOffset / 24));
-
-                    // === TOLERANCE-BASED ZONE CALCULATION ===
-                    // Zone edge = price where we'd lose more than we're willing to tolerate
-
-                    // Convert DTE to market hours remaining (~6.5 hours per trading day)
-                    const hoursRemaining = effectiveDTE * 6.5;
-
-                    // VIX Regime classification
-                    // VIX Regime Classification:
-                    // Zombieland (≤17): Low vol, HIGH gamma, fast decay → tight management
-                    // Goldilocks (17-32): Moderate vol, suppressed gamma, delayed decay → more room
-                    // High Vol (>32): Super low gamma, wide flies cheap → most room
-                    const isGoldilocks = adjustedVix > 17 && adjustedVix <= 32;
-                    const isHighVol = adjustedVix > 32;
-                    // isZombieland is implicit: !isGoldilocks && !isHighVol
-
-                    // Tolerance schedule: % of unrealized profit willing to give up
-                    // Adjusted by VIX regime
-                    let baseTolerance: number;
-                    if (hoursRemaining >= 6) baseTolerance = 0.625;      // Morning: 50-75%
-                    else if (hoursRemaining >= 4) baseTolerance = 0.45;  // Later morning: 40-50%
-                    else if (hoursRemaining >= 2) baseTolerance = 0.35;  // Early afternoon: 30-40%
-                    else if (hoursRemaining >= 1) baseTolerance = 0.25;  // Late afternoon: 20-30%
-                    else if (hoursRemaining >= 0.5) baseTolerance = 0.15; // Final hour: 10-20%
-                    else baseTolerance = 0.10;                           // Final stretch
-
-                    // Regime adjustment to tolerance
-                    // Higher VIX = lower gamma = more tolerance
-                    let tolerancePercent: number;
-                    if (isHighVol) {
-                      // Super low gamma, wide flies, very forgiving
-                      // Scale up with VIX: 1.3 at 32, up to 1.5 at 50+
-                      const highVolBonus = Math.min(1.5, 1.30 + (adjustedVix - 32) * 0.01);
-                      tolerancePercent = baseTolerance * highVolBonus;
-                    } else if (isGoldilocks) {
-                      // Gamma stays flat into afternoon - more forgiving
-                      tolerancePercent = baseTolerance * 1.20;
-                    } else {
-                      // Zombieland (adjustedVix <= 17): gamma is amplified, decay is rapid - less forgiving
-                      // Lower VIX = worse (scale from 0.75 at VIX 10 to 0.90 at VIX 17)
-                      const zombieSeverity = Math.max(0.75, 0.90 - (17 - adjustedVix) * 0.02);
-                      tolerancePercent = baseTolerance * zombieSeverity;
-                    }
-
-                    // How much profit (in dollars) are we willing to give up?
-                    const tolerableLossDollars = currentProfit * tolerancePercent;
-
-                    // Convert delta/gamma from cents to dollars per point
-                    const deltaPerPoint = Math.abs(numericalDelta) / 100; // $/point
-                    const gammaPerPoint = numericalGamma / 100;           // $/point²
-
-                    // Calculate zone width based on how far price can move before losing tolerance
-                    let zoneHalfWidth: number;
-
-                    if (deltaPerPoint < 0.5) {
-                      // Near the peak (delta ≈ 0) - gamma dominates the P&L curve
-                      // Loss ≈ 0.5 × gamma × distance² (quadratic)
-                      // Solving for distance: sqrt(2 × tolerableLoss / gamma)
-                      if (gammaPerPoint > 0.01) {
-                        zoneHalfWidth = Math.sqrt(2 * tolerableLossDollars / gammaPerPoint);
-                      } else {
-                        zoneHalfWidth = 50; // Very flat curve, wide zone
-                      }
-                    } else {
-                      // Away from peak - delta gives initial rate of loss
-                      // Linear estimate: distance = tolerableLoss / delta
-                      const linearEstimate = tolerableLossDollars / deltaPerPoint;
-
-                      // Gamma acceleration: losses speed up as we move further
-                      // Higher gamma = linear estimate is optimistic, reduce it
-                      const gammaAdjustment = Math.max(0.4, 1 - gammaPerPoint * 0.4);
-                      zoneHalfWidth = linearEstimate * gammaAdjustment;
-                    }
-
-                    // VIX Regime zone adjustment
-                    // Zombieland: gamma is amplified beyond what the numbers show - tighten
-                    // Goldilocks: gamma is suppressed, stays flat longer - widen
-                    // High Vol: gamma is crushed, wide flies cheap - widest zones
-                    let regimeAdjustment: number;
-                    if (isHighVol) {
-                      // Gamma is super low - very wide zones possible
-                      // Scale: 1.25 at VIX 32, up to 1.5 at VIX 50+
-                      regimeAdjustment = Math.min(1.5, 1.25 + (adjustedVix - 32) * 0.014);
-                    } else if (isGoldilocks) {
-                      // Sweet spot - gamma suppressed, premium decay delayed
-                      // Peak benefit around VIX 22-26
-                      const optimalVix = 24;
-                      const distFromOptimal = Math.abs(adjustedVix - optimalVix);
-                      regimeAdjustment = 1.15 - distFromOptimal * 0.01; // ~1.15 at optimal, 1.05 at edges
-                    } else {
-                      // Zombieland: gamma amplified - calculated zone is too optimistic
-                      // Scale: 0.70 at VIX 10, 0.85 at VIX 17
-                      regimeAdjustment = 0.70 + (adjustedVix - 10) * 0.021;
-                    }
-                    zoneHalfWidth *= regimeAdjustment;
-
-                    // Clamp to reasonable visual bounds
-                    zoneHalfWidth = Math.max(2, Math.min(80, zoneHalfWidth));
-
-                    // Zone bounds centered on current effective spot
-                    const zoneLow = effectiveSpot - zoneHalfWidth;
-                    const zoneHigh = effectiveSpot + zoneHalfWidth;
-
-                    // 10% buffer zone - still okay but approaching exit signal
-                    const bufferWidth = zoneHalfWidth * 0.10;
-                    const bufferLow = zoneLow - bufferWidth;
-                    const bufferHigh = zoneHigh + bufferWidth;
-
-                    // Convert to SVG coordinates
-                    const priceToX = (price: number) => 50 + ((price - riskGraphData.minPrice) / (riskGraphData.maxPrice - riskGraphData.minPrice)) * 530;
-
-                    const xLow = priceToX(zoneLow);
-                    const xHigh = priceToX(zoneHigh);
-                    const xBufferLow = priceToX(bufferLow);
-                    const xBufferHigh = priceToX(bufferHigh);
-
-                    // Clamp to visible area
-                    const clampedXLow = Math.max(50, Math.min(580, xLow));
-                    const clampedXHigh = Math.max(50, Math.min(580, xHigh));
-                    const clampedXBufferLow = Math.max(50, Math.min(580, xBufferLow));
-                    const clampedXBufferHigh = Math.max(50, Math.min(580, xBufferHigh));
-                    const width = clampedXHigh - clampedXLow;
-
-                    if (width <= 0) return null;
-
-                    const displayProfit = profitPercent * 100;
-
-                    return (
-                      <g key={alert.id} className="ai-theta-gamma-zone">
-                        {/* 10% buffer zones - still okay but approaching signal */}
-                        <rect
-                          x={clampedXBufferLow}
-                          y="20"
-                          width={clampedXLow - clampedXBufferLow}
-                          height="260"
-                          fill={alert.color || ALERT_COLORS[4]}
-                          opacity={0.06}
-                        />
-                        <rect
-                          x={clampedXHigh}
-                          y="20"
-                          width={clampedXBufferHigh - clampedXHigh}
-                          height="260"
-                          fill={alert.color || ALERT_COLORS[4]}
-                          opacity={0.06}
-                        />
-                        {/* Main safe zone - the profit tent */}
-                        <rect
-                          x={clampedXLow}
-                          y="20"
-                          width={width}
-                          height="260"
-                          fill={alert.color || ALERT_COLORS[4]}
-                          opacity={0.15}
-                        />
-                        {/* Buffer boundary lines - outer warning */}
-                        <line
-                          x1={clampedXBufferLow}
-                          y1="20"
-                          x2={clampedXBufferLow}
-                          y2="280"
-                          stroke={alert.color || ALERT_COLORS[4]}
-                          strokeWidth="1"
-                          strokeDasharray="4,4"
-                          opacity={0.4}
-                        />
-                        <line
-                          x1={clampedXBufferHigh}
-                          y1="20"
-                          x2={clampedXBufferHigh}
-                          y2="280"
-                          stroke={alert.color || ALERT_COLORS[4]}
-                          strokeWidth="1"
-                          strokeDasharray="4,4"
-                          opacity={0.4}
-                        />
-                        {/* Zone boundary lines - exit signal levels */}
-                        <line
-                          x1={clampedXLow}
-                          y1="20"
-                          x2={clampedXLow}
-                          y2="280"
-                          stroke={alert.color || ALERT_COLORS[4]}
-                          strokeWidth="1.5"
-                          opacity={0.8}
-                        />
-                        <line
-                          x1={clampedXHigh}
-                          y1="20"
-                          x2={clampedXHigh}
-                          y2="280"
-                          stroke={alert.color || ALERT_COLORS[4]}
-                          strokeWidth="1.5"
-                          opacity={0.8}
-                        />
-                        {/* Zone label at top */}
-                        <g transform={`translate(${(clampedXLow + clampedXHigh) / 2}, 15)`}>
-                          <rect
-                            x="-40"
-                            y="-10"
-                            width="80"
-                            height="14"
-                            fill={alert.color || ALERT_COLORS[4]}
-                            rx="2"
-                            opacity={0.95}
-                          />
-                          <text
-                            x="0"
-                            y="1"
-                            textAnchor="middle"
-                            fill="#fff"
-                            fontSize="8"
-                            fontWeight="bold"
-                          >
-                            {`AI ${displayProfit >= 0 ? '+' : ''}${displayProfit.toFixed(0)}% | ±${zoneHalfWidth.toFixed(0)}`}
-                          </text>
-                        </g>
-                      </g>
-                    );
-                  })}
-
-                  {/* Interactive crosshair */}
-                  {crosshairPos && (
-                    <g className="crosshair">
-                      {/* Vertical line */}
-                      <line
-                        x1={crosshairPos.x}
-                        y1="20"
-                        x2={crosshairPos.x}
-                        y2="280"
-                        stroke="#fff"
-                        strokeWidth="1"
-                        strokeOpacity="0.5"
-                      />
-                      {/* Horizontal line at P&L level */}
-                      {(() => {
-                        const pnlRange = riskGraphData.maxPnL - riskGraphData.minPnL || 1;
-                        const y = 20 + ((riskGraphData.maxPnL - crosshairPos.pnl) / pnlRange) * 260;
-                        return (
-                          <line
-                            x1="50"
-                            y1={y}
-                            x2="580"
-                            y2={y}
-                            stroke="#fff"
-                            strokeWidth="1"
-                            strokeOpacity="0.5"
-                          />
-                        );
-                      })()}
-                      {/* Info label */}
-                      {(() => {
-                        const pnlRange = riskGraphData.maxPnL - riskGraphData.minPnL || 1;
-                        const y = 20 + ((riskGraphData.maxPnL - crosshairPos.pnl) / pnlRange) * 260;
-                        const labelX = crosshairPos.x > 450 ? crosshairPos.x - 10 : crosshairPos.x + 10;
-                        const anchor = crosshairPos.x > 450 ? 'end' : 'start';
-                        const pnlColor = crosshairPos.pnl >= 0 ? '#4ade80' : '#f87171';
-                        return (
-                          <g>
-                            {/* Background for readability */}
-                            <rect
-                              x={anchor === 'end' ? labelX - 85 : labelX - 5}
-                              y={y < 60 ? y + 5 : y - 40}
-                              width="90"
-                              height="38"
-                              fill="#1a1a1a"
-                              fillOpacity="0.9"
-                              rx="4"
-                            />
-                            <text
-                              x={labelX}
-                              y={y < 60 ? y + 20 : y - 25}
-                              textAnchor={anchor}
-                              fill="#888"
-                              fontSize="11"
-                            >
-                              {crosshairPos.price.toFixed(2)}
-                            </text>
-                            <text
-                              x={labelX}
-                              y={y < 60 ? y + 36 : y - 9}
-                              textAnchor={anchor}
-                              fill={pnlColor}
-                              fontSize="12"
-                              fontWeight="bold"
-                            >
-                              ${(crosshairPos.pnl / 100).toFixed(2)}
-                            </text>
-                          </g>
-                        );
-                      })()}
-                    </g>
-                  )}
-
-                  {/* Axis labels */}
-                  <text x="50" y="295" fill="#666" fontSize="10">{riskGraphData.minPrice.toFixed(0)}</text>
-                  <text x="580" y="295" fill="#666" fontSize="10" textAnchor="end">{riskGraphData.maxPrice.toFixed(0)}</text>
-                  <text x="40" y="25" fill="#666" fontSize="10" textAnchor="end">${(riskGraphData.maxPnL / 100).toFixed(2)}</text>
-                  <text x="40" y="280" fill="#666" fontSize="10" textAnchor="end">${(riskGraphData.minPnL / 100).toFixed(2)}</text>
-                </svg>
-
-                {/* Right-click context menu for adding alerts */}
-                {alertContextMenu && (
-                  <div
-                    className="alert-context-menu"
-                    style={{
-                      position: 'fixed',
-                      left: alertContextMenu.x,
-                      top: alertContextMenu.y,
-                      zIndex: 1000,
-                    }}
-                    onClick={e => e.stopPropagation()}
-                  >
-                    <div className="context-menu-header">
-                      Add Alert at {alertContextMenu.price.toFixed(0)}
-                    </div>
-                    <div className="context-menu-colors">
-                      {ALERT_COLORS.map(color => (
-                        <button
-                          key={color}
-                          className="color-swatch"
-                          style={{ backgroundColor: color }}
-                          onClick={() => {
-                            const newAlert: PriceAlertLine = {
-                              id: `alert_${Date.now()}`,
-                              price: alertContextMenu.price,
-                              color,
-                              createdAt: Date.now(),
-                            };
-                            setPriceAlertLines(prev => [...prev, newAlert]);
-                            setAlertContextMenu(null);
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <button
-                      className="context-menu-cancel"
-                      onClick={() => setAlertContextMenu(null)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-
-                {/* Right-click context menu for alert lines */}
-                {alertLineContextMenu && (
-                  <div
-                    className="alert-context-menu"
-                    style={{
-                      position: 'fixed',
-                      left: alertLineContextMenu.x,
-                      top: alertLineContextMenu.y,
-                      zIndex: 1000,
-                    }}
-                    onClick={e => e.stopPropagation()}
-                  >
-                    <button
-                      className="context-menu-delete"
-                      onClick={() => {
-                        setPriceAlertLines(prev => prev.filter(a => a.id !== alertLineContextMenu.alertId));
-                        setAlertLineContextMenu(null);
-                      }}
-                    >
-                      Delete Alert
-                    </button>
-                    <button
-                      className="context-menu-cancel"
-                      onClick={() => setAlertLineContextMenu(null)}
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-                </div>
-
-                    {/* 3D of Options Controls - Always visible */}
-                    <div className={`time-machine-panel ${timeMachineEnabled ? 'active' : ''}`}>
-                      <div className="time-machine-header">
-                        <div className="time-machine-switch">
-                          <span className="switch-label">📐 3D of Options</span>
-                          <button
-                            className={`switch-toggle ${timeMachineEnabled ? 'on' : 'off'}`}
-                            onClick={() => setTimeMachineEnabled(!timeMachineEnabled)}
-                          >
-                            {timeMachineEnabled ? 'ON' : 'OFF'}
-                          </button>
-                          {timeMachineEnabled && (
-                            <button
-                              className="btn-reset"
-                              onClick={() => {
-                                setSimTimeOffsetHours(0);
-                                setSimVolatilityOffset(0);
-                                setSimSpotOffset(0);
-                              }}
-                            >
-                              Reset
-                            </button>
+                          {riskGraphAlerts.length === 0 && priceAlertLines.length === 0 && (
+                            <div className="alerts-empty">No alerts<br/><span className="hint">Right-click chart for price line</span></div>
                           )}
                         </div>
                       </div>
-                      <div className={`time-machine-controls ${!timeMachineEnabled ? 'disabled' : ''}`}>
-                        {(() => {
-                          // Calculate DTE info for all controls
-                          const visibleStrategies = riskGraphStrategies.filter(s => s.visible);
-                          const minDTE = visibleStrategies.length > 0
-                            ? Math.min(...visibleStrategies.map(s => s.dte))
-                            : 1;
-                          const maxHours = Math.max(1, minDTE) * 24;
-                          const hoursRemaining = maxHours - simTimeOffsetHours;
-                          const effectiveHoursRemaining = Math.max(0, hoursRemaining);
+                    </div>
+                  </div>
 
-                          // Format hours as DTE string
-                          const formatDTE = (hours: number) => {
-                            if (hours <= 0) return '0m';
-                            if (hours < 4) {
-                              const mins = Math.round(hours * 60);
-                              if (mins < 60) return `${mins}m`;
-                              const h = Math.floor(mins / 60);
-                              const m = mins % 60;
-                              return m > 0 ? `${h}h ${m}m` : `${h}h`;
-                            }
-                            if (hours < 24) {
-                              return `${hours.toFixed(0)}h`;
-                            }
-                            const days = hours / 24;
-                            if (days < 1.5) {
-                              const h = Math.round(hours % 24);
-                              return `1d ${h}h`;
-                            }
-                            return `${days.toFixed(1)}d`;
-                          };
+                  {/* 3D of Options Controls */}
+                  <div className={`time-machine-panel ${timeMachineEnabled ? 'active' : ''}`}>
+                    <div className="time-machine-header">
+                      <div className="time-machine-switch">
+                        <span className="switch-label">📐 3D of Options</span>
+                        <button
+                          className={`switch-toggle ${timeMachineEnabled ? 'on' : 'off'}`}
+                          onClick={() => setTimeMachineEnabled(!timeMachineEnabled)}
+                        >
+                          {timeMachineEnabled ? 'ON' : 'OFF'}
+                        </button>
+                        {timeMachineEnabled && (
+                          <button
+                            className="btn-reset"
+                            onClick={() => {
+                              setSimTimeOffsetHours(0);
+                              setSimVolatilityOffset(0);
+                              setSimSpotOffset(0);
+                            }}
+                          >
+                            Reset
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <div className={`time-machine-controls ${!timeMachineEnabled ? 'disabled' : ''}`}>
+                      {(() => {
+                        const visibleStrategies = riskGraphStrategies.filter(s => s.visible);
+                        const minDTE = visibleStrategies.length > 0
+                          ? Math.min(...visibleStrategies.map(s => s.dte))
+                          : 1;
+                        const maxHours = Math.max(1, minDTE) * 24;
+                        const hoursRemaining = maxHours - simTimeOffsetHours;
+                        const effectiveHoursRemaining = Math.max(0, hoursRemaining);
 
-                          const stepSize = effectiveHoursRemaining <= 4 ? 0.25 : 1;
-                          const currentVix = (spot?.['I:VIX']?.value || 20) + simVolatilityOffset;
+                        const formatDTE = (hours: number) => {
+                          if (hours <= 0) return '0m';
+                          if (hours < 4) {
+                            const mins = Math.round(hours * 60);
+                            if (mins < 60) return `${mins}m`;
+                            const h = Math.floor(mins / 60);
+                            const m = mins % 60;
+                            return m > 0 ? `${h}h ${m}m` : `${h}h`;
+                          }
+                          if (hours < 24) return `${hours.toFixed(0)}h`;
+                          const days = hours / 24;
+                          if (days < 1.5) {
+                            const h = Math.round(hours % 24);
+                            return `1d ${h}h`;
+                          }
+                          return `${days.toFixed(1)}d`;
+                        };
 
-                          return (
-                            <>
-                              {/* Left column: Time and Spot (horizontal sliders) */}
-                              <div className="horizontal-controls">
-                                <div className="control-group time-control">
-                                  <div className="slider-row">
-                                    <span className="control-label">Time</span>
+                        const stepSize = effectiveHoursRemaining <= 4 ? 0.25 : 1;
+                        const currentVix = (spot?.['I:VIX']?.value || 20) + simVolatilityOffset;
+
+                        return (
+                          <>
+                            <div className="horizontal-controls">
+                              <div className="control-group time-control">
+                                <div className="slider-row">
+                                  <span className="control-label">Time</span>
+                                  <input
+                                    type="range"
+                                    min="0"
+                                    max={maxHours}
+                                    step={stepSize}
+                                    value={simTimeOffsetHours}
+                                    onChange={(e) => setSimTimeOffsetHours(parseFloat(e.target.value))}
+                                    className="time-slider"
+                                    disabled={!timeMachineEnabled}
+                                  />
+                                  <span className="control-readout time-readout">
+                                    {formatDTE(effectiveHoursRemaining)}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="control-group spot-control">
+                                <div className="slider-row">
+                                  <span className="control-label">Spot</span>
+                                  <div className="slider-with-thumb-value">
                                     <input
                                       type="range"
-                                      min="0"
-                                      max={maxHours}
-                                      step={stepSize}
-                                      value={simTimeOffsetHours}
-                                      onChange={(e) => setSimTimeOffsetHours(parseFloat(e.target.value))}
-                                      className="time-slider"
+                                      min="-150"
+                                      max="150"
+                                      step="1"
+                                      value={simSpotOffset}
+                                      onChange={(e) => setSimSpotOffset(parseFloat(e.target.value))}
+                                      className="spot-slider"
                                       disabled={!timeMachineEnabled}
                                     />
-                                    <span className="control-readout time-readout">
-                                      {formatDTE(effectiveHoursRemaining)}
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="control-group spot-control">
-                                  <div className="slider-row">
-                                    <span className="control-label">Spot</span>
-                                    <div className="slider-with-thumb-value">
-                                      <input
-                                        type="range"
-                                        min="-150"
-                                        max="150"
-                                        step="1"
-                                        value={simSpotOffset}
-                                        onChange={(e) => setSimSpotOffset(parseFloat(e.target.value))}
-                                        className="spot-slider"
-                                        disabled={!timeMachineEnabled}
-                                      />
-                                      <div
-                                        className="thumb-value"
-                                        style={{ left: `${((simSpotOffset + 150) / 300) * 100}%` }}
-                                      >
-                                        {simulatedSpot?.toFixed(0) || '-'}
-                                      </div>
+                                    <div
+                                      className="thumb-value"
+                                      style={{ left: `${((simSpotOffset + 150) / 300) * 100}%` }}
+                                    >
+                                      {simulatedSpot?.toFixed(0) || '-'}
                                     </div>
                                   </div>
                                 </div>
                               </div>
-                              {/* Right column: VIX (vertical slider) - absolute range 5-30 */}
-                              <div className="vertical-control vol-control">
-                                <div className="vol-label-left">
-                                  <span className="vol-label-text">VIX</span>
-                                  <span className="vol-value">{currentVix.toFixed(1)}</span>
-                                </div>
-                                <div className="vertical-slider-container">
-                                  <span className="vol-tick">30</span>
-                                  <input
-                                    type="range"
-                                    min="5"
-                                    max="30"
-                                    step="0.5"
-                                    value={currentVix}
-                                    onChange={(e) => {
-                                      const newVix = parseFloat(e.target.value);
-                                      const realVix = spot?.['I:VIX']?.value || 20;
-                                      setSimVolatilityOffset(newVix - realVix);
-                                    }}
-                                    className="vol-slider-vertical"
-                                    disabled={!timeMachineEnabled}
-                                  />
-                                  <span className="vol-tick">5</span>
-                                </div>
+                            </div>
+                            <div className="vertical-control vol-control">
+                              <div className="vol-label-left">
+                                <span className="vol-label-text">VIX</span>
+                                <span className="vol-value">{currentVix.toFixed(1)}</span>
                               </div>
-                            </>
-                          );
-                        })()}
-                      </div>
+                              <div className="vertical-slider-container">
+                                <span className="vol-tick">30</span>
+                                <input
+                                  type="range"
+                                  min="5"
+                                  max="30"
+                                  step="0.5"
+                                  value={currentVix}
+                                  onChange={(e) => {
+                                    const newVix = parseFloat(e.target.value);
+                                    const realVix = spot?.['I:VIX']?.value || 20;
+                                    setSimVolatilityOffset(newVix - realVix);
+                                  }}
+                                  className="vol-slider-vertical"
+                                  disabled={!timeMachineEnabled}
+                                />
+                                <span className="vol-tick">5</span>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
-
-                    {/* Summary Stats */}
-                    <div className="risk-graph-stats">
-                      <div className="stat highlight">
-                        <span className="stat-label">Real-Time P&L</span>
-                        {(() => {
-                          // Prefer market P&L (from live heatmap) over theoretical (Black-Scholes)
-                          const pnl = riskGraphData.marketPnL ?? riskGraphData.theoreticalPnLAtSpot;
-                          return (
-                            <span className={`stat-value ${pnl >= 0 ? 'profit' : 'loss'}`}>
-                              ${(pnl / 100).toFixed(2)}
-                            </span>
-                          );
-                        })()}
-                      </div>
-                      <div className="stat-divider" />
-                      <div className="stat">
-                        <span className="stat-label">Max Profit</span>
-                        <span className="stat-value profit">${(riskGraphData.maxPnL / 100).toFixed(2)}</span>
-                      </div>
-                      <div className="stat">
-                        <span className="stat-label">Max Loss</span>
-                        <span className="stat-value loss">${(riskGraphData.minPnL / 100).toFixed(2)}</span>
-                      </div>
-                      <div className="stat">
-                        <span className="stat-label">Breakevens (RT)</span>
-                        <span className="stat-value">{riskGraphData.theoreticalBreakevens.map(b => b.toFixed(0)).join(', ') || '-'}</span>
-                      </div>
-                      {currentSpot && (
-                        <div className="stat">
-                          <span className="stat-label">Spot</span>
-                          <span className="stat-value">{currentSpot.toFixed(2)}</span>
-                        </div>
-                      )}
-                    </div>
-
                   </div>
-                </div>
+
+                  {/* Summary Stats */}
+                  <div className="risk-graph-stats">
+                    <div className="stat highlight">
+                      <span className="stat-label">Real-Time P&L</span>
+                      {(() => {
+                        const pnl = riskGraphData.marketPnL ?? riskGraphData.theoreticalPnLAtSpot;
+                        return (
+                          <span className={`stat-value ${pnl >= 0 ? 'profit' : 'loss'}`}>
+                            ${(pnl / 100).toFixed(2)}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                    <div className="stat-divider" />
+                    <div className="stat">
+                      <span className="stat-label">Max Profit</span>
+                      <span className="stat-value profit">${(riskGraphData.maxPnL / 100).toFixed(2)}</span>
+                    </div>
+                    <div className="stat">
+                      <span className="stat-label">Max Loss</span>
+                      <span className="stat-value loss">${(riskGraphData.minPnL / 100).toFixed(2)}</span>
+                    </div>
+                    <div className="stat">
+                      <span className="stat-label">Breakevens</span>
+                      <span className="stat-value">{riskGraphData.theoreticalBreakevens.map(b => b.toFixed(0)).join(', ') || '-'}</span>
+                    </div>
+                    {currentSpot && (
+                      <div className="stat">
+                        <span className="stat-label">Spot</span>
+                        <span className="stat-value">{currentSpot.toFixed(2)}</span>
+                      </div>
+                    )}
+                  </div>
+                </>
               )}
             </div>
           )}
@@ -4027,29 +3128,87 @@ function App() {
       {/* Alert Creation Modal */}
       <AlertCreationModal
         isOpen={alertModalStrategy !== null}
-        onClose={() => setAlertModalStrategy(null)}
+        onClose={() => {
+          setAlertModalStrategy(null);
+          setAlertModalInitialPrice(null);
+          setAlertModalEditingAlert(null);
+        }}
         onSave={(alertData) => {
           if (alertModalStrategy) {
-            createAlert(
-              alertModalStrategy,
-              alertData.type,
-              alertData.condition,
-              alertData.targetValue,
-              alertData.color,
-              alertData.behavior,
-              alertData.minProfitThreshold
-            );
+            if (alertData.id) {
+              // Update existing alert
+              setRiskGraphAlerts(prev => prev.map(a =>
+                a.id === alertData.id
+                  ? {
+                      ...a,
+                      type: alertData.type,
+                      condition: alertData.condition,
+                      targetValue: alertData.targetValue,
+                      color: alertData.color,
+                      behavior: alertData.behavior,
+                      minProfitThreshold: alertData.minProfitThreshold,
+                    }
+                  : a
+              ));
+            } else {
+              // Create new alert
+              createAlert(
+                alertModalStrategy,
+                alertData.type,
+                alertData.condition,
+                alertData.targetValue,
+                alertData.color,
+                alertData.behavior,
+                alertData.minProfitThreshold
+              );
+            }
           }
         }}
         strategyLabel={(() => {
           const strat = riskGraphStrategies.find(s => s.id === alertModalStrategy);
-          if (!strat) return '';
+          if (!strat) return 'Chart Alert';
           const typeLabel = strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL';
           return `${typeLabel} ${strat.strike}`;
         })()}
         currentSpot={currentSpot}
         currentDebit={riskGraphStrategies.find(s => s.id === alertModalStrategy)?.debit || null}
+        initialPrice={alertModalInitialPrice}
+        initialCondition={alertModalInitialCondition}
+        editingAlert={alertModalEditingAlert}
       />
+
+      {/* Risk Graph ECharts Demo (Ctrl+Shift+G to toggle) */}
+      {riskGraphDemoOpen && (
+        <div
+          className="popup-overlay"
+          onClick={() => setRiskGraphDemoOpen(false)}
+          onKeyDown={(e) => e.key === 'Escape' && setRiskGraphDemoOpen(false)}
+        >
+          <div
+            style={{
+              width: '90%',
+              maxWidth: '1200px',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              background: '#111',
+              borderRadius: '12px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+            }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 20px', borderBottom: '1px solid #333' }}>
+              <span style={{ color: '#888', fontSize: '12px' }}>Press Escape or click outside to close</span>
+              <button
+                onClick={() => setRiskGraphDemoOpen(false)}
+                style={{ background: 'none', border: 'none', color: '#888', fontSize: '24px', cursor: 'pointer' }}
+              >
+                &times;
+              </button>
+            </div>
+            <RiskGraphDemo />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
