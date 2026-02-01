@@ -1631,6 +1631,298 @@ body {
   background: #991b1b;
 }
 
+/* Consolidated Risk Graph Panel */
+.echarts-risk-graph-panel {
+  flex: 1 1 100%;
+  min-width: 800px;
+  display: flex;
+  flex-direction: column;
+}
+
+.echarts-risk-graph-panel.collapsed {
+  flex: 0 0 auto;
+  min-width: auto;
+  width: auto;
+}
+
+.echarts-risk-graph-panel .panel-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 400px;
+}
+
+/* Consolidated layout */
+.risk-graph-consolidated {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: 100%;
+}
+
+.risk-graph-main {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 350px;
+}
+
+.risk-graph-chart-area {
+  flex: 1;
+  min-width: 400px;
+  background: #0a0a0a;
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-controls-hint {
+  font-size: 10px;
+  color: #555;
+  text-align: center;
+  padding: 4px;
+  background: #111;
+  border-top: 1px solid #222;
+}
+
+.chart-controls-inline {
+  display: flex;
+  gap: 2px;
+  margin-right: 8px;
+}
+
+.chart-controls-inline button {
+  width: 24px;
+  height: 24px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 3px;
+  color: #888;
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.chart-controls-inline button:hover {
+  background: #252525;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
+.chart-controls-inline button:active {
+  background: #3b82f6;
+  color: #fff;
+}
+
+.risk-graph-sidebar {
+  width: 260px;
+  min-width: 260px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  max-height: 100%;
+}
+
+.risk-graph-sidebar .risk-graph-strategies,
+.risk-graph-sidebar .risk-graph-alerts {
+  background: #111;
+  border-radius: 4px;
+  padding: 8px;
+}
+
+.risk-graph-sidebar .section-header {
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.risk-graph-sidebar .risk-graph-strategy-item {
+  padding: 6px 8px;
+  background: #1a1a1a;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.risk-graph-sidebar .strategy-row-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.risk-graph-sidebar .strategy-row-bottom {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.risk-graph-sidebar .strategy-row-bottom button {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: #333;
+  border: none;
+  border-radius: 3px;
+  color: #888;
+  cursor: pointer;
+}
+
+.risk-graph-sidebar .strategy-row-bottom button:hover {
+  background: #444;
+  color: #e5e5e5;
+}
+
+.risk-graph-sidebar .strategy-row-bottom .btn-remove {
+  color: #f87171;
+}
+
+.risk-graph-sidebar .debit-input {
+  width: 50px;
+  background: #222;
+  border: 1px solid #333;
+  border-radius: 3px;
+  color: #e5e5e5;
+  font-size: 10px;
+  padding: 2px 4px;
+}
+
+.risk-graph-sidebar .alerts-list {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.risk-graph-sidebar .alert-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 6px;
+  background: #1a1a1a;
+  border-radius: 4px;
+  margin-bottom: 4px;
+  font-size: 10px;
+}
+
+.risk-graph-sidebar .alert-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.risk-graph-sidebar .alert-color-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.risk-graph-sidebar .alert-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.risk-graph-sidebar .alert-actions button {
+  font-size: 9px;
+  padding: 2px 4px;
+  background: #333;
+  border: none;
+  border-radius: 3px;
+  color: #888;
+  cursor: pointer;
+}
+
+.risk-graph-sidebar .alert-actions button:hover {
+  background: #444;
+  color: #e5e5e5;
+}
+
+.risk-graph-sidebar .alerts-empty {
+  color: #555;
+  font-size: 10px;
+  text-align: center;
+  padding: 12px;
+}
+
+.risk-graph-sidebar .color-picker-inline {
+  display: flex;
+  gap: 3px;
+}
+
+.risk-graph-sidebar .color-picker-inline.compact {
+  gap: 2px;
+}
+
+.risk-graph-sidebar .color-picker-inline .color-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.risk-graph-sidebar .color-picker-inline .color-dot.selected {
+  border-color: #fff;
+}
+
+.risk-graph-sidebar .alert-edit-mode {
+  background: #222;
+  padding: 8px;
+}
+
+.risk-graph-sidebar .alert-form-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.risk-graph-sidebar .alert-form-row select,
+.risk-graph-sidebar .alert-form-row input {
+  font-size: 10px;
+  padding: 3px 4px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 3px;
+  color: #e5e5e5;
+}
+
+.risk-graph-sidebar .alert-form-row select {
+  min-width: 60px;
+}
+
+.risk-graph-sidebar .alert-value-input {
+  width: 60px;
+}
+
+.risk-graph-sidebar .alert-form-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.risk-graph-sidebar .btn-save-alert {
+  background: #3b82f6;
+  color: #fff;
+  border: none;
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.risk-graph-sidebar .color-label {
+  font-size: 10px;
+  color: #888;
+}
+
 /* Risk Graph Panel - in horizontal row */
 .risk-graph-panel {
   flex: 0 0 auto;
@@ -6490,4 +6782,123 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+/* ============================================
+   Risk Graph Canvas - 5-Sigma Chart Surface
+   ============================================ */
+
+.risk-graph-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 300px;
+  display: flex;
+  flex-direction: column;
+  background: #0a0a0a;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.risk-graph-canvas svg {
+  flex: 1;
+  min-height: 0;
+}
+
+.risk-graph-controls {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #0d0d0d;
+  border-top: 1px solid #222;
+}
+
+.risk-graph-controls .btn-small {
+  padding: 4px 12px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #888;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.risk-graph-controls .btn-small:hover {
+  background: #252525;
+  color: #ccc;
+  border-color: #444;
+}
+
+/* ============================================
+   Risk Graph ECharts POC
+   ============================================ */
+
+.risk-graph-echarts {
+  width: 100%;
+  height: 100%;
+  min-height: 400px;
+  background: #0a0a0a;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.risk-graph-echarts-demo {
+  padding: 20px;
+  background: #111;
+  border-radius: 8px;
+  margin: 20px;
+}
+
+.risk-graph-echarts-demo h2 {
+  color: #e5e5e5;
+  margin-bottom: 16px;
+  font-size: 18px;
+}
+
+.risk-graph-echarts-demo .controls {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.risk-graph-echarts-demo .controls button {
+  padding: 8px 16px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e5e5e5;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.risk-graph-echarts-demo .controls button:hover {
+  background: #252525;
+  border-color: #444;
+}
+
+.risk-graph-echarts-demo .controls button.active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+}
+
+.risk-graph-echarts-demo .info {
+  display: flex;
+  gap: 24px;
+  margin-top: 12px;
+  font-size: 12px;
+  color: #888;
+}
+
+.risk-graph-echarts-demo .info span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.risk-graph-echarts-demo .info .dot {
+  width: 12px;
+  height: 3px;
+  border-radius: 1px;
 }
