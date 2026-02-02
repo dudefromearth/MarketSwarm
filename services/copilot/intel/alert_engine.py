@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, UTC
 from typing import Any, Callable, Dict, List, Optional
 
+import aiohttp
 from redis.asyncio import Redis
 
 
@@ -30,10 +31,17 @@ class AlertEngineConfig:
     redis_key_prefix: str = "copilot:alerts"
     publish_channel: str = "copilot:alerts:events"
     latest_key: str = "copilot:alerts:latest"
+    analytics_key: str = "copilot:alerts:analytics"
+    # Sync channel from Journal service
+    sync_channel: str = "alerts:sync"
+    # Prompt alerts sync channel
+    prompt_alerts_sync_channel: str = "prompt_alerts:sync"
     # Role gating config
     role_gating: Optional[Dict[str, list]] = None
     limits: Optional[Dict[str, dict]] = None
     max_alerts_per_user: int = 50
+    # Journal service URL for fetching alerts from database
+    journal_api_url: str = "http://localhost:3002"
 
 
 @dataclass
@@ -54,20 +62,23 @@ class AlertEvaluation:
 
 @dataclass
 class Alert:
-    """Internal alert representation matching UI types."""
+    """Internal alert representation matching database model."""
     id: str
+    user_id: int
     type: str  # price, debit, profit_target, trailing_stop, ai_theta_gamma, etc.
-    source: Dict[str, Any]
+    intent_class: str  # informational, reflective, protective
     condition: str  # above, below, at, outside_zone, inside_zone
     target_value: float
     behavior: str  # remove_on_hit, once_only, repeat
     priority: str  # low, medium, high, critical
+    source_type: str  # strategy, symbol, portfolio
+    source_id: str
     enabled: bool
     triggered: bool
-    triggered_at: Optional[float]
+    triggered_at: Optional[str]
     trigger_count: int
-    created_at: float
-    updated_at: float
+    created_at: str
+    updated_at: str
     color: str
     label: Optional[str] = None
     was_on_other_side: Optional[bool] = None
@@ -85,6 +96,11 @@ class Alert:
     ai_reasoning: Optional[str] = None
     last_ai_update: Optional[float] = None
 
+    # Legacy compatibility - construct source dict from source_type/source_id
+    @property
+    def source(self) -> Dict[str, Any]:
+        return {"type": self.source_type, "id": self.source_id}
+
     @classmethod
     def from_dict(cls, data: dict) -> "Alert":
         """Create Alert from dict (snake_case or camelCase)."""
@@ -97,20 +113,28 @@ class Alert:
             )
             return data.get(snake, data.get(camel, default))
 
+        # Handle source field - can be dict (legacy) or separate fields (new)
+        source = data.get("source", {})
+        source_type = get("source_type", get("sourceType", source.get("type", "symbol")))
+        source_id = get("source_id", get("sourceId", source.get("id", "")))
+
         return cls(
             id=data["id"],
+            user_id=int(get("user_id", get("userId", 0))),
             type=data["type"],
-            source=data.get("source", {}),
+            intent_class=get("intent_class", get("intentClass", "informational")),
             condition=get("condition", "above"),
-            target_value=float(get("target_value", get("targetValue", 0))),
+            target_value=float(get("target_value", get("targetValue", 0)) or 0),
             behavior=get("behavior", "once_only"),
             priority=get("priority", "medium"),
+            source_type=source_type,
+            source_id=source_id,
             enabled=get("enabled", True),
             triggered=get("triggered", False),
             triggered_at=get("triggered_at", get("triggeredAt")),
             trigger_count=int(get("trigger_count", get("triggerCount", 0))),
-            created_at=float(get("created_at", get("createdAt", time.time()))),
-            updated_at=float(get("updated_at", get("updatedAt", time.time()))),
+            created_at=get("created_at", get("createdAt", "")),
+            updated_at=get("updated_at", get("updatedAt", "")),
             color=get("color", "#ffffff"),
             label=get("label"),
             was_on_other_side=get("was_on_other_side", get("wasOnOtherSide")),
@@ -131,8 +155,12 @@ class Alert:
         """Convert to dict with camelCase keys for JSON/UI compatibility."""
         return {
             "id": self.id,
+            "userId": self.user_id,
             "type": self.type,
+            "intentClass": self.intent_class,
             "source": self.source,
+            "sourceType": self.source_type,
+            "sourceId": self.source_id,
             "condition": self.condition,
             "targetValue": self.target_value,
             "behavior": self.behavior,
@@ -201,10 +229,12 @@ class AlertEngine:
         self,
         config: AlertEngineConfig,
         redis: Optional[Redis] = None,
+        intel_redis: Optional[Redis] = None,
         logger=None,
     ):
         self._config = config
         self._redis = redis
+        self._intel_redis = intel_redis  # For analytics publishing
         self._logger = logger
 
         # Evaluator registry
@@ -212,6 +242,9 @@ class AlertEngine:
 
         # Alert cache (id -> Alert)
         self._alerts: Dict[str, Alert] = {}
+
+        # Prompt alert cache (id -> prompt alert dict with reference state)
+        self._prompt_alerts: Dict[str, dict] = {}
 
         # Market data cache
         self._market_data: dict = {}
@@ -227,7 +260,22 @@ class AlertEngine:
         # Processing tasks
         self._fast_loop_task: Optional[asyncio.Task] = None
         self._slow_loop_task: Optional[asyncio.Task] = None
+        self._sync_task: Optional[asyncio.Task] = None
         self._running = False
+
+        # Analytics tracking (key from config)
+        self._analytics = {
+            "alerts_loaded": 0,
+            "alerts_evaluated": 0,
+            "alerts_triggered": 0,
+            "fast_loop_runs": 0,
+            "slow_loop_runs": 0,
+            "sync_messages": 0,
+            "errors": 0,
+            "last_evaluation_ms": 0,
+            "last_trigger_ts": None,
+            "started_at": None,
+        }
 
     def _log(self, msg: str, level: str = "info", emoji: str = ""):
         """Log a message using the logger if available."""
@@ -239,6 +287,49 @@ class AlertEngine:
                 fn(msg)
         else:
             print(f"[alert_engine] {msg}")
+
+    async def _record_analytics(self, **kwargs) -> None:
+        """Record analytics metrics to intel-redis."""
+        redis = self._intel_redis or self._redis
+        if not redis:
+            return
+        try:
+            analytics_key = self._config.analytics_key
+            for key, value in kwargs.items():
+                if key.startswith("incr_"):
+                    field = key[5:]  # Remove "incr_" prefix
+                    self._analytics[field] = self._analytics.get(field, 0) + value
+                    await redis.hincrby(analytics_key, field, value)
+                else:
+                    self._analytics[key] = value
+                    await redis.hset(analytics_key, key, str(value) if value is not None else "")
+        except Exception as e:
+            self._log(f"Analytics error: {e}", level="warn")
+
+    def get_analytics(self) -> dict:
+        """Get current analytics snapshot."""
+        return {
+            **self._analytics,
+            "alerts_active": len(self._alerts),
+            "evaluators_registered": len(self._evaluators),
+            "running": self._running,
+        }
+
+    async def get_analytics_from_redis(self) -> dict:
+        """Get analytics from intel-redis (includes historical data)."""
+        redis = self._intel_redis or self._redis
+        if not redis:
+            return self.get_analytics()
+        try:
+            data = await redis.hgetall(self._config.analytics_key)
+            return {
+                **{k: int(v) if v.isdigit() else v for k, v in data.items()},
+                "alerts_active": len(self._alerts),
+                "evaluators_registered": len(self._evaluators),
+                "running": self._running,
+            }
+        except Exception:
+            return self.get_analytics()
 
     def register_evaluator(self, evaluator: BaseEvaluator) -> None:
         """Register an evaluator for an alert type."""
@@ -262,7 +353,38 @@ class AlertEngine:
                 self._log(f"Subscriber callback error: {e}", level="warn", emoji="")
 
     async def load_alerts(self) -> None:
-        """Load alerts from Redis."""
+        """Load alerts from Journal service database."""
+        try:
+            await self._load_alerts_from_db()
+        except Exception as e:
+            self._log(f"Error loading alerts from DB, falling back to Redis: {e}", level="warn")
+            await self._load_alerts_from_redis()
+
+    async def _load_alerts_from_db(self) -> None:
+        """Load all enabled alerts from Journal service database via internal API."""
+        url = f"{self._config.journal_api_url}/api/internal/alerts"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if result.get("success") and result.get("data"):
+                            self._alerts.clear()
+                            for alert_dict in result["data"]:
+                                try:
+                                    alert = Alert.from_dict(alert_dict)
+                                    self._alerts[alert.id] = alert
+                                except Exception as e:
+                                    self._log(f"Error parsing alert: {e}", level="warn")
+                            self._log(f"Loaded {len(self._alerts)} alerts from Journal DB", emoji="")
+                            await self._record_analytics(alerts_loaded=len(self._alerts))
+                    else:
+                        raise Exception(f"HTTP {resp.status}")
+        except Exception as e:
+            raise Exception(f"Failed to load from Journal API: {e}")
+
+    async def _load_alerts_from_redis(self) -> None:
+        """Fallback: Load alerts from Redis cache."""
         if not self._redis:
             self._log("No Redis connection, skipping alert load", level="warn")
             return
@@ -293,7 +415,7 @@ class AlertEngine:
 
             self._log(f"Loaded {len(self._alerts)} alerts from Redis", emoji="")
         except Exception as e:
-            self._log(f"Error loading alerts: {e}", level="error", emoji="")
+            self._log(f"Error loading alerts from Redis: {e}", level="error", emoji="")
 
     async def save_alert(self, alert: Alert) -> None:
         """Save an alert to Redis."""
@@ -495,6 +617,13 @@ class AlertEngine:
                 "aiConfidence": evaluation.confidence,
             })
 
+            # Record trigger analytics
+            await self._record_analytics(
+                incr_alerts_triggered=1,
+                last_trigger_ts=evaluation.timestamp,
+                last_evaluation_ms=int(evaluation.latency_ms)
+            )
+
         # Update AI fields if present
         if evaluation.zone_low is not None:
             alert.zone_low = evaluation.zone_low
@@ -533,6 +662,7 @@ class AlertEngine:
         interval_sec = self._config.fast_loop_interval_ms / 1000
 
         while self._running:
+            evaluated_count = 0
             try:
                 # Evaluate all non-AI alerts
                 for alert in self._alerts.values():
@@ -542,22 +672,29 @@ class AlertEngine:
                     evaluator = self.get_evaluator(alert.type)
                     if evaluator and not evaluator.is_ai_powered:
                         evaluation = await self._evaluate_alert(alert)
+                        evaluated_count += 1
                         if evaluation:
                             await self._handle_evaluation(alert, evaluation)
 
+                await self._record_analytics(
+                    incr_fast_loop_runs=1,
+                    incr_alerts_evaluated=evaluated_count
+                )
             except Exception as e:
                 self._log(f"Fast loop error: {e}", level="error")
+                await self._record_analytics(incr_errors=1)
 
             await asyncio.sleep(interval_sec)
 
     async def _slow_loop(self) -> None:
         """
-        Slow evaluation loop for AI-powered alerts.
+        Slow evaluation loop for AI-powered alerts and prompt alerts.
         Runs every 5 seconds.
         """
         interval_sec = self._config.slow_loop_interval_ms / 1000
 
         while self._running:
+            evaluated_count = 0
             try:
                 # Evaluate all AI alerts
                 for alert in self._alerts.values():
@@ -567,13 +704,160 @@ class AlertEngine:
                     evaluator = self.get_evaluator(alert.type)
                     if evaluator and evaluator.is_ai_powered:
                         evaluation = await self._evaluate_alert(alert)
+                        evaluated_count += 1
                         if evaluation:
                             await self._handle_evaluation(alert, evaluation)
 
+                # Evaluate prompt alerts
+                prompt_evaluator = self.get_evaluator("prompt_driven")
+                if prompt_evaluator:
+                    for prompt_alert in self._prompt_alerts.values():
+                        if prompt_alert.get("lifecycleState") != "active":
+                            continue
+
+                        try:
+                            # Build market data with reference state
+                            market_data_with_ref = {
+                                **self._market_data,
+                                "reference_states": {
+                                    prompt_alert["id"]: prompt_alert.get("referenceState", {})
+                                },
+                                "strategies": self._market_data.get("strategies", {}),
+                            }
+
+                            evaluation = await prompt_evaluator.evaluate(
+                                prompt_alert,
+                                market_data_with_ref
+                            )
+                            evaluated_count += 1
+
+                            # Handle prompt alert stage transitions
+                            if evaluation.should_trigger:
+                                await self._handle_prompt_evaluation(prompt_alert, evaluation)
+
+                        except Exception as e:
+                            self._log(f"Prompt alert evaluation error: {e}", level="warn")
+
+                await self._record_analytics(
+                    incr_slow_loop_runs=1,
+                    incr_alerts_evaluated=evaluated_count
+                )
             except Exception as e:
                 self._log(f"Slow loop error: {e}", level="error")
+                await self._record_analytics(incr_errors=1)
 
             await asyncio.sleep(interval_sec)
+
+    async def _handle_prompt_evaluation(self, prompt_alert: dict, evaluation) -> None:
+        """Handle a prompt alert evaluation result."""
+        # Publish stage change event
+        await self.publish_prompt_stage_change(
+            alert_id=prompt_alert["id"],
+            stage=evaluation.reasoning[:50] if hasattr(evaluation, 'reasoning') else "stage_change",
+            reasoning=evaluation.reasoning if hasattr(evaluation, 'reasoning') else "",
+            confidence=evaluation.confidence if hasattr(evaluation, 'confidence') else 0.5,
+        )
+
+        # Update the local cache
+        if prompt_alert["id"] in self._prompt_alerts:
+            self._prompt_alerts[prompt_alert["id"]]["lastAiConfidence"] = evaluation.confidence
+            self._prompt_alerts[prompt_alert["id"]]["lastAiReasoning"] = evaluation.reasoning
+
+    async def _sync_subscription_loop(self) -> None:
+        """
+        Subscribe to alerts:sync and prompt_alerts:sync Redis channels for real-time updates.
+        When Journal service creates/updates/deletes alerts, it publishes to these channels.
+        """
+        if not self._redis:
+            self._log("No Redis connection, skipping sync subscription", level="warn")
+            return
+
+        try:
+            pubsub = self._redis.pubsub()
+            await pubsub.subscribe(
+                self._config.sync_channel,
+                self._config.prompt_alerts_sync_channel
+            )
+            self._log(f"Subscribed to {self._config.sync_channel} and {self._config.prompt_alerts_sync_channel}", emoji="")
+
+            while self._running:
+                try:
+                    message = await pubsub.get_message(
+                        ignore_subscribe_messages=True,
+                        timeout=1.0
+                    )
+                    if message and message["type"] == "message":
+                        data = json.loads(message["data"])
+                        action = data.get("action")
+                        alert_id = data.get("alert_id")
+                        channel = message.get("channel", "")
+
+                        self._log(f"Sync ({channel}): {action} {alert_id}", emoji="")
+                        await self._record_analytics(incr_sync_messages=1)
+
+                        # Reload alerts based on channel
+                        if channel == self._config.prompt_alerts_sync_channel:
+                            await self.load_prompt_alerts()
+                        else:
+                            await self.load_alerts()
+
+                except asyncio.TimeoutError:
+                    continue
+                except Exception as e:
+                    self._log(f"Sync subscription error: {e}", level="warn")
+                    await asyncio.sleep(1)
+
+        except Exception as e:
+            self._log(f"Failed to subscribe to sync channel: {e}", level="error")
+        finally:
+            try:
+                await pubsub.unsubscribe(
+                    self._config.sync_channel,
+                    self._config.prompt_alerts_sync_channel
+                )
+            except Exception:
+                pass
+
+    async def load_prompt_alerts(self) -> None:
+        """Load active prompt alerts from Journal service."""
+        url = f"{self._config.journal_api_url}/api/internal/prompt-alerts"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if result.get("success") and result.get("data"):
+                            self._prompt_alerts.clear()
+                            for alert_dict in result["data"]:
+                                try:
+                                    self._prompt_alerts[alert_dict["id"]] = alert_dict
+                                except Exception as e:
+                                    self._log(f"Error loading prompt alert: {e}", level="warn")
+                            self._log(f"Loaded {len(self._prompt_alerts)} prompt alerts from Journal DB", emoji="")
+                    else:
+                        self._log(f"Failed to load prompt alerts: HTTP {resp.status}", level="warn")
+        except Exception as e:
+            self._log(f"Error loading prompt alerts: {e}", level="warn")
+
+    def get_prompt_alerts(self) -> List[dict]:
+        """Get all prompt alerts."""
+        return list(self._prompt_alerts.values())
+
+    async def publish_prompt_stage_change(
+        self,
+        alert_id: str,
+        stage: str,
+        reasoning: str,
+        confidence: float
+    ) -> None:
+        """Publish a prompt alert stage change event."""
+        await self._publish_event("prompt_alert_stage_change", {
+            "alertId": alert_id,
+            "stage": stage,
+            "reasoning": reasoning,
+            "confidence": confidence,
+            "timestamp": datetime.now(UTC).isoformat(),
+        })
 
     async def start(self) -> None:
         """Start the alert engine."""
@@ -583,8 +867,13 @@ class AlertEngine:
 
         self._running = True
 
-        # Load alerts from Redis
+        # Record start time
+        from datetime import datetime
+        await self._record_analytics(started_at=datetime.utcnow().isoformat())
+
+        # Load alerts from database
         await self.load_alerts()
+        await self.load_prompt_alerts()
 
         # Start evaluation loops
         self._fast_loop_task = asyncio.create_task(
@@ -592,6 +881,11 @@ class AlertEngine:
         )
         self._slow_loop_task = asyncio.create_task(
             self._slow_loop(), name="alert-slow-loop"
+        )
+
+        # Start sync subscription for real-time updates from Journal service
+        self._sync_task = asyncio.create_task(
+            self._sync_subscription_loop(), name="alert-sync-subscription"
         )
 
         self._log("Alert engine started", emoji="")
@@ -615,7 +909,14 @@ class AlertEngine:
             except asyncio.CancelledError:
                 pass
 
-        # Save all alerts
+        if self._sync_task:
+            self._sync_task.cancel()
+            try:
+                await self._sync_task
+            except asyncio.CancelledError:
+                pass
+
+        # Save all alerts to Redis cache
         for alert in self._alerts.values():
             await self.save_alert(alert)
 

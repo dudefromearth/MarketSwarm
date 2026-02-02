@@ -597,3 +597,362 @@ class Tag:
         d = asdict(self)
         # Booleans stay as booleans for API
         return d
+
+
+# ==================== Alert Models ====================
+
+@dataclass
+class Alert:
+    """A server-side alert for awareness mechanisms.
+
+    Alerts exist to protect attention, support routine, and surface moments
+    worth noticing. They are NOT execution signals - they are awareness mechanisms.
+
+    Intent Classes:
+    - informational: "Something changed" (e.g., price crossed a level)
+    - reflective: "Worth noticing" (e.g., trade closed, pattern recurrence)
+    - protective: "Attention, not action" (e.g., risk envelope degraded)
+    """
+    id: str
+    user_id: int
+
+    # Core fields
+    type: str  # price, debit, profit_target, trailing_stop, ai_theta_gamma, ai_sentiment, ai_risk_zone, time_boundary, trade_closed
+    intent_class: str  # informational, reflective, protective
+    condition: str  # above, below, at, outside_zone, inside_zone
+    target_value: Optional[float] = None
+    behavior: str = 'once_only'  # remove_on_hit, once_only, repeat
+    priority: str = 'medium'  # low, medium, high, critical (internal only, no UX change)
+
+    # Source reference
+    source_type: str = 'symbol'  # strategy, symbol, portfolio
+    source_id: str = ''  # strategy UUID or symbol like "I:SPX"
+
+    # Strategy-specific (nullable)
+    strategy_id: Optional[str] = None
+    entry_debit: Optional[float] = None
+
+    # AI-specific (nullable)
+    min_profit_threshold: Optional[float] = None
+    zone_low: Optional[float] = None
+    zone_high: Optional[float] = None
+    ai_confidence: Optional[float] = None
+    ai_reasoning: Optional[str] = None
+
+    # Trailing stop specific
+    high_water_mark: Optional[float] = None
+
+    # State
+    enabled: bool = True
+    triggered: bool = False
+    trigger_count: int = 0
+    triggered_at: Optional[str] = None
+
+    # Display
+    label: Optional[str] = None
+    color: str = '#3b82f6'  # blue default
+
+    # Timestamps
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new alert ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        d['enabled'] = 1 if d['enabled'] else 0
+        d['triggered'] = 1 if d['triggered'] else 0
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'Alert':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        # Handle MySQL integer booleans
+        if 'enabled' in d:
+            d['enabled'] = bool(d['enabled'])
+        if 'triggered' in d:
+            d['triggered'] = bool(d['triggered'])
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format with camelCase keys."""
+        return {
+            'id': self.id,
+            'userId': self.user_id,
+            'type': self.type,
+            'intentClass': self.intent_class,
+            'condition': self.condition,
+            'targetValue': self.target_value,
+            'behavior': self.behavior,
+            'priority': self.priority,
+            'sourceType': self.source_type,
+            'sourceId': self.source_id,
+            'strategyId': self.strategy_id,
+            'entryDebit': self.entry_debit,
+            'minProfitThreshold': self.min_profit_threshold,
+            'zoneLow': self.zone_low,
+            'zoneHigh': self.zone_high,
+            'aiConfidence': self.ai_confidence,
+            'aiReasoning': self.ai_reasoning,
+            'highWaterMark': self.high_water_mark,
+            'enabled': self.enabled,
+            'triggered': self.triggered,
+            'triggerCount': self.trigger_count,
+            'triggeredAt': self.triggered_at,
+            'label': self.label,
+            'color': self.color,
+            'createdAt': self.created_at,
+            'updatedAt': self.updated_at,
+        }
+
+
+# ==================== Prompt Alert Models ====================
+
+@dataclass
+class PromptAlert:
+    """A prompt-driven strategy alert that uses natural language to define conditions.
+
+    Prompt alerts let traders describe, in natural language, when a strategy stops
+    behaving as designed. AI parses the prompt into semantic zones and evaluates
+    against a captured reference state.
+
+    Stages flow: watching -> update -> warn -> accomplished
+    """
+    id: str
+    user_id: int
+    strategy_id: str
+
+    # Prompt content
+    prompt_text: str
+    prompt_version: int = 1
+
+    # AI-parsed semantic zones (JSON strings)
+    parsed_reference_logic: Optional[str] = None
+    parsed_deviation_logic: Optional[str] = None
+    parsed_evaluation_mode: Optional[str] = None  # regular, threshold, event
+    parsed_stage_thresholds: Optional[str] = None
+
+    # User declarations
+    confidence_threshold: str = 'medium'  # high, medium, low
+
+    # Orchestration
+    orchestration_mode: str = 'parallel'  # parallel, overlapping, sequential
+    orchestration_group_id: Optional[str] = None
+    sequence_order: int = 0
+    activates_after_alert_id: Optional[str] = None
+
+    # State
+    lifecycle_state: str = 'active'  # active, dormant, accomplished
+    current_stage: str = 'watching'  # watching, update, warn, accomplished
+
+    # Last evaluation
+    last_ai_confidence: Optional[float] = None
+    last_ai_reasoning: Optional[str] = None
+    last_evaluation_at: Optional[str] = None
+
+    # Timestamps
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    activated_at: Optional[str] = None
+    accomplished_at: Optional[str] = None
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new prompt alert ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'PromptAlert':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format with camelCase keys."""
+        return {
+            'id': self.id,
+            'userId': self.user_id,
+            'strategyId': self.strategy_id,
+            'promptText': self.prompt_text,
+            'promptVersion': self.prompt_version,
+            'parsedReferenceLogic': json.loads(self.parsed_reference_logic) if self.parsed_reference_logic else None,
+            'parsedDeviationLogic': json.loads(self.parsed_deviation_logic) if self.parsed_deviation_logic else None,
+            'parsedEvaluationMode': self.parsed_evaluation_mode,
+            'parsedStageThresholds': json.loads(self.parsed_stage_thresholds) if self.parsed_stage_thresholds else None,
+            'confidenceThreshold': self.confidence_threshold,
+            'orchestrationMode': self.orchestration_mode,
+            'orchestrationGroupId': self.orchestration_group_id,
+            'sequenceOrder': self.sequence_order,
+            'activatesAfterAlertId': self.activates_after_alert_id,
+            'lifecycleState': self.lifecycle_state,
+            'currentStage': self.current_stage,
+            'lastAiConfidence': self.last_ai_confidence,
+            'lastAiReasoning': self.last_ai_reasoning,
+            'lastEvaluationAt': self.last_evaluation_at,
+            'createdAt': self.created_at,
+            'updatedAt': self.updated_at,
+            'activatedAt': self.activated_at,
+            'accomplishedAt': self.accomplished_at,
+        }
+
+
+@dataclass
+class PromptAlertVersion:
+    """Version history for prompt alert edits (silent versioning)."""
+    id: str
+    prompt_alert_id: str
+    version: int
+    prompt_text: str
+    parsed_zones: Optional[str] = None  # JSON snapshot of all parsed zones
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new version ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'PromptAlertVersion':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'promptAlertId': self.prompt_alert_id,
+            'version': self.version,
+            'promptText': self.prompt_text,
+            'parsedZones': json.loads(self.parsed_zones) if self.parsed_zones else None,
+            'createdAt': self.created_at,
+        }
+
+
+@dataclass
+class ReferenceStateSnapshot:
+    """A captured RiskGraph state at prompt alert creation or sequential activation.
+
+    This snapshot serves as the baseline against which deviations are measured.
+    """
+    id: str
+    prompt_alert_id: str
+
+    # Greeks
+    delta: Optional[float] = None
+    gamma: Optional[float] = None
+    theta: Optional[float] = None
+
+    # P&L
+    expiration_breakevens: Optional[str] = None  # JSON array
+    theoretical_breakevens: Optional[str] = None  # JSON array
+    max_profit: Optional[float] = None
+    max_loss: Optional[float] = None
+    pnl_at_spot: Optional[float] = None
+
+    # Market
+    spot_price: Optional[float] = None
+    vix: Optional[float] = None
+    market_regime: Optional[str] = None
+
+    # Strategy
+    dte: Optional[int] = None
+    debit: Optional[float] = None
+    strike: Optional[float] = None
+    width: Optional[int] = None
+    side: Optional[str] = None
+
+    captured_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new snapshot ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'ReferenceStateSnapshot':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'promptAlertId': self.prompt_alert_id,
+            'delta': self.delta,
+            'gamma': self.gamma,
+            'theta': self.theta,
+            'expirationBreakevens': json.loads(self.expiration_breakevens) if self.expiration_breakevens else None,
+            'theoreticalBreakevens': json.loads(self.theoretical_breakevens) if self.theoretical_breakevens else None,
+            'maxProfit': self.max_profit,
+            'maxLoss': self.max_loss,
+            'pnlAtSpot': self.pnl_at_spot,
+            'spotPrice': self.spot_price,
+            'vix': self.vix,
+            'marketRegime': self.market_regime,
+            'dte': self.dte,
+            'debit': self.debit,
+            'strike': self.strike,
+            'width': self.width,
+            'side': self.side,
+            'capturedAt': self.captured_at,
+        }
+
+
+@dataclass
+class PromptAlertTrigger:
+    """Historical record of prompt alert stage transitions."""
+    id: str
+    prompt_alert_id: str
+    version_at_trigger: int
+    stage: str  # watching, update, warn, accomplished
+    ai_confidence: Optional[float] = None
+    ai_reasoning: Optional[str] = None
+    market_snapshot: Optional[str] = None  # JSON snapshot of market state
+    triggered_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new trigger ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'PromptAlertTrigger':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'promptAlertId': self.prompt_alert_id,
+            'versionAtTrigger': self.version_at_trigger,
+            'stage': self.stage,
+            'aiConfidence': self.ai_confidence,
+            'aiReasoning': self.ai_reasoning,
+            'marketSnapshot': json.loads(self.market_snapshot) if self.market_snapshot else None,
+            'triggeredAt': self.triggered_at,
+        }

@@ -10,14 +10,15 @@ from datetime import datetime
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint, Symbol, Setting,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
-    PlaybookEntry, PlaybookSourceRef, Tag
+    PlaybookEntry, PlaybookSourceRef, Tag, Alert,
+    PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger
 )
 
 
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 8
+    SCHEMA_VERSION = 10
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -190,6 +191,12 @@ class JournalDBv2:
 
             if current_version < 8:
                 self._migrate_to_v8(conn)
+
+            if current_version < 9:
+                self._migrate_to_v9(conn)
+
+            if current_version < 10:
+                self._migrate_to_v10(conn)
 
             conn.commit()
         finally:
@@ -593,12 +600,201 @@ class JournalDBv2:
                 AND column_name = 'tags'
             """)
             if cursor.fetchone()[0] == 0:
+                # MySQL doesn't allow DEFAULT on TEXT columns
                 cursor.execute("""
                     ALTER TABLE journal_entries
-                    ADD COLUMN tags TEXT DEFAULT '[]'
+                    ADD COLUMN tags TEXT
                 """)
 
             self._set_schema_version(conn, 8)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v9(self, conn):
+        """Migrate to v9: Add alerts table for server-side alert persistence."""
+        cursor = conn.cursor()
+        try:
+            if not self._table_exists(conn, 'alerts'):
+                cursor.execute("""
+                    CREATE TABLE alerts (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+
+                        -- Core fields
+                        type VARCHAR(50) NOT NULL,
+                        intent_class VARCHAR(20) NOT NULL,
+                        `condition` VARCHAR(20) NOT NULL,
+                        target_value DECIMAL(12, 4),
+                        behavior VARCHAR(20) DEFAULT 'once_only',
+                        priority VARCHAR(20) DEFAULT 'medium',
+
+                        -- Source reference
+                        source_type VARCHAR(20) NOT NULL,
+                        source_id VARCHAR(100) NOT NULL,
+
+                        -- Strategy-specific (nullable)
+                        strategy_id VARCHAR(36),
+                        entry_debit DECIMAL(10, 2),
+
+                        -- AI-specific (nullable)
+                        min_profit_threshold DECIMAL(5, 2),
+                        zone_low DECIMAL(12, 4),
+                        zone_high DECIMAL(12, 4),
+                        ai_confidence DECIMAL(3, 2),
+                        ai_reasoning TEXT,
+
+                        -- Trailing stop specific
+                        high_water_mark DECIMAL(12, 4),
+
+                        -- State
+                        enabled TINYINT DEFAULT 1,
+                        triggered TINYINT DEFAULT 0,
+                        trigger_count INT DEFAULT 0,
+                        triggered_at VARCHAR(32),
+
+                        -- Display
+                        label VARCHAR(100),
+                        color VARCHAR(20) DEFAULT '#3b82f6',
+
+                        -- Timestamps
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+                        updated_at VARCHAR(32) DEFAULT (NOW()),
+
+                        INDEX idx_alerts_user (user_id),
+                        INDEX idx_alerts_user_enabled (user_id, enabled),
+                        INDEX idx_alerts_source (source_type, source_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 9)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v10(self, conn):
+        """Migrate to v10: Add prompt alert tables for prompt-driven strategy alerts."""
+        cursor = conn.cursor()
+        try:
+            # Create prompt_alerts table
+            if not self._table_exists(conn, 'prompt_alerts'):
+                cursor.execute("""
+                    CREATE TABLE prompt_alerts (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+                        strategy_id VARCHAR(36) NOT NULL,
+
+                        -- Prompt content
+                        prompt_text TEXT NOT NULL,
+                        prompt_version INT DEFAULT 1,
+
+                        -- AI-parsed semantic zones (JSON)
+                        parsed_reference_logic TEXT,
+                        parsed_deviation_logic TEXT,
+                        parsed_evaluation_mode VARCHAR(20),
+                        parsed_stage_thresholds TEXT,
+
+                        -- User declarations
+                        confidence_threshold ENUM('high', 'medium', 'low') DEFAULT 'medium',
+
+                        -- Orchestration
+                        orchestration_mode ENUM('parallel', 'overlapping', 'sequential') DEFAULT 'parallel',
+                        orchestration_group_id VARCHAR(36),
+                        sequence_order INT DEFAULT 0,
+                        activates_after_alert_id VARCHAR(36),
+
+                        -- State
+                        lifecycle_state ENUM('active', 'dormant', 'accomplished') DEFAULT 'active',
+                        current_stage ENUM('watching', 'update', 'warn', 'accomplished') DEFAULT 'watching',
+
+                        -- Last evaluation
+                        last_ai_confidence DECIMAL(3,2),
+                        last_ai_reasoning TEXT,
+                        last_evaluation_at VARCHAR(32),
+
+                        -- Timestamps
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+                        updated_at VARCHAR(32) DEFAULT (NOW()),
+                        activated_at VARCHAR(32),
+                        accomplished_at VARCHAR(32),
+
+                        INDEX idx_prompt_alerts_user (user_id),
+                        INDEX idx_prompt_alerts_strategy (strategy_id),
+                        INDEX idx_prompt_alerts_lifecycle (lifecycle_state),
+                        INDEX idx_prompt_alerts_group (orchestration_group_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create prompt_alert_versions table (silent versioning)
+            if not self._table_exists(conn, 'prompt_alert_versions'):
+                cursor.execute("""
+                    CREATE TABLE prompt_alert_versions (
+                        id VARCHAR(36) PRIMARY KEY,
+                        prompt_alert_id VARCHAR(36) NOT NULL,
+                        version INT NOT NULL,
+                        prompt_text TEXT NOT NULL,
+                        parsed_zones TEXT,
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+
+                        UNIQUE INDEX idx_version_unique (prompt_alert_id, version),
+                        INDEX idx_versions_alert (prompt_alert_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create reference_state_snapshots table (RiskGraph capture)
+            if not self._table_exists(conn, 'reference_state_snapshots'):
+                cursor.execute("""
+                    CREATE TABLE reference_state_snapshots (
+                        id VARCHAR(36) PRIMARY KEY,
+                        prompt_alert_id VARCHAR(36) NOT NULL,
+
+                        -- Greeks
+                        delta DECIMAL(10,4),
+                        gamma DECIMAL(10,6),
+                        theta DECIMAL(10,4),
+
+                        -- P&L
+                        expiration_breakevens TEXT,
+                        theoretical_breakevens TEXT,
+                        max_profit DECIMAL(12,2),
+                        max_loss DECIMAL(12,2),
+                        pnl_at_spot DECIMAL(12,2),
+
+                        -- Market
+                        spot_price DECIMAL(12,4),
+                        vix DECIMAL(6,2),
+                        market_regime VARCHAR(20),
+
+                        -- Strategy
+                        dte INT,
+                        debit DECIMAL(10,2),
+                        strike DECIMAL(12,2),
+                        width INT,
+                        side VARCHAR(10),
+
+                        captured_at VARCHAR(32) DEFAULT (NOW()),
+
+                        INDEX idx_snapshots_alert (prompt_alert_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create prompt_alert_triggers table (history)
+            if not self._table_exists(conn, 'prompt_alert_triggers'):
+                cursor.execute("""
+                    CREATE TABLE prompt_alert_triggers (
+                        id VARCHAR(36) PRIMARY KEY,
+                        prompt_alert_id VARCHAR(36) NOT NULL,
+                        version_at_trigger INT,
+                        stage VARCHAR(20),
+                        ai_confidence DECIMAL(3,2),
+                        ai_reasoning TEXT,
+                        market_snapshot TEXT,
+                        triggered_at VARCHAR(32) DEFAULT (NOW()),
+
+                        INDEX idx_triggers_alert (prompt_alert_id),
+                        INDEX idx_triggers_time (triggered_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 10)
         finally:
             cursor.close()
 
@@ -1393,6 +1589,432 @@ class JournalDBv2:
         try:
             cursor.execute("SELECT COUNT(*) FROM tags WHERE user_id = %s", (user_id,))
             return cursor.fetchone()[0]
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Alerts ====================
+
+    def list_alerts(
+        self,
+        user_id: int,
+        enabled: Optional[bool] = None,
+        alert_type: Optional[str] = None,
+        source_id: Optional[str] = None,
+        triggered: Optional[bool] = None
+    ) -> List[Alert]:
+        """List alerts for a user with optional filters."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM alerts WHERE user_id = %s"
+            params: List[Any] = [user_id]
+
+            if enabled is not None:
+                query += " AND enabled = %s"
+                params.append(1 if enabled else 0)
+
+            if alert_type:
+                query += " AND type = %s"
+                params.append(alert_type)
+
+            if source_id:
+                query += " AND source_id = %s"
+                params.append(source_id)
+
+            if triggered is not None:
+                query += " AND triggered = %s"
+                params.append(1 if triggered else 0)
+
+            query += " ORDER BY created_at DESC"
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [Alert.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_alert(self, alert_id: str) -> Optional[Alert]:
+        """Get a single alert by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM alerts WHERE id = %s", (alert_id,))
+            row = cursor.fetchone()
+            if row:
+                return Alert.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_alert(self, alert: Alert) -> Alert:
+        """Create a new alert."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = alert.to_dict()
+            columns = ', '.join(f'`{k}`' if k == 'condition' else k for k in data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO alerts ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return alert
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_alert(self, alert_id: str, updates: Dict[str, Any]) -> Optional[Alert]:
+        """Update an alert with the given fields."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Prevent updating immutable fields
+            immutable = {'id', 'user_id', 'created_at'}
+            updates = {k: v for k, v in updates.items() if k not in immutable}
+
+            if not updates:
+                return self.get_alert(alert_id)
+
+            updates['updated_at'] = datetime.utcnow().isoformat()
+
+            # Handle boolean conversions
+            if 'enabled' in updates:
+                updates['enabled'] = 1 if updates['enabled'] else 0
+            if 'triggered' in updates:
+                updates['triggered'] = 1 if updates['triggered'] else 0
+
+            set_clause = ', '.join(
+                f'`{k}` = %s' if k == 'condition' else f'{k} = %s'
+                for k in updates.keys()
+            )
+            params = list(updates.values()) + [alert_id]
+
+            cursor.execute(
+                f"UPDATE alerts SET {set_clause} WHERE id = %s",
+                params
+            )
+            conn.commit()
+            return self.get_alert(alert_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_alert(self, alert_id: str) -> bool:
+        """Delete an alert."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM alerts WHERE id = %s", (alert_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def reset_alert(self, alert_id: str) -> Optional[Alert]:
+        """Reset an alert's trigger state (for repeat or manual reset)."""
+        return self.update_alert(alert_id, {
+            'triggered': False,
+            'triggered_at': None
+        })
+
+    def get_all_enabled_alerts(self) -> List[Alert]:
+        """Get all enabled alerts (for Copilot evaluation engine)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM alerts WHERE enabled = 1 ORDER BY priority DESC, created_at ASC"
+            )
+            rows = cursor.fetchall()
+            return [Alert.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Prompt Alerts ====================
+
+    def list_prompt_alerts(
+        self,
+        user_id: int,
+        strategy_id: Optional[str] = None,
+        lifecycle_state: Optional[str] = None,
+        orchestration_group_id: Optional[str] = None
+    ) -> List[PromptAlert]:
+        """List prompt alerts for a user with optional filters."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM prompt_alerts WHERE user_id = %s"
+            params: List[Any] = [user_id]
+
+            if strategy_id:
+                query += " AND strategy_id = %s"
+                params.append(strategy_id)
+
+            if lifecycle_state:
+                query += " AND lifecycle_state = %s"
+                params.append(lifecycle_state)
+
+            if orchestration_group_id:
+                query += " AND orchestration_group_id = %s"
+                params.append(orchestration_group_id)
+
+            query += " ORDER BY created_at DESC"
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [PromptAlert.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_prompt_alert(self, alert_id: str) -> Optional[PromptAlert]:
+        """Get a single prompt alert by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM prompt_alerts WHERE id = %s", (alert_id,))
+            row = cursor.fetchone()
+            if row:
+                return PromptAlert.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_prompt_alert(self, alert: PromptAlert) -> PromptAlert:
+        """Create a new prompt alert."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = alert.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO prompt_alerts ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return alert
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_prompt_alert(self, alert_id: str, updates: Dict[str, Any]) -> Optional[PromptAlert]:
+        """Update a prompt alert with the given fields."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Prevent updating immutable fields
+            immutable = {'id', 'user_id', 'created_at'}
+            updates = {k: v for k, v in updates.items() if k not in immutable}
+
+            if not updates:
+                return self.get_prompt_alert(alert_id)
+
+            updates['updated_at'] = datetime.utcnow().isoformat()
+
+            set_clause = ', '.join(f'{k} = %s' for k in updates.keys())
+            params = list(updates.values()) + [alert_id]
+
+            cursor.execute(
+                f"UPDATE prompt_alerts SET {set_clause} WHERE id = %s",
+                params
+            )
+            conn.commit()
+            return self.get_prompt_alert(alert_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_prompt_alert(self, alert_id: str) -> bool:
+        """Delete a prompt alert and its related records."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Delete related records first
+            cursor.execute("DELETE FROM prompt_alert_triggers WHERE prompt_alert_id = %s", (alert_id,))
+            cursor.execute("DELETE FROM reference_state_snapshots WHERE prompt_alert_id = %s", (alert_id,))
+            cursor.execute("DELETE FROM prompt_alert_versions WHERE prompt_alert_id = %s", (alert_id,))
+            cursor.execute("DELETE FROM prompt_alerts WHERE id = %s", (alert_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_active_prompt_alerts(self) -> List[PromptAlert]:
+        """Get all active prompt alerts (for Copilot evaluation engine)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM prompt_alerts WHERE lifecycle_state = 'active' ORDER BY created_at ASC"
+            )
+            rows = cursor.fetchall()
+            return [PromptAlert.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_prompt_alerts_for_strategy(self, strategy_id: str) -> List[PromptAlert]:
+        """Get all prompt alerts for a specific strategy."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM prompt_alerts WHERE strategy_id = %s ORDER BY sequence_order ASC, created_at ASC",
+                (strategy_id,)
+            )
+            rows = cursor.fetchall()
+            return [PromptAlert.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def set_prompt_alerts_dormant_for_strategy(self, strategy_id: str) -> int:
+        """Set all active prompt alerts for a strategy to dormant (when position closes)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE prompt_alerts SET lifecycle_state = 'dormant', updated_at = %s WHERE strategy_id = %s AND lifecycle_state = 'active'",
+                (datetime.utcnow().isoformat(), strategy_id)
+            )
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Prompt Alert Versions ====================
+
+    def create_prompt_alert_version(self, version: PromptAlertVersion) -> PromptAlertVersion:
+        """Create a new prompt alert version record."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = version.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO prompt_alert_versions ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return version
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_prompt_alert_versions(self, prompt_alert_id: str) -> List[PromptAlertVersion]:
+        """Get version history for a prompt alert."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM prompt_alert_versions WHERE prompt_alert_id = %s ORDER BY version DESC",
+                (prompt_alert_id,)
+            )
+            rows = cursor.fetchall()
+            return [PromptAlertVersion.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Reference State Snapshots ====================
+
+    def create_reference_snapshot(self, snapshot: ReferenceStateSnapshot) -> ReferenceStateSnapshot:
+        """Create a new reference state snapshot."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = snapshot.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO reference_state_snapshots ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return snapshot
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_reference_snapshot(self, prompt_alert_id: str) -> Optional[ReferenceStateSnapshot]:
+        """Get the most recent reference snapshot for a prompt alert."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM reference_state_snapshots WHERE prompt_alert_id = %s ORDER BY captured_at DESC LIMIT 1",
+                (prompt_alert_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return ReferenceStateSnapshot.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_all_reference_snapshots(self, prompt_alert_id: str) -> List[ReferenceStateSnapshot]:
+        """Get all reference snapshots for a prompt alert (history)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM reference_state_snapshots WHERE prompt_alert_id = %s ORDER BY captured_at DESC",
+                (prompt_alert_id,)
+            )
+            rows = cursor.fetchall()
+            return [ReferenceStateSnapshot.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Prompt Alert Triggers ====================
+
+    def create_prompt_alert_trigger(self, trigger: PromptAlertTrigger) -> PromptAlertTrigger:
+        """Create a new prompt alert trigger record."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = trigger.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO prompt_alert_triggers ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return trigger
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_prompt_alert_triggers(self, prompt_alert_id: str) -> List[PromptAlertTrigger]:
+        """Get trigger history for a prompt alert."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM prompt_alert_triggers WHERE prompt_alert_id = %s ORDER BY triggered_at DESC",
+                (prompt_alert_id,)
+            )
+            rows = cursor.fetchall()
+            return [PromptAlertTrigger.from_dict(self._row_to_dict(cursor, row)) for row in rows]
         finally:
             cursor.close()
             conn.close()

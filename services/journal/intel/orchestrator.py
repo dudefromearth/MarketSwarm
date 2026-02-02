@@ -14,11 +14,14 @@ from aiohttp import web
 import openpyxl
 from openpyxl.utils import get_column_letter
 
+import redis.asyncio as redis
+
 from .db_v2 import JournalDBv2
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, Symbol, Setting, Tag,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
-    PlaybookEntry, PlaybookSourceRef
+    PlaybookEntry, PlaybookSourceRef, Alert,
+    PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger
 )
 from .analytics_v2 import AnalyticsV2
 from .auth import JournalAuth, require_auth, optional_auth
@@ -34,6 +37,12 @@ class JournalOrchestrator:
         self.db = JournalDBv2(config)
         self.analytics = AnalyticsV2(self.db)
         self.auth = JournalAuth(config, self.db._pool)
+
+        # Redis for alerts sync
+        redis_host = config.get('REDIS_HOST', 'localhost')
+        redis_port = int(config.get('REDIS_PORT', 6379))
+        self._redis: Optional[redis.Redis] = None
+        self._redis_url = f"redis://{redis_host}:{redis_port}"
 
         # Journal attachments storage
         default_path = os.path.join(os.path.dirname(__file__), '..', 'data', 'attachments')
@@ -2543,6 +2552,629 @@ class JournalOrchestrator:
             self.logger.error(f"get_flagged_playbook_material error: {e}")
             return self._error_response(str(e), 500)
 
+    # ==================== Alerts API ====================
+
+    async def _get_redis(self) -> redis.Redis:
+        """Get or create Redis connection."""
+        if self._redis is None:
+            self._redis = redis.from_url(self._redis_url)
+        return self._redis
+
+    async def _publish_alerts_sync(self, action: str, alert_id: str):
+        """Publish alert sync message to Redis for Copilot to reload."""
+        try:
+            r = await self._get_redis()
+            await r.publish('alerts:sync', json.dumps({
+                'action': action,
+                'alert_id': alert_id,
+                'ts': datetime.utcnow().isoformat()
+            }))
+        except Exception as e:
+            self.logger.warn(f"Failed to publish alerts:sync: {e}")
+
+    async def list_alerts(self, request: web.Request) -> web.Response:
+        """GET /api/alerts - List alerts for the current user."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            params = request.query
+            enabled = None
+            if 'enabled' in params:
+                enabled = params.get('enabled', '').lower() == 'true'
+
+            triggered = None
+            if 'triggered' in params:
+                triggered = params.get('triggered', '').lower() == 'true'
+
+            alerts = self.db.list_alerts(
+                user_id=user['id'],
+                enabled=enabled,
+                alert_type=params.get('type'),
+                source_id=params.get('source_id'),
+                triggered=triggered
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': [a.to_api_dict() for a in alerts],
+                'count': len(alerts)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"list_alerts error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_alert(self, request: web.Request) -> web.Response:
+        """GET /api/alerts/:id - Get a single alert."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            alert_id = request.match_info['id']
+            alert = self.db.get_alert(alert_id)
+
+            if not alert:
+                return self._error_response('Alert not found', 404, request)
+
+            if alert.user_id != user['id']:
+                return self._error_response('Alert not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': alert.to_api_dict()
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"get_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def create_alert(self, request: web.Request) -> web.Response:
+        """POST /api/alerts - Create a new alert."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            body = await request.json()
+
+            # Validate required fields
+            if 'type' not in body:
+                return self._error_response('type is required', 400, request)
+            if 'condition' not in body:
+                return self._error_response('condition is required', 400, request)
+
+            # Map intent_class based on type if not provided
+            intent_class = body.get('intentClass', body.get('intent_class'))
+            if not intent_class:
+                alert_type = body['type']
+                if alert_type in ('trade_closed', 'pattern_recurrence'):
+                    intent_class = 'reflective'
+                elif alert_type.startswith('ai_'):
+                    intent_class = 'protective'
+                else:
+                    intent_class = 'informational'
+
+            alert = Alert(
+                id=Alert.new_id(),
+                user_id=user['id'],
+                type=body['type'],
+                intent_class=intent_class,
+                condition=body['condition'],
+                target_value=body.get('targetValue', body.get('target_value')),
+                behavior=body.get('behavior', 'once_only'),
+                priority=body.get('priority', 'medium'),
+                source_type=body.get('sourceType', body.get('source_type', 'symbol')),
+                source_id=body.get('sourceId', body.get('source_id', '')),
+                strategy_id=body.get('strategyId', body.get('strategy_id')),
+                entry_debit=body.get('entryDebit', body.get('entry_debit')),
+                min_profit_threshold=body.get('minProfitThreshold', body.get('min_profit_threshold')),
+                zone_low=body.get('zoneLow', body.get('zone_low')),
+                zone_high=body.get('zoneHigh', body.get('zone_high')),
+                high_water_mark=body.get('highWaterMark', body.get('high_water_mark')),
+                label=body.get('label'),
+                color=body.get('color', '#3b82f6'),
+            )
+
+            created = self.db.create_alert(alert)
+
+            # Publish sync message for Copilot
+            await self._publish_alerts_sync('create', created.id)
+
+            self.logger.info(f"Created alert {created.type} for user {user['id']}", emoji="🔔")
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201, request)
+
+        except Exception as e:
+            self.logger.error(f"create_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def update_alert(self, request: web.Request) -> web.Response:
+        """PATCH /api/alerts/:id - Update an alert."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            alert_id = request.match_info['id']
+            alert = self.db.get_alert(alert_id)
+
+            if not alert:
+                return self._error_response('Alert not found', 404, request)
+
+            if alert.user_id != user['id']:
+                return self._error_response('Alert not found', 404, request)
+
+            body = await request.json()
+
+            # Map camelCase to snake_case for DB
+            updates = {}
+            field_map = {
+                'targetValue': 'target_value',
+                'intentClass': 'intent_class',
+                'sourceType': 'source_type',
+                'sourceId': 'source_id',
+                'strategyId': 'strategy_id',
+                'entryDebit': 'entry_debit',
+                'minProfitThreshold': 'min_profit_threshold',
+                'zoneLow': 'zone_low',
+                'zoneHigh': 'zone_high',
+                'aiConfidence': 'ai_confidence',
+                'aiReasoning': 'ai_reasoning',
+                'highWaterMark': 'high_water_mark',
+                'triggeredAt': 'triggered_at',
+                'triggerCount': 'trigger_count',
+            }
+
+            for key, value in body.items():
+                db_key = field_map.get(key, key)
+                updates[db_key] = value
+
+            updated = self.db.update_alert(alert_id, updates)
+
+            # Publish sync message for Copilot
+            await self._publish_alerts_sync('update', alert_id)
+
+            return self._json_response({
+                'success': True,
+                'data': updated.to_api_dict()
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"update_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def delete_alert(self, request: web.Request) -> web.Response:
+        """DELETE /api/alerts/:id - Delete an alert."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            alert_id = request.match_info['id']
+            alert = self.db.get_alert(alert_id)
+
+            if not alert:
+                return self._error_response('Alert not found', 404, request)
+
+            if alert.user_id != user['id']:
+                return self._error_response('Alert not found', 404, request)
+
+            deleted = self.db.delete_alert(alert_id)
+
+            # Publish sync message for Copilot
+            await self._publish_alerts_sync('delete', alert_id)
+
+            self.logger.info(f"Deleted alert {alert_id}", emoji="🗑️")
+
+            return self._json_response({
+                'success': True,
+                'message': 'Alert deleted'
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"delete_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def reset_alert(self, request: web.Request) -> web.Response:
+        """POST /api/alerts/:id/reset - Reset an alert's trigger state."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            alert_id = request.match_info['id']
+            alert = self.db.get_alert(alert_id)
+
+            if not alert:
+                return self._error_response('Alert not found', 404, request)
+
+            if alert.user_id != user['id']:
+                return self._error_response('Alert not found', 404, request)
+
+            reset = self.db.reset_alert(alert_id)
+
+            # Publish sync message for Copilot
+            await self._publish_alerts_sync('reset', alert_id)
+
+            return self._json_response({
+                'success': True,
+                'data': reset.to_api_dict()
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"reset_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def list_all_alerts_internal(self, request: web.Request) -> web.Response:
+        """GET /api/internal/alerts - List all enabled alerts (for Copilot evaluation).
+
+        This is an internal endpoint for service-to-service communication.
+        No user auth required - only accessible from localhost.
+        """
+        try:
+            # Basic security: only allow from localhost
+            peername = request.transport.get_extra_info('peername')
+            if peername:
+                client_ip = peername[0]
+                if client_ip not in ('127.0.0.1', '::1', 'localhost'):
+                    return self._error_response('Internal endpoint only', 403, request)
+
+            alerts = self.db.get_all_enabled_alerts()
+
+            return self._json_response({
+                'success': True,
+                'data': [a.to_api_dict() for a in alerts],
+                'count': len(alerts)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"list_all_alerts_internal error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    # ==================== Prompt Alerts ====================
+
+    async def _publish_prompt_alerts_sync(self, action: str, alert_id: str):
+        """Publish prompt alert sync message to Redis for Copilot."""
+        try:
+            r = await self._get_redis()
+            await r.publish('prompt_alerts:sync', json.dumps({
+                'action': action,
+                'alert_id': alert_id,
+                'timestamp': datetime.utcnow().isoformat()
+            }))
+        except Exception as e:
+            self.logger.warn(f"Failed to publish prompt_alerts:sync: {e}")
+
+    async def list_prompt_alerts(self, request: web.Request) -> web.Response:
+        """GET /api/prompt-alerts - List prompt alerts for the current user."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            params = request.query
+
+            alerts = self.db.list_prompt_alerts(
+                user_id=user['id'],
+                strategy_id=params.get('strategyId') or params.get('strategy_id'),
+                lifecycle_state=params.get('lifecycleState') or params.get('lifecycle_state'),
+                orchestration_group_id=params.get('groupId') or params.get('orchestration_group_id')
+            )
+
+            # Optionally include reference state for each alert
+            include_reference = params.get('includeReference', '').lower() == 'true'
+            data = []
+            for alert in alerts:
+                alert_dict = alert.to_api_dict()
+                if include_reference:
+                    ref = self.db.get_reference_snapshot(alert.id)
+                    if ref:
+                        alert_dict['referenceState'] = ref.to_api_dict()
+                data.append(alert_dict)
+
+            return self._json_response({
+                'success': True,
+                'data': data,
+                'count': len(data)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"list_prompt_alerts error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_prompt_alert(self, request: web.Request) -> web.Response:
+        """GET /api/prompt-alerts/:id - Get a single prompt alert with history."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            alert_id = request.match_info['id']
+            alert = self.db.get_prompt_alert(alert_id)
+
+            if not alert:
+                return self._error_response('Prompt alert not found', 404, request)
+
+            if alert.user_id != user['id']:
+                return self._error_response('Prompt alert not found', 404, request)
+
+            # Get related data
+            reference = self.db.get_reference_snapshot(alert_id)
+            versions = self.db.get_prompt_alert_versions(alert_id)
+            triggers = self.db.get_prompt_alert_triggers(alert_id)
+
+            data = alert.to_api_dict()
+            data['referenceState'] = reference.to_api_dict() if reference else None
+            data['versions'] = [v.to_api_dict() for v in versions]
+            data['triggers'] = [t.to_api_dict() for t in triggers]
+
+            return self._json_response({
+                'success': True,
+                'data': data
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"get_prompt_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def create_prompt_alert(self, request: web.Request) -> web.Response:
+        """POST /api/prompt-alerts - Create a new prompt alert."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            body = await request.json()
+
+            # Validate required fields
+            if 'promptText' not in body and 'prompt_text' not in body:
+                return self._error_response('promptText is required', 400, request)
+            if 'strategyId' not in body and 'strategy_id' not in body:
+                return self._error_response('strategyId is required', 400, request)
+
+            prompt_text = body.get('promptText', body.get('prompt_text', ''))
+            strategy_id = body.get('strategyId', body.get('strategy_id', ''))
+
+            # Create the alert
+            alert = PromptAlert(
+                id=PromptAlert.new_id(),
+                user_id=user['id'],
+                strategy_id=strategy_id,
+                prompt_text=prompt_text,
+                prompt_version=1,
+                confidence_threshold=body.get('confidenceThreshold', body.get('confidence_threshold', 'medium')),
+                orchestration_mode=body.get('orchestrationMode', body.get('orchestration_mode', 'parallel')),
+                orchestration_group_id=body.get('orchestrationGroupId', body.get('orchestration_group_id')),
+                sequence_order=body.get('sequenceOrder', body.get('sequence_order', 0)),
+                activates_after_alert_id=body.get('activatesAfterAlertId', body.get('activates_after_alert_id')),
+            )
+
+            # If parsed zones are provided (from AI parsing), store them
+            if 'parsedReferenceLogic' in body or 'parsed_reference_logic' in body:
+                alert.parsed_reference_logic = json.dumps(
+                    body.get('parsedReferenceLogic', body.get('parsed_reference_logic'))
+                )
+            if 'parsedDeviationLogic' in body or 'parsed_deviation_logic' in body:
+                alert.parsed_deviation_logic = json.dumps(
+                    body.get('parsedDeviationLogic', body.get('parsed_deviation_logic'))
+                )
+            if 'parsedEvaluationMode' in body or 'parsed_evaluation_mode' in body:
+                alert.parsed_evaluation_mode = body.get('parsedEvaluationMode', body.get('parsed_evaluation_mode'))
+            if 'parsedStageThresholds' in body or 'parsed_stage_thresholds' in body:
+                alert.parsed_stage_thresholds = json.dumps(
+                    body.get('parsedStageThresholds', body.get('parsed_stage_thresholds'))
+                )
+
+            created = self.db.create_prompt_alert(alert)
+
+            # Create initial version record
+            version = PromptAlertVersion(
+                id=PromptAlertVersion.new_id(),
+                prompt_alert_id=created.id,
+                version=1,
+                prompt_text=prompt_text,
+                parsed_zones=json.dumps({
+                    'reference_logic': body.get('parsedReferenceLogic', body.get('parsed_reference_logic')),
+                    'deviation_logic': body.get('parsedDeviationLogic', body.get('parsed_deviation_logic')),
+                    'evaluation_mode': body.get('parsedEvaluationMode', body.get('parsed_evaluation_mode')),
+                    'stage_thresholds': body.get('parsedStageThresholds', body.get('parsed_stage_thresholds')),
+                })
+            )
+            self.db.create_prompt_alert_version(version)
+
+            # Create reference state snapshot if provided
+            if 'referenceState' in body or 'reference_state' in body:
+                ref_data = body.get('referenceState', body.get('reference_state', {}))
+                snapshot = ReferenceStateSnapshot(
+                    id=ReferenceStateSnapshot.new_id(),
+                    prompt_alert_id=created.id,
+                    delta=ref_data.get('delta'),
+                    gamma=ref_data.get('gamma'),
+                    theta=ref_data.get('theta'),
+                    expiration_breakevens=json.dumps(ref_data.get('expirationBreakevens')) if ref_data.get('expirationBreakevens') else None,
+                    theoretical_breakevens=json.dumps(ref_data.get('theoreticalBreakevens')) if ref_data.get('theoreticalBreakevens') else None,
+                    max_profit=ref_data.get('maxProfit'),
+                    max_loss=ref_data.get('maxLoss'),
+                    pnl_at_spot=ref_data.get('pnlAtSpot'),
+                    spot_price=ref_data.get('spotPrice'),
+                    vix=ref_data.get('vix'),
+                    market_regime=ref_data.get('marketRegime'),
+                    dte=ref_data.get('dte'),
+                    debit=ref_data.get('debit'),
+                    strike=ref_data.get('strike'),
+                    width=ref_data.get('width'),
+                    side=ref_data.get('side'),
+                )
+                self.db.create_reference_snapshot(snapshot)
+
+            # Publish sync message for Copilot
+            await self._publish_prompt_alerts_sync('create', created.id)
+
+            self.logger.info(f"Created prompt alert for strategy {strategy_id}", emoji="📝")
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201, request)
+
+        except Exception as e:
+            self.logger.error(f"create_prompt_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def update_prompt_alert(self, request: web.Request) -> web.Response:
+        """PATCH /api/prompt-alerts/:id - Update a prompt alert (creates new version if text changes)."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            alert_id = request.match_info['id']
+            alert = self.db.get_prompt_alert(alert_id)
+
+            if not alert:
+                return self._error_response('Prompt alert not found', 404, request)
+
+            if alert.user_id != user['id']:
+                return self._error_response('Prompt alert not found', 404, request)
+
+            body = await request.json()
+
+            # Map camelCase to snake_case
+            updates = {}
+            field_map = {
+                'promptText': 'prompt_text',
+                'confidenceThreshold': 'confidence_threshold',
+                'orchestrationMode': 'orchestration_mode',
+                'orchestrationGroupId': 'orchestration_group_id',
+                'sequenceOrder': 'sequence_order',
+                'activatesAfterAlertId': 'activates_after_alert_id',
+                'lifecycleState': 'lifecycle_state',
+                'currentStage': 'current_stage',
+                'lastAiConfidence': 'last_ai_confidence',
+                'lastAiReasoning': 'last_ai_reasoning',
+                'lastEvaluationAt': 'last_evaluation_at',
+                'parsedReferenceLogic': 'parsed_reference_logic',
+                'parsedDeviationLogic': 'parsed_deviation_logic',
+                'parsedEvaluationMode': 'parsed_evaluation_mode',
+                'parsedStageThresholds': 'parsed_stage_thresholds',
+            }
+
+            prompt_text_changed = False
+            new_prompt_text = None
+
+            for key, value in body.items():
+                db_key = field_map.get(key, key)
+
+                # JSON-encode complex fields
+                if db_key in ('parsed_reference_logic', 'parsed_deviation_logic', 'parsed_stage_thresholds'):
+                    if isinstance(value, dict):
+                        value = json.dumps(value)
+
+                updates[db_key] = value
+
+                # Track if prompt text changed
+                if db_key == 'prompt_text' and value != alert.prompt_text:
+                    prompt_text_changed = True
+                    new_prompt_text = value
+
+            # If prompt text changed, create new version
+            if prompt_text_changed and new_prompt_text:
+                new_version = alert.prompt_version + 1
+                updates['prompt_version'] = new_version
+
+                # Reset stage on prompt edit
+                updates['current_stage'] = 'watching'
+
+                # Create version record
+                version = PromptAlertVersion(
+                    id=PromptAlertVersion.new_id(),
+                    prompt_alert_id=alert_id,
+                    version=new_version,
+                    prompt_text=new_prompt_text,
+                    parsed_zones=json.dumps({
+                        'reference_logic': body.get('parsedReferenceLogic', body.get('parsed_reference_logic')),
+                        'deviation_logic': body.get('parsedDeviationLogic', body.get('parsed_deviation_logic')),
+                        'evaluation_mode': body.get('parsedEvaluationMode', body.get('parsed_evaluation_mode')),
+                        'stage_thresholds': body.get('parsedStageThresholds', body.get('parsed_stage_thresholds')),
+                    })
+                )
+                self.db.create_prompt_alert_version(version)
+
+            updated = self.db.update_prompt_alert(alert_id, updates)
+
+            # Publish sync message for Copilot
+            await self._publish_prompt_alerts_sync('update', alert_id)
+
+            return self._json_response({
+                'success': True,
+                'data': updated.to_api_dict()
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"update_prompt_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def delete_prompt_alert(self, request: web.Request) -> web.Response:
+        """DELETE /api/prompt-alerts/:id - Delete a prompt alert."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            alert_id = request.match_info['id']
+            alert = self.db.get_prompt_alert(alert_id)
+
+            if not alert:
+                return self._error_response('Prompt alert not found', 404, request)
+
+            if alert.user_id != user['id']:
+                return self._error_response('Prompt alert not found', 404, request)
+
+            deleted = self.db.delete_prompt_alert(alert_id)
+
+            # Publish sync message for Copilot
+            await self._publish_prompt_alerts_sync('delete', alert_id)
+
+            self.logger.info(f"Deleted prompt alert {alert_id}", emoji="🗑️")
+
+            return self._json_response({
+                'success': True,
+                'deleted': deleted
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"delete_prompt_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def list_prompt_alerts_internal(self, request: web.Request) -> web.Response:
+        """GET /api/internal/prompt-alerts - List all active prompt alerts (for Copilot evaluation).
+
+        Internal endpoint for service-to-service communication.
+        """
+        try:
+            # Basic security: only allow from localhost
+            peername = request.transport.get_extra_info('peername')
+            if peername:
+                client_ip = peername[0]
+                if client_ip not in ('127.0.0.1', '::1', 'localhost'):
+                    return self._error_response('Internal endpoint only', 403, request)
+
+            alerts = self.db.get_active_prompt_alerts()
+
+            # Include reference states for each alert
+            data = []
+            for alert in alerts:
+                alert_dict = alert.to_api_dict()
+                ref = self.db.get_reference_snapshot(alert.id)
+                if ref:
+                    alert_dict['referenceState'] = ref.to_api_dict()
+                data.append(alert_dict)
+
+            return self._json_response({
+                'success': True,
+                'data': data,
+                'count': len(data)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"list_prompt_alerts_internal error: {e}")
+            return self._error_response(str(e), 500, request)
+
     # ==================== Legacy Endpoints (for backwards compatibility) ====================
 
     async def legacy_list_trades(self, request: web.Request) -> web.Response:
@@ -2783,6 +3415,23 @@ class JournalOrchestrator:
         app.router.add_post('/api/playbook/entries/{id}/sources', self.add_playbook_source)
         app.router.add_delete('/api/playbook/sources/{id}', self.delete_playbook_source)
         app.router.add_get('/api/playbook/flagged-material', self.get_flagged_playbook_material)
+
+        # Alerts
+        app.router.add_get('/api/alerts', self.list_alerts)
+        app.router.add_get('/api/alerts/{id}', self.get_alert)
+        app.router.add_post('/api/alerts', self.create_alert)
+        app.router.add_patch('/api/alerts/{id}', self.update_alert)
+        app.router.add_delete('/api/alerts/{id}', self.delete_alert)
+        app.router.add_post('/api/alerts/{id}/reset', self.reset_alert)
+        app.router.add_get('/api/internal/alerts', self.list_all_alerts_internal)
+
+        # Prompt Alerts
+        app.router.add_get('/api/prompt-alerts', self.list_prompt_alerts)
+        app.router.add_get('/api/prompt-alerts/{id}', self.get_prompt_alert)
+        app.router.add_post('/api/prompt-alerts', self.create_prompt_alert)
+        app.router.add_patch('/api/prompt-alerts/{id}', self.update_prompt_alert)
+        app.router.add_delete('/api/prompt-alerts/{id}', self.delete_prompt_alert)
+        app.router.add_get('/api/internal/prompt-alerts', self.list_prompt_alerts_internal)
 
         # Legacy endpoints (backwards compatibility)
         app.router.add_get('/api/trades', self.legacy_list_trades)

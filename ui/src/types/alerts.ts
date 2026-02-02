@@ -292,3 +292,270 @@ export function isAIAlert(alert: Alert): alert is AIThetaGammaAlert | AISentimen
 export function hasAIReasoning(alert: Alert): boolean {
   return 'aiReasoning' in alert && alert.aiReasoning !== undefined;
 }
+
+// ==================== Prompt Alert Types ====================
+
+/**
+ * Confidence threshold for AI evaluation
+ * Determines how certain the AI must be before triggering stage transitions
+ */
+export type ConfidenceThreshold = 'high' | 'medium' | 'low';
+
+/**
+ * Orchestration mode for multi-prompt relationships
+ */
+export type OrchestrationMode = 'parallel' | 'overlapping' | 'sequential';
+
+/**
+ * Lifecycle state of a prompt alert
+ */
+export type PromptLifecycleState = 'active' | 'dormant' | 'accomplished';
+
+/**
+ * Stage in the prompt alert flow
+ */
+export type PromptStage = 'watching' | 'update' | 'warn' | 'accomplished';
+
+/**
+ * Reference state snapshot captured at alert creation
+ */
+export interface ReferenceStateSnapshot {
+  id: string;
+  promptAlertId: string;
+
+  // Greeks
+  delta?: number;
+  gamma?: number;
+  theta?: number;
+
+  // P&L
+  expirationBreakevens?: number[];
+  theoreticalBreakevens?: number[];
+  maxProfit?: number;
+  maxLoss?: number;
+  pnlAtSpot?: number;
+
+  // Market
+  spotPrice?: number;
+  vix?: number;
+  marketRegime?: string;
+
+  // Strategy
+  dte?: number;
+  debit?: number;
+  strike?: number;
+  width?: number;
+  side?: string;
+
+  capturedAt: string;
+}
+
+/**
+ * Version history record for a prompt alert
+ */
+export interface PromptAlertVersion {
+  id: string;
+  promptAlertId: string;
+  version: number;
+  promptText: string;
+  parsedZones?: {
+    referenceLogic?: Record<string, unknown>;
+    deviationLogic?: Record<string, unknown>;
+    evaluationMode?: string;
+    stageThresholds?: Record<string, unknown>;
+  };
+  createdAt: string;
+}
+
+/**
+ * Trigger history record
+ */
+export interface PromptAlertTrigger {
+  id: string;
+  promptAlertId: string;
+  versionAtTrigger: number;
+  stage: PromptStage;
+  aiConfidence?: number;
+  aiReasoning?: string;
+  marketSnapshot?: Record<string, unknown>;
+  triggeredAt: string;
+}
+
+/**
+ * Parsed semantic zones from AI prompt parsing
+ */
+export interface ParsedPromptZones {
+  referenceLogic?: {
+    metrics: string[];
+    captureFields: string[];
+    notes?: string;
+  };
+  deviationLogic?: {
+    watchFor: string;
+    direction: string;
+    metric: string;
+    comparisonType: string;
+    comparisonTarget: string;
+    notes?: string;
+  };
+  evaluationMode?: 'regular' | 'threshold' | 'event';
+  stageThresholds?: {
+    updateTrigger?: { condition: string; thresholdPercentage?: number };
+    warnTrigger?: { condition: string; thresholdPercentage?: number };
+    accomplishedTrigger?: { condition: string; outcome?: string };
+  };
+}
+
+/**
+ * Prompt-driven strategy alert
+ *
+ * Lets traders describe, in natural language, when a strategy stops
+ * behaving as designed. AI parses the prompt and evaluates against
+ * a captured reference state.
+ */
+export interface PromptAlert {
+  id: string;
+  userId: number;
+  strategyId: string;
+
+  // Prompt content
+  promptText: string;
+  promptVersion: number;
+
+  // AI-parsed semantic zones
+  parsedReferenceLogic?: Record<string, unknown>;
+  parsedDeviationLogic?: Record<string, unknown>;
+  parsedEvaluationMode?: string;
+  parsedStageThresholds?: Record<string, unknown>;
+
+  // User declarations
+  confidenceThreshold: ConfidenceThreshold;
+
+  // Orchestration
+  orchestrationMode: OrchestrationMode;
+  orchestrationGroupId?: string;
+  sequenceOrder: number;
+  activatesAfterAlertId?: string;
+
+  // State
+  lifecycleState: PromptLifecycleState;
+  currentStage: PromptStage;
+
+  // Last evaluation
+  lastAiConfidence?: number;
+  lastAiReasoning?: string;
+  lastEvaluationAt?: string;
+
+  // Timestamps
+  createdAt: string;
+  updatedAt: string;
+  activatedAt?: string;
+  accomplishedAt?: string;
+
+  // Populated by API when requested
+  referenceState?: ReferenceStateSnapshot;
+  versions?: PromptAlertVersion[];
+  triggers?: PromptAlertTrigger[];
+}
+
+/**
+ * Input for creating a new prompt alert
+ */
+export interface CreatePromptAlertInput {
+  strategyId: string;
+  promptText: string;
+  confidenceThreshold?: ConfidenceThreshold;
+  orchestrationMode?: OrchestrationMode;
+  orchestrationGroupId?: string;
+  sequenceOrder?: number;
+  activatesAfterAlertId?: string;
+
+  // Parsed zones (from AI parsing)
+  parsedReferenceLogic?: Record<string, unknown>;
+  parsedDeviationLogic?: Record<string, unknown>;
+  parsedEvaluationMode?: string;
+  parsedStageThresholds?: Record<string, unknown>;
+
+  // Reference state snapshot
+  referenceState?: Partial<ReferenceStateSnapshot>;
+}
+
+/**
+ * Input for editing a prompt alert
+ */
+export interface EditPromptAlertInput {
+  promptText?: string;
+  confidenceThreshold?: ConfidenceThreshold;
+  orchestrationMode?: OrchestrationMode;
+  orchestrationGroupId?: string;
+  sequenceOrder?: number;
+  activatesAfterAlertId?: string;
+  lifecycleState?: PromptLifecycleState;
+  currentStage?: PromptStage;
+
+  // Parsed zones (re-parsed if text changes)
+  parsedReferenceLogic?: Record<string, unknown>;
+  parsedDeviationLogic?: Record<string, unknown>;
+  parsedEvaluationMode?: string;
+  parsedStageThresholds?: Record<string, unknown>;
+}
+
+/**
+ * Prompt alert stage change SSE event
+ */
+export interface PromptAlertStageChangeEvent {
+  alertId: string;
+  stage: PromptStage;
+  reasoning: string;
+  confidence: number;
+  timestamp: string;
+}
+
+/**
+ * Stage styling configuration
+ */
+export const PROMPT_STAGE_STYLES: Record<PromptStage, {
+  color: string;
+  bgColor: string;
+  icon: string;
+  label: string;
+}> = {
+  watching: {
+    color: '#9ca3af',
+    bgColor: '#1f2937',
+    icon: '👁️',
+    label: 'Watching',
+  },
+  update: {
+    color: '#3b82f6',
+    bgColor: '#1e3a5f',
+    icon: '📊',
+    label: 'Update',
+  },
+  warn: {
+    color: '#f59e0b',
+    bgColor: '#78350f',
+    icon: '⚠️',
+    label: 'Warning',
+  },
+  accomplished: {
+    color: '#22c55e',
+    bgColor: '#14532d',
+    icon: '✓',
+    label: 'Accomplished',
+  },
+};
+
+/**
+ * Check if a prompt alert is actionable (not dormant/accomplished)
+ */
+export function isPromptAlertActive(alert: PromptAlert): boolean {
+  return alert.lifecycleState === 'active';
+}
+
+/**
+ * Get stage display info
+ */
+export function getPromptStageInfo(stage: PromptStage) {
+  return PROMPT_STAGE_STYLES[stage];
+}

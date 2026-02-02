@@ -3,12 +3,16 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
+import type { PromptStage } from '../types/alerts';
+import { PROMPT_STAGE_STYLES } from '../types/alerts';
+import '../styles/prompt-alert.css';
 
 interface ObserverMessage {
   id: string;
-  type: 'vexy' | 'alert';
+  type: 'vexy' | 'alert' | 'prompt_alert';
   kind?: 'epoch' | 'event';  // For vexy messages
   alertType?: string;        // For alerts: 'triggered', 'added', etc.
+  promptStage?: PromptStage; // For prompt alerts
   text: string;
   ts: string;
   meta?: Record<string, unknown>;
@@ -130,6 +134,31 @@ export default function ObserverPanel() {
       }
     });
 
+    // Prompt alert stage changes
+    es.addEventListener('prompt_alert_stage_change', (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        const stage = data.stage as PromptStage;
+        const stageInfo = PROMPT_STAGE_STYLES[stage];
+        const msg: ObserverMessage = {
+          id: `prompt-${data.alertId}-${Date.now()}`,
+          type: 'prompt_alert',
+          promptStage: stage,
+          text: data.reasoning || `Stage changed to ${stageInfo.label}`,
+          ts: data.timestamp || new Date().toISOString(),
+          meta: {
+            alertId: data.alertId,
+            stage: data.stage,
+            confidence: data.confidence,
+            reasoning: data.reasoning,
+          },
+        };
+        setMessages((prev) => [...prev, msg].slice(-100));
+      } catch (err) {
+        console.error('[Observer] Prompt alert parse error', err);
+      }
+    });
+
     return () => es.close();
   }, []);
 
@@ -138,10 +167,18 @@ export default function ObserverPanel() {
   };
 
   const getIcon = (msg: ObserverMessage) => {
+    if (msg.type === 'prompt_alert' && msg.promptStage) {
+      return PROMPT_STAGE_STYLES[msg.promptStage].icon;
+    }
     if (msg.type === 'alert') {
       return msg.alertType === 'triggered' ? '🔔' : '➕';
     }
     return msg.kind === 'epoch' ? '🎙️' : '💥';
+  };
+
+  const getPromptStageClass = (stage?: PromptStage) => {
+    if (!stage) return '';
+    return `prompt-stage-${stage}`;
   };
 
   const connected = vexyConnected || alertsConnected;
@@ -176,7 +213,7 @@ export default function ObserverPanel() {
         {messages.map((msg) => (
           <div
             key={msg.id}
-            className={`commentary-msg commentary-${msg.type === 'alert' ? 'alert' : msg.kind}`}
+            className={`commentary-msg commentary-${msg.type === 'alert' ? 'alert' : msg.type === 'prompt_alert' ? 'prompt-alert' : msg.kind} ${msg.type === 'prompt_alert' ? getPromptStageClass(msg.promptStage) : ''}`}
           >
             <div className="commentary-msg-header">
               <span className="commentary-category-icon">{getIcon(msg)}</span>
@@ -186,9 +223,28 @@ export default function ObserverPanel() {
               {msg.type === 'alert' && (
                 <span className="commentary-alert-label">Alert</span>
               )}
+              {msg.type === 'prompt_alert' && msg.promptStage && (
+                <span className={`prompt-stage-badge ${msg.promptStage}`}>
+                  {PROMPT_STAGE_STYLES[msg.promptStage].label}
+                </span>
+              )}
               <span className="commentary-time">{formatTime(msg.ts)}</span>
             </div>
             <div className="commentary-text">{msg.text}</div>
+            {msg.type === 'prompt_alert' && msg.meta?.confidence != null && (
+              <div className="observer-prompt-meta">
+                <div className="observer-prompt-confidence">
+                  <span>Confidence:</span>
+                  <div className="observer-prompt-confidence-bar">
+                    <div
+                      className="observer-prompt-confidence-fill"
+                      style={{ width: `${(msg.meta.confidence as number) * 100}%` }}
+                    />
+                  </div>
+                  <span>{((msg.meta.confidence as number) * 100).toFixed(0)}%</span>
+                </div>
+              </div>
+            )}
           </div>
         ))}
         <div ref={messagesEndRef} />

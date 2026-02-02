@@ -607,16 +607,22 @@ Find the nearest {zone_type} zone boundaries."""
             )
 
 
-def create_all_evaluators(ai_manager: Optional[AIProviderManager] = None) -> list:
+def create_all_evaluators(ai_manager: Optional[AIProviderManager] = None, logger=None) -> list:
     """
     Factory function to create all evaluators.
 
     Args:
         ai_manager: AI provider manager for AI-powered evaluators
+        logger: Optional logger for evaluators
 
     Returns:
         List of all evaluator instances
     """
+    from .prompt_evaluator import PromptDrivenEvaluator
+    from .reference_state_capture import ReferenceStateCaptureService
+
+    reference_service = ReferenceStateCaptureService(logger)
+
     return [
         PriceEvaluator(),
         DebitEvaluator(),
@@ -625,4 +631,5 @@ def create_all_evaluators(ai_manager: Optional[AIProviderManager] = None) -> lis
         AIThetaGammaEvaluator(ai_manager),
         AISentimentEvaluator(ai_manager),
         AIRiskZoneEvaluator(ai_manager),
+        PromptDrivenEvaluator(ai_manager, reference_service, logger),
     ]

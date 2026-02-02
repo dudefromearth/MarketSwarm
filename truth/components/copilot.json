@@ -7,7 +7,8 @@
   "access_points": {
     "subscribe_to": [
       { "bus": "market-redis", "key": "massive:spot", "description": "Live spot prices for SPX/NDX/VIX" },
-      { "bus": "market-redis", "key": "massive:heatmap:model:{symbol}:latest", "description": "Heatmap tile data" }
+      { "bus": "market-redis", "key": "massive:heatmap:model:{symbol}:latest", "description": "Heatmap tile data" },
+      { "bus": "system-redis", "key": "alerts:sync", "description": "Alert sync notifications from Journal" }
     ],
     "publish_to": [
       { "bus": "system-redis", "key": "copilot:heartbeat", "description": "Service heartbeat" },
@@ -17,7 +18,8 @@
       { "bus": "market-redis", "key": "copilot:commentary:message", "description": "AI commentary messages" },
       { "bus": "market-redis", "key": "copilot:alerts:events", "description": "Real-time alert trigger/update events (pub/sub)" },
       { "bus": "market-redis", "key": "copilot:alerts:latest", "description": "Latest alert state snapshot" },
-      { "bus": "market-redis", "key": "copilot:alerts:{id}", "description": "Individual alert data by ID" }
+      { "bus": "market-redis", "key": "copilot:alerts:{id}", "description": "Individual alert data by ID" },
+      { "bus": "intel-redis", "key": "copilot:alerts:analytics", "description": "Alert engine analytics and metrics" }
     ]
   },
   "heartbeat": {
@@ -53,7 +55,8 @@
     "COPILOT_ALERTS_FAST_LOOP_MS": "1000",
     "COPILOT_ALERTS_SLOW_LOOP_MS": "5000",
     "DEBUG_COPILOT": "false",
-    "OPENAI_API_KEY": ""
+    "OPENAI_API_KEY": "",
+    "CONVEXITY_ASSISTANT_ID": "asst_yNLi7GCN2q2TkixGLiDYLxwP"
   },
   "mel": {
     "weights": {
@@ -80,14 +83,15 @@
     "rateLimitPerMinute": 10
   },
   "alerts": {
-    "provider": "anthropic",
+    "provider": "openai",
     "fastLoopIntervalMs": 1000,
     "slowLoopIntervalMs": 5000,
     "maxAlertsPerUser": 50,
     "keys": {
       "events": "copilot:alerts:events",
       "latest": "copilot:alerts:latest",
-      "alertPrefix": "copilot:alerts"
+      "alertPrefix": "copilot:alerts",
+      "analytics": "copilot:alerts:analytics"
     },
     "roleGating": {
       "price": ["free", "basic", "premium", "admin"],

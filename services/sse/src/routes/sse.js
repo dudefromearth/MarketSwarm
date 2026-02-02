@@ -538,18 +538,21 @@ export function subscribeVexyPubSub() {
   const keys = getKeys();
   const vexyChannel = keys.vexyChannel();
 
-  sub.subscribe(vexyChannel, (err) => {
+  console.log(`[sse] Attempting to subscribe to ${vexyChannel} on market-redis...`);
+  sub.subscribe(vexyChannel, (err, count) => {
     if (err) {
       console.error(`[sse] Failed to subscribe to ${vexyChannel}:`, err.message);
     } else {
-      console.log(`[sse] Subscribed to ${vexyChannel}`);
+      console.log(`[sse] Subscribed to ${vexyChannel} (${count} total subscriptions)`);
     }
   });
 
   sub.on("message", (channel, message) => {
+    console.log(`[sse] pub/sub message on channel: ${channel}`);
     if (channel === vexyChannel) {
       try {
         const data = JSON.parse(message);
+        console.log(`[sse] vexy pub/sub received: kind=${data.kind}, clients=${clients.vexy.size}`);
         // Merge into modelState based on kind
         if (data.kind === "epoch") {
           modelState.vexy = { ...modelState.vexy, epoch: data };

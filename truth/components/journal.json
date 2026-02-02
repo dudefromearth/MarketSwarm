@@ -6,10 +6,12 @@
   },
   "access_points": {
     "subscribe_to": [
-      { "bus": "market-redis", "key": "massive:spot" }
+      { "bus": "market-redis", "key": "massive:spot", "description": "Live spot prices" },
+      { "bus": "intel-redis", "key": "copilot:alerts:analytics", "description": "Alert analytics from Copilot for collection" }
     ],
     "publish_to": [
-      { "bus": "system-redis", "key": "journal:heartbeat" }
+      { "bus": "system-redis", "key": "journal:heartbeat", "description": "Service heartbeat" },
+      { "bus": "system-redis", "key": "alerts:sync", "description": "Alert sync notifications to Copilot" }
     ]
   },
   "heartbeat": {
