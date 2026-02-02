@@ -346,7 +346,7 @@ class CopilotOrchestrator:
 
         ai_config = AIProviderConfig(
             provider=commentary_settings.get("provider", "anthropic"),
-            api_key=os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+            api_key=self.config.get("OPENAI_API_KEY") or self.config.get("ANTHROPIC_API_KEY"),
             model=None,  # Use provider default
         )
 
@@ -384,7 +384,7 @@ class CopilotOrchestrator:
         # Setup AI provider manager for AI-powered alerts
         ai_config = AIProviderConfig(
             provider=alerts_settings.get("provider", "anthropic"),
-            api_key=os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+            api_key=self.config.get("OPENAI_API_KEY") or self.config.get("ANTHROPIC_API_KEY"),
             model=alerts_settings.get("model"),
         )
 

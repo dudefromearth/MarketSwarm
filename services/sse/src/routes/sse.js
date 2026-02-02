@@ -4,6 +4,8 @@
 import { Router } from "express";
 import { getMarketRedis, getMarketRedisSub } from "../redis.js";
 import { getKeys } from "../keys.js";
+import { trackUserConnection, untrackUserConnection } from "./admin.js";
+import { getCurrentUser } from "../auth.js";
 
 const router = Router();
 
@@ -175,6 +177,13 @@ router.get("/all", (req, res) => {
   sseHeaders(res);
   clients.all.add(res);
 
+  // Track user connection for admin stats
+  const sessionId = req.cookies?.ms_session || `anon_${Date.now()}`;
+  const user = getCurrentUser(req);
+  const displayName = user?.wp?.name || "Anonymous";
+  const email = user?.wp?.email || null;
+  trackUserConnection(sessionId, displayName, email);
+
   // Send all current states
   if (modelState.spot) {
     sendEvent(res, "spot", modelState.spot);
@@ -202,6 +211,7 @@ router.get("/all", (req, res) => {
 
   req.on("close", () => {
     clients.all.delete(res);
+    untrackUserConnection(sessionId);
   });
 });
 

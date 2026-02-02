@@ -12,6 +12,7 @@ import { setConfig as setKeyConfig } from "./keys.js";
 import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, subscribeAlertsPubSub, stopPolling, getClientStats } from "./routes/sse.js";
 import modelsRoutes from "./routes/models.js";
 import authRoutes from "./routes/auth.js";
+import adminRoutes from "./routes/admin.js";
 import { authMiddleware, logAuthConfig } from "./auth.js";
 import { initDb, closeDb } from "./db/index.js";
 
@@ -56,6 +57,7 @@ app.get("/api/health", (req, res) => {
 // Mount routes
 app.use("/api/auth", authRoutes);
 app.use("/api", authRoutes); // Also mount for /api/profile/me
+app.use("/api/admin", adminRoutes);
 app.use("/sse", sseRoutes);
 app.use("/api/models", modelsRoutes);
 

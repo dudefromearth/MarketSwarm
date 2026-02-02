@@ -16,6 +16,16 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
         secure: false,
+        // SSE requires no timeout and proper headers
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            proxyReq.setHeader('Connection', 'keep-alive');
+          });
+          proxy.on('proxyRes', (proxyRes) => {
+            proxyRes.headers['Cache-Control'] = 'no-cache';
+            proxyRes.headers['Connection'] = 'keep-alive';
+          });
+        },
       },
     },
   },

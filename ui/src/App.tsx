@@ -102,6 +102,7 @@ interface MarketModeData {
 // User profile for header greeting
 interface UserProfile {
   display_name: string;
+  is_admin: boolean;
 }
 
 // Strategy details for popup/risk graph (side is always 'call' or 'put', never 'both')
@@ -685,7 +686,7 @@ function App() {
       .then(res => res.ok ? res.json() : null)
       .then(data => {
         if (data?.display_name) {
-          setUserProfile({ display_name: data.display_name });
+          setUserProfile({ display_name: data.display_name, is_admin: data.is_admin || false });
         }
       })
       .catch(err => console.error('Failed to fetch user profile:', err));
@@ -840,7 +841,7 @@ function App() {
 
   // SSE connection
   useEffect(() => {
-    const es = new EventSource(`${SSE_BASE}/sse/all`);
+    const es = new EventSource(`${SSE_BASE}/sse/all`, { withCredentials: true });
 
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
@@ -1752,6 +1753,15 @@ function App() {
           >
             Settings
           </button>
+          {userProfile?.is_admin && (
+            <button
+              className="header-admin-btn"
+              onClick={() => window.location.href = '/admin'}
+              title="Admin Panel"
+            >
+              Admin
+            </button>
+          )}
         </div>
         <div className="header-center">
           <div className="underlying-selector">

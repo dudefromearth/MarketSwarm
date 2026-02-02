@@ -52,7 +52,8 @@
     "COPILOT_COMMENTARY_RATE_LIMIT": "10",
     "COPILOT_ALERTS_FAST_LOOP_MS": "1000",
     "COPILOT_ALERTS_SLOW_LOOP_MS": "5000",
-    "DEBUG_COPILOT": "false"
+    "DEBUG_COPILOT": "false",
+    "OPENAI_API_KEY": ""
   },
   "mel": {
     "weights": {

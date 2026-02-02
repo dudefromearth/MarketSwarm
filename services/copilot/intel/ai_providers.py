@@ -169,11 +169,15 @@ class OpenAIProvider(BaseAIProvider):
         for msg in messages:
             api_messages.append({"role": msg.role, "content": msg.content})
 
+        # Allow kwargs to override config defaults
+        max_tokens = kwargs.pop("max_tokens", self.config.max_tokens)
+        temperature = kwargs.pop("temperature", self.config.temperature)
+
         response = await client.chat.completions.create(
             model=self.config.model or "gpt-4-turbo-preview",
             messages=api_messages,
-            max_tokens=self.config.max_tokens,
-            temperature=self.config.temperature,
+            max_tokens=max_tokens,
+            temperature=temperature,
             **kwargs,
         )
 
@@ -294,11 +298,15 @@ class GrokProvider(BaseAIProvider):
         for msg in messages:
             api_messages.append({"role": msg.role, "content": msg.content})
 
+        # Allow kwargs to override config defaults
+        max_tokens = kwargs.pop("max_tokens", self.config.max_tokens)
+        temperature = kwargs.pop("temperature", self.config.temperature)
+
         response = await client.chat.completions.create(
             model=self.config.model or "grok-beta",
             messages=api_messages,
-            max_tokens=self.config.max_tokens,
-            temperature=self.config.temperature,
+            max_tokens=max_tokens,
+            temperature=temperature,
             **kwargs,
         )
 
@@ -349,11 +357,14 @@ class AnthropicProvider(BaseAIProvider):
         for msg in messages:
             api_messages.append({"role": msg.role, "content": msg.content})
 
+        # Allow kwargs to override config defaults
+        max_tokens = kwargs.pop("max_tokens", self.config.max_tokens)
+
         response = await client.messages.create(
             model=self.config.model or "claude-sonnet-4-20250514",
             messages=api_messages,
             system=system_prompt or "",
-            max_tokens=self.config.max_tokens,
+            max_tokens=max_tokens,
             **kwargs,
         )
 

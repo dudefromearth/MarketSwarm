@@ -3,9 +3,10 @@ import { Link } from "react-router-dom";
 
 type Props = {
   displayName?: string | null;
+  isAdmin?: boolean;
 };
 
-export default function SiteHeader({ displayName }: Props) {
+export default function SiteHeader({ displayName, isAdmin }: Props) {
   return (
     <div className="site-header">
       {/* Left — greeting */}
@@ -52,6 +53,11 @@ export default function SiteHeader({ displayName }: Props) {
         >
           My Account
         </a>
+        {isAdmin && (
+          <Link to="/admin" className="site-header-btn site-header-admin-btn">
+            Admin
+          </Link>
+        )}
       </div>
 
       <style>{`
@@ -124,6 +130,18 @@ export default function SiteHeader({ displayName }: Props) {
           background: #fafafa;
           border-color: #a1a1aa;
           color: #18181b;
+        }
+
+        .site-header-admin-btn {
+          background: linear-gradient(135deg, #7c3aed, #6366f1);
+          border-color: #7c3aed;
+          color: #fff;
+        }
+
+        .site-header-admin-btn:hover {
+          background: linear-gradient(135deg, #6d28d9, #4f46e5);
+          border-color: #6d28d9;
+          color: #fff;
         }
       `}</style>
     </div>
