@@ -20,6 +20,22 @@ import type {
 const JOURNAL_API_BASE = 'http://localhost:3002';  // Alert CRUD
 const COPILOT_API_BASE = 'http://localhost:8095';  // AI evaluations
 
+/**
+ * Parse numeric fields from API response (database returns strings for DECIMAL)
+ */
+function parseAlertNumericFields(alert: Alert): Alert {
+  return {
+    ...alert,
+    targetValue: alert.targetValue != null ? Number(alert.targetValue) : undefined,
+    entryDebit: alert.entryDebit != null ? Number(alert.entryDebit) : undefined,
+    minProfitThreshold: alert.minProfitThreshold != null ? Number(alert.minProfitThreshold) : undefined,
+    zoneLow: alert.zoneLow != null ? Number(alert.zoneLow) : undefined,
+    zoneHigh: alert.zoneHigh != null ? Number(alert.zoneHigh) : undefined,
+    aiConfidence: alert.aiConfidence != null ? Number(alert.aiConfidence) : undefined,
+    highWaterMark: alert.highWaterMark != null ? Number(alert.highWaterMark) : undefined,
+  };
+}
+
 // Response wrapper
 interface ApiResponse<T> {
   success: boolean;
@@ -42,7 +58,7 @@ export async function fetchAlerts(): Promise<Alert[]> {
 
     const result: ApiResponse<Alert[]> = await response.json();
     if (result.success && result.data) {
-      return result.data;
+      return result.data.map(parseAlertNumericFields);
     }
     throw new Error(result.error || 'Failed to fetch alerts');
   } catch (err) {
@@ -69,7 +85,7 @@ export async function createAlertApi(input: CreateAlertInput): Promise<Alert> {
 
     const result: ApiResponse<Alert> = await response.json();
     if (result.success && result.data) {
-      return result.data;
+      return parseAlertNumericFields(result.data);
     }
     throw new Error(result.error || 'Failed to create alert');
   } catch (err) {
@@ -96,7 +112,7 @@ export async function updateAlertApi(input: EditAlertInput): Promise<Alert> {
 
     const result: ApiResponse<Alert> = await response.json();
     if (result.success && result.data) {
-      return result.data;
+      return parseAlertNumericFields(result.data);
     }
     throw new Error(result.error || 'Failed to update alert');
   } catch (err) {
@@ -177,7 +193,7 @@ export async function importAlertsApi(alerts: Alert[]): Promise<Alert[]> {
 
     const result: ApiResponse<Alert[]> = await response.json();
     if (result.success && result.data) {
-      return result.data;
+      return result.data.map(parseAlertNumericFields);
     }
     throw new Error(result.error || 'Failed to import alerts');
   } catch (err) {
