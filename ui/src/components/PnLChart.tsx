@@ -385,21 +385,74 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
       }
     });
 
-    // Draw legend
+    // Draw current P&L at spot indicator
+    if (theoreticalData.length > 0) {
+      // Find P&L at spot price
+      let pnlAtSpot: number | null = null;
+      for (let i = 1; i < theoreticalData.length; i++) {
+        const prev = theoreticalData[i - 1];
+        const curr = theoreticalData[i];
+        if (spotPrice >= prev.price && spotPrice <= curr.price) {
+          const t = (spotPrice - prev.price) / (curr.price - prev.price);
+          pnlAtSpot = prev.pnl + t * (curr.pnl - prev.pnl);
+          break;
+        }
+      }
+
+      if (pnlAtSpot !== null && spotX >= PADDING.left && spotX <= width - PADDING.right) {
+        const pnlY = toCanvasY(pnlAtSpot, height);
+        if (pnlY >= PADDING.top && pnlY <= height - PADDING.bottom) {
+          // Draw marker
+          ctx.fillStyle = pnlAtSpot >= 0 ? '#4ade80' : '#f87171';
+          ctx.beginPath();
+          ctx.arc(spotX, pnlY, 6, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#fff';
+          ctx.lineWidth = 2;
+          ctx.stroke();
+
+          // Draw P&L value label
+          const labelText = `${pnlAtSpot >= 0 ? '+' : ''}$${pnlAtSpot.toFixed(0)}`;
+          ctx.font = 'bold 11px monospace';
+          const metrics = ctx.measureText(labelText);
+          const labelPadding = 4;
+          const labelX = spotX + 10;
+          const labelY = pnlY;
+
+          ctx.fillStyle = pnlAtSpot >= 0 ? '#166534' : '#991b1b';
+          ctx.beginPath();
+          ctx.roundRect(
+            labelX - labelPadding,
+            labelY - 8,
+            metrics.width + labelPadding * 2,
+            16,
+            3
+          );
+          ctx.fill();
+
+          ctx.fillStyle = '#fff';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(labelText, labelX, labelY);
+        }
+      }
+    }
+
+    // Draw legend (bottom-left corner, compact)
     ctx.font = '10px monospace';
-    const legendX = width - PADDING.right - 120;
-    const legendY = PADDING.top + 10;
+    const legendX = PADDING.left + 10;
+    const legendY = height - PADDING.bottom - 30;
 
     ctx.fillStyle = '#3b82f6';
     ctx.fillRect(legendX, legendY, 16, 2);
-    ctx.fillStyle = '#888';
+    ctx.fillStyle = '#666';
     ctx.textAlign = 'left';
-    ctx.fillText('Expiration', legendX + 20, legendY + 3);
+    ctx.fillText('At Expiry', legendX + 20, legendY + 3);
 
     ctx.fillStyle = '#e879f9';
-    ctx.fillRect(legendX, legendY + 15, 16, 2);
-    ctx.fillStyle = '#888';
-    ctx.fillText('Current', legendX + 20, legendY + 18);
+    ctx.fillRect(legendX, legendY + 12, 16, 2);
+    ctx.fillStyle = '#666';
+    ctx.fillText('Real-Time', legendX + 20, legendY + 15);
 
   }, [expirationData, theoreticalData, spotPrice, expirationBreakevens, theoreticalBreakevens, strikes, alertLines, toCanvasX, toCanvasY]);
 

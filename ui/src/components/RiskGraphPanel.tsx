@@ -9,9 +9,16 @@
  * - Summary stats (Real-Time P&L, Max Profit, Max Loss)
  */
 
-import { useRef, useMemo, useCallback } from 'react';
+import { useRef, useMemo, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
 import PnLChart, { type PnLChartHandle, type PriceAlertType } from './PnLChart';
-import { useRiskGraphCalculations, type Strategy } from '../hooks/useRiskGraphCalculations';
+import {
+  useRiskGraphCalculations,
+  type Strategy,
+  type MarketRegime,
+  type PricingModel,
+  MARKET_REGIMES,
+  PRICING_MODELS,
+} from '../hooks/useRiskGraphCalculations';
 import { useAlerts } from '../contexts/AlertContext';
 import type {
   AlertType,
@@ -36,6 +43,7 @@ export interface SelectedStrategy {
   dte: number;
   expiration: string;
   debit: number | null;
+  symbol?: string;  // Underlying symbol (SPX, NDX, etc.)
 }
 
 export interface RiskGraphStrategy extends SelectedStrategy {
@@ -104,138 +112,23 @@ export interface RiskGraphPanelProps {
   onSimSpotChange: (offset: number) => void;
   onResetSimulation: () => void;
 
-  // Panel state
-  collapsed: boolean;
-  onToggleCollapse: () => void;
+  // Reflection hook - opens Journal for capturing insights
+  onOpenJournal?: () => void;
+
+  // ToS Import - opens modal to import ToS scripts
+  onImportToS?: () => void;
+
+  // Edit strategy - opens modal to edit existing strategy
+  onEditStrategy?: (id: string) => void;
 }
 
-// Black-Scholes for theoretical P&L calculations
-function normalCDF(x: number): number {
-  const a1 = 0.254829592;
-  const a2 = -0.284496736;
-  const a3 = 1.421413741;
-  const a4 = -1.453152027;
-  const a5 = 1.061405429;
-  const p = 0.3275911;
-  const sign = x < 0 ? -1 : 1;
-  x = Math.abs(x) / Math.sqrt(2);
-  const t = 1.0 / (1.0 + p * x);
-  const y = 1.0 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-  return 0.5 * (1.0 + sign * y);
+export interface RiskGraphPanelHandle {
+  autoFit: () => void;
 }
 
-function blackScholesCall(S: number, K: number, T: number, r: number, sigma: number): number {
-  if (T <= 0) return Math.max(0, S - K);
-  if (sigma <= 0) return Math.max(0, S - K);
-  const d1 = (Math.log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * Math.sqrt(T));
-  const d2 = d1 - sigma * Math.sqrt(T);
-  return S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2);
-}
+// P&L calculations are now handled by useRiskGraphCalculations hook
 
-function blackScholesPut(S: number, K: number, T: number, r: number, sigma: number): number {
-  if (T <= 0) return Math.max(0, K - S);
-  if (sigma <= 0) return Math.max(0, K - S);
-  const d1 = (Math.log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * Math.sqrt(T));
-  const d2 = d1 - sigma * Math.sqrt(T);
-  return K * Math.exp(-r * T) * normalCDF(-d2) - S * normalCDF(-d1);
-}
-
-// Calculate strategy P&L at a given price (expiration)
-function calculateStrategyPnL(strat: RiskGraphStrategy, price: number): number {
-  const multiplier = 100;
-  const debit = (strat.debit || 0) * multiplier;
-
-  if (strat.strategy === 'single') {
-    if (strat.side === 'call') {
-      const intrinsic = Math.max(0, price - strat.strike);
-      return intrinsic * multiplier - debit;
-    } else {
-      const intrinsic = Math.max(0, strat.strike - price);
-      return intrinsic * multiplier - debit;
-    }
-  } else if (strat.strategy === 'vertical') {
-    if (strat.side === 'call') {
-      const longStrike = strat.strike;
-      const shortStrike = strat.strike + strat.width;
-      const longValue = Math.max(0, price - longStrike);
-      const shortValue = Math.max(0, price - shortStrike);
-      return (longValue - shortValue) * multiplier - debit;
-    } else {
-      const longStrike = strat.strike;
-      const shortStrike = strat.strike - strat.width;
-      const longValue = Math.max(0, longStrike - price);
-      const shortValue = Math.max(0, shortStrike - price);
-      return (longValue - shortValue) * multiplier - debit;
-    }
-  } else {
-    // Butterfly
-    const lowerStrike = strat.strike - strat.width;
-    const upperStrike = strat.strike + strat.width;
-
-    if (strat.side === 'call') {
-      const longLower = Math.max(0, price - lowerStrike);
-      const shortMiddle = Math.max(0, price - strat.strike) * 2;
-      const longUpper = Math.max(0, price - upperStrike);
-      return (longLower - shortMiddle + longUpper) * multiplier - debit;
-    } else {
-      const longUpper = Math.max(0, upperStrike - price);
-      const shortMiddle = Math.max(0, strat.strike - price) * 2;
-      const longLower = Math.max(0, lowerStrike - price);
-      return (longUpper - shortMiddle + longLower) * multiplier - debit;
-    }
-  }
-}
-
-// Calculate theoretical P&L using Black-Scholes
-function calculateTheoreticalPnL(
-  strat: RiskGraphStrategy,
-  price: number,
-  volatility: number,
-  dte: number,
-  timeOffset: number
-): number {
-  const multiplier = 100;
-  const debit = (strat.debit || 0) * multiplier;
-  const r = 0.05;
-  const stratDte = strat.dte || dte;
-  const effectiveDte = Math.max(0, stratDte - timeOffset / 24);
-  const T = effectiveDte / 365;
-
-  if (strat.strategy === 'single') {
-    const optionValue = strat.side === 'call'
-      ? blackScholesCall(price, strat.strike, T, r, volatility)
-      : blackScholesPut(price, strat.strike, T, r, volatility);
-    return optionValue * multiplier - debit;
-  } else if (strat.strategy === 'vertical') {
-    if (strat.side === 'call') {
-      const longValue = blackScholesCall(price, strat.strike, T, r, volatility);
-      const shortValue = blackScholesCall(price, strat.strike + strat.width, T, r, volatility);
-      return (longValue - shortValue) * multiplier - debit;
-    } else {
-      const longValue = blackScholesPut(price, strat.strike, T, r, volatility);
-      const shortValue = blackScholesPut(price, strat.strike - strat.width, T, r, volatility);
-      return (longValue - shortValue) * multiplier - debit;
-    }
-  } else {
-    // Butterfly
-    const lowerStrike = strat.strike - strat.width;
-    const upperStrike = strat.strike + strat.width;
-
-    if (strat.side === 'call') {
-      const longLower = blackScholesCall(price, lowerStrike, T, r, volatility);
-      const shortMiddle = blackScholesCall(price, strat.strike, T, r, volatility) * 2;
-      const longUpper = blackScholesCall(price, upperStrike, T, r, volatility);
-      return (longLower - shortMiddle + longUpper) * multiplier - debit;
-    } else {
-      const longUpper = blackScholesPut(price, upperStrike, T, r, volatility);
-      const shortMiddle = blackScholesPut(price, strat.strike, T, r, volatility) * 2;
-      const longLower = blackScholesPut(price, lowerStrike, T, r, volatility);
-      return (longUpper - shortMiddle + longLower) * multiplier - debit;
-    }
-  }
-}
-
-export default function RiskGraphPanel({
+const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(function RiskGraphPanel({
   strategies,
   onRemoveStrategy,
   onToggleStrategyVisibility,
@@ -256,9 +149,10 @@ export default function RiskGraphPanel({
   simSpotOffset,
   onSimSpotChange,
   onResetSimulation,
-  collapsed,
-  onToggleCollapse,
-}: RiskGraphPanelProps) {
+  onOpenJournal,
+  onImportToS,
+  onEditStrategy,
+}, ref) {
   // Get alerts from shared context
   const {
     alerts,
@@ -269,9 +163,62 @@ export default function RiskGraphPanel({
 
   const pnlChartRef = useRef<PnLChartHandle>(null);
 
+  // Track meaningful analyzer interaction for reflection hook
+  const [hasAnalyzerInteraction, setHasAnalyzerInteraction] = useState(false);
+
+  // Expose autoFit to parent
+  useImperativeHandle(ref, () => ({
+    autoFit: () => pnlChartRef.current?.autoFit(),
+  }));
+  const vixInputRef = useRef<HTMLInputElement>(null);
+
+  // VIX editing state
+  const [isEditingVix, setIsEditingVix] = useState(false);
+  const [vixInputValue, setVixInputValue] = useState('');
+
+  // Market regime for volatility skew simulation
+  const [marketRegime, setMarketRegime] = useState<MarketRegime>('normal');
+  const regimeConfig = MARKET_REGIMES[marketRegime];
+
+  // Pricing model selection and parameters
+  const [pricingModel, setPricingModel] = useState<PricingModel>('black-scholes');
+  const pricingModelConfig = PRICING_MODELS[pricingModel];
+
+  // Heston parameters (user-adjustable)
+  const [hestonVolOfVol, setHestonVolOfVol] = useState(0.4);
+  const [hestonCorrelation, setHestonCorrelation] = useState(-0.7);
+
+  // Monte Carlo parameters
+  const [mcNumPaths, setMcNumPaths] = useState(5000);
+
   // Simulated spot for 3D of Options
   const simulatedSpot = timeMachineEnabled ? spotPrice + simSpotOffset : spotPrice;
   const currentVix = vix + (timeMachineEnabled ? simVolatilityOffset : 0);
+
+  // Handle VIX edit
+  const handleVixClick = useCallback(() => {
+    if (!timeMachineEnabled) return;
+    setVixInputValue(currentVix.toFixed(1));
+    setIsEditingVix(true);
+    // Focus input after render
+    setTimeout(() => vixInputRef.current?.select(), 0);
+  }, [timeMachineEnabled, currentVix]);
+
+  const handleVixInputBlur = useCallback(() => {
+    setIsEditingVix(false);
+    const newVix = parseFloat(vixInputValue);
+    if (!isNaN(newVix) && newVix >= 5 && newVix <= 80) {
+      onSimVolatilityChange(newVix - vix);
+    }
+  }, [vixInputValue, vix, onSimVolatilityChange]);
+
+  const handleVixInputKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleVixInputBlur();
+    } else if (e.key === 'Escape') {
+      setIsEditingVix(false);
+    }
+  }, [handleVixInputBlur]);
 
   // Map strategies to the format expected by useRiskGraphCalculations
   const chartStrategies: Strategy[] = useMemo(() =>
@@ -297,6 +244,12 @@ export default function RiskGraphPanel({
     timeMachineEnabled,
     simVolatilityOffset,
     simTimeOffsetHours,
+    simSpotOffset,
+    marketRegime,
+    pricingModel,
+    hestonVolOfVol,
+    hestonCorrelation,
+    mcNumPaths,
   });
 
   // Extract strikes from strategies for chart
@@ -311,67 +264,15 @@ export default function RiskGraphPanel({
     });
   }, [strategies]);
 
-  // Calculate risk graph data for stats (includes market P&L)
+  // Stats derived from the hook's calculated data
   const riskGraphData = useMemo(() => {
-    const visibleStrategies = strategies.filter(s => s.visible);
-    if (visibleStrategies.length === 0) {
-      return {
-        minPnL: 0,
-        maxPnL: 0,
-        theoreticalPnLAtSpot: 0,
-        marketPnL: null as number | null,
-      };
-    }
-
-    const volatility = Math.max(0.05, currentVix) / 100;
-    const timeOffset = timeMachineEnabled ? simTimeOffsetHours : 0;
-
-    // Calculate min/max P&L
-    let minPnL = Infinity;
-    let maxPnL = -Infinity;
-    const allStrikes = visibleStrategies.flatMap(s => {
-      if (s.strategy === 'butterfly') {
-        return [s.strike - s.width, s.strike, s.strike + s.width];
-      } else if (s.strategy === 'vertical') {
-        return [s.strike, s.side === 'call' ? s.strike + s.width : s.strike - s.width];
-      }
-      return [s.strike];
-    });
-
-    const minStrike = Math.min(...allStrikes);
-    const maxStrike = Math.max(...allStrikes);
-    const range = maxStrike - minStrike || 100;
-    const fullPadding = Math.max(range * 1.5, 150);
-    const fullMinPrice = minStrike - fullPadding;
-    const fullMaxPrice = maxStrike + fullPadding;
-
-    const numPoints = 400;
-    const step = (fullMaxPrice - fullMinPrice) / numPoints;
-
-    for (let i = 0; i <= numPoints; i++) {
-      const price = fullMinPrice + i * step;
-      let totalPnL = 0;
-      for (const strat of visibleStrategies) {
-        totalPnL += calculateStrategyPnL(strat, price);
-      }
-      minPnL = Math.min(minPnL, totalPnL);
-      maxPnL = Math.max(maxPnL, totalPnL);
-    }
-
-    // Theoretical P&L at current spot
-    let theoreticalPnLAtSpot = 0;
-    const dte = visibleStrategies[0]?.dte || 0;
-    for (const strat of visibleStrategies) {
-      theoreticalPnLAtSpot += calculateTheoreticalPnL(strat, spotPrice, volatility, dte, timeOffset);
-    }
-
     return {
-      minPnL,
-      maxPnL,
-      theoreticalPnLAtSpot,
+      minPnL: pnlChartData.minPnL,
+      maxPnL: pnlChartData.maxPnL,
+      theoreticalPnLAtSpot: pnlChartData.theoreticalPnLAtSpot,
       marketPnL: null as number | null,
     };
-  }, [strategies, spotPrice, currentVix, timeMachineEnabled, simTimeOffsetHours]);
+  }, [pnlChartData]);
 
   // Convert price alert lines to format expected by PnLChart
   const alertLinesForChart = useMemo(() => {
@@ -388,10 +289,11 @@ export default function RiskGraphPanel({
 
     // Strategy price alerts
     alerts.filter(a => a.enabled && a.type === 'price').forEach(alert => {
+      const val = Number(alert.targetValue);
       lines.push({
-        price: alert.targetValue,
+        price: val,
         color: alert.color,
-        label: alert.targetValue.toFixed(0),
+        label: val.toFixed(0),
       });
     });
 
@@ -436,31 +338,131 @@ export default function RiskGraphPanel({
   const maxHours = Math.max(1, minDTE) * 24;
   const hoursRemaining = maxHours - simTimeOffsetHours;
   const effectiveHoursRemaining = Math.max(0, hoursRemaining);
-  const stepSize = effectiveHoursRemaining <= 4 ? 0.25 : 1;
+
+  // Progressive time slider mapping
+  // First half (0-50%): linear from now to noon on expiration day (~4h before close)
+  // Second half uses smooth piecewise zones:
+  //   50-75%: hour increments (4h → 1h remaining)
+  //   75-90%: 15-min increments (1h → 15min remaining)
+  //   90-97%: 5-min increments (15min → 3min remaining)
+  //   97-100%: 1-min increments (3min → 0)
+  const NOON_HOURS_BEFORE_CLOSE = 4;
+  const noonHours = Math.min(NOON_HOURS_BEFORE_CLOSE, maxHours * 0.5);
+  const hoursToNoon = maxHours - noonHours;
+
+  // Zone boundaries (hours remaining)
+  const ZONE_1H = 1;           // 1 hour
+  const ZONE_15M = 0.25;       // 15 minutes
+  const ZONE_3M = 0.05;        // 3 minutes
+
+  // Smooth interpolation helper (cubic ease)
+  const smoothstep = (t: number) => t * t * (3 - 2 * t);
+
+  // Convert hours offset to slider position (0-100)
+  const hoursToSlider = useCallback((hours: number): number => {
+    if (hours <= 0) return 0;
+    if (hours >= maxHours) return 100;
+
+    const remaining = maxHours - hours;
+
+    if (remaining >= noonHours) {
+      // First half: linear (remaining goes from maxHours to noonHours)
+      const t = (maxHours - remaining) / hoursToNoon;
+      return t * 50;
+    } else if (remaining >= ZONE_1H) {
+      // 50-75%: noonHours → 1h
+      const t = (noonHours - remaining) / (noonHours - ZONE_1H);
+      return 50 + smoothstep(t) * 25;
+    } else if (remaining >= ZONE_15M) {
+      // 75-90%: 1h → 15min
+      const t = (ZONE_1H - remaining) / (ZONE_1H - ZONE_15M);
+      return 75 + smoothstep(t) * 15;
+    } else if (remaining >= ZONE_3M) {
+      // 90-97%: 15min → 3min
+      const t = (ZONE_15M - remaining) / (ZONE_15M - ZONE_3M);
+      return 90 + smoothstep(t) * 7;
+    } else {
+      // 97-100%: 3min → 0
+      const t = (ZONE_3M - remaining) / ZONE_3M;
+      return 97 + smoothstep(t) * 3;
+    }
+  }, [maxHours, hoursToNoon, noonHours]);
+
+  // Inverse smoothstep for slider → hours
+  const invSmoothstep = (y: number) => {
+    // Approximate inverse of smoothstep using Newton's method
+    let t = y;
+    for (let i = 0; i < 5; i++) {
+      const f = t * t * (3 - 2 * t) - y;
+      const df = 6 * t * (1 - t);
+      if (Math.abs(df) < 1e-10) break;
+      t = t - f / df;
+    }
+    return Math.max(0, Math.min(1, t));
+  };
+
+  // Convert slider position (0-100) to hours offset
+  const sliderToHours = useCallback((position: number): number => {
+    if (position <= 0) return 0;
+    if (position >= 100) return maxHours;
+
+    let remaining: number;
+
+    if (position <= 50) {
+      // First half: linear
+      const t = position / 50;
+      remaining = maxHours - t * hoursToNoon;
+    } else if (position <= 75) {
+      // 50-75%: noonHours → 1h
+      const t = invSmoothstep((position - 50) / 25);
+      remaining = noonHours - t * (noonHours - ZONE_1H);
+    } else if (position <= 90) {
+      // 75-90%: 1h → 15min
+      const t = invSmoothstep((position - 75) / 15);
+      remaining = ZONE_1H - t * (ZONE_1H - ZONE_15M);
+    } else if (position <= 97) {
+      // 90-97%: 15min → 3min
+      const t = invSmoothstep((position - 90) / 7);
+      remaining = ZONE_15M - t * (ZONE_15M - ZONE_3M);
+    } else {
+      // 97-100%: 3min → 0
+      const t = invSmoothstep((position - 97) / 3);
+      remaining = ZONE_3M - t * ZONE_3M;
+    }
+
+    return maxHours - Math.max(0, remaining);
+  }, [maxHours, hoursToNoon, noonHours]);
+
+  // Current slider position
+  const sliderPosition = hoursToSlider(simTimeOffsetHours);
+
+  // Handle slider change with progressive mapping
+  const handleTimeSliderChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const position = parseFloat(e.target.value);
+    const hours = sliderToHours(position);
+    onSimTimeChange(hours);
+  }, [sliderToHours, onSimTimeChange]);
 
   return (
-    <div className={`panel echarts-risk-graph-panel ${collapsed ? 'collapsed' : ''}`}>
-      <div className="panel-header" onClick={onToggleCollapse}>
-        <span className="panel-toggle">{collapsed ? '>' : 'v'}</span>
+    <div className="panel echarts-risk-graph-panel">
+      <div className="panel-header">
         <h3>Risk Graph {strategies.length > 0 && `(${strategies.length})`}</h3>
-        {strategies.length > 0 && !collapsed && (
+        {strategies.length > 0 && (
           <button
             className="btn-auto-fit-header"
-            onClick={(e) => {
-              e.stopPropagation();
-              pnlChartRef.current?.autoFit();
-            }}
+            onClick={() => pnlChartRef.current?.autoFit()}
           >
             Auto-Fit
           </button>
         )}
       </div>
-      {!collapsed && (
+      {(
         <div className="panel-content risk-graph-consolidated">
           {strategies.length === 0 ? (
             <div className="risk-graph-empty">
-              <p>No strategies added yet.</p>
-              <p className="hint">Click on a heatmap tile and select "Add to Risk Graph"</p>
+              <div className="empty-icon">📊</div>
+              <p>No strategies to analyze</p>
+              <p className="hint">Click a heatmap tile → "Add to Risk Graph"</p>
             </div>
           ) : (
             <>
@@ -472,7 +474,7 @@ export default function RiskGraphPanel({
                     ref={pnlChartRef}
                     expirationData={pnlChartData.expirationPoints}
                     theoreticalData={pnlChartData.theoreticalPoints}
-                    spotPrice={spotPrice}
+                    spotPrice={simulatedSpot}
                     expirationBreakevens={pnlChartData.expirationBreakevens}
                     theoreticalBreakevens={pnlChartData.theoreticalBreakevens}
                     strikes={chartStrikes}
@@ -486,62 +488,130 @@ export default function RiskGraphPanel({
               <div className="risk-graph-sidebar">
                 {/* Strategy List */}
                 <div className="risk-graph-strategies">
-                  <div className="section-header">Strategies</div>
+                  <div className="section-header">
+                    Strategies
+                    <div className="section-header-actions">
+                      {onImportToS && (
+                        <button
+                          className="btn-import-tos"
+                          title="Import ToS Script"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onImportToS();
+                          }}
+                        >
+                          +ToS
+                        </button>
+                      )}
+                      {hasAnalyzerInteraction && onOpenJournal && (
+                        <button
+                          className="reflect-hook analyzer-reflect"
+                          title="Capture an insight?"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setHasAnalyzerInteraction(false);
+                            onOpenJournal();
+                          }}
+                        >
+                          📝
+                        </button>
+                      )}
+                    </div>
+                  </div>
                   <div className="strategies-list">
-                    {strategies.map(strat => (
-                      <div key={strat.id} className={`risk-graph-strategy-item ${!strat.visible ? 'hidden-strategy' : ''}`}>
-                        <div className="strategy-content">
-                          <div className="strategy-row-top">
-                            <span className="strategy-type">
-                              {strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL'}
-                            </span>
-                            <span className="strategy-strike">
-                              {strat.strike}{strat.width > 0 ? `/${strat.width}` : ''}
-                            </span>
-                            <span className={`strategy-side ${strat.side}`}>
-                              {strat.side}
-                            </span>
-                            <span className="strategy-dte">{strat.dte}d</span>
-                            <span className="strategy-debit">
-                              $<input
-                                type="number"
-                                className="debit-input"
-                                defaultValue={strat.debit !== null ? strat.debit.toFixed(2) : ''}
-                                key={`debit-${strat.id}-${strat.debit}`}
-                                step="0.01"
-                                min="0"
-                                onBlur={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  onUpdateStrategyDebit(strat.id, isNaN(val) ? null : val);
+                    {strategies.map(strat => {
+                      const strategyLabel = strat.strategy === 'butterfly' ? 'Butterfly'
+                        : strat.strategy === 'vertical' ? 'Vertical'
+                        : 'Single';
+                      const strikeDisplay = strat.strategy === 'butterfly'
+                        ? `${strat.strike - strat.width}/${strat.strike}/${strat.strike + strat.width}`
+                        : strat.strategy === 'vertical'
+                        ? `${strat.strike}/${strat.side === 'call' ? strat.strike + strat.width : strat.strike - strat.width}`
+                        : `${strat.strike}`;
+
+                      return (
+                        <div key={strat.id} className={`risk-graph-strategy-item ${!strat.visible ? 'hidden-strategy' : ''}`}>
+                          <div className="strategy-content">
+                            <div className="strategy-row-top">
+                              {strat.symbol && (
+                                <span className="strategy-symbol" title={strat.symbol}>
+                                  {strat.symbol}
+                                </span>
+                              )}
+                              <span className="strategy-type" title={strategyLabel}>
+                                {strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL'}
+                              </span>
+                              <span className="strategy-strike" title={`Strikes: ${strikeDisplay}`}>
+                                {strat.strike}{strat.width > 0 ? `/${strat.width}w` : ''}
+                              </span>
+                              <span className={`strategy-side ${strat.side}`}>
+                                {strat.side.charAt(0).toUpperCase()}
+                              </span>
+                              <span className="strategy-dte" title={`${strat.dte} days to expiration`}>
+                                {strat.dte}d
+                              </span>
+                              <span className="strategy-debit">
+                                $<input
+                                  type="number"
+                                  className="debit-input"
+                                  defaultValue={strat.debit !== null ? strat.debit.toFixed(2) : ''}
+                                  key={`debit-${strat.id}-${strat.debit}`}
+                                  step="0.01"
+                                  min="0"
+                                  placeholder="0.00"
+                                  onBlur={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    setHasAnalyzerInteraction(true);
+                                    onUpdateStrategyDebit(strat.id, isNaN(val) ? null : val);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.currentTarget.blur();
+                                    }
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </span>
+                            </div>
+                            <div className="strategy-row-bottom">
+                              <button
+                                className={`btn-toggle-visibility ${strat.visible ? 'visible' : 'hidden'}`}
+                                onClick={() => {
+                                  setHasAnalyzerInteraction(true);
+                                  onToggleStrategyVisibility(strat.id);
                                 }}
-                                onKeyDown={(e) => {
-                                  if (e.key === 'Enter') {
-                                    e.currentTarget.blur();
-                                  }
-                                }}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            </span>
-                          </div>
-                          <div className="strategy-row-bottom">
-                            <button
-                              className={`btn-toggle-visibility ${strat.visible ? 'visible' : 'hidden'}`}
-                              onClick={() => onToggleStrategyVisibility(strat.id)}
-                            >
-                              {strat.visible ? 'Hide' : 'Show'}
-                            </button>
-                            <button
-                              className="btn-alert"
-                              onClick={() => onStartNewAlert(strat.id)}
-                              title="Set alert"
-                            >
-                              Alert
-                            </button>
-                            <button className="btn-remove" onClick={() => onRemoveStrategy(strat.id)}>x</button>
+                                title={strat.visible ? 'Hide from chart' : 'Show on chart'}
+                              >
+                                {strat.visible ? 'Hide' : 'Show'}
+                              </button>
+                              {onEditStrategy && (
+                                <button
+                                  className="btn-edit-strategy"
+                                  onClick={() => onEditStrategy(strat.id)}
+                                  title="Edit strategy"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                              <button
+                                className="btn-alert"
+                                onClick={() => onStartNewAlert(strat.id)}
+                                title="Create alert for this strategy"
+                              >
+                                Alert
+                              </button>
+                              <button
+                                className="btn-remove"
+                                onClick={() => onRemoveStrategy(strat.id)}
+                                title="Remove strategy"
+                              >
+                                ×
+                              </button>
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -556,42 +626,63 @@ export default function RiskGraphPanel({
                     )}
                   </div>
                   <div className="alerts-list">
-                    {alerts.map(alert => (
-                      <div
-                        key={alert.id}
-                        className={`alert-item clickable ${alert.triggered ? 'triggered' : ''} ${!alert.enabled ? 'disabled' : ''}`}
-                        onClick={() => onStartEditingAlert(alert.id)}
-                      >
-                        <div className="alert-info">
-                          <div
-                            className="alert-color-dot"
-                            style={{ backgroundColor: alert.color || ALERT_COLOR_PALETTE[0] }}
-                          />
-                          <span className="alert-condition">
-                            {alert.type === 'price' && `${alert.condition === 'above' ? '>=' : alert.condition === 'below' ? '<=' : '~'} ${alert.targetValue.toFixed(0)}`}
-                            {alert.type === 'debit' && `$${alert.targetValue.toFixed(2)}`}
-                            {alert.type === 'profit_target' && `+$${alert.targetValue.toFixed(2)}`}
-                            {alert.type === 'trailing_stop' && `Trail $${alert.targetValue.toFixed(2)}`}
-                            {alert.type === 'ai_theta_gamma' && `AI Th/Gm`}
-                            {alert.type === 'ai_sentiment' && `AI Sent`}
-                            {alert.type === 'ai_risk_zone' && `AI Zone`}
-                          </span>
-                        </div>
-                        <button
-                          className="btn-delete-alert"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteAlert(alert.id);
-                          }}
+                    {alerts.map(alert => {
+                      const isAI = alert.type.startsWith('ai_');
+                      const val = Number(alert.targetValue);
+                      const alertLabel = (() => {
+                        switch (alert.type) {
+                          case 'price':
+                            const op = alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈';
+                            return `Price ${op} ${val.toFixed(0)}`;
+                          case 'debit':
+                            return `Debit ≤ $${val.toFixed(2)}`;
+                          case 'profit_target':
+                            return `Profit ≥ $${val.toFixed(0)}`;
+                          case 'trailing_stop':
+                            return `Trail -$${val.toFixed(0)}`;
+                          case 'ai_theta_gamma':
+                            return 'Theta/Gamma Zone';
+                          case 'ai_sentiment':
+                            return 'Sentiment Shift';
+                          case 'ai_risk_zone':
+                            return 'Risk Zone Exit';
+                          default:
+                            return alert.type;
+                        }
+                      })();
+
+                      return (
+                        <div
+                          key={alert.id}
+                          className={`alert-item clickable ${alert.triggered ? 'triggered' : ''} ${!alert.enabled ? 'disabled' : ''} ${isAI ? 'ai-alert' : ''}`}
+                          onClick={() => onStartEditingAlert(alert.id)}
+                          title={`Click to edit${alert.triggered ? ' (triggered)' : ''}`}
                         >
-                          x
-                        </button>
-                      </div>
-                    ))}
+                          <div className="alert-info">
+                            <div
+                              className="alert-color-dot"
+                              style={{ backgroundColor: alert.color || ALERT_COLOR_PALETTE[0] }}
+                            />
+                            {isAI && <span className="alert-ai-badge">AI</span>}
+                            <span className="alert-condition">{alertLabel}</span>
+                          </div>
+                          <button
+                            className="btn-delete-alert"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteAlert(alert.id);
+                            }}
+                            title="Delete alert"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })}
 
                     {/* Price Line Alerts */}
                     {priceAlertLines.map(alert => (
-                      <div key={alert.id} className="alert-item price-line-alert">
+                      <div key={alert.id} className="alert-item price-line-alert" title="Visual price line (no notification)">
                         <div className="alert-info">
                           <div
                             className="alert-color-dot"
@@ -604,30 +695,40 @@ export default function RiskGraphPanel({
                         <button
                           className="btn-delete-alert"
                           onClick={() => onDeletePriceAlertLine(alert.id)}
+                          title="Remove price line"
                         >
-                          x
+                          ×
                         </button>
                       </div>
                     ))}
 
                     {alerts.length === 0 && priceAlertLines.length === 0 && (
-                      <div className="alerts-empty">No alerts<br/><span className="hint">Right-click chart for price line</span></div>
+                      <div className="alerts-empty">
+                        No alerts set
+                        <span className="hint">Right-click chart to add price alerts</span>
+                      </div>
                     )}
                   </div>
                 </div>
               </div>
 
-              {/* 3D of Options Controls */}
+              {/* Simulation Controls */}
               <div className={`time-machine-panel ${timeMachineEnabled ? 'active' : ''}`}>
                 <div className="time-machine-header">
                   <div className="time-machine-switch">
-                    <span className="switch-label">3D of Options</span>
-                    <button
-                      className={`switch-toggle ${timeMachineEnabled ? 'on' : 'off'}`}
-                      onClick={onTimeMachineToggle}
-                    >
-                      {timeMachineEnabled ? 'ON' : 'OFF'}
-                    </button>
+                    <label className="toggle-switch live-sim-toggle">
+                      <span className={`toggle-label-live ${!timeMachineEnabled ? 'active' : ''}`}>
+                        <span className="live-dot" />
+                        Live
+                      </span>
+                      <div className="toggle-track" onClick={onTimeMachineToggle}>
+                        <div className={`toggle-thumb ${timeMachineEnabled ? 'on' : ''}`} />
+                      </div>
+                      <span className={`toggle-label-sim ${timeMachineEnabled ? 'active' : ''}`}>Sim</span>
+                    </label>
+                    {!timeMachineEnabled && (
+                      <span className="live-price">{spotPrice.toFixed(2)}</span>
+                    )}
                     {timeMachineEnabled && (
                       <button className="btn-reset" onClick={onResetSimulation}>
                         Reset
@@ -643,11 +744,11 @@ export default function RiskGraphPanel({
                         <input
                           type="range"
                           min="0"
-                          max={maxHours}
-                          step={stepSize}
-                          value={simTimeOffsetHours}
-                          onChange={(e) => onSimTimeChange(parseFloat(e.target.value))}
-                          className="time-slider"
+                          max="100"
+                          step="0.5"
+                          value={sliderPosition}
+                          onChange={handleTimeSliderChange}
+                          className="time-slider progressive"
                           disabled={!timeMachineEnabled}
                         />
                         <span className="control-readout time-readout">
@@ -682,14 +783,34 @@ export default function RiskGraphPanel({
                   <div className="vertical-control vol-control">
                     <div className="vol-label-left">
                       <span className="vol-label-text">VIX</span>
-                      <span className="vol-value">{currentVix.toFixed(1)}</span>
+                      {isEditingVix ? (
+                        <input
+                          ref={vixInputRef}
+                          type="number"
+                          className="vol-value-input"
+                          value={vixInputValue}
+                          onChange={(e) => setVixInputValue(e.target.value)}
+                          onBlur={handleVixInputBlur}
+                          onKeyDown={handleVixInputKeyDown}
+                          min="5"
+                          max="80"
+                          step="0.1"
+                        />
+                      ) : (
+                        <span
+                          className="vol-value"
+                          onClick={handleVixClick}
+                          title={timeMachineEnabled ? "Click to edit" : "Enable simulation to edit"}
+                        >
+                          {currentVix.toFixed(1)}
+                        </span>
+                      )}
                     </div>
                     <div className="vertical-slider-container">
-                      <span className="vol-tick">30</span>
                       <input
                         type="range"
                         min="5"
-                        max="30"
+                        max="80"
                         step="0.5"
                         value={currentVix}
                         onChange={(e) => {
@@ -699,8 +820,103 @@ export default function RiskGraphPanel({
                         className="vol-slider-vertical"
                         disabled={!timeMachineEnabled}
                       />
-                      <span className="vol-tick">5</span>
                     </div>
+                  </div>
+                  <div className="regime-control">
+                    <div className="regime-description-row">
+                      <div
+                        className="regime-indicator"
+                        style={{ backgroundColor: regimeConfig.color }}
+                      />
+                      <span className="regime-description">{regimeConfig.description}</span>
+                    </div>
+                    <div className="regime-select-row">
+                      <span className="regime-label">Regime</span>
+                      <select
+                        className="regime-select"
+                        value={marketRegime}
+                        onChange={(e) => setMarketRegime(e.target.value as MarketRegime)}
+                        disabled={!timeMachineEnabled}
+                      >
+                        {(Object.keys(MARKET_REGIMES) as MarketRegime[]).map((key) => (
+                          <option key={key} value={key}>
+                            {MARKET_REGIMES[key].name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="pricing-model-control">
+                    <div className="model-description-row">
+                      <div
+                        className="model-indicator"
+                        style={{ backgroundColor: pricingModelConfig.color }}
+                      />
+                      <span className="model-description">{pricingModelConfig.description}</span>
+                    </div>
+                    <div className="model-select-row">
+                      <span className="model-label">Model</span>
+                      <select
+                        className="model-select"
+                        value={pricingModel}
+                        onChange={(e) => setPricingModel(e.target.value as PricingModel)}
+                        disabled={!timeMachineEnabled}
+                      >
+                        {(Object.keys(PRICING_MODELS) as PricingModel[]).map((key) => (
+                          <option key={key} value={key}>
+                            {PRICING_MODELS[key].name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    {/* Model-specific parameters */}
+                    {pricingModel === 'heston' && timeMachineEnabled && (
+                      <div className="model-params">
+                        <div className="param-row">
+                          <span className="param-label" title="Volatility of Volatility - How much vol itself varies">ξ</span>
+                          <input
+                            type="range"
+                            min="0.1"
+                            max="1.0"
+                            step="0.05"
+                            value={hestonVolOfVol}
+                            onChange={(e) => setHestonVolOfVol(parseFloat(e.target.value))}
+                            className="param-slider"
+                          />
+                          <span className="param-value">{hestonVolOfVol.toFixed(2)}</span>
+                        </div>
+                        <div className="param-row">
+                          <span className="param-label" title="Correlation between spot and vol (negative = leverage effect)">ρ</span>
+                          <input
+                            type="range"
+                            min="-0.95"
+                            max="0"
+                            step="0.05"
+                            value={hestonCorrelation}
+                            onChange={(e) => setHestonCorrelation(parseFloat(e.target.value))}
+                            className="param-slider"
+                          />
+                          <span className="param-value">{hestonCorrelation.toFixed(2)}</span>
+                        </div>
+                      </div>
+                    )}
+                    {pricingModel === 'monte-carlo' && timeMachineEnabled && (
+                      <div className="model-params">
+                        <div className="param-row">
+                          <span className="param-label" title="Number of simulation paths">Paths</span>
+                          <input
+                            type="range"
+                            min="1000"
+                            max="20000"
+                            step="1000"
+                            value={mcNumPaths}
+                            onChange={(e) => setMcNumPaths(parseInt(e.target.value))}
+                            className="param-slider"
+                          />
+                          <span className="param-value">{(mcNumPaths / 1000).toFixed(0)}k</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -713,7 +929,7 @@ export default function RiskGraphPanel({
                     const pnl = riskGraphData.marketPnL ?? riskGraphData.theoreticalPnLAtSpot;
                     return (
                       <span className={`stat-value ${pnl >= 0 ? 'profit' : 'loss'}`}>
-                        ${(pnl / 100).toFixed(2)}
+                        {pnl >= 0 ? '+' : ''}${pnl.toFixed(0)}
                       </span>
                     );
                   })()}
@@ -721,12 +937,49 @@ export default function RiskGraphPanel({
                 <div className="stat-divider" />
                 <div className="stat">
                   <span className="stat-label">Max Profit</span>
-                  <span className="stat-value profit">${(riskGraphData.maxPnL / 100).toFixed(2)}</span>
+                  <span className="stat-value profit">
+                    +${riskGraphData.maxPnL.toFixed(0)}
+                    {riskGraphData.minPnL < 0 && (
+                      <span className="stat-ratio" title="Risk/Reward ratio">
+                        {' '}({Math.abs(riskGraphData.maxPnL / riskGraphData.minPnL).toFixed(1)}:1)
+                      </span>
+                    )}
+                  </span>
                 </div>
                 <div className="stat">
                   <span className="stat-label">Max Loss</span>
-                  <span className="stat-value loss">${(riskGraphData.minPnL / 100).toFixed(2)}</span>
+                  <span className="stat-value loss">${riskGraphData.minPnL.toFixed(0)}</span>
                 </div>
+                <div className="stat-divider" />
+                <div className="stat">
+                  <span className="stat-label">Delta</span>
+                  <span className={`stat-value ${pnlChartData.delta >= 0 ? 'profit' : 'loss'}`}>
+                    {pnlChartData.delta >= 0 ? '+' : ''}{pnlChartData.delta.toFixed(1)}
+                  </span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label">Gamma</span>
+                  <span className="stat-value">{pnlChartData.gamma.toFixed(2)}</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label">Theta</span>
+                  <span className={`stat-value ${pnlChartData.theta >= 0 ? 'profit' : 'loss'}`}>
+                    {pnlChartData.theta >= 0 ? '+' : ''}${pnlChartData.theta.toFixed(0)}/day
+                  </span>
+                </div>
+                {timeMachineEnabled && (
+                  <>
+                    <div className="stat-divider" />
+                    <div className="stat simulation-indicator">
+                      <span className="stat-label">Simulation</span>
+                      <span className="stat-value">
+                        {simSpotOffset !== 0 && <span className="sim-param">Spot {simSpotOffset > 0 ? '+' : ''}{simSpotOffset}</span>}
+                        {simTimeOffsetHours > 0 && <span className="sim-param">-{formatDTE(simTimeOffsetHours)} decay</span>}
+                        {simVolatilityOffset !== 0 && <span className="sim-param">Vol {simVolatilityOffset > 0 ? '+' : ''}{simVolatilityOffset.toFixed(1)}</span>}
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
             </>
           )}
@@ -734,4 +987,6 @@ export default function RiskGraphPanel({
       )}
     </div>
   );
-}
+});
+
+export default RiskGraphPanel;

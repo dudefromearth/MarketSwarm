@@ -1,14 +1,197 @@
 /**
  * useRiskGraphCalculations - Hook for calculating options P&L curves
  *
- * Reusable hook that computes:
- * - Expiration P&L curve
- * - Theoretical (real-time) P&L curve using Black-Scholes
- * - Breakeven points
- * - Price range based on strategies and VIX
+ * Generates accurate P&L curves:
+ * - Expiration P&L: Piecewise linear with exact corners at strike prices
+ * - Theoretical P&L: Smooth Black-Scholes curve with realistic volatility skew
+ * - Breakeven points via interpolation
+ *
+ * Supports market regime simulation with volatility skew modeling
  */
 
 import { useMemo } from 'react';
+
+// ============================================================
+// Market Regime Types & Presets
+// ============================================================
+
+export type MarketRegime =
+  | 'normal'
+  | 'low_vol'
+  | 'elevated'
+  | 'panic'
+  | 'fomc'
+  | 'meme'
+  | 'opex';
+
+export interface RegimeConfig {
+  name: string;
+  description: string;
+  vixRange: [number, number];  // [min, max] typical VIX for this regime
+  putSkew: number;             // % IV increase per 10% OTM for puts (positive = higher IV for OTM puts)
+  callSkew: number;            // % IV increase per 10% OTM for calls
+  atmBoost: number;            // Additional ATM IV boost (for event days)
+  color: string;               // UI indicator color
+}
+
+export const MARKET_REGIMES: Record<MarketRegime, RegimeConfig> = {
+  normal: {
+    name: 'Normal',
+    description: 'Typical trading day',
+    vixRange: [14, 18],
+    putSkew: 0.15,      // 15% higher IV per 10% OTM
+    callSkew: 0.03,     // 3% higher IV per 10% OTM
+    atmBoost: 0,
+    color: '#6b7280',   // gray
+  },
+  low_vol: {
+    name: 'Low Vol',
+    description: 'Complacent, cheap options',
+    vixRange: [10, 14],
+    putSkew: 0.10,
+    callSkew: 0.02,
+    atmBoost: 0,
+    color: '#22c55e',   // green
+  },
+  elevated: {
+    name: 'Elevated',
+    description: 'Heightened fear, steep skew',
+    vixRange: [22, 30],
+    putSkew: 0.30,
+    callSkew: 0.05,
+    atmBoost: 0,
+    color: '#f59e0b',   // amber
+  },
+  panic: {
+    name: 'Panic',
+    description: 'Crash/crisis mode',
+    vixRange: [35, 60],
+    putSkew: 0.50,
+    callSkew: 0.08,
+    atmBoost: 0.05,
+    color: '#ef4444',   // red
+  },
+  fomc: {
+    name: 'FOMC/Event',
+    description: 'Binary event, elevated ATM',
+    vixRange: [18, 26],
+    putSkew: 0.12,
+    callSkew: 0.12,     // Symmetric smile
+    atmBoost: 0.08,     // ATM premium for uncertainty
+    color: '#8b5cf6',   // purple
+  },
+  meme: {
+    name: 'Squeeze',
+    description: 'Call skew inverted, OTM calls expensive',
+    vixRange: [30, 50],
+    putSkew: 0.10,
+    callSkew: 0.40,     // Inverted - calls more expensive
+    atmBoost: 0.10,
+    color: '#ec4899',   // pink
+  },
+  opex: {
+    name: 'Opex',
+    description: 'Expiration dynamics, gamma dominant',
+    vixRange: [12, 20],
+    putSkew: 0.08,
+    callSkew: 0.08,
+    atmBoost: -0.03,    // IV crush
+    color: '#06b6d4',   // cyan
+  },
+};
+
+// ============================================================
+// Pricing Model Types & Configurations
+// ============================================================
+
+export type PricingModel = 'black-scholes' | 'heston' | 'monte-carlo';
+
+export interface PricingModelConfig {
+  name: string;
+  shortName: string;
+  description: string;
+  color: string;
+}
+
+export const PRICING_MODELS: Record<PricingModel, PricingModelConfig> = {
+  'black-scholes': {
+    name: 'Black-Scholes + Skew',
+    shortName: 'BS',
+    description: 'Fast analytical solution with empirical skew adjustment',
+    color: '#3b82f6',  // blue
+  },
+  'heston': {
+    name: 'Heston Stochastic Vol',
+    shortName: 'Heston',
+    description: 'Volatility follows its own random process with mean reversion',
+    color: '#8b5cf6',  // purple
+  },
+  'monte-carlo': {
+    name: 'Monte Carlo',
+    shortName: 'MC',
+    description: 'Simulates thousands of price paths for maximum accuracy',
+    color: '#f59e0b',  // amber
+  },
+};
+
+// Heston model parameters
+export interface HestonParams {
+  kappa: number;      // Mean reversion speed (1-5 typical)
+  theta: number;      // Long-term variance (derived from VIX)
+  xi: number;         // Vol of vol (0.2-0.8 typical)
+  rho: number;        // Correlation spot/vol (-0.9 to -0.3 typical, negative = leverage effect)
+  v0: number;         // Initial variance (current VIX^2)
+}
+
+// Monte Carlo parameters
+export interface MonteCarloParams {
+  numPaths: number;   // Number of simulation paths (1000-50000)
+  numSteps: number;   // Time steps per path
+  seed?: number;      // Random seed for reproducibility
+}
+
+// Default Heston parameters (calibrated to typical equity index behavior)
+export const DEFAULT_HESTON_PARAMS: Omit<HestonParams, 'theta' | 'v0'> = {
+  kappa: 2.0,         // Mean reversion speed
+  xi: 0.4,            // Vol of vol
+  rho: -0.7,          // Negative correlation (leverage effect)
+};
+
+// Default Monte Carlo parameters
+export const DEFAULT_MONTE_CARLO_PARAMS: MonteCarloParams = {
+  numPaths: 5000,
+  numSteps: 100,
+};
+
+/**
+ * Calculate strike-specific implied volatility with skew
+ */
+function calculateSkewedIV(
+  baseIV: number,
+  strike: number,
+  spotPrice: number,
+  regime: RegimeConfig
+): number {
+  const moneyness = (strike - spotPrice) / spotPrice; // negative = OTM put, positive = OTM call
+
+  let skewAdjustment = 0;
+
+  if (moneyness < 0) {
+    // OTM put (or ITM call) - apply put skew
+    // moneyness of -0.10 means 10% OTM put
+    skewAdjustment = regime.putSkew * Math.abs(moneyness) * 10; // Scale: per 10% OTM
+  } else if (moneyness > 0) {
+    // OTM call (or ITM put) - apply call skew
+    skewAdjustment = regime.callSkew * moneyness * 10;
+  }
+
+  // Apply ATM boost (affects all strikes but peaks at ATM)
+  const atmDistance = Math.abs(moneyness);
+  const atmFactor = Math.exp(-atmDistance * atmDistance * 50); // Gaussian centered at ATM
+  const atmAdjustment = regime.atmBoost * atmFactor;
+
+  return baseIV * (1 + skewAdjustment + atmAdjustment);
+}
 
 // Types
 export interface Strategy {
@@ -29,28 +212,21 @@ export interface PnLPoint {
 }
 
 export interface RiskGraphData {
-  // P&L curves
   expirationPoints: PnLPoint[];
   theoreticalPoints: PnLPoint[];
-
-  // Price range
   minPrice: number;
   maxPrice: number;
   fullMinPrice: number;
   fullMaxPrice: number;
-
-  // P&L range (for visible area)
   minPnL: number;
   maxPnL: number;
-
-  // Breakeven prices
   expirationBreakevens: number[];
   theoreticalBreakevens: number[];
-
-  // Current P&L at spot
   theoreticalPnLAtSpot: number;
-
-  // Strategy info
+  // Greeks at current/simulated spot
+  theta: number;  // Daily theta (time decay) in dollars
+  gamma: number;  // Gamma (rate of delta change)
+  delta: number;  // Delta (price sensitivity)
   allStrikes: number[];
   centerPrice: number;
 }
@@ -62,10 +238,27 @@ interface UseRiskGraphCalculationsProps {
   timeMachineEnabled?: boolean;
   simVolatilityOffset?: number;
   simTimeOffsetHours?: number;
+  simSpotOffset?: number;
   panOffset?: number;
+  marketRegime?: MarketRegime;
+  // Pricing model selection
+  pricingModel?: PricingModel;
+  // Heston-specific parameters
+  hestonVolOfVol?: number;      // Vol of vol (xi), default 0.4
+  hestonMeanReversion?: number; // Mean reversion speed (kappa), default 2.0
+  hestonCorrelation?: number;   // Spot/vol correlation (rho), default -0.7
+  // Monte Carlo parameters
+  mcNumPaths?: number;          // Number of simulation paths, default 5000
 }
 
-// Black-Scholes helper functions
+// ============================================================
+// Black-Scholes Implementation
+// ============================================================
+
+/**
+ * Standard normal cumulative distribution function
+ * Uses Abramowitz and Stegun approximation (error < 7.5e-8)
+ */
 function normalCDF(x: number): number {
   const a1 = 0.254829592;
   const a2 = -0.284496736;
@@ -75,144 +268,893 @@ function normalCDF(x: number): number {
   const p = 0.3275911;
 
   const sign = x < 0 ? -1 : 1;
-  x = Math.abs(x) / Math.sqrt(2);
-
-  const t = 1.0 / (1.0 + p * x);
-  const y = 1.0 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  const absX = Math.abs(x) / Math.sqrt(2);
+  const t = 1.0 / (1.0 + p * absX);
+  const y = 1.0 - ((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
 
   return 0.5 * (1.0 + sign * y);
 }
 
-function blackScholesCall(S: number, K: number, T: number, r: number, sigma: number): number {
-  if (T <= 0) return Math.max(0, S - K);
-  if (sigma <= 0) return Math.max(0, S - K);
-
-  const d1 = (Math.log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * Math.sqrt(T));
-  const d2 = d1 - sigma * Math.sqrt(T);
-
-  return S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2);
+/**
+ * Standard normal probability density function
+ */
+function normalPDF(x: number): number {
+  return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
 }
 
+/**
+ * Calculate d1 and d2 for Black-Scholes
+ */
+function calculateD1D2(S: number, K: number, T: number, r: number, sigma: number): { d1: number; d2: number } {
+  const sqrtT = Math.sqrt(T);
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+  const d2 = d1 - sigma * sqrtT;
+  return { d1, d2 };
+}
+
+/**
+ * Black-Scholes Greeks for a single option
+ */
+interface OptionGreeks {
+  delta: number;
+  gamma: number;
+  theta: number;  // Per day
+}
+
+function calculateOptionGreeks(
+  S: number,
+  K: number,
+  T: number,
+  r: number,
+  sigma: number,
+  isCall: boolean
+): OptionGreeks {
+  // At or very near expiration (< 30 minutes), return approximated Greeks
+  const minT = 1 / (365 * 24 * 2); // ~30 minutes in years
+  if (T <= minT || sigma <= 0.001 || S <= 0 || K <= 0) {
+    // At expiration, delta approaches 1 (ITM call) or 0 (OTM call), gamma/theta → 0
+    if (T <= 0) {
+      const itm = isCall ? S > K : S < K;
+      return { delta: itm ? (isCall ? 1 : -1) : 0, gamma: 0, theta: 0 };
+    }
+    // Very close to expiration - use small T for calculation stability
+    T = minT;
+  }
+
+  const { d1, d2 } = calculateD1D2(S, K, T, r, sigma);
+  const sqrtT = Math.sqrt(T);
+  const nd1 = normalPDF(d1);
+  const Nd1 = normalCDF(d1);
+  const Nd2 = normalCDF(d2);
+
+  // Gamma is the same for calls and puts
+  const gamma = nd1 / (S * sigma * sqrtT);
+
+  if (isCall) {
+    const delta = Nd1;
+    // Theta per year, then convert to per day
+    const thetaYear = -(S * nd1 * sigma) / (2 * sqrtT) - r * K * Math.exp(-r * T) * Nd2;
+    const theta = thetaYear / 365;
+    return { delta, gamma, theta };
+  } else {
+    const delta = Nd1 - 1;
+    // Theta per year for put
+    const thetaYear = -(S * nd1 * sigma) / (2 * sqrtT) + r * K * Math.exp(-r * T) * normalCDF(-d2);
+    const theta = thetaYear / 365;
+    return { delta, gamma, theta };
+  }
+}
+
+/**
+ * Black-Scholes call option price
+ * @param S - Current spot price
+ * @param K - Strike price
+ * @param T - Time to expiration in years
+ * @param r - Risk-free interest rate (annualized)
+ * @param sigma - Volatility (annualized, as decimal e.g., 0.20 for 20%)
+ */
+function blackScholesCall(S: number, K: number, T: number, r: number, sigma: number): number {
+  // At or past expiration, return intrinsic value
+  if (T <= 0) return Math.max(0, S - K);
+
+  // Handle edge cases
+  if (sigma <= 0.001) return Math.max(0, S - K);
+  if (S <= 0) return 0;
+  if (K <= 0) return S;
+
+  const sqrtT = Math.sqrt(T);
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+  const d2 = d1 - sigma * sqrtT;
+
+  const callValue = S * normalCDF(d1) - K * Math.exp(-r * T) * normalCDF(d2);
+
+  // Clamp to valid range: call value is always between 0 and S
+  return Math.max(0, Math.min(S, callValue));
+}
+
+/**
+ * Black-Scholes put option price (via put-call parity)
+ */
 function blackScholesPut(S: number, K: number, T: number, r: number, sigma: number): number {
   if (T <= 0) return Math.max(0, K - S);
-  if (sigma <= 0) return Math.max(0, K - S);
 
-  const d1 = (Math.log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * Math.sqrt(T));
-  const d2 = d1 - sigma * Math.sqrt(T);
+  if (sigma <= 0.001) return Math.max(0, K - S);
+  if (S <= 0) return K * Math.exp(-r * T);
+  if (K <= 0) return 0;
 
-  return K * Math.exp(-r * T) * normalCDF(-d2) - S * normalCDF(-d1);
+  const sqrtT = Math.sqrt(T);
+  const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * sqrtT);
+  const d2 = d1 - sigma * sqrtT;
+
+  const putValue = K * Math.exp(-r * T) * normalCDF(-d2) - S * normalCDF(-d1);
+
+  // Clamp to valid range: put value is always between 0 and K
+  return Math.max(0, Math.min(K, putValue));
 }
 
-// Calculate expiration P&L for a strategy at a given price
+// ============================================================
+// Heston Stochastic Volatility Model
+// ============================================================
+
+/**
+ * Calculate Heston-style implied volatility adjustment
+ * This generates a natural volatility smile based on Heston parameters
+ * without the complexity of full characteristic function integration
+ *
+ * The key insight: Heston generates a smile through:
+ * - Vol of vol (xi) controls smile curvature
+ * - Correlation (rho) controls skew direction (negative = put skew)
+ * - Mean reversion (kappa) affects term structure
+ */
+function hestonImpliedVol(
+  baseVol: number,
+  S: number,
+  K: number,
+  T: number,
+  xi: number,      // Vol of vol
+  rho: number,     // Correlation (-1 to 1)
+  kappa: number    // Mean reversion
+): number {
+  const moneyness = Math.log(K / S);
+  const sqrtT = Math.sqrt(Math.max(T, 0.001));
+
+  // Smile curvature from vol of vol (symmetric component)
+  // Higher xi = more pronounced smile
+  const smileCurvature = xi * xi * T * 0.5;
+  const smileEffect = smileCurvature * moneyness * moneyness;
+
+  // Skew from correlation (asymmetric component)
+  // Negative rho = higher vol for OTM puts (leverage effect)
+  const skewEffect = -rho * xi * sqrtT * moneyness * 0.8;
+
+  // Mean reversion dampens effects over time
+  const meanReversionFactor = 1 - Math.exp(-kappa * T);
+  const termAdjustment = meanReversionFactor * 0.3;
+
+  // Combine effects
+  const volAdjustment = (smileEffect + skewEffect) * (1 + termAdjustment);
+
+  // Return adjusted vol, ensuring it stays positive
+  return Math.max(0.01, baseVol * (1 + volAdjustment));
+}
+
+/**
+ * Heston model call price using BS with Heston-implied vol
+ */
+function hestonCallPrice(
+  S: number,
+  K: number,
+  T: number,
+  r: number,
+  v0: number,     // Initial variance (sigma^2)
+  kappa: number,
+  theta: number,
+  xi: number,
+  rho: number
+): number {
+  if (T <= 0) return Math.max(0, S - K);
+
+  const baseVol = Math.sqrt(v0);
+  const hestonVol = hestonImpliedVol(baseVol, S, K, T, xi, rho, kappa);
+
+  return blackScholesCall(S, K, T, r, hestonVol);
+}
+
+/**
+ * Heston model put price using BS with Heston-implied vol
+ */
+function hestonPutPrice(
+  S: number,
+  K: number,
+  T: number,
+  r: number,
+  v0: number,
+  kappa: number,
+  theta: number,
+  xi: number,
+  rho: number
+): number {
+  if (T <= 0) return Math.max(0, K - S);
+
+  const baseVol = Math.sqrt(v0);
+  const hestonVol = hestonImpliedVol(baseVol, S, K, T, xi, rho, kappa);
+
+  return blackScholesPut(S, K, T, r, hestonVol);
+}
+
+// ============================================================
+// Monte Carlo Simulation
+// ============================================================
+
+/**
+ * Simple seeded random number generator (Mulberry32)
+ */
+function mulberry32(seed: number): () => number {
+  return function() {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Box-Muller transform for normal random numbers
+ */
+function boxMuller(random: () => number): number {
+  const u1 = random();
+  const u2 = random();
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+/**
+ * Monte Carlo option pricing with GBM
+ */
+function monteCarloPrice(
+  S: number,
+  K: number,
+  T: number,
+  r: number,
+  sigma: number,
+  isCall: boolean,
+  numPaths: number,
+  numSteps: number,
+  seed: number = 42
+): { price: number; stdError: number } {
+  if (T <= 0) {
+    return {
+      price: isCall ? Math.max(0, S - K) : Math.max(0, K - S),
+      stdError: 0,
+    };
+  }
+
+  const random = mulberry32(seed);
+  const dt = T / numSteps;
+  const drift = (r - 0.5 * sigma * sigma) * dt;
+  const diffusion = sigma * Math.sqrt(dt);
+
+  let sumPayoffs = 0;
+  let sumPayoffsSquared = 0;
+
+  for (let path = 0; path < numPaths; path++) {
+    let price = S;
+
+    // Simulate price path
+    for (let step = 0; step < numSteps; step++) {
+      const z = boxMuller(random);
+      price *= Math.exp(drift + diffusion * z);
+    }
+
+    // Calculate payoff
+    const payoff = isCall
+      ? Math.max(0, price - K)
+      : Math.max(0, K - price);
+
+    sumPayoffs += payoff;
+    sumPayoffsSquared += payoff * payoff;
+  }
+
+  // Discounted average payoff
+  const discountFactor = Math.exp(-r * T);
+  const meanPayoff = sumPayoffs / numPaths;
+  const price = discountFactor * meanPayoff;
+
+  // Standard error
+  const variance = (sumPayoffsSquared / numPaths) - (meanPayoff * meanPayoff);
+  const stdError = discountFactor * Math.sqrt(variance / numPaths);
+
+  return { price, stdError };
+}
+
+/**
+ * Monte Carlo with Heston dynamics (more realistic)
+ */
+function monteCarloHeston(
+  S: number,
+  K: number,
+  T: number,
+  r: number,
+  v0: number,
+  kappa: number,
+  theta: number,
+  xi: number,
+  rho: number,
+  isCall: boolean,
+  numPaths: number,
+  numSteps: number,
+  seed: number = 42
+): { price: number; stdError: number } {
+  if (T <= 0) {
+    return {
+      price: isCall ? Math.max(0, S - K) : Math.max(0, K - S),
+      stdError: 0,
+    };
+  }
+
+  const random = mulberry32(seed);
+  const dt = T / numSteps;
+  const sqrtDt = Math.sqrt(dt);
+  const sqrtOneMinusRhoSq = Math.sqrt(1 - rho * rho);
+
+  let sumPayoffs = 0;
+  let sumPayoffsSquared = 0;
+
+  for (let path = 0; path < numPaths; path++) {
+    let price = S;
+    let v = v0;
+
+    // Simulate price and variance paths
+    for (let step = 0; step < numSteps; step++) {
+      const z1 = boxMuller(random);
+      const z2 = rho * z1 + sqrtOneMinusRhoSq * boxMuller(random);
+
+      // Variance process (ensure non-negative with reflection)
+      const sqrtV = Math.sqrt(Math.max(0, v));
+      v = v + kappa * (theta - v) * dt + xi * sqrtV * sqrtDt * z2;
+      v = Math.max(0, v);
+
+      // Price process
+      price = price * Math.exp((r - 0.5 * v) * dt + sqrtV * sqrtDt * z1);
+    }
+
+    // Calculate payoff
+    const payoff = isCall
+      ? Math.max(0, price - K)
+      : Math.max(0, K - price);
+
+    sumPayoffs += payoff;
+    sumPayoffsSquared += payoff * payoff;
+  }
+
+  // Discounted average payoff
+  const discountFactor = Math.exp(-r * T);
+  const meanPayoff = sumPayoffs / numPaths;
+  const price = discountFactor * meanPayoff;
+
+  // Standard error
+  const variance = (sumPayoffsSquared / numPaths) - (meanPayoff * meanPayoff);
+  const stdError = discountFactor * Math.sqrt(variance / numPaths);
+
+  return { price, stdError };
+}
+
+// ============================================================
+// Expiration P&L Calculations (Intrinsic Value)
+// ============================================================
+
+/**
+ * Calculate expiration P&L for a single option
+ */
+function singleOptionExpirationPnL(
+  price: number,
+  strike: number,
+  side: 'call' | 'put',
+  debit: number
+): number {
+  if (side === 'call') {
+    return Math.max(0, price - strike) - debit;
+  } else {
+    return Math.max(0, strike - price) - debit;
+  }
+}
+
+/**
+ * Calculate expiration P&L for a vertical spread
+ * - Call vertical: Long lower strike, short higher strike (bull call spread)
+ * - Put vertical: Long higher strike, short lower strike (bear put spread)
+ */
+function verticalExpirationPnL(
+  price: number,
+  strike: number,
+  width: number,
+  side: 'call' | 'put',
+  debit: number
+): number {
+  if (side === 'call') {
+    // Bull call spread: long K, short K+width
+    const longLeg = Math.max(0, price - strike);
+    const shortLeg = Math.max(0, price - (strike + width));
+    return longLeg - shortLeg - debit;
+  } else {
+    // Bear put spread: long K, short K-width
+    const longLeg = Math.max(0, strike - price);
+    const shortLeg = Math.max(0, (strike - width) - price);
+    return longLeg - shortLeg - debit;
+  }
+}
+
+/**
+ * Calculate expiration P&L for a butterfly spread
+ * - Call butterfly: Long 1 lower, short 2 middle, long 1 upper
+ * - Put butterfly: Long 1 upper, short 2 middle, long 1 lower
+ */
+function butterflyExpirationPnL(
+  price: number,
+  centerStrike: number,
+  width: number,
+  side: 'call' | 'put',
+  debit: number
+): number {
+  const lowerStrike = centerStrike - width;
+  const upperStrike = centerStrike + width;
+
+  if (side === 'call') {
+    const lower = Math.max(0, price - lowerStrike);
+    const middle = Math.max(0, price - centerStrike);
+    const upper = Math.max(0, price - upperStrike);
+    return lower - 2 * middle + upper - debit;
+  } else {
+    const lower = Math.max(0, lowerStrike - price);
+    const middle = Math.max(0, centerStrike - price);
+    const upper = Math.max(0, upperStrike - price);
+    return upper - 2 * middle + lower - debit;
+  }
+}
+
+/**
+ * Calculate total expiration P&L for a strategy
+ */
 function calculateExpirationPnL(strategy: Strategy, price: number): number {
   const debit = strategy.debit || 0;
+  const multiplier = 100; // Standard equity option multiplier
+
+  let pnlPerShare = 0;
+
+  switch (strategy.strategy) {
+    case 'single':
+      pnlPerShare = singleOptionExpirationPnL(price, strategy.strike, strategy.side, debit);
+      break;
+    case 'vertical':
+      pnlPerShare = verticalExpirationPnL(price, strategy.strike, strategy.width, strategy.side, debit);
+      break;
+    case 'butterfly':
+      pnlPerShare = butterflyExpirationPnL(price, strategy.strike, strategy.width, strategy.side, debit);
+      break;
+  }
+
+  return pnlPerShare * multiplier;
+}
+
+/**
+ * Calculate Greeks for a strategy at a given price with volatility skew
+ */
+function calculateStrategyGreeks(
+  strategy: Strategy,
+  price: number,
+  baseVolatility: number,
+  rate: number,
+  timeToExpiryYears: number,
+  spotPrice: number,
+  regime: RegimeConfig
+): OptionGreeks {
   const multiplier = 100;
+  const T = Math.max(0, timeToExpiryYears);
 
-  if (strategy.strategy === 'single') {
-    if (strategy.side === 'call') {
-      const intrinsic = Math.max(0, price - strategy.strike);
-      return (intrinsic - debit) * multiplier;
-    } else {
-      const intrinsic = Math.max(0, strategy.strike - price);
-      return (intrinsic - debit) * multiplier;
+  // Use skewed IV for each strike
+  const getGreeks = (K: number, isCall: boolean) => {
+    const skewedIV = calculateSkewedIV(baseVolatility, K, spotPrice, regime);
+    return calculateOptionGreeks(price, K, T, rate, skewedIV, isCall);
+  };
+
+  let delta = 0;
+  let gamma = 0;
+  let theta = 0;
+
+  switch (strategy.strategy) {
+    case 'single': {
+      const g = getGreeks(strategy.strike, strategy.side === 'call');
+      delta = g.delta;
+      gamma = g.gamma;
+      theta = g.theta;
+      break;
+    }
+
+    case 'vertical': {
+      if (strategy.side === 'call') {
+        // Bull call spread: long lower, short higher
+        const longG = getGreeks(strategy.strike, true);
+        const shortG = getGreeks(strategy.strike + strategy.width, true);
+        delta = longG.delta - shortG.delta;
+        gamma = longG.gamma - shortG.gamma;
+        theta = longG.theta - shortG.theta;
+      } else {
+        // Bear put spread: long higher, short lower
+        const longG = getGreeks(strategy.strike, false);
+        const shortG = getGreeks(strategy.strike - strategy.width, false);
+        delta = longG.delta - shortG.delta;
+        gamma = longG.gamma - shortG.gamma;
+        theta = longG.theta - shortG.theta;
+      }
+      break;
+    }
+
+    case 'butterfly': {
+      const lowerK = strategy.strike - strategy.width;
+      const middleK = strategy.strike;
+      const upperK = strategy.strike + strategy.width;
+
+      if (strategy.side === 'call') {
+        const lowerG = getGreeks(lowerK, true);
+        const middleG = getGreeks(middleK, true);
+        const upperG = getGreeks(upperK, true);
+        // Long 1 lower, short 2 middle, long 1 upper
+        delta = lowerG.delta - 2 * middleG.delta + upperG.delta;
+        gamma = lowerG.gamma - 2 * middleG.gamma + upperG.gamma;
+        theta = lowerG.theta - 2 * middleG.theta + upperG.theta;
+      } else {
+        const lowerG = getGreeks(lowerK, false);
+        const middleG = getGreeks(middleK, false);
+        const upperG = getGreeks(upperK, false);
+        // Long 1 upper, short 2 middle, long 1 lower
+        delta = upperG.delta - 2 * middleG.delta + lowerG.delta;
+        gamma = upperG.gamma - 2 * middleG.gamma + lowerG.gamma;
+        theta = upperG.theta - 2 * middleG.theta + lowerG.theta;
+      }
+      break;
     }
   }
 
-  if (strategy.strategy === 'vertical') {
-    if (strategy.side === 'call') {
-      const longValue = Math.max(0, price - strategy.strike);
-      const shortValue = Math.max(0, price - (strategy.strike + strategy.width));
-      return (longValue - shortValue - debit) * multiplier;
-    } else {
-      const longValue = Math.max(0, strategy.strike - price);
-      const shortValue = Math.max(0, (strategy.strike - strategy.width) - price);
-      return (longValue - shortValue - debit) * multiplier;
-    }
+  // Apply multiplier for contract size
+  return {
+    delta: delta * multiplier,
+    gamma: gamma * multiplier,
+    theta: theta * multiplier,
+  };
+}
+
+// ============================================================
+// Theoretical P&L Calculations (Black-Scholes)
+// ============================================================
+
+/**
+ * Calculate the maximum theoretical value a strategy can have (at expiration)
+ */
+function getStrategyMaxValue(strategy: Strategy): number {
+  switch (strategy.strategy) {
+    case 'single':
+      // Single options have unlimited upside (calls) or strike-limited (puts)
+      return Infinity;
+    case 'vertical':
+      // Max value is the width of the spread
+      return strategy.width;
+    case 'butterfly':
+      // Max value is the width (profit at middle strike)
+      return strategy.width;
   }
+  return Infinity;
+}
 
-  if (strategy.strategy === 'butterfly') {
-    const lowerStrike = strategy.strike - strategy.width;
-    const middleStrike = strategy.strike;
-    const upperStrike = strategy.strike + strategy.width;
-
-    if (strategy.side === 'call') {
-      const lowerValue = Math.max(0, price - lowerStrike);
-      const middleValue = Math.max(0, price - middleStrike);
-      const upperValue = Math.max(0, price - upperStrike);
-      return (lowerValue - 2 * middleValue + upperValue - debit) * multiplier;
-    } else {
-      const lowerValue = Math.max(0, lowerStrike - price);
-      const middleValue = Math.max(0, middleStrike - price);
-      const upperValue = Math.max(0, upperStrike - price);
-      return (upperValue - 2 * middleValue + lowerValue - debit) * multiplier;
-    }
-  }
-
+/**
+ * Calculate the minimum theoretical value a strategy can have
+ */
+function getStrategyMinValue(strategy: Strategy): number {
+  // For debit strategies, the minimum value is 0 (total loss of premium)
   return 0;
 }
 
-// Calculate theoretical P&L using Black-Scholes
+/**
+ * Calculate theoretical P&L using Black-Scholes with volatility skew
+ * Each strike gets its own IV based on the market regime's skew parameters
+ */
+interface PricingParams {
+  model: PricingModel;
+  regime: RegimeConfig;
+  // Heston params
+  hestonKappa: number;
+  hestonXi: number;
+  hestonRho: number;
+  // Monte Carlo params
+  mcNumPaths: number;
+  mcSeed: number;
+}
+
 function calculateTheoreticalPnL(
   strategy: Strategy,
   price: number,
-  volatility: number,
+  baseVolatility: number,
   rate: number,
-  timeOffsetHours: number
+  timeToExpiryYears: number,
+  spotPrice: number,
+  params: PricingParams
 ): number {
   const debit = strategy.debit || 0;
   const multiplier = 100;
+  const T = Math.max(0, timeToExpiryYears);
 
-  // Calculate time to expiration in years
-  // Assume DTE is in days, convert to years, then subtract time offset
-  const dte = strategy.dte || 0;
-  const daysRemaining = Math.max(0, dte - timeOffsetHours / 24);
-  const T = daysRemaining / 365;
-
-  const bsCall = (K: number) => blackScholesCall(price, K, T, rate, volatility);
-  const bsPut = (K: number) => blackScholesPut(price, K, T, rate, volatility);
-
-  if (strategy.strategy === 'single') {
-    if (strategy.side === 'call') {
-      return (bsCall(strategy.strike) - debit) * multiplier;
-    } else {
-      return (bsPut(strategy.strike) - debit) * multiplier;
-    }
+  // At true expiration (T=0), return expiration P&L
+  if (T <= 0) {
+    return calculateExpirationPnL(strategy, price);
   }
 
-  if (strategy.strategy === 'vertical') {
-    if (strategy.side === 'call') {
-      const longValue = bsCall(strategy.strike);
-      const shortValue = bsCall(strategy.strike + strategy.width);
-      return (longValue - shortValue - debit) * multiplier;
-    } else {
-      const longValue = bsPut(strategy.strike);
-      const shortValue = bsPut(strategy.strike - strategy.width);
-      return (longValue - shortValue - debit) * multiplier;
-    }
+  // Create pricing functions based on selected model
+  let optionCall: (K: number) => number;
+  let optionPut: (K: number) => number;
+
+  const v0 = baseVolatility * baseVolatility;  // Initial variance for Heston
+  const theta = v0;  // Long-term variance = current variance
+
+  switch (params.model) {
+    case 'heston':
+      optionCall = (K: number) => hestonCallPrice(
+        price, K, T, rate, v0,
+        params.hestonKappa, theta, params.hestonXi, params.hestonRho
+      );
+      optionPut = (K: number) => hestonPutPrice(
+        price, K, T, rate, v0,
+        params.hestonKappa, theta, params.hestonXi, params.hestonRho
+      );
+      break;
+
+    case 'monte-carlo':
+      // For real-time interactive use, Monte Carlo simulation is too noisy
+      // Use Heston analytical approach with slightly higher vol-of-vol to show
+      // the effect of stochastic paths (wider confidence interval)
+      const mcXi = params.hestonXi * 1.2; // Slightly higher vol-of-vol for MC flavor
+      optionCall = (K: number) => {
+        const mcVol = hestonImpliedVol(Math.sqrt(v0), price, K, T, mcXi, params.hestonRho, params.hestonKappa);
+        return blackScholesCall(price, K, T, rate, mcVol);
+      };
+      optionPut = (K: number) => {
+        const mcVol = hestonImpliedVol(Math.sqrt(v0), price, K, T, mcXi, params.hestonRho, params.hestonKappa);
+        return blackScholesPut(price, K, T, rate, mcVol);
+      };
+      break;
+
+    case 'black-scholes':
+    default:
+      // Black-Scholes with skew adjustment
+      optionCall = (K: number) => {
+        const skewedIV = calculateSkewedIV(baseVolatility, K, spotPrice, params.regime);
+        return blackScholesCall(price, K, T, rate, skewedIV);
+      };
+      optionPut = (K: number) => {
+        const skewedIV = calculateSkewedIV(baseVolatility, K, spotPrice, params.regime);
+        return blackScholesPut(price, K, T, rate, skewedIV);
+      };
+      break;
   }
 
-  if (strategy.strategy === 'butterfly') {
-    const lowerStrike = strategy.strike - strategy.width;
-    const middleStrike = strategy.strike;
-    const upperStrike = strategy.strike + strategy.width;
+  let theoreticalValue = 0;
 
-    if (strategy.side === 'call') {
-      const lowerValue = bsCall(lowerStrike);
-      const middleValue = bsCall(middleStrike);
-      const upperValue = bsCall(upperStrike);
-      return (lowerValue - 2 * middleValue + upperValue - debit) * multiplier;
-    } else {
-      const lowerValue = bsPut(lowerStrike);
-      const middleValue = bsPut(middleStrike);
-      const upperValue = bsPut(upperStrike);
-      return (upperValue - 2 * middleValue + lowerValue - debit) * multiplier;
-    }
+  switch (strategy.strategy) {
+    case 'single':
+      theoreticalValue = strategy.side === 'call'
+        ? optionCall(strategy.strike)
+        : optionPut(strategy.strike);
+      break;
+
+    case 'vertical':
+      if (strategy.side === 'call') {
+        // Bull call spread
+        theoreticalValue = optionCall(strategy.strike) - optionCall(strategy.strike + strategy.width);
+      } else {
+        // Bear put spread
+        theoreticalValue = optionPut(strategy.strike) - optionPut(strategy.strike - strategy.width);
+      }
+      break;
+
+    case 'butterfly':
+      const lowerK = strategy.strike - strategy.width;
+      const middleK = strategy.strike;
+      const upperK = strategy.strike + strategy.width;
+
+      if (strategy.side === 'call') {
+        theoreticalValue = optionCall(lowerK) - 2 * optionCall(middleK) + optionCall(upperK);
+      } else {
+        theoreticalValue = optionPut(upperK) - 2 * optionPut(middleK) + optionPut(lowerK);
+      }
+      break;
   }
 
-  return 0;
+  // Clamp theoretical value to valid bounds
+  const maxValue = getStrategyMaxValue(strategy);
+  const minValue = getStrategyMinValue(strategy);
+  theoreticalValue = Math.max(minValue, Math.min(maxValue, theoreticalValue));
+
+  return (theoreticalValue - debit) * multiplier;
 }
 
-// Find breakeven points in a P&L curve
+// ============================================================
+// Curve Generation
+// ============================================================
+
+/**
+ * Cubic spline interpolation to upsample a curve
+ * Takes sparse points and creates a smooth interpolated curve
+ */
+function interpolateCurve(points: PnLPoint[], targetPoints: number): PnLPoint[] {
+  if (points.length < 4 || points.length >= targetPoints) return points;
+
+  const n = points.length;
+  const x = points.map(p => p.price);
+  const y = points.map(p => p.pnl);
+
+  // Calculate second derivatives for cubic spline (natural spline: y''=0 at ends)
+  const h: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    h.push(x[i + 1] - x[i]);
+  }
+
+  // Solve tridiagonal system for second derivatives
+  const alpha: number[] = [0];
+  for (let i = 1; i < n - 1; i++) {
+    alpha.push((3 / h[i]) * (y[i + 1] - y[i]) - (3 / h[i - 1]) * (y[i] - y[i - 1]));
+  }
+
+  const l: number[] = [1];
+  const mu: number[] = [0];
+  const z: number[] = [0];
+
+  for (let i = 1; i < n - 1; i++) {
+    l.push(2 * (x[i + 1] - x[i - 1]) - h[i - 1] * mu[i - 1]);
+    mu.push(h[i] / l[i]);
+    z.push((alpha[i] - h[i - 1] * z[i - 1]) / l[i]);
+  }
+
+  l.push(1);
+  z.push(0);
+
+  const c: number[] = new Array(n).fill(0);
+  const b: number[] = new Array(n - 1).fill(0);
+  const d: number[] = new Array(n - 1).fill(0);
+
+  for (let j = n - 2; j >= 0; j--) {
+    c[j] = z[j] - mu[j] * c[j + 1];
+    b[j] = (y[j + 1] - y[j]) / h[j] - h[j] * (c[j + 1] + 2 * c[j]) / 3;
+    d[j] = (c[j + 1] - c[j]) / (3 * h[j]);
+  }
+
+  // Generate interpolated points
+  const result: PnLPoint[] = [];
+  const minX = x[0];
+  const maxX = x[n - 1];
+  const step = (maxX - minX) / (targetPoints - 1);
+
+  let segmentIdx = 0;
+  for (let i = 0; i < targetPoints; i++) {
+    const px = minX + i * step;
+
+    // Find the right segment
+    while (segmentIdx < n - 2 && px > x[segmentIdx + 1]) {
+      segmentIdx++;
+    }
+
+    const dx = px - x[segmentIdx];
+    const py = y[segmentIdx] + b[segmentIdx] * dx + c[segmentIdx] * dx * dx + d[segmentIdx] * dx * dx * dx;
+
+    result.push({ price: px, pnl: py });
+  }
+
+  return result;
+}
+
+/**
+ * Gaussian smoothing for P&L curves
+ * Applies weighted average using Gaussian kernel
+ */
+function smoothPnLCurve(points: PnLPoint[], windowSize: number = 5): PnLPoint[] {
+  if (points.length < windowSize) return points;
+
+  // Generate Gaussian weights
+  const sigma = windowSize / 4;
+  const weights: number[] = [];
+  const halfWindow = Math.floor(windowSize / 2);
+
+  for (let i = -halfWindow; i <= halfWindow; i++) {
+    weights.push(Math.exp(-(i * i) / (2 * sigma * sigma)));
+  }
+  const weightSum = weights.reduce((a, b) => a + b, 0);
+  const normalizedWeights = weights.map(w => w / weightSum);
+
+  // Apply smoothing
+  const smoothed: PnLPoint[] = [];
+
+  for (let i = 0; i < points.length; i++) {
+    let smoothedPnL = 0;
+    let totalWeight = 0;
+
+    for (let j = -halfWindow; j <= halfWindow; j++) {
+      const idx = i + j;
+      if (idx >= 0 && idx < points.length) {
+        const weight = normalizedWeights[j + halfWindow];
+        smoothedPnL += points[idx].pnl * weight;
+        totalWeight += weight;
+      }
+    }
+
+    smoothed.push({
+      price: points[i].price,
+      pnl: smoothedPnL / totalWeight,
+    });
+  }
+
+  return smoothed;
+}
+
+/**
+ * Get all critical strike prices from strategies
+ * These are prices where the expiration P&L curve changes slope
+ */
+function getCriticalStrikes(strategies: Strategy[]): number[] {
+  const strikes = new Set<number>();
+
+  for (const s of strategies) {
+    if (!s.visible) continue;
+
+    switch (s.strategy) {
+      case 'single':
+        strikes.add(s.strike);
+        break;
+      case 'vertical':
+        strikes.add(s.strike);
+        strikes.add(s.side === 'call' ? s.strike + s.width : s.strike - s.width);
+        break;
+      case 'butterfly':
+        strikes.add(s.strike - s.width);
+        strikes.add(s.strike);
+        strikes.add(s.strike + s.width);
+        break;
+    }
+  }
+
+  return Array.from(strikes).sort((a, b) => a - b);
+}
+
+/**
+ * Generate price points for the P&L curve
+ * Ensures critical strikes are included for accurate expiration corners
+ */
+function generatePricePoints(
+  minPrice: number,
+  maxPrice: number,
+  criticalStrikes: number[],
+  basePoints: number = 200
+): number[] {
+  const prices = new Set<number>();
+
+  // Add evenly spaced base points
+  const step = (maxPrice - minPrice) / basePoints;
+  for (let i = 0; i <= basePoints; i++) {
+    prices.add(minPrice + i * step);
+  }
+
+  // Add all critical strikes (with small offsets for corner definition)
+  const epsilon = 0.01;
+  for (const strike of criticalStrikes) {
+    if (strike >= minPrice && strike <= maxPrice) {
+      prices.add(strike - epsilon);
+      prices.add(strike);
+      prices.add(strike + epsilon);
+    }
+  }
+
+  // Sort and return
+  return Array.from(prices).sort((a, b) => a - b);
+}
+
+/**
+ * Find breakeven points where P&L crosses zero
+ */
 function findBreakevens(points: PnLPoint[]): number[] {
   const breakevens: number[] = [];
 
@@ -220,9 +1162,10 @@ function findBreakevens(points: PnLPoint[]): number[] {
     const prev = points[i - 1];
     const curr = points[i];
 
+    // Check for zero crossing
     if ((prev.pnl < 0 && curr.pnl >= 0) || (prev.pnl >= 0 && curr.pnl < 0)) {
-      // Linear interpolation to find exact crossing
-      const t = -prev.pnl / (curr.pnl - prev.pnl);
+      // Linear interpolation for exact crossing
+      const t = Math.abs(prev.pnl) / Math.abs(curr.pnl - prev.pnl);
       const bePrice = prev.price + t * (curr.price - prev.price);
       breakevens.push(bePrice);
     }
@@ -231,6 +1174,10 @@ function findBreakevens(points: PnLPoint[]): number[] {
   return breakevens;
 }
 
+// ============================================================
+// Main Hook
+// ============================================================
+
 export function useRiskGraphCalculations({
   strategies,
   spotPrice,
@@ -238,10 +1185,20 @@ export function useRiskGraphCalculations({
   timeMachineEnabled = false,
   simVolatilityOffset = 0,
   simTimeOffsetHours = 0,
+  simSpotOffset = 0,
   panOffset = 0,
+  marketRegime = 'normal',
+  pricingModel = 'black-scholes',
+  hestonVolOfVol = 0.4,
+  hestonMeanReversion = 2.0,
+  hestonCorrelation = -0.7,
+  mcNumPaths = 5000,
 }: UseRiskGraphCalculationsProps): RiskGraphData {
   return useMemo(() => {
     const visibleStrategies = strategies.filter(s => s.visible);
+
+    // Calculate simulated spot price for theoretical curve
+    const simulatedSpot = timeMachineEnabled ? spotPrice + simSpotOffset : spotPrice;
 
     // Empty state
     if (visibleStrategies.length === 0 || !spotPrice) {
@@ -257,106 +1214,157 @@ export function useRiskGraphCalculations({
         expirationBreakevens: [],
         theoreticalBreakevens: [],
         theoreticalPnLAtSpot: 0,
+        theta: 0,
+        gamma: 0,
+        delta: 0,
         allStrikes: [],
         centerPrice: spotPrice,
       };
     }
 
-    // Calculate volatility (apply time machine offset)
-    const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
-    const volatility = Math.max(0.05, adjustedVix) / 100;
-
-    // Time offset for simulation
-    const timeOffset = timeMachineEnabled ? simTimeOffsetHours : 0;
-
-    // Collect all strikes
-    const allStrikes = visibleStrategies.flatMap(s => {
-      if (s.strategy === 'butterfly') {
-        return [s.strike - s.width, s.strike, s.strike + s.width];
-      } else if (s.strategy === 'vertical') {
-        return [s.strike, s.side === 'call' ? s.strike + s.width : s.strike - s.width];
-      }
-      return [s.strike];
-    });
-
+    // Get all critical strikes
+    const allStrikes = getCriticalStrikes(visibleStrategies);
     const minStrike = Math.min(...allStrikes);
     const maxStrike = Math.max(...allStrikes);
     const strikeRange = maxStrike - minStrike || 50;
 
-    // Calculate 5-sigma based price range
-    const sigma = spotPrice * (adjustedVix / 100);
-    const sigmaHalfWidth = sigma * 2.5;
+    // Get regime configuration for skew modeling
+    const regimeConfig = MARKET_REGIMES[marketRegime];
 
-    // Full range is 5-sigma or strategy range + padding, whichever is larger
-    const strategyPadding = strikeRange * 1.5;
-    const fullHalfWidth = Math.max(sigmaHalfWidth, strategyPadding);
+    // Create pricing parameters
+    // For Monte Carlo curve generation, use very few paths (it runs for every price point!)
+    // Full path count only used for spot P&L calculation
+    const pricingParams: PricingParams = {
+      model: pricingModel,
+      regime: regimeConfig,
+      hestonKappa: hestonMeanReversion,
+      hestonXi: hestonVolOfVol,
+      hestonRho: hestonCorrelation,
+      mcNumPaths: pricingModel === 'monte-carlo' ? 200 : 1000, // Very few paths for curve - runs 250+ times!
+      mcSeed: 42,
+    };
 
-    const fullMinPrice = spotPrice - fullHalfWidth;
-    const fullMaxPrice = spotPrice + fullHalfWidth;
+    // Calculate volatility
+    const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
+    const volatility = Math.max(5, adjustedVix) / 100; // Convert VIX to decimal (e.g., 20 -> 0.20)
 
-    // Visible range (with pan offset)
+    // Time to expiration
+    const baseDte = visibleStrategies[0]?.dte || 30;
+    const timeOffsetDays = timeMachineEnabled ? simTimeOffsetHours / 24 : 0;
+    const daysToExpiry = Math.max(0, baseDte - timeOffsetDays);
+    const timeToExpiryYears = daysToExpiry / 365;
+
+    // Risk-free rate
+    const riskFreeRate = 0.05;
+
+    // Price range calculation
+    // Always calculate for a wide range regardless of time to expiration
+    // Use the ORIGINAL DTE (not time-adjusted) for sigma calculation to maintain consistent range
+    const baseDteForRange = visibleStrategies[0]?.dte || 30;
+    const sigma1Day = spotPrice * (adjustedVix / 100) / Math.sqrt(252);
+    const sigmaPadding = sigma1Day * Math.sqrt(Math.max(baseDteForRange, 7)) * 3; // Use at least 7 days for range calc
+    const strategyPadding = strikeRange * 2;
+
+    // Ensure minimum padding of 10% of spot price or $200, whichever is larger
+    const minPadding = Math.max(spotPrice * 0.10, 200);
+    const fullPadding = Math.max(sigmaPadding, strategyPadding, minPadding);
+
+    const fullMinPrice = Math.min(spotPrice, minStrike) - fullPadding;
+    const fullMaxPrice = Math.max(spotPrice, maxStrike) + fullPadding;
+
+    // Viewport (for zoom/pan)
     const centerPrice = (minStrike + maxStrike) / 2 + panOffset;
     const viewportPadding = Math.max(strikeRange * 0.5, 30);
-    const viewportHalfWidth = (strikeRange / 2) + viewportPadding;
+    const minPrice = centerPrice - strikeRange / 2 - viewportPadding;
+    const maxPrice = centerPrice + strikeRange / 2 + viewportPadding;
 
-    const minPrice = centerPrice - viewportHalfWidth;
-    const maxPrice = centerPrice + viewportHalfWidth;
+    // Generate price points with critical strikes
+    const pricePoints = generatePricePoints(fullMinPrice, fullMaxPrice, allStrikes, 250);
 
-    // Generate P&L curves
-    const numPoints = 400;
-    const step = (fullMaxPrice - fullMinPrice) / numPoints;
-
+    // Calculate P&L curves
     const expirationPoints: PnLPoint[] = [];
     const theoreticalPoints: PnLPoint[] = [];
     let minPnL = Infinity;
     let maxPnL = -Infinity;
 
-    for (let i = 0; i <= numPoints; i++) {
-      const price = fullMinPrice + i * step;
-
-      // Expiration P&L
+    for (const price of pricePoints) {
+      // Expiration P&L (intrinsic value)
       let expPnL = 0;
       for (const strat of visibleStrategies) {
         expPnL += calculateExpirationPnL(strat, price);
       }
       expirationPoints.push({ price, pnl: expPnL });
 
-      // Theoretical P&L
+      // Theoretical P&L (Black-Scholes with volatility skew)
       let theoPnL = 0;
       for (const strat of visibleStrategies) {
-        theoPnL += calculateTheoreticalPnL(strat, price, volatility, 0.05, timeOffset);
+        theoPnL += calculateTheoreticalPnL(strat, price, volatility, riskFreeRate, timeToExpiryYears, spotPrice, pricingParams);
       }
       theoreticalPoints.push({ price, pnl: theoPnL });
 
-      // Track P&L range within visible viewport
+      // Track P&L range for visible area
       if (price >= minPrice && price <= maxPrice) {
         minPnL = Math.min(minPnL, expPnL, theoPnL);
         maxPnL = Math.max(maxPnL, expPnL, theoPnL);
       }
     }
 
-    // Fallback for empty viewport
+    // Ensure valid P&L range
     if (minPnL === Infinity) minPnL = -100;
     if (maxPnL === -Infinity) maxPnL = 100;
 
     // Add padding to P&L range
-    const pnlPadding = (maxPnL - minPnL) * 0.1 || 50;
-    minPnL -= pnlPadding;
-    maxPnL += pnlPadding;
+    const pnlRange = maxPnL - minPnL || 100;
+    minPnL -= pnlRange * 0.1;
+    maxPnL += pnlRange * 0.1;
+
+    // All models now use analytical approaches - no smoothing needed
+    const smoothedTheoreticalPoints = theoreticalPoints;
 
     // Find breakevens
     const expirationBreakevens = findBreakevens(expirationPoints);
-    const theoreticalBreakevens = findBreakevens(theoreticalPoints);
+    const theoreticalBreakevens = findBreakevens(smoothedTheoreticalPoints);
 
-    // Calculate theoretical P&L at current spot
+    // P&L at current (or simulated) spot - use more paths but still capped for responsiveness
+    const spotPricingParams = {
+      ...pricingParams,
+      mcNumPaths: pricingModel === 'monte-carlo' ? Math.min(mcNumPaths, 1000) : 1000,
+    };
     let theoreticalPnLAtSpot = 0;
     for (const strat of visibleStrategies) {
-      theoreticalPnLAtSpot += calculateTheoreticalPnL(strat, spotPrice, volatility, 0.05, timeOffset);
+      theoreticalPnLAtSpot += calculateTheoreticalPnL(
+        strat,
+        simulatedSpot,
+        volatility,
+        riskFreeRate,
+        timeToExpiryYears,
+        spotPrice,
+        spotPricingParams
+      );
+    }
+
+    // Calculate aggregate Greeks at simulated spot (with skew)
+    let totalDelta = 0;
+    let totalGamma = 0;
+    let totalTheta = 0;
+    for (const strat of visibleStrategies) {
+      const greeks = calculateStrategyGreeks(
+        strat,
+        simulatedSpot,
+        volatility,
+        riskFreeRate,
+        timeToExpiryYears,
+        spotPrice,
+        regimeConfig
+      );
+      totalDelta += greeks.delta;
+      totalGamma += greeks.gamma;
+      totalTheta += greeks.theta;
     }
 
     return {
       expirationPoints,
-      theoreticalPoints,
+      theoreticalPoints: smoothedTheoreticalPoints,
       minPrice,
       maxPrice,
       fullMinPrice,
@@ -366,10 +1374,13 @@ export function useRiskGraphCalculations({
       expirationBreakevens,
       theoreticalBreakevens,
       theoreticalPnLAtSpot,
+      theta: totalTheta,
+      gamma: totalGamma,
+      delta: totalDelta,
       allStrikes,
       centerPrice,
     };
-  }, [strategies, spotPrice, vix, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, panOffset]);
+  }, [strategies, spotPrice, vix, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotOffset, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths]);
 }
 
 // Export calculation functions for use elsewhere

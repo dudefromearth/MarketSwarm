@@ -16,7 +16,16 @@ export type AlertType =
   | 'trailing_stop'   // Trailing stop triggered
   | 'ai_theta_gamma'  // AI-computed dynamic risk zone
   | 'ai_sentiment'    // AI market sentiment analysis
-  | 'ai_risk_zone';   // AI-computed risk boundaries
+  | 'ai_risk_zone'    // AI-computed risk boundaries
+  | 'time_boundary'   // EOD/EOW/EOM alerts
+  | 'trade_closed';   // Trade closed notification
+
+// Intent class - determines alert UX behavior
+// See fotw-alerts.md for philosophy
+export type AlertIntentClass =
+  | 'informational'   // "Something changed" - e.g., price crossed a level
+  | 'reflective'      // "Worth noticing" - e.g., trade closed, pattern recurrence
+  | 'protective';     // "Attention, not action" - e.g., risk envelope degraded
 
 // Alert condition operators
 export type AlertCondition = 'above' | 'below' | 'at' | 'outside_zone' | 'inside_zone';

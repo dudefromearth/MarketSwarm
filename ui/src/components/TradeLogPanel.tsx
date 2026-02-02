@@ -74,7 +74,7 @@ interface TradeLogPanelProps {
   onEditTrade: (trade: Trade) => void;
   onViewReporting: (logId: string) => void;
   onManageLogs: () => void;
-  onOpenJournal: (context?: TradeReflectionContext) => void;
+onOpenJournal: (context?: TradeReflectionContext) => void;
   onOpenPlaybook: () => void;
   selectedLogId: string | null;
   selectedLog: TradeLog | null;
@@ -358,6 +358,19 @@ export default function TradeLogPanel({
         </div>
       )}
 
+      {/* Loop Indicator - The Trade Log is the hinge between Action and Reflection */}
+      <div className="improvement-loop-indicator">
+        <span className="loop-stage">Discovery</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage">Analysis</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage current">Action</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage">Reflection</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage">Distillation</span>
+      </div>
+
       <div className="trade-log-filters">
         <div className="status-tabs">
           <button
@@ -449,6 +462,7 @@ export default function TradeLogPanel({
                   <th>Exit</th>
                   <th>P&L</th>
                   <th>Dur</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
@@ -497,6 +511,28 @@ export default function TradeLogPanel({
                       )}
                     </td>
                     <td className="trade-duration">{formatDuration(trade.entry_time, trade.exit_time)}</td>
+                    <td className="trade-reflect">
+                      {trade.status === 'closed' && (
+                        <button
+                          className="reflect-hook"
+                          title="Capture a thought?"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onOpenJournal({
+                              tradeId: trade.id,
+                              symbol: trade.symbol,
+                              strategy: trade.strategy,
+                              side: trade.side,
+                              strike: trade.strike,
+                              width: trade.width,
+                              closeDate: trade.exit_time || trade.entry_time,
+                            });
+                          }}
+                        >
+                          📝
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

@@ -4,7 +4,8 @@
  * Provides HTTP methods for alert operations with the backend.
  * Used by AlertContext for persistence and AI evaluation requests.
  *
- * Backend: Copilot service at port 8095
+ * Backend: Journal service at port 3002 (alerts are now server-side persisted)
+ * AI evaluations still go to Copilot service at port 8095
  */
 
 import type {
@@ -15,8 +16,9 @@ import type {
   MarketContext,
 } from '../types/alerts';
 
-// API base URL - Copilot service
-const API_BASE = 'http://localhost:8095';
+// API base URLs
+const JOURNAL_API_BASE = 'http://localhost:3002';  // Alert CRUD
+const COPILOT_API_BASE = 'http://localhost:8095';  // AI evaluations
 
 // Response wrapper
 interface ApiResponse<T> {
@@ -26,11 +28,11 @@ interface ApiResponse<T> {
 }
 
 /**
- * Fetch all alerts from backend
+ * Fetch all alerts from backend (Journal service)
  */
 export async function fetchAlerts(): Promise<Alert[]> {
   try {
-    const response = await fetch(`${API_BASE}/api/alerts`, {
+    const response = await fetch(`${JOURNAL_API_BASE}/api/alerts`, {
       credentials: 'include',
     });
 
@@ -50,11 +52,11 @@ export async function fetchAlerts(): Promise<Alert[]> {
 }
 
 /**
- * Create a new alert
+ * Create a new alert (Journal service)
  */
 export async function createAlertApi(input: CreateAlertInput): Promise<Alert> {
   try {
-    const response = await fetch(`${API_BASE}/api/alerts`, {
+    const response = await fetch(`${JOURNAL_API_BASE}/api/alerts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -77,11 +79,11 @@ export async function createAlertApi(input: CreateAlertInput): Promise<Alert> {
 }
 
 /**
- * Update an existing alert
+ * Update an existing alert (Journal service)
  */
 export async function updateAlertApi(input: EditAlertInput): Promise<Alert> {
   try {
-    const response = await fetch(`${API_BASE}/api/alerts/${input.id}`, {
+    const response = await fetch(`${JOURNAL_API_BASE}/api/alerts/${input.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -104,11 +106,11 @@ export async function updateAlertApi(input: EditAlertInput): Promise<Alert> {
 }
 
 /**
- * Delete an alert
+ * Delete an alert (Journal service)
  */
 export async function deleteAlertApi(id: string): Promise<void> {
   try {
-    const response = await fetch(`${API_BASE}/api/alerts/${id}`, {
+    const response = await fetch(`${JOURNAL_API_BASE}/api/alerts/${id}`, {
       method: 'DELETE',
       credentials: 'include',
     });
@@ -128,14 +130,14 @@ export async function deleteAlertApi(id: string): Promise<void> {
 }
 
 /**
- * Request AI evaluation for an alert
+ * Request AI evaluation for an alert (Copilot service)
  */
 export async function requestAIEvaluation(
   alertId: string,
   context: MarketContext
 ): Promise<AIEvaluation> {
   try {
-    const response = await fetch(`${API_BASE}/api/alerts/${alertId}/evaluate`, {
+    const response = await fetch(`${COPILOT_API_BASE}/api/alerts/${alertId}/evaluate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -158,11 +160,11 @@ export async function requestAIEvaluation(
 }
 
 /**
- * Bulk import alerts
+ * Bulk import alerts (Journal service)
  */
 export async function importAlertsApi(alerts: Alert[]): Promise<Alert[]> {
   try {
-    const response = await fetch(`${API_BASE}/api/alerts/import`, {
+    const response = await fetch(`${JOURNAL_API_BASE}/api/alerts/import`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
@@ -198,11 +200,26 @@ export function exportAlertsToFile(alerts: Alert[], filename = 'alerts.json'): v
 }
 
 /**
- * Check if backend is available
+ * Check if Journal service is available
  */
-export async function checkBackendHealth(): Promise<boolean> {
+export async function checkJournalHealth(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_BASE}/health`, {
+    const response = await fetch(`${JOURNAL_API_BASE}/health`, {
+      method: 'GET',
+      credentials: 'include',
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if Copilot service is available (for AI evaluations)
+ */
+export async function checkCopilotHealth(): Promise<boolean> {
+  try {
+    const response = await fetch(`${COPILOT_API_BASE}/health`, {
       method: 'GET',
       credentials: 'include',
     });

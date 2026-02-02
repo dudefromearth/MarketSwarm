@@ -2,10 +2,12 @@
  * AlertContext - Shared Alert State Management
  *
  * Provides system-wide alert infrastructure:
- * - CRUD operations for alerts
+ * - CRUD operations for alerts (persisted to server)
  * - SSE connection for real-time updates
- * - localStorage persistence
  * - AI evaluation results
+ *
+ * Alerts are now server-side (Journal service) and survive browser refresh.
+ * Client is purely UI - no alert logic, no modals, no interruptions.
  *
  * Usage:
  *   const { alerts, createAlert, deleteAlert } = useAlerts();
@@ -32,6 +34,13 @@ import type {
   AlertBehavior,
   AlertPriority,
 } from '../types/alerts';
+
+import {
+  fetchAlerts,
+  createAlertApi,
+  updateAlertApi,
+  deleteAlertApi,
+} from '../services/alertService';
 
 // State shape
 interface AlertState {
@@ -170,14 +179,6 @@ interface AlertContextValue extends AlertState {
 // Create context
 const AlertContext = createContext<AlertContextValue | null>(null);
 
-// Storage key
-const STORAGE_KEY = 'fotw_alerts';
-
-// Generate unique ID
-function generateId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
 // Default values
 const DEFAULT_BEHAVIOR: AlertBehavior = 'once_only';
 const DEFAULT_PRIORITY: AlertPriority = 'medium';
@@ -189,34 +190,21 @@ export function AlertProvider({ children }: { children: ReactNode }) {
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
 
-  // Load alerts from localStorage on mount
+  // Load alerts from API on mount
   useEffect(() => {
-    dispatch({ type: 'SET_LOADING', loading: true });
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const alerts = JSON.parse(saved) as Alert[];
+    const loadAlerts = async () => {
+      dispatch({ type: 'SET_LOADING', loading: true });
+      try {
+        const alerts = await fetchAlerts();
         dispatch({ type: 'LOAD_ALERTS', alerts });
-      } else {
+      } catch (err) {
+        console.error('Failed to load alerts from API:', err);
+        dispatch({ type: 'SET_ERROR', error: 'Failed to load alerts' });
         dispatch({ type: 'SET_LOADING', loading: false });
       }
-    } catch (err) {
-      console.error('Failed to load alerts from localStorage:', err);
-      dispatch({ type: 'SET_ERROR', error: 'Failed to load alerts' });
-      dispatch({ type: 'SET_LOADING', loading: false });
-    }
+    };
+    loadAlerts();
   }, []);
-
-  // Persist alerts to localStorage on change
-  useEffect(() => {
-    if (!state.loading) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state.alerts));
-      } catch (err) {
-        console.error('Failed to persist alerts:', err);
-      }
-    }
-  }, [state.alerts, state.loading]);
 
   // SSE connection for real-time updates
   useEffect(() => {
@@ -323,13 +311,13 @@ export function AlertProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Create alert
+  // Create alert (calls API, updates local state on success)
   const createAlert = useCallback((input: CreateAlertInput): Alert => {
     const now = Date.now();
-    const id = generateId();
 
+    // Build optimistic alert for immediate UI feedback
     const baseAlert = {
-      id,
+      id: `temp-${now}`, // Temporary ID, will be replaced by server
       type: input.type,
       source: input.source,
       condition: input.condition,
@@ -345,15 +333,15 @@ export function AlertProvider({ children }: { children: ReactNode }) {
       updatedAt: now,
     };
 
-    let alert: Alert;
+    let optimisticAlert: Alert;
 
     switch (input.type) {
       case 'price':
-        alert = { ...baseAlert, type: 'price' } as Alert;
+        optimisticAlert = { ...baseAlert, type: 'price' } as Alert;
         break;
 
       case 'debit':
-        alert = {
+        optimisticAlert = {
           ...baseAlert,
           type: 'debit',
           strategyId: input.strategyId || '',
@@ -361,7 +349,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         break;
 
       case 'profit_target':
-        alert = {
+        optimisticAlert = {
           ...baseAlert,
           type: 'profit_target',
           strategyId: input.strategyId || '',
@@ -370,7 +358,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         break;
 
       case 'trailing_stop':
-        alert = {
+        optimisticAlert = {
           ...baseAlert,
           type: 'trailing_stop',
           strategyId: input.strategyId || '',
@@ -379,7 +367,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         break;
 
       case 'ai_theta_gamma':
-        alert = {
+        optimisticAlert = {
           ...baseAlert,
           type: 'ai_theta_gamma',
           strategyId: input.strategyId || '',
@@ -390,7 +378,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         break;
 
       case 'ai_sentiment':
-        alert = {
+        optimisticAlert = {
           ...baseAlert,
           type: 'ai_sentiment',
           symbol: input.symbol || 'SPX',
@@ -400,7 +388,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         break;
 
       case 'ai_risk_zone':
-        alert = {
+        optimisticAlert = {
           ...baseAlert,
           type: 'ai_risk_zone',
           symbol: input.symbol || 'SPX',
@@ -409,22 +397,58 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         break;
 
       default:
-        alert = baseAlert as Alert;
+        optimisticAlert = baseAlert as Alert;
     }
 
-    dispatch({ type: 'ADD_ALERT', alert });
-    return alert;
+    // Add optimistically to UI
+    dispatch({ type: 'ADD_ALERT', alert: optimisticAlert });
+
+    // Call API in background and update with real data
+    createAlertApi(input)
+      .then((serverAlert) => {
+        // Remove temp, add real alert
+        dispatch({ type: 'DELETE_ALERT', id: optimisticAlert.id });
+        dispatch({ type: 'ADD_ALERT', alert: serverAlert });
+      })
+      .catch((err) => {
+        console.error('Failed to create alert on server:', err);
+        // Remove optimistic alert on failure
+        dispatch({ type: 'DELETE_ALERT', id: optimisticAlert.id });
+        dispatch({ type: 'SET_ERROR', error: 'Failed to create alert' });
+      });
+
+    return optimisticAlert;
   }, []);
 
-  // Update alert
+  // Update alert (calls API, updates local state optimistically)
   const updateAlert = useCallback((input: EditAlertInput) => {
     const { id, ...updates } = input;
-    dispatch({ type: 'UPDATE_ALERT', id, updates });
+    // Optimistic update
+    dispatch({ type: 'UPDATE_ALERT', id, updates: updates as Partial<Alert> });
+
+    // Call API in background
+    updateAlertApi(input).catch((err) => {
+      console.error('Failed to update alert on server:', err);
+      dispatch({ type: 'SET_ERROR', error: 'Failed to update alert' });
+    });
   }, []);
 
-  // Delete alert
+  // Delete alert (calls API, updates local state optimistically)
   const deleteAlert = useCallback((id: string) => {
+    // Skip temp alerts that haven't been persisted yet
+    if (id.startsWith('temp-')) {
+      dispatch({ type: 'DELETE_ALERT', id });
+      return;
+    }
+
+    // Optimistic delete
     dispatch({ type: 'DELETE_ALERT', id });
+
+    // Call API in background
+    deleteAlertApi(id).catch((err) => {
+      console.error('Failed to delete alert on server:', err);
+      dispatch({ type: 'SET_ERROR', error: 'Failed to delete alert' });
+    });
   }, []);
 
   // Toggle alert enabled

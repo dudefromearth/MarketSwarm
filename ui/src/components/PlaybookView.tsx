@@ -184,6 +184,19 @@ export default function PlaybookView({ onClose, backLabel = 'Back to Trades' }: 
         </button>
       </div>
 
+      {/* Loop Indicator - Playbook is where Distillation happens */}
+      <div className="improvement-loop-indicator">
+        <span className="loop-stage">Discovery</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage">Analysis</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage">Action</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage">Reflection</span>
+        <span className="loop-arrow">→</span>
+        <span className="loop-stage current">Distillation</span>
+      </div>
+
       <div className="playbook-content">
         {activeTab === 'entries' ? (
           <div className="playbook-entries-layout">

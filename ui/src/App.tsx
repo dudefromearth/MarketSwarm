@@ -4,7 +4,6 @@ import './styles/mel.css';
 import './styles/commentary.css';
 import LightweightPriceChart from './components/LightweightPriceChart';
 import MELStatusBar from './components/MELStatusBar';
-import CommentaryPanel from './components/CommentaryPanel';
 import { useMEL } from './hooks/useMEL';
 import type { RawSnapshot } from './components/LightweightPriceChart';
 import BiasLfiQuadrantCard from './components/BiasLfiQuadrantCard';
@@ -22,9 +21,13 @@ import SettingsModal from './components/SettingsModal';
 import JournalView from './components/JournalView';
 import PlaybookView from './components/PlaybookView';
 import AlertCreationModal, { type EditingAlertData } from './components/AlertCreationModal';
-import RiskGraphPanel from './components/RiskGraphPanel';
+import RiskGraphPanel, { type RiskGraphPanelHandle } from './components/RiskGraphPanel';
+import TosImportModal from './components/TosImportModal';
+import StrategyEditModal, { type StrategyData } from './components/StrategyEditModal';
+import type { ParsedStrategy } from './utils/tosParser';
 import { useAlerts } from './contexts/AlertContext';
 import type { AlertType, AlertBehavior } from './types/alerts';
+import ObserverPanel from './components/ObserverPanel';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -474,6 +477,8 @@ function App() {
   const [alertModalInitialCondition, setAlertModalInitialCondition] = useState<'above' | 'below' | 'at'>('below');
   const [alertModalEditingAlert, setAlertModalEditingAlert] = useState<EditingAlertData | null>(null); // Alert being edited
   const [tosCopied, setTosCopied] = useState(false);
+  const [showTosImport, setShowTosImport] = useState(false);
+  const [editingStrategy, setEditingStrategy] = useState<RiskGraphStrategy | null>(null);
 
   // Panel collapse and layout state
   const [gexCollapsed, setGexCollapsed] = useState(false);
@@ -645,6 +650,24 @@ function App() {
     setSelectedTile(null);
   };
 
+  // Import ToS script as new strategy
+  const handleTosImport = (parsed: ParsedStrategy) => {
+    const newStrategy: RiskGraphStrategy = {
+      symbol: 'SPX',  // Default to SPX for ToS imports
+      strategy: parsed.strategy,
+      side: parsed.side,
+      strike: parsed.strike,
+      width: parsed.width,
+      dte: parsed.dte,
+      expiration: parsed.expiration,
+      debit: parsed.debit,
+      id: `tos-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      addedAt: Date.now(),
+      visible: true,
+    };
+    setRiskGraphStrategies(prev => [...prev, newStrategy]);
+  };
+
   // Close popup
   const closePopup = () => setSelectedTile(null);
 
@@ -657,6 +680,13 @@ function App() {
   const toggleStrategyVisibility = (id: string) => {
     setRiskGraphStrategies(prev => prev.map(s =>
       s.id === id ? { ...s, visible: !s.visible } : s
+    ));
+  };
+
+  // Update strategy from edit modal
+  const handleStrategyEdit = (updated: StrategyData) => {
+    setRiskGraphStrategies(prev => prev.map(s =>
+      s.id === updated.id ? { ...s, ...updated } : s
     ));
   };
 
@@ -2489,8 +2519,12 @@ function App() {
             setSimVolatilityOffset(0);
             setSimSpotOffset(0);
           }}
-          collapsed={false}
-          onToggleCollapse={() => {}}
+          onOpenJournal={() => setJournalOpen(true)}
+          onImportToS={() => setShowTosImport(true)}
+          onEditStrategy={(id) => {
+            const strat = riskGraphStrategies.find(s => s.id === id);
+            if (strat) setEditingStrategy(strat);
+          }}
         />
 
       </div>
@@ -2518,10 +2552,7 @@ function App() {
           <span className="close-bar-label">Close</span>
         </div>
         <div className="commentary-panel-inner">
-          <CommentaryPanel
-            collapsed={false}
-            onToggleCollapse={() => setCommentaryCollapsed(true)}
-          />
+          <ObserverPanel />
         </div>
       </div>
 
@@ -2795,6 +2826,22 @@ function App() {
         initialCondition={alertModalInitialCondition}
         editingAlert={alertModalEditingAlert}
       />
+
+      {/* ToS Import Modal */}
+      <TosImportModal
+        isOpen={showTosImport}
+        onClose={() => setShowTosImport(false)}
+        onImport={handleTosImport}
+      />
+
+      {/* Strategy Edit Modal */}
+      <StrategyEditModal
+        isOpen={editingStrategy !== null}
+        onClose={() => setEditingStrategy(null)}
+        onSave={handleStrategyEdit}
+        strategy={editingStrategy}
+      />
+
     </div>
   );
 }
