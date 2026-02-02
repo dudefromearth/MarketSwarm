@@ -81,7 +81,7 @@ export default function JournalView({ onClose, onOpenPlaybook, tradeContext }: J
       : tradeContext.strategy === 'vertical' ? 'Vertical'
       : tradeContext.strategy === 'single' ? 'Single'
       : tradeContext.strategy || 'Trade';
-    const sideLabel = tradeContext.side?.charAt(0).toUpperCase() + tradeContext.side?.slice(1) || '';
+    const sideLabel = tradeContext.side ? tradeContext.side.charAt(0).toUpperCase() + tradeContext.side.slice(1) : '';
     const strikeDisplay = tradeContext.width
       ? `${tradeContext.strike}/${tradeContext.width}w`
       : `${tradeContext.strike}`;

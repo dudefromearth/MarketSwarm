@@ -528,9 +528,9 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
       const content = editor
         ? (editor.storage as unknown as Record<string, { getMarkdown: () => string }>).markdown.getMarkdown()
         : '';
-      await onSave(content || '', isPlaybook);
+      await onSave(content || '', isPlaybook, selectedTagIds);
     }
-  }, [attachmentSourceId, isEntryMode, onSave, editor, isPlaybook, uploadAttachment]);
+  }, [attachmentSourceId, isEntryMode, onSave, editor, isPlaybook, uploadAttachment, selectedTagIds]);
 
   // Upload pending attachments when entry becomes available
   useEffect(() => {

@@ -22,7 +22,7 @@ import SettingsModal from './components/SettingsModal';
 import JournalView from './components/JournalView';
 import PlaybookView from './components/PlaybookView';
 import AlertCreationModal, { type EditingAlertData } from './components/AlertCreationModal';
-import RiskGraphPanel, { type RiskGraphPanelHandle } from './components/RiskGraphPanel';
+import RiskGraphPanel from './components/RiskGraphPanel';
 import { useAlerts } from './contexts/AlertContext';
 import type { AlertType, AlertBehavior } from './types/alerts';
 
@@ -531,15 +531,10 @@ function App() {
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
   const heatmapScrollRef = useRef<HTMLDivElement>(null);
-  const riskGraphRef = useRef<RiskGraphPanelHandle>(null);
   const isScrolling = useRef<boolean>(false); // Prevent scroll event loops
 
-  // Auto-fit Risk Graph when widgets row collapses or expands (chart size changes)
+  // Track widgets collapse state changes
   useEffect(() => {
-    if (prevWidgetsCollapsed.current !== widgetsRowCollapsed) {
-      // Widgets just collapsed or expanded - give the chart a moment to resize, then auto-fit
-      setTimeout(() => riskGraphRef.current?.autoFit(), 100);
-    }
     prevWidgetsCollapsed.current = widgetsRowCollapsed;
   }, [widgetsRowCollapsed]);
 
@@ -2466,7 +2461,6 @@ function App() {
 
         {/* Risk Graph Panel */}
         <RiskGraphPanel
-          ref={riskGraphRef}
           strategies={riskGraphStrategies}
           onRemoveStrategy={removeFromRiskGraph}
           onToggleStrategyVisibility={toggleStrategyVisibility}
@@ -2495,7 +2489,8 @@ function App() {
             setSimVolatilityOffset(0);
             setSimSpotOffset(0);
           }}
-          onOpenJournal={() => setJournalOpen(true)}
+          collapsed={false}
+          onToggleCollapse={() => {}}
         />
 
       </div>

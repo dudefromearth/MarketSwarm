@@ -57,12 +57,24 @@ export interface TradeEvent {
   created_at: string;
 }
 
+export interface TradeReflectionContext {
+  trade: Trade;
+  log: TradeLog;
+  // Flattened trade properties for convenience in JournalView
+  closeDate?: string;
+  strategy?: string;
+  side?: string;
+  strike?: number;
+  width?: number | null;
+  symbol?: string;
+}
+
 interface TradeLogPanelProps {
   onOpenTradeEntry: (logId: string) => void;
   onEditTrade: (trade: Trade) => void;
   onViewReporting: (logId: string) => void;
   onManageLogs: () => void;
-  onOpenJournal: () => void;
+  onOpenJournal: (context?: TradeReflectionContext) => void;
   onOpenPlaybook: () => void;
   selectedLogId: string | null;
   selectedLog: TradeLog | null;
@@ -299,7 +311,7 @@ export default function TradeLogPanel({
         <div className="trade-log-actions">
           <button
             className="btn-journal"
-            onClick={onOpenJournal}
+            onClick={() => onOpenJournal()}
             title="Journal"
           >
             Journal

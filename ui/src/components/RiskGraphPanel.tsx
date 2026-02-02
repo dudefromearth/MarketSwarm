@@ -22,6 +22,11 @@ import type {
 // Re-export types for consumers
 export type { AlertBehavior, AlertType };
 
+// Handle for imperative methods (used by parent via ref)
+export interface RiskGraphPanelHandle {
+  autoFit: () => void;
+}
+
 // Strategy details for popup/risk graph
 export interface SelectedStrategy {
   strategy: 'butterfly' | 'vertical' | 'single';
