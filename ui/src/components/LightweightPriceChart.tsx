@@ -737,18 +737,17 @@ export default function LightweightPriceChart({
         const lowVal = m - sd;
         const spread = highVal - lowVal;
 
+        // Cloud position based on gravity direction
+        const pullDown = spot > m; // Price above gravity = pulling down
+        const cloudValue = pullDown
+          ? m - spread * 0.6  // Cloud below
+          : m + spread * 0.6; // Cloud above
+
         // Update lines (wrapped in try-catch for safety)
         try {
           gravityBestRef.current.update({ time: bucketStart as number, value: m });
           gravityHighRef.current.update({ time: bucketStart as number, value: highVal });
           gravityLowRef.current.update({ time: bucketStart as number, value: lowVal });
-
-          // Cloud position based on gravity direction
-          const pullDown = spot > m; // Price above gravity = pulling down
-          const cloudValue = pullDown
-            ? m - spread * 0.6  // Cloud below
-            : m + spread * 0.6; // Cloud above
-
           gravityCloudRef.current.update({ time: bucketStart as number, value: cloudValue });
         } catch (err) {
           console.debug('[LightweightPriceChart] Gravity update error:', err);

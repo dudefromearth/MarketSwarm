@@ -1030,7 +1030,7 @@ function App() {
         reconnectTimeout = setTimeout(connect, delay);
       };
 
-    // Throttle spot updates to max 2/second to reduce re-renders
+      // Throttle spot updates to max 2/second to reduce re-renders
     // Humans can't perceive price changes faster than ~500ms anyway
     const { throttled: throttledSpotUpdate, flush: flushSpot } = createThrottle((spotData: SpotData) => {
       setSpot(spotData);
@@ -1145,6 +1145,7 @@ function App() {
         window.dispatchEvent(new CustomEvent('trade-selector-update', { detail: data }));
       } catch {}
     });
+    };
 
     // Start connection
     connect();
