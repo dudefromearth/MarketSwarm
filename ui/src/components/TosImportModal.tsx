@@ -7,7 +7,7 @@
  * - Singles
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { parseTosScript, validateStrategy, type ParsedStrategy } from '../utils/tosParser';
 
 interface TosImportModalProps {
@@ -40,6 +40,29 @@ export default function TosImportModal({ isOpen, onClose, onImport }: TosImportM
       setError(result.error || 'Failed to parse script');
     }
   }, []);
+
+  // Auto-paste from clipboard when modal opens
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const pasteFromClipboard = async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) {
+          // Check if it looks like a ToS script (contains SPX/NDX and option keywords)
+          const upper = text.toUpperCase();
+          if ((upper.includes('SPX') || upper.includes('NDX') || upper.includes('SPXW')) &&
+              (upper.includes('CALL') || upper.includes('PUT') || upper.includes('C @') || upper.includes('P @'))) {
+            handleScriptChange(text.trim());
+          }
+        }
+      } catch {
+        // Clipboard access denied or not available - silently ignore
+      }
+    };
+
+    pasteFromClipboard();
+  }, [isOpen, handleScriptChange]);
 
   const handleImport = useCallback(() => {
     if (!preview) return;

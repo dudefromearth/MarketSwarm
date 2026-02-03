@@ -34,6 +34,8 @@ const MONTHS: Record<string, number> = {
  * - Single: BUY +1 SPX 100 (Weeklys) 31 JAN 26 5000 CALL @10.50
  * - Vertical: BUY +1 VERTICAL SPX 100 (Weeklys) 31 JAN 26 5000/5010 CALL @5.00
  * - Butterfly: BUY +1 BUTTERFLY SPX 100 (Weeklys) 31 JAN 26 4990/5000/5010 CALL @2.50
+ *
+ * Also handles variations: IRON BUTTERFLY, IRON CONDOR, ~BUTTERFLY, etc.
  */
 export function parseTosScript(script: string): ParseResult {
   const normalized = script.trim().toUpperCase();
@@ -42,25 +44,28 @@ export function parseTosScript(script: string): ParseResult {
     return { success: false, error: 'Empty script' };
   }
 
-  // Determine strategy type
+  // Determine strategy type purely by strike count (slashes)
+  // RiskGraph only cares about strikes, not the order type name
+  const slashCount = (normalized.match(/\//g) || []).length;
   let strategyType: 'butterfly' | 'vertical' | 'single';
 
-  if (normalized.includes('BUTTERFLY')) {
+  if (slashCount >= 2) {
     strategyType = 'butterfly';
-  } else if (normalized.includes('VERTICAL')) {
+  } else if (slashCount === 1) {
     strategyType = 'vertical';
   } else {
     strategyType = 'single';
   }
 
-  // Extract side (CALL or PUT)
+  // Extract side (CALL or PUT) - be forgiving with variations
   let side: 'call' | 'put';
-  if (normalized.includes('CALL')) {
+  if (normalized.includes('CALL') || normalized.includes('C @') || normalized.match(/\d\s*C\s*@/)) {
     side = 'call';
-  } else if (normalized.includes('PUT')) {
+  } else if (normalized.includes('PUT') || normalized.includes('P @') || normalized.match(/\d\s*P\s*@/)) {
     side = 'put';
   } else {
-    return { success: false, error: 'Could not determine option type (CALL/PUT)' };
+    // Default to call if can't determine - better than failing
+    side = 'call';
   }
 
   // Extract price (debit) - optional, format: @XX.XX
@@ -72,14 +77,26 @@ export function parseTosScript(script: string): ParseResult {
   }
 
   // Extract expiration date - format: DD MMM YY (e.g., 31 JAN 26)
-  const dateMatch = normalized.match(/(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(\d{2})/);
+  // Also try: MMM DD YY, or with full year
+  let dateMatch = normalized.match(/(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(\d{2,4})/);
+
+  // Fallback: MMM DD YY format
+  if (!dateMatch) {
+    const altMatch = normalized.match(/(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+(\d{1,2})\s+(\d{2,4})/);
+    if (altMatch) {
+      // Rearrange to match expected format: [full, day, month, year]
+      dateMatch = [altMatch[0], altMatch[2], altMatch[1], altMatch[3]] as RegExpMatchArray;
+    }
+  }
+
   if (!dateMatch) {
     return { success: false, error: 'Could not parse expiration date (expected: DD MMM YY)' };
   }
 
   const day = parseInt(dateMatch[1]);
   const month = MONTHS[dateMatch[2]];
-  const year = 2000 + parseInt(dateMatch[3]);  // Assumes 20XX
+  const yearNum = parseInt(dateMatch[3]);
+  const year = yearNum < 100 ? 2000 + yearNum : yearNum;  // Handle both YY and YYYY
 
   // Format as ISO date
   const expiration = `${year}-${month.toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
@@ -95,22 +112,31 @@ export function parseTosScript(script: string): ParseResult {
   let width: number = 0;
 
   if (strategyType === 'butterfly') {
-    // Butterfly format: 4990/5000/5010
+    // Butterfly format: 4990/5000/5010 or 5010/5000/4990 (can be ascending or descending)
     const strikesMatch = normalized.match(/(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)/);
     if (!strikesMatch) {
       return { success: false, error: 'Could not parse butterfly strikes (expected: lower/middle/upper)' };
     }
-    const lower = parseInt(strikesMatch[1]);
-    const middle = parseInt(strikesMatch[2]);
-    const upper = parseInt(strikesMatch[3]);
+    const s1 = parseInt(strikesMatch[1]);
+    const s2 = parseInt(strikesMatch[2]);
+    const s3 = parseInt(strikesMatch[3]);
 
-    // Validate butterfly structure
-    if (middle - lower !== upper - middle) {
+    // Sort strikes to handle both ascending and descending order
+    const sorted = [s1, s2, s3].sort((a, b) => a - b);
+    const lower = sorted[0];
+    const middle = sorted[1];
+    const upper = sorted[2];
+
+    // Validate butterfly structure (wings equidistant - be forgiving)
+    const lowerWing = middle - lower;
+    const upperWing = upper - middle;
+    if (Math.abs(lowerWing - upperWing) > 1) {
+      // Allow 1 point difference for rounding
       return { success: false, error: 'Invalid butterfly: wings must be equidistant from center' };
     }
 
     strike = middle;
-    width = middle - lower;
+    width = Math.max(lowerWing, upperWing);
 
   } else if (strategyType === 'vertical') {
     // Vertical format: 5000/5010
@@ -133,13 +159,26 @@ export function parseTosScript(script: string): ParseResult {
 
   } else {
     // Single option - find a standalone number that looks like a strike
-    // Must be after the date and before CALL/PUT
-    // Look for a 4-digit number that's not part of a date or other pattern
-    const singleStrikeMatch = normalized.match(/\d{2}\s+(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+\d{2}\s+(\d{3,5})\s+(?:CALL|PUT)/);
+    // Try multiple patterns to be more forgiving
+    let singleStrikeMatch = normalized.match(/\d{2}\s+(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)\s+\d{2}\s+(\d{3,5})\s+(?:CALL|PUT)/);
+
+    // Fallback: look for any 4-5 digit number before CALL/PUT
     if (!singleStrikeMatch) {
-      return { success: false, error: 'Could not parse strike price for single option' };
+      singleStrikeMatch = normalized.match(/(\d{4,5})\s+(?:CALL|PUT)/);
     }
-    strike = parseInt(singleStrikeMatch[1]);
+
+    // Fallback: look for any 4-5 digit number that could be a strike
+    if (!singleStrikeMatch) {
+      const allNumbers = normalized.match(/\b(\d{4,5})\b/g);
+      if (allNumbers && allNumbers.length > 0) {
+        // Take the last 4-5 digit number (likely the strike)
+        strike = parseInt(allNumbers[allNumbers.length - 1]);
+      } else {
+        return { success: false, error: 'Could not parse strike price for single option' };
+      }
+    } else {
+      strike = parseInt(singleStrikeMatch[1]);
+    }
     width = 0;
   }
 
