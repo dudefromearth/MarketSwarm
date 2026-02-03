@@ -658,41 +658,56 @@ export default function LightweightPriceChart({
     lastTsRef.current = ts!;
     lastSpotRef.current = spot;
 
-    const tSec = Math.floor(new Date(ts).getTime() / 1000);
+    // Ensure ts is a valid value (string or number, not object)
+    const tsValue = typeof ts === 'object' ? (ts as any)?.value ?? (ts as any)?.ts ?? String(ts) : ts;
+    const tSec = Math.floor(new Date(tsValue).getTime() / 1000);
+
+    // Guard against invalid timestamps
+    if (!Number.isFinite(tSec) || tSec <= 0) return;
+
     const bucketSeconds = getBucketSeconds(tf);
     const bucketStart = Math.floor(tSec / bucketSeconds) * bucketSeconds;
+
+    // Additional guard: ensure bucketStart is valid
+    if (!Number.isFinite(bucketStart) || bucketStart <= 0) return;
     const kind = seriesKindRef.current;
 
-    if (kind === "candles") {
-      const last = lastCandleRef.current;
+    try {
+      if (kind === "candles") {
+        const last = lastCandleRef.current;
 
-      if (!last || bucketStart > last.time) {
-        const newCandle = {
-          time: bucketStart,
-          open: spot,
-          high: spot,
-          low: spot,
-          close: spot,
-        };
-        seriesRef.current.update(newCandle);
-        lastCandleRef.current = newCandle;
-      } else if (bucketStart === last.time) {
-        const updated = {
-          time: last.time,
-          open: last.open,
-          high: Math.max(last.high, spot),
-          low: Math.min(last.low, spot),
-          close: spot,
-        };
-        seriesRef.current.update(updated);
-        lastCandleRef.current = updated;
+        if (!last || bucketStart > last.time) {
+          const newCandle = {
+            time: bucketStart as number,
+            open: spot,
+            high: spot,
+            low: spot,
+            close: spot,
+          };
+          seriesRef.current.update(newCandle);
+          lastCandleRef.current = newCandle;
+        } else if (bucketStart === last.time) {
+          const updated = {
+            time: last.time as number,
+            open: last.open,
+            high: Math.max(last.high, spot),
+            low: Math.min(last.low, spot),
+            close: spot,
+          };
+          seriesRef.current.update(updated);
+          lastCandleRef.current = updated;
+        }
+      } else if (kind === "area" || kind === "line") {
+        seriesRef.current.update({
+          time: bucketStart as number,
+          value: spot,
+        });
+      } else {
+        return;
       }
-    } else if (kind === "area" || kind === "line") {
-      seriesRef.current.update({
-        time: bucketStart,
-        value: spot,
-      });
-    } else {
+    } catch (err) {
+      // Silently handle lightweight-charts update errors (e.g., out-of-order data)
+      console.debug('[LightweightPriceChart] Update error:', err);
       return;
     }
 
@@ -722,18 +737,22 @@ export default function LightweightPriceChart({
         const lowVal = m - sd;
         const spread = highVal - lowVal;
 
-        // Update lines
-        gravityBestRef.current.update({ time: bucketStart, value: m });
-        gravityHighRef.current.update({ time: bucketStart, value: highVal });
-        gravityLowRef.current.update({ time: bucketStart, value: lowVal });
+        // Update lines (wrapped in try-catch for safety)
+        try {
+          gravityBestRef.current.update({ time: bucketStart as number, value: m });
+          gravityHighRef.current.update({ time: bucketStart as number, value: highVal });
+          gravityLowRef.current.update({ time: bucketStart as number, value: lowVal });
 
-        // Cloud position based on gravity direction
-        const pullDown = spot > m; // Price above gravity = pulling down
-        const cloudValue = pullDown
-          ? m - spread * 0.6  // Cloud below
-          : m + spread * 0.6; // Cloud above
+          // Cloud position based on gravity direction
+          const pullDown = spot > m; // Price above gravity = pulling down
+          const cloudValue = pullDown
+            ? m - spread * 0.6  // Cloud below
+            : m + spread * 0.6; // Cloud above
 
-        gravityCloudRef.current.update({ time: bucketStart, value: cloudValue });
+          gravityCloudRef.current.update({ time: bucketStart as number, value: cloudValue });
+        } catch (err) {
+          console.debug('[LightweightPriceChart] Gravity update error:', err);
+        }
 
         // Adjust cloud color and opacity based on direction and confidence
         const op = confidenceToFillOpacity(conf);

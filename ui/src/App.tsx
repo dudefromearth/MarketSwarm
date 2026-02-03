@@ -995,12 +995,40 @@ function App() {
     setHeartbeatPulse(connected);
   }, [connected]);
 
-  // SSE connection
+  // SSE connection with auto-reconnect
   useEffect(() => {
-    const es = new EventSource(`${SSE_BASE}/sse/all`, { withCredentials: true });
+    let es: EventSource | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_DELAY = 30000; // 30 seconds max
 
-    es.onopen = () => setConnected(true);
-    es.onerror = () => setConnected(false);
+    const connect = () => {
+      // Clean up existing connection
+      if (es) {
+        es.close();
+      }
+
+      es = new EventSource(`${SSE_BASE}/sse/all`, { withCredentials: true });
+
+      es.onopen = () => {
+        setConnected(true);
+        reconnectAttempts = 0; // Reset on successful connection
+        console.log('[SSE] Connected');
+      };
+
+      es.onerror = () => {
+        setConnected(false);
+        console.warn('[SSE] Connection error, will reconnect...');
+
+        // Exponential backoff with jitter
+        const baseDelay = Math.min(1000 * Math.pow(2, reconnectAttempts), MAX_RECONNECT_DELAY);
+        const jitter = Math.random() * 1000;
+        const delay = baseDelay + jitter;
+        reconnectAttempts++;
+
+        if (reconnectTimeout) clearTimeout(reconnectTimeout);
+        reconnectTimeout = setTimeout(connect, delay);
+      };
 
     // Throttle spot updates to max 2/second to reduce re-renders
     // Humans can't perceive price changes faster than ~500ms anyway
@@ -1118,11 +1146,17 @@ function App() {
       } catch {}
     });
 
+    // Start connection
+    connect();
+
     return () => {
       // Flush any pending throttled updates before closing
-      const flushSpot = (es as any)._flushSpot;
-      if (flushSpot) flushSpot();
-      es.close();
+      if (es) {
+        const flushSpot = (es as any)._flushSpot;
+        if (flushSpot) flushSpot();
+        es.close();
+      }
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
     };
   }, []);
 

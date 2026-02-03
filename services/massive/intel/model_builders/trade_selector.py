@@ -63,14 +63,49 @@ class TradeSelectorModelBuilder:
     WIDTH_GOLDILOCKS_2 = (40, 50) # Goldilocks 2: 40-50 wide
     WIDTH_GOLDILOCKS_1 = (30, 40) # Goldilocks 1: 30-40 wide
     WIDTH_ZOMBIELAND = (20, 30)   # Zombieland: 20-30 wide
-    WIDTH_TIMEWARP = (10, 20)     # Time Warp (afternoon Zombieland): 10-20 wide
 
     # DTE constraints by regime: (min_dte, max_dte)
     DTE_CHAOS = (1, 3)            # Chaos: 1-3 DTE (need time for vol to settle)
     DTE_GOLDILOCKS_2 = (0, 2)     # Goldilocks 2: 0-2 DTE
     DTE_GOLDILOCKS_1 = (0, 1)     # Goldilocks 1: 0-1 DTE
     DTE_ZOMBIELAND = (0, 1)       # Zombieland: 0-1 DTE
-    DTE_TIMEWARP = (1, 2)         # Time Warp: 1-2 DTE (capture premium before rapid decay)
+
+    # ==========================================================================
+    # Edge Case Strategies (not regimes)
+    # ==========================================================================
+    # TimeWarp: Low VIX strategy with accelerated decay, use 1-2 DTE to capture
+    # premium before too much decays. Narrower flies work here.
+    TIMEWARP_WIDTH = (10, 20)     # Narrower flies for TimeWarp strategy
+    TIMEWARP_DTE = (1, 2)         # 1-2 DTE to capture premium before rapid decay
+
+    # ==========================================================================
+    # Gamma Scalp Mode
+    # ==========================================================================
+    # Late-day, high-gamma, structural squeeze play
+    # Works best in low VIX, but can work in high VIX (smaller window)
+    # Higher VIX = closer to expiration the opportunity becomes
+
+    GAMMA_SCALP_WIDTH = (15, 25)  # Narrow flies for high gamma
+    GAMMA_SCALP_DTE = 0           # 0DTE only
+    GAMMA_SCALP_MAX_DISTANCE_PCT = 0.5  # Max 0.5% from ATM (near ATM, not OTM)
+
+    # Gamma scalp timing windows by regime (hour ranges in ET, fractional)
+    # Lower VIX = earlier window, Higher VIX = later (closer to expiration)
+    GAMMA_SCALP_WINDOWS = {
+        "zombieland": (13.5, 15.5),   # 1:30 PM - 3:30 PM (wide window in low vol)
+        "goldilocks_1": (14.5, 15.5), # 2:30 PM - 3:30 PM
+        "goldilocks_2": (15.0, 15.75), # 3:00 PM - 3:45 PM (tighter)
+        "chaos": (15.25, 15.75),      # 3:15 PM - 3:45 PM (very tight window)
+    }
+
+    # Gamma scalp profit style by regime
+    # Low VIX = sniper (quick Zone 1-2), High VIX = net caster (Zone 2-3, pins)
+    GAMMA_SCALP_STYLE = {
+        "zombieland": {"style": "sniper", "target_zones": [1, 2], "hold_tolerance": "low"},
+        "goldilocks_1": {"style": "balanced", "target_zones": [1, 2], "hold_tolerance": "medium"},
+        "goldilocks_2": {"style": "net_caster", "target_zones": [2, 3], "hold_tolerance": "high"},
+        "chaos": {"style": "net_caster", "target_zones": [2, 3], "hold_tolerance": "high"},
+    }
 
     # ==========================================================================
     # Expected Move (EM) Tracking
@@ -87,7 +122,6 @@ class TradeSelectorModelBuilder:
         "goldilocks_2": 1.2, # 23% breach rate
         "goldilocks_1": 1.0, # 19.5% baseline
         "zombieland": 0.85,  # 16.5% in low vol
-        "timewarp": 0.75,    # 14.5% in ultra-low vol
     }
 
     # Session adjustments - morning has more vol, more breaches
@@ -261,20 +295,19 @@ class TradeSelectorModelBuilder:
 
     def _get_vix_regime(self, vix: float, current_hour: int) -> Tuple[str, Optional[str]]:
         """
-        Get VIX regime and special condition based on playbook.
+        Get VIX regime and special condition/strategy based on playbook.
         Returns (regime, special_condition).
 
-        Regimes:
+        Regimes (based on VIX level):
         - chaos: VIX ≥ 32 (high volatility, slow decay, wide flies)
         - goldilocks_2: VIX 23-32 (elevated vol)
         - goldilocks_1: VIX 17-23 (normal vol)
         - zombieland: VIX < 17 (low vol, fast decay)
-        - timewarp: VIX < 17 + afternoon (ultra-fast decay)
 
-        Special conditions:
+        Special conditions/strategies (edge cases, not regimes):
         - batman: VIX ≥ 40 (extreme chaos)
-        - timewarp: afternoon in zombieland
-        - gamma_scalp: afternoon low-vol opportunity
+        - timewarp: Low VIX with accelerated decay opportunity
+        - gamma_scalp: Late session low-vol scalping opportunity
         """
         is_afternoon = current_hour >= self.AFTERNOON_HOUR
 
@@ -288,20 +321,25 @@ class TradeSelectorModelBuilder:
             regime = "goldilocks_1"
             special = None
         else:
-            # Zombieland
-            if is_afternoon:
-                regime = "timewarp"
+            # Zombieland regime
+            regime = "zombieland"
+            # TimeWarp is a strategy opportunity in low VIX
+            if vix <= 15:
+                special = "timewarp"
+            elif is_afternoon:
                 special = "gamma_scalp"
             else:
-                regime = "zombieland"
-                special = "timewarp" if vix <= 15 else None
+                special = None
 
         return regime, special
 
-    def _get_ideal_width_range(self, regime: str) -> Tuple[int, int]:
+    def _get_ideal_width_range(self, regime: str, special: Optional[str] = None) -> Tuple[int, int]:
         """
         Get ideal width range based on VIX regime from playbook.
         Returns (min_width, max_width).
+
+        Note: TimeWarp is a strategy, not a regime. When timewarp strategy
+        is active in zombieland, narrower widths are preferred.
         """
         if regime == "chaos":
             return self.WIDTH_CHAOS
@@ -309,15 +347,18 @@ class TradeSelectorModelBuilder:
             return self.WIDTH_GOLDILOCKS_2
         elif regime == "goldilocks_1":
             return self.WIDTH_GOLDILOCKS_1
-        elif regime == "timewarp":
-            return self.WIDTH_TIMEWARP
         else:  # zombieland
+            # If timewarp strategy is active, use narrower widths
+            if special == "timewarp":
+                return self.TIMEWARP_WIDTH
             return self.WIDTH_ZOMBIELAND
 
-    def _get_ideal_dte_range(self, regime: str) -> Tuple[int, int]:
+    def _get_ideal_dte_range(self, regime: str, special: Optional[str] = None) -> Tuple[int, int]:
         """
         Get ideal DTE range based on VIX regime from playbook.
         Returns (min_dte, max_dte).
+
+        Note: TimeWarp strategy uses 1-2 DTE to capture premium before rapid decay.
         """
         if regime == "chaos":
             return self.DTE_CHAOS
@@ -325,9 +366,10 @@ class TradeSelectorModelBuilder:
             return self.DTE_GOLDILOCKS_2
         elif regime == "goldilocks_1":
             return self.DTE_GOLDILOCKS_1
-        elif regime == "timewarp":
-            return self.DTE_TIMEWARP
         else:  # zombieland
+            # If timewarp strategy is active, use 1-2 DTE
+            if special == "timewarp":
+                return self.TIMEWARP_DTE
             return self.DTE_ZOMBIELAND
 
     def _passes_debit_filter(self, width: int, debit: float) -> bool:
@@ -402,8 +444,7 @@ class TradeSelectorModelBuilder:
 
         # Regime modifier - low vol = faster decay
         regime_modifier = {
-            "timewarp": 1.3,      # Ultra-fast decay
-            "zombieland": 1.2,    # Fast decay
+            "zombieland": 1.2,    # Fast decay in low vol
             "goldilocks_1": 1.1,  # Moderate
             "goldilocks_2": 1.0,  # Normal
             "chaos": 0.9,         # Slow decay (vol stays elevated)
@@ -453,6 +494,149 @@ class TradeSelectorModelBuilder:
         else:
             # Multi-day - timing less critical
             return 70.0
+
+    # ------------------------------------------------------------------
+    # Gamma Scalp Mode
+    # ------------------------------------------------------------------
+
+    def _is_gamma_scalp_window(self, current_hour: float, regime: str) -> Tuple[bool, Dict[str, Any]]:
+        """
+        Check if current time is within the gamma scalp window for this regime.
+
+        Returns (is_active, window_info).
+        """
+        window = self.GAMMA_SCALP_WINDOWS.get(regime)
+        if not window:
+            return False, {"active": False, "reason": "no_window_for_regime"}
+
+        start_hour, end_hour = window
+        is_active = start_hour <= current_hour <= end_hour
+
+        if is_active:
+            # Calculate how far into the window we are (0-1)
+            window_progress = (current_hour - start_hour) / (end_hour - start_hour)
+            time_remaining = end_hour - current_hour
+
+            return True, {
+                "active": True,
+                "window_start": start_hour,
+                "window_end": end_hour,
+                "progress": round(window_progress, 2),
+                "time_remaining_hrs": round(time_remaining, 2),
+                "urgency": "high" if window_progress > 0.7 else "medium" if window_progress > 0.4 else "low",
+            }
+        else:
+            if current_hour < start_hour:
+                return False, {
+                    "active": False,
+                    "reason": "before_window",
+                    "starts_in_hrs": round(start_hour - current_hour, 2),
+                }
+            else:
+                return False, {
+                    "active": False,
+                    "reason": "after_window",
+                }
+
+    def _score_gamma_scalp(
+        self,
+        strike: float,
+        width: int,
+        debit: float,
+        spot: float,
+        regime: str,
+        window_info: Dict[str, Any],
+    ) -> Tuple[float, Dict[str, Any]]:
+        """
+        Score a tile for gamma scalp suitability.
+
+        Gamma scalp criteria:
+        - Near ATM (within 0.5% of spot)
+        - Narrow width (15-25)
+        - 0DTE only
+        - Cheap debit (high gamma)
+        - Within timing window
+
+        Returns (score, details).
+        """
+        details = {
+            "is_candidate": False,
+            "disqualify_reasons": [],
+        }
+
+        # Check width
+        min_w, max_w = self.GAMMA_SCALP_WIDTH
+        if not (min_w <= width <= max_w):
+            details["disqualify_reasons"].append(f"width_{width}_not_in_{min_w}-{max_w}")
+
+        # Check distance from ATM
+        distance_from_spot = abs(strike - spot)
+        distance_pct = (distance_from_spot / spot) * 100
+        max_distance_pct = self.GAMMA_SCALP_MAX_DISTANCE_PCT
+
+        if distance_pct > max_distance_pct:
+            details["disqualify_reasons"].append(f"too_far_from_atm_{distance_pct:.2f}%")
+
+        # If disqualified, return 0
+        if details["disqualify_reasons"]:
+            return 0.0, details
+
+        # It's a candidate - calculate score
+        details["is_candidate"] = True
+        details["distance_from_spot"] = round(distance_from_spot, 2)
+        details["distance_pct"] = round(distance_pct, 3)
+
+        # Scoring components for gamma scalp
+
+        # 1. ATM proximity (40%) - closer to ATM = better gamma
+        if distance_pct <= 0.1:
+            atm_score = 100.0
+        elif distance_pct <= 0.2:
+            atm_score = 90.0
+        elif distance_pct <= 0.3:
+            atm_score = 75.0
+        else:
+            atm_score = 60.0
+
+        # 2. Width efficiency (30%) - narrower = more gamma per dollar
+        width_score = 100.0 - ((width - min_w) / (max_w - min_w)) * 40  # 100 at 15, 60 at 25
+
+        # 3. Debit cheapness (30%) - cheaper = better risk profile
+        # For gamma scalp, we want very cheap flies
+        debit_pct = (debit / width) * 100
+        if debit_pct <= 3:
+            debit_score = 100.0
+        elif debit_pct <= 4:
+            debit_score = 85.0
+        elif debit_pct <= 5:
+            debit_score = 70.0
+        else:
+            debit_score = 50.0
+
+        # Combine scores
+        gamma_scalp_score = (
+            atm_score * 0.40 +
+            width_score * 0.30 +
+            debit_score * 0.30
+        )
+
+        # Apply urgency boost if late in window
+        if window_info.get("urgency") == "high":
+            gamma_scalp_score *= 1.1  # 10% boost for urgency
+
+        # Get profit style for this regime
+        style_info = self.GAMMA_SCALP_STYLE.get(regime, {})
+
+        details["scores"] = {
+            "atm_proximity": round(atm_score, 1),
+            "width_efficiency": round(width_score, 1),
+            "debit_cheapness": round(debit_score, 1),
+        }
+        details["style"] = style_info.get("style", "balanced")
+        details["target_zones"] = style_info.get("target_zones", [1, 2])
+        details["hold_tolerance"] = style_info.get("hold_tolerance", "medium")
+
+        return min(100.0, round(gamma_scalp_score, 1)), details
 
     # ------------------------------------------------------------------
     # Expected Move (EM) Calculations
@@ -696,6 +880,7 @@ class TradeSelectorModelBuilder:
         width: int,
         dte: int,
         regime: str,
+        special: Optional[str],
         decay_factor: float,
         session: str,
         session_info: dict,
@@ -711,7 +896,7 @@ class TradeSelectorModelBuilder:
         - Wider bonus (15%) - wider trades have better payoff curves
         """
         # --- Width scoring (40%) ---
-        min_w, max_w = self._get_ideal_width_range(regime)
+        min_w, max_w = self._get_ideal_width_range(regime, special)
 
         if min_w <= width <= max_w:
             # Perfect fit
@@ -731,7 +916,7 @@ class TradeSelectorModelBuilder:
             width_score = 30.0
 
         # --- DTE scoring (25%) ---
-        min_dte, max_dte = self._get_ideal_dte_range(regime)
+        min_dte, max_dte = self._get_ideal_dte_range(regime, special)
 
         if min_dte <= dte <= max_dte:
             # Perfect DTE for regime
@@ -742,7 +927,7 @@ class TradeSelectorModelBuilder:
         elif regime == "chaos" and dte == 0:
             # 0 DTE in chaos is risky (need time for vol)
             dte_score = 40.0
-        elif regime in ("timewarp", "zombieland") and dte > 1:
+        elif regime == "zombieland" and dte > 1:
             # Multi-day in low vol wastes decay opportunity
             dte_score = 50.0
         else:
@@ -926,7 +1111,11 @@ class TradeSelectorModelBuilder:
                 em_1dte = self._calculate_expected_move(spot, vix, 1)
                 em_breach = self._estimate_em_breach_probability(regime, session, vix)
 
+                # Gamma scalp window detection
+                gamma_scalp_active, gamma_scalp_window = self._is_gamma_scalp_window(current_hour, regime)
+
                 all_scores: List[Dict[str, Any]] = []
+                gamma_scalp_candidates: List[Dict[str, Any]] = []  # Separate list for gamma scalp
                 filtered_count = 0  # Track tiles rejected by 5% filter
 
                 # Load unified heatmap
@@ -1016,7 +1205,7 @@ class TradeSelectorModelBuilder:
                             strike, width, debit, all_debits_for_strike, gex_by_strike
                         )
                         width_fit_score = self._score_width_fit(
-                            width, dte, regime, decay_factor, session, session_info
+                            width, dte, regime, special, decay_factor, session, session_info
                         )
                         gamma_alignment_score = self._score_gamma_alignment(
                             strike, width, side, spot, gex_by_strike, bias_lfi
@@ -1073,8 +1262,36 @@ class TradeSelectorModelBuilder:
                             "distance_to_gamma_magnet": round(distance_to_gamma_magnet, 1) if distance_to_gamma_magnet is not None else None,
                         })
 
+                        # ==============================================
+                        # GAMMA SCALP MODE: Score 0DTE near-ATM flies
+                        # ==============================================
+                        if gamma_scalp_active and dte == 0:
+                            gs_score, gs_details = self._score_gamma_scalp(
+                                strike, width, debit, spot, regime, gamma_scalp_window
+                            )
+                            if gs_details.get("is_candidate"):
+                                gamma_scalp_candidates.append({
+                                    "tile_key": scored_tile_key,
+                                    "gamma_scalp_score": gs_score,
+                                    "gamma_scalp_details": gs_details,
+                                    "strategy": "gamma_scalp",
+                                    "side": side,
+                                    "strike": strike,
+                                    "width": width,
+                                    "dte": dte,
+                                    "debit": round(debit, 2),
+                                    "debit_pct": round(debit_pct, 1),
+                                    "max_profit": round(max_profit, 2),
+                                    "max_loss": round(max_loss, 2),
+                                    "r2r_ratio": round(r2r_ratio, 2),
+                                    "distance_to_spot": round(distance_to_spot, 1),
+                                })
+
                 # Sort by composite score descending
                 all_scores.sort(key=lambda x: x["composite"], reverse=True)
+
+                # Sort gamma scalp candidates by score
+                gamma_scalp_candidates.sort(key=lambda x: x["gamma_scalp_score"], reverse=True)
 
                 # Build scores lookup by tile_key
                 scores_dict = {s["tile_key"]: {
@@ -1120,8 +1337,8 @@ class TradeSelectorModelBuilder:
                     })
 
                 # Build indicator snapshot for market context
-                ideal_width = self._get_ideal_width_range(regime)
-                ideal_dte = self._get_ideal_dte_range(regime)
+                ideal_width = self._get_ideal_width_range(regime, special)
+                ideal_dte = self._get_ideal_dte_range(regime, special)
 
                 indicator_snapshot = {
                     "spot": spot,
@@ -1187,6 +1404,13 @@ class TradeSelectorModelBuilder:
                         "em_lower": round(spot - em_0dte, 2),
                         "breach": em_breach,
                         "payoff_zones": self.PAYOFF_ZONES,
+                    },
+                    # Gamma Scalp mode
+                    "gamma_scalp": {
+                        "active": gamma_scalp_active,
+                        "window": gamma_scalp_window,
+                        "candidates": gamma_scalp_candidates[:5],  # Top 5 gamma scalp candidates
+                        "total_candidates": len(gamma_scalp_candidates),
                     },
                     "gamma_magnet": bias_lfi.get("max_net_gex_strike") if bias_lfi else None,
                     "zero_gamma": bias_lfi.get("gex_flip_level") if bias_lfi else None,
