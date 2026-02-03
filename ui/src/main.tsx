@@ -9,19 +9,22 @@ import ProfilePage from './pages/Profile.tsx'
 import WorkbenchPage from './pages/Workbench.tsx'
 import AdminPage from './pages/Admin.tsx'
 import { AlertProvider } from './contexts/AlertContext.tsx'
+import { PathProvider } from './contexts/PathContext.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
       <AlertProvider>
-        <AuthWrapper>
-          <Routes>
-            <Route path="/" element={<AppLayout><App /></AppLayout>} />
-            <Route path="/profile" element={<ProfilePage />} />
-            <Route path="/workbench" element={<WorkbenchPage />} />
-            <Route path="/admin" element={<AdminPage />} />
-          </Routes>
-        </AuthWrapper>
+        <PathProvider>
+          <AuthWrapper>
+            <Routes>
+              <Route path="/" element={<AppLayout><App /></AppLayout>} />
+              <Route path="/profile" element={<ProfilePage />} />
+              <Route path="/workbench" element={<WorkbenchPage />} />
+              <Route path="/admin" element={<AdminPage />} />
+            </Routes>
+          </AuthWrapper>
+        </PathProvider>
       </AlertProvider>
     </BrowserRouter>
   </StrictMode>,

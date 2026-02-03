@@ -1,5 +1,6 @@
 // src/components/SettingsModal.tsx
 import { useState, useEffect, useCallback } from 'react';
+import { usePath } from '../contexts/PathContext';
 
 const JOURNAL_API = 'http://localhost:3002';
 
@@ -45,6 +46,7 @@ interface Profile {
 type AssetTypeFilter = 'all' | 'index_option' | 'etf_option' | 'future' | 'stock';
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
+  const { tourCompleted, resetTour } = usePath();
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [symbols, setSymbols] = useState<Symbol[]>([]);
   const [loading, setLoading] = useState(true);
@@ -950,6 +952,30 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
               {activeTab === 'display' && (
                 <div className="settings-display">
+                  <div className="settings-group">
+                    <h4>Path Indicator</h4>
+                    <div className="setting-item">
+                      <label>Welcome Tour</label>
+                      <button
+                        className="btn-reset-tour"
+                        onClick={resetTour}
+                        disabled={!tourCompleted}
+                        style={{
+                          padding: '6px 12px',
+                          fontSize: '11px',
+                          background: tourCompleted ? '#3b82f6' : '#444',
+                          border: 'none',
+                          borderRadius: '4px',
+                          color: tourCompleted ? '#fff' : '#888',
+                          cursor: tourCompleted ? 'pointer' : 'not-allowed',
+                        }}
+                      >
+                        {tourCompleted ? 'Show Again' : 'Already Showing'}
+                      </button>
+                      <span className="setting-hint">Re-show the welcome tour explaining the 5-stage path</span>
+                    </div>
+                  </div>
+
                   <div className="settings-group">
                     <h4>Trade Log Display</h4>
                     <div className="setting-item">

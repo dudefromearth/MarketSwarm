@@ -6,6 +6,9 @@ import './App.css';
 marked.setOptions({ breaks: true, gfm: true });
 import './styles/mel.css';
 import './styles/commentary.css';
+import './styles/path-indicator.css';
+import PathIndicator from './components/PathIndicator';
+import WelcomeTour from './components/WelcomeTour';
 import LightweightPriceChart from './components/LightweightPriceChart';
 import MELStatusBar from './components/MELStatusBar';
 import { useMEL } from './hooks/useMEL';
@@ -30,6 +33,7 @@ import TosImportModal from './components/TosImportModal';
 import StrategyEditModal, { type StrategyData } from './components/StrategyEditModal';
 import type { ParsedStrategy } from './utils/tosParser';
 import { useAlerts } from './contexts/AlertContext';
+import { usePath } from './contexts/PathContext';
 import type { AlertType, AlertBehavior } from './types/alerts';
 import ObserverPanel from './components/ObserverPanel';
 import GexChartPanel from './components/GexChartPanel';
@@ -482,6 +486,9 @@ function App() {
     getAlert: contextGetAlert,
   } = useAlerts();
 
+  // Path context for stage inference
+  const { setActivePanel } = usePath();
+
   const [spot, setSpot] = useState<SpotData | null>(null);
   const [heatmap, setHeatmap] = useState<HeatmapData | null>(null);
   const [gexCalls, setGexCalls] = useState<GexData | null>(null);
@@ -649,6 +656,62 @@ function App() {
 
   // Commentary panel state
   const [commentaryCollapsed, setCommentaryCollapsed] = useState(true);
+
+  // Path stage inference - infer active panel from UI state
+  useEffect(() => {
+    // Action stage - modals take priority
+    if (alertModalStrategy !== null) {
+      setActivePanel('alert-creation-modal');
+      return;
+    }
+    if (showTosImport) {
+      setActivePanel('tos-import');
+      return;
+    }
+    if (tradeEntryOpen) {
+      setActivePanel('trade-entry-modal');
+      return;
+    }
+
+    // Right-side overlay panel views
+    if (!tradeLogCollapsed) {
+      if (playbookOpen) {
+        setActivePanel('playbook');
+        return;
+      }
+      if (journalOpen) {
+        setActivePanel('journal');
+        return;
+      }
+      if (reportingLogId) {
+        setActivePanel('reporting');
+        return;
+      }
+      // Default trade log view
+      setActivePanel('trade-log');
+      return;
+    }
+
+    // Observer panel open
+    if (!commentaryCollapsed) {
+      setActivePanel('observer');
+      return;
+    }
+
+    // Default - main trading view is Discovery/Analysis
+    // The risk graph and heatmap are visible, so we default to discovery
+    setActivePanel('heatmap');
+  }, [
+    alertModalStrategy,
+    showTosImport,
+    tradeEntryOpen,
+    tradeLogCollapsed,
+    playbookOpen,
+    journalOpen,
+    reportingLogId,
+    commentaryCollapsed,
+    setActivePanel,
+  ]);
 
   // Refs for scroll sync
   const gexScrollRef = useRef<HTMLDivElement>(null);
@@ -3109,6 +3172,12 @@ function App() {
         onSave={handleStrategyEdit}
         strategy={editingStrategy}
       />
+
+      {/* FOTW Path Indicator */}
+      <PathIndicator />
+
+      {/* Welcome Tour (shows once for new users) */}
+      <WelcomeTour />
 
     </div>
   );
