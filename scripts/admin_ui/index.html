@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MarketSwarm Node Admin</title>
+    <link rel="stylesheet" href="/styles.css?v=11">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-title">
+                <h1>MarketSwarm Node Admin</h1>
+                <span id="node-info" class="node-badge">Loading...</span>
+                <button class="admin-info-btn" onclick="openAdminInfo()" title="Admin Server Info">
+                    <span id="admin-version">v?</span>
+                </button>
+            </div>
+            <div class="header-actions">
+                <button id="refresh-btn" class="btn btn-secondary" onclick="refreshStatus()">Refresh</button>
+                <label class="live-toggle">
+                    <input type="checkbox" id="live-toggle" checked onchange="toggleLive()">
+                    <span class="live-indicator"></span>
+                    Live
+                </label>
+            </div>
+        </header>
+
+        <div class="status-bar">
+            <div class="status-cards">
+                <div class="status-card" id="redis-card">
+                    <h3>Redis Buses</h3>
+                    <div id="redis-status" class="status-list">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+                <div class="status-card" id="truth-card">
+                    <h3>Truth</h3>
+                    <div id="truth-status" class="status-value">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+                <div class="status-card" id="summary-card">
+                    <h3>Services</h3>
+                    <div id="service-summary" class="status-value">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="main-content">
+            <div class="services-panel">
+                <div class="panel-header">
+                    <h2>Services</h2>
+                    <div class="panel-actions">
+                        <label class="log-level-label">
+                            Log Level:
+                            <select id="log-level-select">
+                                <option value="ERROR">ERROR</option>
+                                <option value="WARNING">WARNING</option>
+                                <option value="INFO" selected>INFO</option>
+                                <option value="DEBUG">DEBUG</option>
+                            </select>
+                        </label>
+                        <button class="btn btn-success btn-sm" onclick="startAll()">Start All</button>
+                        <button class="btn btn-danger btn-sm" onclick="stopAll()">Stop All</button>
+                    </div>
+                </div>
+                <div class="sort-bar">
+                    <span class="sort-label">Sort:</span>
+                    <button class="sort-btn active" data-sort="name" onclick="setSortBy('name')">Name</button>
+                    <button class="sort-btn" data-sort="status" onclick="setSortBy('status')">Status</button>
+                    <button class="sort-btn" data-sort="uptime" onclick="setSortBy('uptime')">Uptime</button>
+                    <span class="sort-spacer"></span>
+                    <button class="btn btn-secondary btn-sm" onclick="openEnvConfig()">ENV Config</button>
+                </div>
+                <div id="services-list" class="services-list">
+                    <div class="loading">Loading services...</div>
+                </div>
+            </div>
+
+            <div class="logs-panel">
+                <div class="panel-header">
+                    <h2>Log Viewer</h2>
+                    <div class="panel-actions">
+                        <select id="log-service-select" onchange="loadLogs()">
+                            <option value="">Select service...</option>
+                        </select>
+                        <button class="btn btn-secondary btn-sm" onclick="clearLogs()">Clear</button>
+                        <button class="btn btn-secondary btn-sm" onclick="loadLogs()">Refresh Logs</button>
+                    </div>
+                </div>
+                <pre id="log-viewer" class="log-viewer">Select a service to view logs...</pre>
+            </div>
+        </div>
+
+        <div class="analytics-section">
+            <div class="panel-header">
+                <h2>Analytics / Instrumentation</h2>
+                <div class="panel-actions">
+                    <select id="analytics-source-select" onchange="displayAnalytics()">
+                        <option value="">Select source...</option>
+                    </select>
+                    <button class="btn btn-secondary btn-sm" onclick="refreshAnalytics()">Refresh</button>
+                </div>
+            </div>
+            <div id="analytics-container" class="analytics-container">
+                <div class="analytics-placeholder">Click Refresh to load analytics data...</div>
+            </div>
+        </div>
+
+        <footer>
+            <span id="last-update">Last update: never</span>
+            <span id="repo-path" title="Node repository path">Repo: discovering...</span>
+        </footer>
+    </div>
+
+    <!-- ENV Config Modal -->
+    <div id="env-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <div class="modal-header">
+                <h3>Environment Overrides</h3>
+                <button class="modal-close" onclick="closeEnvConfig()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-hint">Override truth.json defaults. Changes are saved to browser storage and applied when starting services.</p>
+
+                <div class="env-tabs">
+                    <button class="env-tab active" data-tab="global" onclick="switchEnvTab('global')">Global</button>
+                    <button class="env-tab" data-tab="service" onclick="switchEnvTab('service')">Service</button>
+                </div>
+
+                <div id="env-tab-global" class="env-tab-content">
+                    <div class="env-global-section">
+                        <div class="env-var-row">
+                            <span class="env-var-key">LOG_LEVEL</span>
+                            <select id="env-global-log-level" class="env-select">
+                                <option value="">Default (INFO)</option>
+                                <option value="ERROR">ERROR</option>
+                                <option value="WARNING">WARNING</option>
+                                <option value="INFO">INFO</option>
+                                <option value="DEBUG">DEBUG</option>
+                            </select>
+                        </div>
+                        <div class="env-var-row">
+                            <span class="env-var-key">Custom overrides</span>
+                            <textarea id="env-global-custom" class="env-textarea-small" placeholder="KEY=value (one per line)"></textarea>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="env-tab-service" class="env-tab-content hidden">
+                    <div class="env-service-header">
+                        <select id="env-service-select" onchange="loadServiceConfig()">
+                            <option value="">Select service...</option>
+                        </select>
+                        <span id="env-service-desc" class="env-service-desc"></span>
+                    </div>
+
+                    <div id="env-service-loading" class="env-loading hidden">Loading configuration...</div>
+
+                    <div id="env-service-vars" class="env-vars-container">
+                        <div class="env-placeholder">Select a service to view its environment variables</div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="clearServiceOverrides()">Clear Overrides</button>
+                <span class="modal-footer-spacer"></span>
+                <button class="btn btn-secondary" onclick="closeEnvConfig()">Cancel</button>
+                <button class="btn btn-success" onclick="saveEnvConfig()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Info Modal -->
+    <div id="admin-info-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Admin Server Info</h3>
+                <button class="modal-close" onclick="closeAdminInfo()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="admin-info-section">
+                    <div class="admin-info-row">
+                        <span class="admin-info-label">Version</span>
+                        <span id="admin-info-version" class="admin-info-value">-</span>
+                    </div>
+                    <div class="admin-info-row">
+                        <span class="admin-info-label">Build Date</span>
+                        <span id="admin-info-build" class="admin-info-value">-</span>
+                    </div>
+                    <div class="admin-info-row">
+                        <span class="admin-info-label">Config File</span>
+                        <span id="admin-info-config" class="admin-info-value">-</span>
+                    </div>
+                </div>
+
+                <h4>Features</h4>
+                <div id="admin-info-features" class="admin-features-list">
+                    Loading...
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeAdminInfo()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js?v=11"></script>
+</body>
+</html>

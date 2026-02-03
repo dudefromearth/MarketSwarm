@@ -1,0 +1,1218 @@
+#!/usr/bin/env python3
+"""
+MarketSwarm Node Admin
+
+A self-configuring admin server for MarketSwarm nodes.
+Manages services, provides web UI, and discovers node configuration
+from truth.json.
+
+Can be pointed at any MarketSwarm repo to manage that node.
+
+Configuration priority:
+  1. CLI argument: --repo /path/to/repo
+  2. Environment variable: MARKETSWARM_REPO
+  3. Config file: ~/.marketswarm/config.json
+  4. Auto-detect: derive from script location
+"""
+
+# ============================================================
+# Admin Server Version & Info
+# ============================================================
+ADMIN_VERSION = "1.0.0"
+ADMIN_BUILD_DATE = "2025-02-03"
+ADMIN_FEATURES = [
+    {"id": "service-mgmt", "name": "Service Management", "desc": "Start, stop, restart services"},
+    {"id": "log-viewer", "name": "Log Viewer", "desc": "View and tail service logs"},
+    {"id": "env-overrides", "name": "ENV Overrides", "desc": "Override truth.json env vars per service"},
+    {"id": "analytics", "name": "Analytics Dashboard", "desc": "View service instrumentation data"},
+    {"id": "self-config", "name": "Self-Configuring", "desc": "Auto-discover node from repo path"},
+    {"id": "live-status", "name": "Live Status", "desc": "Auto-refresh service status every 5s"},
+    {"id": "uptime-tracking", "name": "Uptime Tracking", "desc": "Track service uptime when started via admin"},
+]
+
+import os
+import sys
+import json
+import time
+import signal
+import subprocess
+import argparse
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional, Dict, List
+from datetime import datetime
+
+# ============================================================
+# Configuration Discovery
+# ============================================================
+CONFIG_FILE = Path.home() / ".marketswarm" / "config.json"
+SCRIPT_DIR = Path(__file__).parent.resolve()
+
+
+def load_admin_config() -> dict:
+    """Load admin config from ~/.marketswarm/config.json if it exists."""
+    if CONFIG_FILE.exists():
+        try:
+            return json.loads(CONFIG_FILE.read_text())
+        except (json.JSONDecodeError, IOError):
+            pass
+    return {}
+
+
+def save_admin_config(config: dict):
+    """Save admin config to ~/.marketswarm/config.json."""
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CONFIG_FILE.write_text(json.dumps(config, indent=2))
+
+
+def discover_repo_path(cli_repo: Optional[str] = None) -> Path:
+    """
+    Discover the MarketSwarm repo path.
+
+    Priority:
+      1. CLI argument (if provided)
+      2. MARKETSWARM_REPO environment variable
+      3. Config file (~/.marketswarm/config.json)
+      4. Auto-detect from script location
+    """
+    # 1. CLI argument
+    if cli_repo:
+        path = Path(cli_repo).resolve()
+        if _validate_repo(path):
+            return path
+        print(f"Warning: {path} doesn't look like a MarketSwarm repo")
+
+    # 2. Environment variable
+    env_repo = os.environ.get("MARKETSWARM_REPO")
+    if env_repo:
+        path = Path(env_repo).resolve()
+        if _validate_repo(path):
+            return path
+        print(f"Warning: MARKETSWARM_REPO={env_repo} doesn't look like a MarketSwarm repo")
+
+    # 3. Config file
+    config = load_admin_config()
+    if "repo" in config:
+        path = Path(config["repo"]).resolve()
+        if _validate_repo(path):
+            return path
+        print(f"Warning: Configured repo {path} doesn't look like a MarketSwarm repo")
+
+    # 4. Auto-detect from script location
+    # Assume script is in <repo>/scripts/
+    auto_path = SCRIPT_DIR.parent
+    if _validate_repo(auto_path):
+        return auto_path
+
+    # Fallback to auto-detected path even if validation fails
+    return auto_path
+
+
+def _validate_repo(path: Path) -> bool:
+    """Check if path looks like a MarketSwarm repo."""
+    # Must have services/ directory and either truth.json or truth/ components
+    if not path.is_dir():
+        return False
+
+    has_services = (path / "services").is_dir()
+    has_truth = (path / "scripts" / "truth.json").exists() or (path / "truth").is_dir()
+
+    return has_services and has_truth
+
+
+# Default paths (will be reconfigured after repo discovery)
+ROOT = SCRIPT_DIR.parent  # Temporary, reconfigured in configure_paths()
+VENV_PY = ROOT / ".venv" / "bin" / "python"
+LOGS_DIR = ROOT / "logs"
+PID_DIR = ROOT / ".pids"
+TRUTH_PATH = ROOT / "scripts" / "truth.json"
+ADMIN_UI_DIR = SCRIPT_DIR / "admin_ui"
+
+
+def configure_paths(repo_path: Path):
+    """Configure all paths based on the repo location."""
+    global ROOT, VENV_PY, LOGS_DIR, PID_DIR, TRUTH_PATH, ADMIN_UI_DIR
+
+    ROOT = repo_path
+    VENV_PY = ROOT / ".venv" / "bin" / "python"
+    LOGS_DIR = ROOT / "logs"
+    PID_DIR = ROOT / ".pids"
+    TRUTH_PATH = ROOT / "scripts" / "truth.json"
+    # Admin UI stays with the script, not the repo
+    ADMIN_UI_DIR = SCRIPT_DIR / "admin_ui"
+
+    # Ensure directories exist
+    LOGS_DIR.mkdir(exist_ok=True)
+    PID_DIR.mkdir(exist_ok=True)
+
+
+@dataclass
+class ServiceConfig:
+    """Configuration for a service."""
+    name: str
+    description: str
+    main_module: str  # Path relative to ROOT
+    port: int = 0  # 0 means no HTTP port
+    env: Dict[str, str] = field(default_factory=dict)
+    python: bool = True  # True for Python services, False for Node.js
+    dependencies: List[str] = field(default_factory=list)
+
+
+def load_services_from_truth() -> Dict[str, ServiceConfig]:
+    """Load service definitions from truth.json."""
+    if not TRUTH_PATH.exists():
+        print(f"Warning: {TRUTH_PATH} not found, using defaults")
+        return _get_fallback_services()
+
+    try:
+        truth = json.loads(TRUTH_PATH.read_text())
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"Warning: Failed to parse {TRUTH_PATH}: {e}")
+        return _get_fallback_services()
+
+    services = {}
+    components = truth.get("components", {})
+
+    for name, comp in components.items():
+        meta = comp.get("meta", {})
+        env = comp.get("env", {})
+        dependencies = comp.get("dependencies", [])
+
+        # Detect service type (Node.js vs Python)
+        is_python = name != "sse"
+
+        # Detect port from env vars
+        port = 0
+        port_key = f"{name.upper()}_PORT"
+        if port_key in env:
+            try:
+                port = int(env[port_key])
+            except (ValueError, TypeError):
+                pass
+        elif "SSE_PORT" in env:
+            try:
+                port = int(env["SSE_PORT"])
+            except (ValueError, TypeError):
+                pass
+        elif "JOURNAL_PORT" in env:
+            try:
+                port = int(env["JOURNAL_PORT"])
+            except (ValueError, TypeError):
+                pass
+        elif "COPILOT_PORT" in env:
+            try:
+                port = int(env["COPILOT_PORT"])
+            except (ValueError, TypeError):
+                pass
+
+        # Build main module path
+        if is_python:
+            main_module = f"services/{name}/main.py"
+        else:
+            main_module = f"services/{name}/src/index.js"
+
+        services[name] = ServiceConfig(
+            name=name,
+            description=meta.get("description", meta.get("name", name)),
+            main_module=main_module,
+            port=port,
+            env=env,
+            python=is_python,
+            dependencies=dependencies,
+        )
+
+    return services
+
+
+def _get_fallback_services() -> Dict[str, ServiceConfig]:
+    """Fallback service definitions if truth.json is unavailable."""
+    return {
+        "massive": ServiceConfig(
+            name="massive",
+            description="Market Model Engine",
+            main_module="services/massive/main.py",
+            env={"MASSIVE_WS_ENABLED": "true"},
+        ),
+        "rss_agg": ServiceConfig(
+            name="rss_agg",
+            description="RSS Aggregator",
+            main_module="services/rss_agg/main.py",
+            env={"PIPELINE_MODE": "full"},
+        ),
+        "vexy_ai": ServiceConfig(
+            name="vexy_ai",
+            description="AI Play-by-Play",
+            main_module="services/vexy_ai/main.py",
+            env={"VEXY_MODE": "full"},
+        ),
+        "sse": ServiceConfig(
+            name="sse",
+            description="SSE Gateway",
+            main_module="services/sse/src/index.js",
+            port=3001,
+            python=False,
+            env={
+                "TRUTH_REDIS_URL": "redis://127.0.0.1:6379",
+                "TRUTH_REDIS_KEY": "truth",
+                "SSE_PORT": "3001",
+            },
+        ),
+        "journal": ServiceConfig(
+            name="journal",
+            description="Journal Service",
+            main_module="services/journal/main.py",
+            port=3002,
+            env={"JOURNAL_PORT": "3002"},
+        ),
+        "content_anal": ServiceConfig(
+            name="content_anal",
+            description="Content Analysis",
+            main_module="services/content_anal/main.py",
+        ),
+        "copilot": ServiceConfig(
+            name="copilot",
+            description="Copilot (MEL/ADI/Alerts)",
+            main_module="services/copilot/main.py",
+            port=8095,
+            env={
+                "COPILOT_PORT": "8095",
+                "COPILOT_MEL_ENABLED": "true",
+                "COPILOT_ADI_ENABLED": "true",
+                "COPILOT_ALERTS_ENABLED": "true",
+            },
+        ),
+    }
+
+
+# Load services from truth.json
+SERVICES: Dict[str, ServiceConfig] = load_services_from_truth()
+
+# Common environment for all services
+COMMON_ENV = {
+    "SYSTEM_REDIS_URL": "redis://127.0.0.1:6379",
+    "MARKET_REDIS_URL": "redis://127.0.0.1:6380",
+    "INTEL_REDIS_URL": "redis://127.0.0.1:6381",
+    "PYTHONUNBUFFERED": "1",  # Force immediate log output to files
+}
+
+
+class ServiceManager:
+    """Manages MarketSwarm services."""
+
+    def __init__(self):
+        self.root = ROOT
+        self.venv_py = VENV_PY
+        self.logs_dir = LOGS_DIR
+        self.pid_dir = PID_DIR
+
+    def _pid_file(self, name: str) -> Path:
+        return self.pid_dir / f"{name}.pid"
+
+    def _start_file(self, name: str) -> Path:
+        return self.pid_dir / f"{name}.started"
+
+    def _log_file(self, name: str) -> Path:
+        return self.logs_dir / f"{name}.log"
+
+    def _read_start_time(self, name: str) -> Optional[str]:
+        """Read start timestamp from file."""
+        start_file = self._start_file(name)
+        if start_file.exists():
+            try:
+                return start_file.read_text().strip()
+            except IOError:
+                return None
+        return None
+
+    def _write_start_time(self, name: str):
+        """Write current timestamp to start file."""
+        self._start_file(name).write_text(datetime.now().isoformat())
+
+    def _remove_start_time(self, name: str):
+        """Remove start time file."""
+        start_file = self._start_file(name)
+        if start_file.exists():
+            start_file.unlink()
+
+    def _read_pid(self, name: str) -> Optional[int]:
+        """Read PID from file."""
+        pid_file = self._pid_file(name)
+        if pid_file.exists():
+            try:
+                pid = int(pid_file.read_text().strip())
+                return pid
+            except (ValueError, IOError):
+                return None
+        return None
+
+    def _write_pid(self, name: str, pid: int):
+        """Write PID to file."""
+        self._pid_file(name).write_text(str(pid))
+
+    def _remove_pid(self, name: str):
+        """Remove PID file."""
+        pid_file = self._pid_file(name)
+        if pid_file.exists():
+            pid_file.unlink()
+
+    def _is_process_running(self, pid: int) -> bool:
+        """Check if a process is running."""
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+    def _is_port_in_use(self, port: int) -> bool:
+        """Check if a port is in use."""
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            return s.connect_ex(('127.0.0.1', port)) == 0
+
+    def _get_port_pid(self, port: int) -> Optional[int]:
+        """Get PID of process using a port."""
+        try:
+            result = subprocess.run(
+                ["lsof", "-ti", f":{port}"],
+                capture_output=True,
+                text=True
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return int(result.stdout.strip().split('\n')[0])
+        except Exception:
+            pass
+        return None
+
+    def get_status(self, name: str) -> dict:
+        """Get status of a service."""
+        if name not in SERVICES:
+            return {"error": f"Unknown service: {name}"}
+
+        config = SERVICES[name]
+        pid = self._read_pid(name)
+        running = False
+        actual_pid = None
+
+        # Check if PID from file is running
+        if pid and self._is_process_running(pid):
+            running = True
+            actual_pid = pid
+        else:
+            # Check by port if applicable
+            if config.port > 0 and self._is_port_in_use(config.port):
+                actual_pid = self._get_port_pid(config.port)
+                running = actual_pid is not None
+
+        # Clean up stale PID file
+        if not running and pid:
+            self._remove_pid(name)
+            self._remove_start_time(name)
+
+        # Calculate uptime if running
+        started_at = None
+        uptime_seconds = None
+        if running:
+            started_at = self._read_start_time(name)
+            if started_at:
+                try:
+                    start_dt = datetime.fromisoformat(started_at)
+                    uptime_seconds = int((datetime.now() - start_dt).total_seconds())
+                except (ValueError, TypeError):
+                    pass
+
+        return {
+            "name": name,
+            "description": config.description,
+            "port": config.port if config.port > 0 else None,
+            "running": running,
+            "pid": actual_pid,
+            "started_at": started_at,
+            "uptime_seconds": uptime_seconds,
+        }
+
+    def get_all_status(self) -> List[dict]:
+        """Get status of all services."""
+        return [self.get_status(name) for name in SERVICES]
+
+    def start(self, name: str, foreground: bool = False, extra_env: dict = None) -> dict:
+        """Start a service."""
+        if name not in SERVICES:
+            return {"success": False, "error": f"Unknown service: {name}"}
+
+        config = SERVICES[name]
+        status = self.get_status(name)
+
+        if status["running"]:
+            return {"success": True, "message": f"{name} is already running", "pid": status["pid"]}
+
+        # Build environment
+        env = os.environ.copy()
+        env.update(COMMON_ENV)
+        env.update(config.env)
+        env["SERVICE_ID"] = name
+        if extra_env:
+            env.update(extra_env)
+
+        # Build command
+        main_path = self.root / config.main_module
+        if not main_path.exists():
+            return {"success": False, "error": f"Main module not found: {main_path}"}
+
+        # Python services run from ROOT (they add ROOT to sys.path)
+        # Node.js services run from their service directory
+        if config.python:
+            if not self.venv_py.exists():
+                return {"success": False, "error": f"Python venv not found: {self.venv_py}"}
+            cmd = [str(self.venv_py), str(main_path)]
+            cwd = str(self.root)
+        else:
+            # Node.js service runs from its directory
+            cmd = ["node", main_path.name]
+            cwd = str(main_path.parent)
+
+        if foreground:
+            # Run in foreground (exec)
+            os.chdir(cwd)
+            os.environ.update(env)
+            os.execv(cmd[0], cmd)
+            # Never returns
+        else:
+            # Run in background
+            log_file = self._log_file(name)
+
+            with open(log_file, 'a') as log:
+                log.write(f"\n{'='*60}\n")
+                log.write(f"Starting {name} at {datetime.now().isoformat()}\n")
+                log.write(f"Command: {' '.join(cmd)}\n")
+                log.write(f"{'='*60}\n\n")
+                log.flush()
+
+                process = subprocess.Popen(
+                    cmd,
+                    cwd=cwd,
+                    env=env,
+                    stdout=log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,  # Detach from terminal
+                )
+
+            # Wait a moment and check if it started
+            time.sleep(2)
+
+            if process.poll() is not None:
+                # Process exited
+                return {
+                    "success": False,
+                    "error": f"{name} exited immediately. Check {log_file}",
+                    "exit_code": process.returncode,
+                }
+
+            # Save PID and start time
+            self._write_pid(name, process.pid)
+            self._write_start_time(name)
+
+            return {
+                "success": True,
+                "message": f"{name} started",
+                "pid": process.pid,
+                "log": str(log_file),
+            }
+
+    def stop(self, name: str, force: bool = False) -> dict:
+        """Stop a service."""
+        if name not in SERVICES:
+            return {"success": False, "error": f"Unknown service: {name}"}
+
+        status = self.get_status(name)
+
+        if not status["running"]:
+            return {"success": True, "message": f"{name} is not running"}
+
+        pid = status["pid"]
+        if not pid:
+            return {"success": False, "error": "Could not determine PID"}
+
+        try:
+            # Send SIGTERM
+            os.kill(pid, signal.SIGTERM)
+
+            # Wait for process to exit
+            for _ in range(10):  # Wait up to 5 seconds
+                time.sleep(0.5)
+                if not self._is_process_running(pid):
+                    self._remove_pid(name)
+                    self._remove_start_time(name)
+                    return {"success": True, "message": f"{name} stopped"}
+
+            # Force kill if still running
+            if force or True:  # Always force after timeout
+                os.kill(pid, signal.SIGKILL)
+                time.sleep(0.5)
+
+            if not self._is_process_running(pid):
+                self._remove_pid(name)
+                self._remove_start_time(name)
+                return {"success": True, "message": f"{name} stopped (forced)"}
+            else:
+                return {"success": False, "error": f"Failed to stop {name}"}
+
+        except ProcessLookupError:
+            self._remove_pid(name)
+            self._remove_start_time(name)
+            return {"success": True, "message": f"{name} already stopped"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def restart(self, name: str) -> dict:
+        """Restart a service."""
+        stop_result = self.stop(name)
+        if not stop_result.get("success", False) and "not running" not in stop_result.get("message", ""):
+            return stop_result
+
+        time.sleep(1)
+        return self.start(name)
+
+    def start_all(self, extra_env: dict = None, service_env: dict = None) -> List[dict]:
+        """Start all services with optional global and per-service env overrides."""
+        results = []
+        for name in SERVICES:
+            # Merge global env with service-specific env
+            env = dict(extra_env or {})
+            if service_env and name in service_env:
+                env.update({k: str(v) for k, v in service_env[name].items()})
+            result = self.start(name, extra_env=env)
+            result["name"] = name
+            results.append(result)
+        return results
+
+    def stop_all(self) -> List[dict]:
+        """Stop all services."""
+        results = []
+        for name in SERVICES:
+            result = self.stop(name)
+            result["name"] = name
+            results.append(result)
+        return results
+
+    def logs(self, name: str, lines: int = 50) -> dict:
+        """Get recent logs for a service."""
+        if name not in SERVICES:
+            return {"error": f"Unknown service: {name}"}
+
+        log_file = self._log_file(name)
+        if not log_file.exists():
+            return {"name": name, "logs": "(no logs)"}
+
+        try:
+            with open(log_file, 'r') as f:
+                all_lines = f.readlines()
+                recent = all_lines[-lines:] if len(all_lines) > lines else all_lines
+                return {"name": name, "logs": "".join(recent)}
+        except Exception as e:
+            return {"error": str(e)}
+
+
+def check_redis() -> dict:
+    """Check Redis buses status."""
+    import socket
+
+    buses = {
+        "system-redis": 6379,
+        "market-redis": 6380,
+        "intel-redis": 6381,
+    }
+
+    results = {}
+    for name, port in buses.items():
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                running = s.connect_ex(('127.0.0.1', port)) == 0
+                results[name] = {"port": port, "running": running}
+        except Exception:
+            results[name] = {"port": port, "running": False}
+
+    return results
+
+
+def check_truth() -> bool:
+    """Check if truth is loaded in system-redis."""
+    try:
+        result = subprocess.run(
+            ["redis-cli", "-h", "127.0.0.1", "-p", "6379", "EXISTS", "truth"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        return result.stdout.strip() == "1"
+    except Exception:
+        return False
+
+
+# ============================================================
+# Web UI Server (FastAPI)
+# ============================================================
+
+def create_web_app():
+    """Create and configure the FastAPI web application."""
+    from fastapi import FastAPI, HTTPException, Body
+    from fastapi.staticfiles import StaticFiles
+    from fastapi.responses import HTMLResponse, FileResponse
+    from fastapi.middleware.cors import CORSMiddleware
+    from typing import Optional
+
+    app = FastAPI(title="MarketSwarm Node Admin", version="1.0.0")
+
+    # Enable CORS for development
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.get("/", response_class=HTMLResponse)
+    def dashboard():
+        """Serve the dashboard HTML."""
+        html_path = ADMIN_UI_DIR / "index.html"
+        if html_path.exists():
+            return HTMLResponse(content=html_path.read_text())
+        return HTMLResponse(content="<h1>Admin UI not found</h1>", status_code=404)
+
+    @app.get("/styles.css")
+    def styles():
+        """Serve the CSS file."""
+        css_path = ADMIN_UI_DIR / "styles.css"
+        if css_path.exists():
+            return FileResponse(css_path, media_type="text/css")
+        raise HTTPException(status_code=404, detail="CSS not found")
+
+    @app.get("/app.js")
+    def javascript():
+        """Serve the JavaScript file."""
+        js_path = ADMIN_UI_DIR / "app.js"
+        if js_path.exists():
+            return FileResponse(js_path, media_type="application/javascript")
+        raise HTTPException(status_code=404, detail="JS not found")
+
+    @app.get("/api/admin/info")
+    def api_admin_info():
+        """Get admin server version and capabilities."""
+        return {
+            "version": ADMIN_VERSION,
+            "build_date": ADMIN_BUILD_DATE,
+            "features": ADMIN_FEATURES,
+            "config_file": str(CONFIG_FILE),
+            "admin_ui_dir": str(ADMIN_UI_DIR),
+        }
+
+    @app.get("/api/status")
+    def api_status():
+        """Get status of all services, Redis buses, and truth."""
+        manager = ServiceManager()
+
+        # Get node info from truth.json
+        node_info = {"name": "unknown", "env": "unknown"}
+        if TRUTH_PATH.exists():
+            try:
+                truth = json.loads(TRUTH_PATH.read_text())
+                node_info = truth.get("node", node_info)
+            except Exception:
+                pass
+
+        # Add repo path to node info
+        node_info["repo_path"] = str(ROOT)
+
+        return {
+            "node": node_info,
+            "services": manager.get_all_status(),
+            "redis": check_redis(),
+            "truth": check_truth(),
+            "timestamp": datetime.now().isoformat(),
+        }
+
+    @app.get("/api/services/{name}")
+    def api_service_status(name: str):
+        """Get status of a single service."""
+        manager = ServiceManager()
+        status = manager.get_status(name)
+        if "error" in status:
+            raise HTTPException(status_code=404, detail=status["error"])
+        return status
+
+    @app.post("/api/services/{name}/start")
+    def api_start(name: str, body: Optional[dict] = Body(default=None)):
+        """Start a service with optional env overrides."""
+        manager = ServiceManager()
+        extra_env = {}
+        if body and "env" in body:
+            extra_env = {k: str(v) for k, v in body["env"].items()}
+        result = manager.start(name, extra_env=extra_env)
+        if not result.get("success", False):
+            raise HTTPException(status_code=400, detail=result.get("error", "Failed to start"))
+        return result
+
+    @app.post("/api/services/{name}/stop")
+    def api_stop(name: str):
+        """Stop a service."""
+        manager = ServiceManager()
+        result = manager.stop(name)
+        if not result.get("success", False):
+            raise HTTPException(status_code=400, detail=result.get("error", "Failed to stop"))
+        return result
+
+    @app.post("/api/services/{name}/restart")
+    def api_restart(name: str):
+        """Restart a service."""
+        manager = ServiceManager()
+        result = manager.restart(name)
+        if not result.get("success", False):
+            raise HTTPException(status_code=400, detail=result.get("error", "Failed to restart"))
+        return result
+
+    @app.get("/api/services/{name}/logs")
+    def api_logs(name: str, lines: int = 100):
+        """Get recent logs for a service."""
+        manager = ServiceManager()
+        result = manager.logs(name, lines)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+
+    @app.get("/api/services/{name}/config")
+    def api_service_config(name: str):
+        """Get service configuration including env vars from truth.json."""
+        if not TRUTH_PATH.exists():
+            raise HTTPException(status_code=404, detail="truth.json not found")
+
+        truth = json.loads(TRUTH_PATH.read_text())
+        components = truth.get("components", {})
+
+        if name not in components:
+            raise HTTPException(status_code=404, detail=f"Service '{name}' not found in truth.json")
+
+        comp = components[name]
+        env_vars = comp.get("env", {})
+
+        # Categorize env vars for better UI organization
+        categorized = {"boolean": [], "number": [], "string": []}
+
+        for key, value in sorted(env_vars.items()):
+            val_str = str(value)
+            val_lower = val_str.lower()
+
+            if val_lower in ("true", "false"):
+                categorized["boolean"].append({"key": key, "default": value, "type": "boolean"})
+            elif val_str.replace(".", "").replace("-", "").isdigit():
+                categorized["number"].append({"key": key, "default": value, "type": "number"})
+            else:
+                categorized["string"].append({"key": key, "default": value, "type": "string"})
+
+        return {
+            "name": name,
+            "meta": comp.get("meta", {}),
+            "env": env_vars,
+            "categorized": categorized,
+        }
+
+    @app.get("/api/redis")
+    def api_redis():
+        """Get Redis bus status."""
+        return check_redis()
+
+    @app.post("/api/services/start-all")
+    def api_start_all(body: Optional[dict] = Body(default=None)):
+        """Start all services with optional env overrides."""
+        manager = ServiceManager()
+        global_env = {}
+        service_env = {}
+        if body:
+            global_env = {k: str(v) for k, v in body.get("env", {}).items()}
+            service_env = body.get("service_env", {})
+        return {"results": manager.start_all(extra_env=global_env, service_env=service_env)}
+
+    @app.post("/api/services/stop-all")
+    def api_stop_all():
+        """Stop all services."""
+        manager = ServiceManager()
+        return {"results": manager.stop_all()}
+
+    @app.get("/api/reload-truth")
+    def api_reload_truth():
+        """Reload services from truth.json."""
+        global SERVICES
+        SERVICES = load_services_from_truth()
+        return {"success": True, "services": list(SERVICES.keys())}
+
+    @app.get("/api/analytics")
+    def api_analytics():
+        """Get analytics from all instrumented services."""
+        import redis
+        import requests
+
+        analytics = {}
+
+        # Redis-based analytics (massive workers)
+        redis_analytics_keys = [
+            ("massive:spot", "massive:spot:analytics", "market-redis"),
+            ("massive:ws", "massive:ws:analytics", "market-redis"),
+            ("massive:chain", "massive:chain:analytics", "market-redis"),
+            ("massive:model", "massive:model:analytics", "market-redis"),
+            ("massive:ws:hydrate", "massive:ws:hydrate:analytics", "market-redis"),
+            ("massive:volume_profile", "massive:volume_profile:analytics", "market-redis"),
+            ("copilot:alerts", "copilot:alerts:analytics", "intel-redis"),
+        ]
+
+        redis_ports = {
+            "system-redis": 6379,
+            "market-redis": 6380,
+            "intel-redis": 6381,
+        }
+
+        for name, key, bus in redis_analytics_keys:
+            try:
+                port = redis_ports.get(bus, 6379)
+                r = redis.Redis(host="127.0.0.1", port=port, decode_responses=True)
+                data = r.hgetall(key)
+                if data:
+                    analytics[name] = {"source": "redis", "bus": bus, "key": key, "data": data}
+            except Exception as e:
+                analytics[name] = {"source": "redis", "error": str(e)}
+
+        # HTTP-based analytics
+        http_endpoints = [
+            ("copilot", "http://127.0.0.1:8095/analytics"),
+            ("journal", "http://127.0.0.1:3002/api/analytics"),
+        ]
+
+        for name, url in http_endpoints:
+            try:
+                resp = requests.get(url, timeout=2)
+                if resp.ok:
+                    analytics[name] = {"source": "http", "url": url, "data": resp.json()}
+                else:
+                    analytics[name] = {"source": "http", "url": url, "error": f"HTTP {resp.status_code}"}
+            except requests.exceptions.ConnectionError:
+                analytics[name] = {"source": "http", "url": url, "error": "Service not running"}
+            except Exception as e:
+                analytics[name] = {"source": "http", "url": url, "error": str(e)}
+
+        return {"analytics": analytics, "timestamp": datetime.now().isoformat()}
+
+    return app
+
+
+def serve_web_ui(port: int = 8099, host: str = "0.0.0.0"):
+    """Start the web UI server."""
+    import uvicorn
+
+    # Load node info for display
+    node_name = "unknown"
+    node_env = "unknown"
+    if TRUTH_PATH.exists():
+        try:
+            truth = json.loads(TRUTH_PATH.read_text())
+            node_info = truth.get("node", {})
+            node_name = node_info.get("name", "unknown")
+            node_env = node_info.get("env", "unknown")
+        except Exception:
+            pass
+
+    print(f"\n{'='*60}")
+    print(f"  MarketSwarm Node Admin")
+    print(f"  Node: {node_name} ({node_env})")
+    print(f"  http://localhost:{port}")
+    print(f"{'='*60}\n")
+
+    app = create_web_app()
+    uvicorn.run(app, host=host, port=port, log_level="info")
+
+
+# ============================================================
+# CLI Interface
+# ============================================================
+
+def _format_uptime(seconds: int) -> str:
+    """Format uptime seconds to human readable string."""
+    if seconds is None:
+        return "-"
+
+    days = seconds // 86400
+    hours = (seconds % 86400) // 3600
+    minutes = (seconds % 3600) // 60
+
+    if days > 0:
+        return f"{days}d {hours}h"
+    elif hours > 0:
+        return f"{hours}h {minutes}m"
+    elif minutes > 0:
+        return f"{minutes}m"
+    else:
+        return f"{seconds}s"
+
+
+def print_status(statuses: List[dict], redis: dict, truth: bool):
+    """Print formatted status."""
+    print("\n" + "─" * 60)
+    print(" MarketSwarm Service Status")
+    print("─" * 60)
+
+    # Redis status
+    print("\nRedis Buses:")
+    for name, info in redis.items():
+        status = "\033[32mRUNNING\033[0m" if info["running"] else "\033[31mSTOPPED\033[0m"
+        print(f"  {name:14} :{info['port']}  [{status}]")
+
+    # Truth status
+    if truth:
+        print("\n\033[32m[OK]\033[0m Truth loaded in system-redis")
+    else:
+        print("\n\033[33m[WARN]\033[0m Truth NOT loaded in system-redis")
+
+    # Services
+    print("\n" + "─" * 60)
+    print(f"  {'SERVICE':<14} {'PORT':<6} {'UPTIME':<10} STATUS")
+    print(f"  {'-'*14:<14} {'-'*4:<6} {'-'*10:<10} ------")
+
+    for s in statuses:
+        port = str(s["port"]) if s["port"] else "-"
+        uptime = _format_uptime(s.get("uptime_seconds")) if s["running"] else "-"
+        if s["running"]:
+            status = f"\033[32mRUNNING\033[0m (PID: {s['pid']})"
+        else:
+            status = "\033[31mSTOPPED\033[0m"
+        print(f"  {s['name']:<14} {port:<6} {uptime:<10} {status}")
+
+    print()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="MarketSwarm Node Admin - Self-configuring service manager",
+        epilog="Repo discovery: --repo > $MARKETSWARM_REPO > ~/.marketswarm/config.json > auto-detect"
+    )
+
+    # Global argument for repo path
+    parser.add_argument(
+        "--repo",
+        metavar="PATH",
+        help="Path to MarketSwarm repo (overrides env/config)"
+    )
+
+    subparsers = parser.add_subparsers(dest="command", help="Commands")
+
+    # status
+    subparsers.add_parser("status", help="Show status of all services")
+
+    # start
+    start_p = subparsers.add_parser("start", help="Start service(s)")
+    start_p.add_argument("service", nargs="?", help="Service name (omit for all)")
+    start_p.add_argument("-f", "--foreground", action="store_true", help="Run in foreground")
+
+    # stop
+    stop_p = subparsers.add_parser("stop", help="Stop service(s)")
+    stop_p.add_argument("service", nargs="?", help="Service name (omit for all)")
+
+    # restart
+    restart_p = subparsers.add_parser("restart", help="Restart service(s)")
+    restart_p.add_argument("service", nargs="?", help="Service name (omit for all)")
+
+    # logs
+    logs_p = subparsers.add_parser("logs", help="View service logs")
+    logs_p.add_argument("service", help="Service name")
+    logs_p.add_argument("-n", "--lines", type=int, default=50, help="Number of lines")
+    logs_p.add_argument("-f", "--follow", action="store_true", help="Follow log output")
+
+    # list
+    subparsers.add_parser("list", help="List available services")
+
+    # serve (web UI)
+    serve_p = subparsers.add_parser("serve", help="Start web UI server")
+    serve_p.add_argument("-p", "--port", type=int, default=8099, help="Port (default: 8099)")
+    serve_p.add_argument("--host", default="0.0.0.0", help="Host (default: 0.0.0.0)")
+
+    # config - save repo path to config file
+    config_p = subparsers.add_parser("config", help="Configure admin settings")
+    config_p.add_argument("--set-repo", metavar="PATH", help="Save repo path to config file")
+    config_p.add_argument("--show", action="store_true", help="Show current configuration")
+
+    # info - show node information
+    subparsers.add_parser("info", help="Show node information")
+
+    args = parser.parse_args()
+
+    # Handle config command before discovering repo
+    if args.command == "config":
+        if args.set_repo:
+            repo_path = Path(args.set_repo).resolve()
+            if not _validate_repo(repo_path):
+                print(f"\033[33mWarning:\033[0m {repo_path} doesn't look like a MarketSwarm repo")
+                print("Saving anyway...")
+            config = load_admin_config()
+            config["repo"] = str(repo_path)
+            save_admin_config(config)
+            print(f"\033[32m[OK]\033[0m Saved repo path: {repo_path}")
+            print(f"     Config file: {CONFIG_FILE}")
+            return
+
+        if args.show:
+            config = load_admin_config()
+            print("MarketSwarm Admin Configuration")
+            print(f"  Config file: {CONFIG_FILE}")
+            print(f"  Repo path:   {config.get('repo', '(not set)')}")
+            return
+
+        parser.parse_args(["config", "--help"])
+        return
+
+    # Discover and configure repo path
+    repo_path = discover_repo_path(args.repo)
+    configure_paths(repo_path)
+
+    # Reload services from truth.json
+    global SERVICES
+    SERVICES = load_services_from_truth()
+
+    manager = ServiceManager()
+
+    if args.command == "status" or args.command is None:
+        statuses = manager.get_all_status()
+        redis = check_redis()
+        truth = check_truth()
+        print_status(statuses, redis, truth)
+
+    elif args.command == "start":
+        if args.service:
+            if args.foreground:
+                print(f"Starting {args.service} in foreground...")
+                result = manager.start(args.service, foreground=True)
+                # Won't reach here if foreground
+            else:
+                result = manager.start(args.service)
+                if result.get("success"):
+                    print(f"\033[32m[OK]\033[0m {result.get('message', 'Started')}")
+                    if result.get("log"):
+                        print(f"     Log: {result['log']}")
+                else:
+                    print(f"\033[31m[ERROR]\033[0m {result.get('error', 'Failed')}")
+                    sys.exit(1)
+        else:
+            print("Starting all services...")
+            results = manager.start_all()
+            for r in results:
+                if r.get("success"):
+                    print(f"  \033[32m[OK]\033[0m {r['name']}")
+                else:
+                    print(f"  \033[31m[FAIL]\033[0m {r['name']}: {r.get('error', 'Unknown error')}")
+
+    elif args.command == "stop":
+        if args.service:
+            result = manager.stop(args.service)
+            if result.get("success"):
+                print(f"\033[32m[OK]\033[0m {result.get('message', 'Stopped')}")
+            else:
+                print(f"\033[31m[ERROR]\033[0m {result.get('error', 'Failed')}")
+                sys.exit(1)
+        else:
+            print("Stopping all services...")
+            results = manager.stop_all()
+            for r in results:
+                if r.get("success"):
+                    print(f"  \033[32m[OK]\033[0m {r['name']}: {r.get('message', 'Stopped')}")
+                else:
+                    print(f"  \033[31m[FAIL]\033[0m {r['name']}: {r.get('error', 'Unknown error')}")
+
+    elif args.command == "restart":
+        if args.service:
+            result = manager.restart(args.service)
+            if result.get("success"):
+                print(f"\033[32m[OK]\033[0m {result.get('message', 'Restarted')}")
+            else:
+                print(f"\033[31m[ERROR]\033[0m {result.get('error', 'Failed')}")
+                sys.exit(1)
+        else:
+            print("Restarting all services...")
+            manager.stop_all()
+            time.sleep(2)
+            results = manager.start_all()
+            for r in results:
+                if r.get("success"):
+                    print(f"  \033[32m[OK]\033[0m {r['name']}")
+                else:
+                    print(f"  \033[31m[FAIL]\033[0m {r['name']}: {r.get('error', 'Unknown error')}")
+
+    elif args.command == "logs":
+        if args.follow:
+            # Tail -f equivalent
+            log_file = manager._log_file(args.service)
+            if not log_file.exists():
+                print(f"No log file for {args.service}")
+                sys.exit(1)
+            try:
+                subprocess.run(["tail", "-f", str(log_file)])
+            except KeyboardInterrupt:
+                pass
+        else:
+            result = manager.logs(args.service, args.lines)
+            if "error" in result:
+                print(f"\033[31m[ERROR]\033[0m {result['error']}")
+                sys.exit(1)
+            print(result.get("logs", ""))
+
+    elif args.command == "list":
+        print("\nAvailable services:")
+        print(f"  {'NAME':<14} {'PORT':<6} DESCRIPTION")
+        print(f"  {'-'*14:<14} {'-'*4:<6} -----------")
+        for name, config in SERVICES.items():
+            port = str(config.port) if config.port > 0 else "-"
+            print(f"  {name:<14} {port:<6} {config.description}")
+        print()
+
+    elif args.command == "info":
+        # Show node information
+        node_info = {"name": "unknown", "env": "unknown"}
+        if TRUTH_PATH.exists():
+            try:
+                truth = json.loads(TRUTH_PATH.read_text())
+                node_info = truth.get("node", node_info)
+            except Exception:
+                pass
+
+        print("\nMarketSwarm Node Information")
+        print(f"  Node name:     {node_info.get('name', 'unknown')}")
+        print(f"  Environment:   {node_info.get('env', 'unknown')}")
+        print(f"  Repo path:     {ROOT}")
+        print(f"  Truth file:    {TRUTH_PATH}")
+        print(f"  Services:      {len(SERVICES)}")
+        print(f"  Config file:   {CONFIG_FILE}")
+        print()
+
+        # List core vs optional services
+        core_services = {"vexy_ai", "healer", "mesh"}  # TODO: make this configurable
+        node_services = set(SERVICES.keys())
+
+        core_present = core_services & node_services
+        optional = node_services - core_services
+
+        print("  Core services:")
+        for s in sorted(core_present):
+            print(f"    - {s}")
+        if not core_present:
+            print("    (none detected)")
+
+        print("  Optional services:")
+        for s in sorted(optional):
+            print(f"    - {s}")
+        print()
+
+    elif args.command == "serve":
+        print(f"Managing node: {ROOT}")
+        serve_web_ui(port=args.port, host=args.host)
+
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
