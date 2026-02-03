@@ -820,7 +820,8 @@ async function refreshAnalytics() {
     try {
         const response = await fetch(`${API_BASE}/api/analytics`);
         if (!response.ok) throw new Error('Failed to fetch analytics');
-        cachedAnalytics = await response.json();
+        const data = await response.json();
+        cachedAnalytics = data.analytics || data;  // Handle both {analytics: {...}} and direct object
 
         // Update analytics source dropdown
         updateAnalyticsSourceSelect();
@@ -876,7 +877,13 @@ function displayAnalytics() {
             `;
         }
 
-        const data = info.data || {};
+        let data = info.data || {};
+
+        // Handle nested structures (e.g., journal returns {success, data: {summary: {...}}})
+        if (data.data && typeof data.data === 'object') {
+            data = data.data.summary || data.data;
+        }
+
         const metrics = Object.entries(data);
 
         return `
