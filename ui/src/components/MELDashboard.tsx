@@ -8,6 +8,14 @@
 import type { MELSnapshot, MELModelScore, ModelState } from '../hooks/useMEL';
 import { getStateColor, getTrendArrow } from '../hooks/useMEL';
 
+// Coherence state colors - defined at module scope for performance
+const COHERENCE_STATE_COLORS: Record<string, string> = {
+  STABLE: '#22c55e',
+  MIXED: '#f59e0b',
+  COLLAPSING: '#ef4444',
+  RECOVERED: '#3b82f6',
+};
+
 interface MELDashboardProps {
   snapshot: MELSnapshot;
   onClose: () => void;
@@ -161,14 +169,7 @@ interface CoherenceRowProps {
 }
 
 function CoherenceRow({ coherence, state }: CoherenceRowProps) {
-  // Map coherence state to color
-  const stateColors: Record<string, string> = {
-    STABLE: '#22c55e',
-    MIXED: '#f59e0b',
-    COLLAPSING: '#ef4444',
-    RECOVERED: '#3b82f6',
-  };
-  const color = stateColors[state] || '#666';
+  const color = COHERENCE_STATE_COLORS[state] || '#666';
 
   return (
     <div className={`mel-model-row mel-coherence-row`}>

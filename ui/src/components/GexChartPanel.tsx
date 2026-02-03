@@ -253,7 +253,10 @@ export default function GexChartPanel({
     };
 
     fetchCandles();
-    const interval = setInterval(fetchCandles, 30000);
+    // Only poll when tab is visible to save resources
+    const interval = setInterval(() => {
+      if (!document.hidden) fetchCandles();
+    }, 30000);
     return () => clearInterval(interval);
   }, [symbol, timeframe]);
 
@@ -353,35 +356,47 @@ export default function GexChartPanel({
     chart.subscribeCrosshairMove(updateVisiblePriceRange);
     chart.timeScale().subscribeVisibleLogicalRangeChange(updateVisiblePriceRange);
 
+    // Debounced update using requestAnimationFrame
+    let rafId: number | null = null;
+    const debouncedUpdate = () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        updateVisiblePriceRange();
+      });
+    };
+
     // Also update on any chart click/drag
     const chartElement = containerRef.current;
-    const handleMouseUp = () => {
-      // Delay slightly to let the chart finish updating
-      setTimeout(updateVisiblePriceRange, 50);
-    };
-    chartElement?.addEventListener('mouseup', handleMouseUp);
-    chartElement?.addEventListener('wheel', handleMouseUp);
+    chartElement?.addEventListener('mouseup', debouncedUpdate);
+    chartElement?.addEventListener('wheel', debouncedUpdate);
 
     const handleResize = () => {
       if (!containerRef.current || !chartRef.current) return;
-      setTimeout(updateVisiblePriceRange, 50);
+      debouncedUpdate();
     };
 
     window.addEventListener('resize', handleResize);
     (chartRef.current as any)._resizeHandler = handleResize;
     (chartRef.current as any)._rangeHandler = updateVisiblePriceRange;
-    (chartRef.current as any)._mouseHandler = handleMouseUp;
+    (chartRef.current as any)._debouncedHandler = debouncedUpdate;
+    (chartRef.current as any)._rafId = rafId;
     (chartRef.current as any)._chartElement = chartElement;
 
     return () => {
       if (chartRef.current) {
         const handler = (chartRef.current as any)._resizeHandler;
-        const mouseHandler = (chartRef.current as any)._mouseHandler;
+        const debouncedHandler = (chartRef.current as any)._debouncedHandler;
         const element = (chartRef.current as any)._chartElement;
+        const pendingRaf = (chartRef.current as any)._rafId;
+
+        // Cancel any pending RAF
+        if (pendingRaf !== null) cancelAnimationFrame(pendingRaf);
+
         if (handler) window.removeEventListener('resize', handler);
-        if (element && mouseHandler) {
-          element.removeEventListener('mouseup', mouseHandler);
-          element.removeEventListener('wheel', mouseHandler);
+        if (element && debouncedHandler) {
+          element.removeEventListener('mouseup', debouncedHandler);
+          element.removeEventListener('wheel', debouncedHandler);
         }
         chartRef.current.unsubscribeCrosshairMove(
           (chartRef.current as any)._rangeHandler

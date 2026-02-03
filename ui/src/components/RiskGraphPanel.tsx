@@ -330,108 +330,64 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     return `${days.toFixed(1)}d`;
   };
 
-  // Calculate time machine limits
+  // Calculate time machine limits based on ACTUAL hours remaining until expiration
   const visibleStrategies = strategies.filter(s => s.visible);
   const minDTE = visibleStrategies.length > 0
     ? Math.min(...visibleStrategies.map(s => s.dte))
     : 1;
-  const maxHours = Math.max(1, minDTE) * 24;
+
+  // Calculate actual hours remaining until expiration
+  // Market closes at 4pm ET (16:00)
+  const now = new Date();
+  const etOffset = -5; // ET is UTC-5 (or -4 during DST, but we'll approximate)
+  const utcHours = now.getUTCHours() + now.getUTCMinutes() / 60;
+  const etHours = (utcHours + etOffset + 24) % 24;
+  const marketCloseHour = 16; // 4pm ET
+  const hoursUntilTodayClose = Math.max(0, marketCloseHour - etHours);
+
+  // Total hours remaining until expiration:
+  // - 0DTE: hours until today's close
+  // - 1+ DTE: (DTE days * 24) + hours until today's close
+  // But for simplicity, we treat each DTE as a full trading session
+  // 0DTE = hours until close today
+  // 1DTE = 24 + hours until close (next day's full session + today's remainder)
+  const actualHoursRemaining = minDTE === 0
+    ? Math.max(0.5, hoursUntilTodayClose) // 0DTE: actual hours until close (min 30 min to avoid 0)
+    : (minDTE * 24);                       // Non-0DTE: full days for simplicity
+
+  const maxHours = actualHoursRemaining;
   const hoursRemaining = maxHours - simTimeOffsetHours;
   const effectiveHoursRemaining = Math.max(0, hoursRemaining);
 
-  // Progressive time slider mapping
-  // First half (0-50%): linear from now to noon on expiration day (~4h before close)
-  // Second half uses smooth piecewise zones:
-  //   50-75%: hour increments (4h → 1h remaining)
-  //   75-90%: 15-min increments (1h → 15min remaining)
-  //   90-97%: 5-min increments (15min → 3min remaining)
-  //   97-100%: 1-min increments (3min → 0)
-  const NOON_HOURS_BEFORE_CLOSE = 4;
-  const noonHours = Math.min(NOON_HOURS_BEFORE_CLOSE, maxHours * 0.5);
-  const hoursToNoon = maxHours - noonHours;
-
-  // Zone boundaries (hours remaining)
-  const ZONE_1H = 1;           // 1 hour
-  const ZONE_15M = 0.25;       // 15 minutes
-  const ZONE_3M = 0.05;        // 3 minutes
-
-  // Smooth interpolation helper (cubic ease)
-  const smoothstep = (t: number) => t * t * (3 - 2 * t);
+  // Progressive time slider mapping using exponential curve
+  // This provides more resolution near expiration without zone discontinuities
+  // The curve parameter controls how much to favor resolution near expiration
+  // Higher values = more resolution near expiration, less in the middle
+  const CURVE_EXPONENT = 2.5;
 
   // Convert hours offset to slider position (0-100)
+  // Uses power curve: position = (hours/maxHours)^(1/exp) * 100
   const hoursToSlider = useCallback((hours: number): number => {
     if (hours <= 0) return 0;
     if (hours >= maxHours) return 100;
 
-    const remaining = maxHours - hours;
-
-    if (remaining >= noonHours) {
-      // First half: linear (remaining goes from maxHours to noonHours)
-      const t = (maxHours - remaining) / hoursToNoon;
-      return t * 50;
-    } else if (remaining >= ZONE_1H) {
-      // 50-75%: noonHours → 1h
-      const t = (noonHours - remaining) / (noonHours - ZONE_1H);
-      return 50 + smoothstep(t) * 25;
-    } else if (remaining >= ZONE_15M) {
-      // 75-90%: 1h → 15min
-      const t = (ZONE_1H - remaining) / (ZONE_1H - ZONE_15M);
-      return 75 + smoothstep(t) * 15;
-    } else if (remaining >= ZONE_3M) {
-      // 90-97%: 15min → 3min
-      const t = (ZONE_15M - remaining) / (ZONE_15M - ZONE_3M);
-      return 90 + smoothstep(t) * 7;
-    } else {
-      // 97-100%: 3min → 0
-      const t = (ZONE_3M - remaining) / ZONE_3M;
-      return 97 + smoothstep(t) * 3;
-    }
-  }, [maxHours, hoursToNoon, noonHours]);
-
-  // Inverse smoothstep for slider → hours
-  const invSmoothstep = (y: number) => {
-    // Approximate inverse of smoothstep using Newton's method
-    let t = y;
-    for (let i = 0; i < 5; i++) {
-      const f = t * t * (3 - 2 * t) - y;
-      const df = 6 * t * (1 - t);
-      if (Math.abs(df) < 1e-10) break;
-      t = t - f / df;
-    }
-    return Math.max(0, Math.min(1, t));
-  };
+    // Normalized offset (0 = now, 1 = expiration)
+    const t = hours / maxHours;
+    // Apply inverse power curve for slider position
+    return Math.pow(t, 1 / CURVE_EXPONENT) * 100;
+  }, [maxHours]);
 
   // Convert slider position (0-100) to hours offset
+  // Inverse: hours = (position/100)^exp * maxHours
   const sliderToHours = useCallback((position: number): number => {
     if (position <= 0) return 0;
     if (position >= 100) return maxHours;
 
-    let remaining: number;
-
-    if (position <= 50) {
-      // First half: linear
-      const t = position / 50;
-      remaining = maxHours - t * hoursToNoon;
-    } else if (position <= 75) {
-      // 50-75%: noonHours → 1h
-      const t = invSmoothstep((position - 50) / 25);
-      remaining = noonHours - t * (noonHours - ZONE_1H);
-    } else if (position <= 90) {
-      // 75-90%: 1h → 15min
-      const t = invSmoothstep((position - 75) / 15);
-      remaining = ZONE_1H - t * (ZONE_1H - ZONE_15M);
-    } else if (position <= 97) {
-      // 90-97%: 15min → 3min
-      const t = invSmoothstep((position - 90) / 7);
-      remaining = ZONE_15M - t * (ZONE_15M - ZONE_3M);
-    } else {
-      // 97-100%: 3min → 0
-      const t = invSmoothstep((position - 97) / 3);
-      remaining = ZONE_3M - t * ZONE_3M;
-    }
-
-    return maxHours - Math.max(0, remaining);
-  }, [maxHours, hoursToNoon, noonHours]);
+    // Normalized position (0-1)
+    const t = position / 100;
+    // Apply power curve for hours
+    return Math.pow(t, CURVE_EXPONENT) * maxHours;
+  }, [maxHours]);
 
   // Current slider position
   const sliderPosition = hoursToSlider(simTimeOffsetHours);
@@ -745,7 +701,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                           type="range"
                           min="0"
                           max="100"
-                          step="0.5"
+                          step="0.1"
                           value={sliderPosition}
                           onChange={handleTimeSliderChange}
                           className="time-slider progressive"

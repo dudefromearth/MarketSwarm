@@ -29,7 +29,9 @@ import { useAlerts } from './contexts/AlertContext';
 import type { AlertType, AlertBehavior } from './types/alerts';
 import ObserverPanel from './components/ObserverPanel';
 import GexChartPanel from './components/GexChartPanel';
+import TradeRecommendationsPanel from './components/TradeRecommendationsPanel';
 import { VolumeProfileSettings, useIndicatorSettings, sigmaToPercentile } from './components/chart-primitives';
+import type { TradeSelectorModel, TradeRecommendation } from './types/tradeSelector';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -206,6 +208,54 @@ function gaussianSmooth(data: number[], kernelSize: number = 5): number[] {
   }
 
   return result;
+}
+
+/**
+ * Throttle function - limits how often a function can be called
+ * Returns the throttled function and a flush function to force immediate execution
+ */
+function createThrottle<T>(fn: (value: T) => void, limitMs: number): {
+  throttled: (value: T) => void;
+  flush: () => void;
+} {
+  let lastValue: T | undefined;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let lastCall = 0;
+
+  const throttled = (value: T) => {
+    lastValue = value;
+    const now = Date.now();
+    const timeSinceLastCall = now - lastCall;
+
+    if (timeSinceLastCall >= limitMs) {
+      // Enough time has passed, call immediately
+      lastCall = now;
+      fn(value);
+    } else if (!timeoutId) {
+      // Schedule a call for when the throttle period ends
+      timeoutId = setTimeout(() => {
+        lastCall = Date.now();
+        timeoutId = null;
+        if (lastValue !== undefined) {
+          fn(lastValue);
+        }
+      }, limitMs - timeSinceLastCall);
+    }
+    // If timeout already scheduled, just update lastValue (it will use latest)
+  };
+
+  const flush = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+    if (lastValue !== undefined) {
+      lastCall = Date.now();
+      fn(lastValue);
+    }
+  };
+
+  return { throttled, flush };
 }
 
 /**
@@ -435,6 +485,7 @@ function App() {
   const [vexy, setVexy] = useState<VexyData | null>(null);
   const [biasLfi, setBiasLfi] = useState<BiasLfiData | null>(null);
   const [marketMode, setMarketMode] = useState<MarketModeData | null>(null);
+  const [tradeSelector, setTradeSelector] = useState<TradeSelectorModel | null>(null);
   const [connected, setConnected] = useState(false);
   const [heartbeatPulse, setHeartbeatPulse] = useState(false);
 
@@ -449,7 +500,7 @@ function App() {
     const fetchCandles = async () => {
       try {
         console.log('[App] Fetching candles for', underlying);
-        const response = await fetch(`${SSE_BASE}/api/models/candles/${underlying}`);
+        const response = await fetch(`${SSE_BASE}/api/models/candles/${underlying}`, { credentials: 'include' });
         console.log('[App] Candles response status:', response.status);
         if (response.ok) {
           const result = await response.json();
@@ -532,6 +583,12 @@ function App() {
   const [alertModalInitialPrice, setAlertModalInitialPrice] = useState<number | null>(null);
   const [alertModalInitialCondition, setAlertModalInitialCondition] = useState<'above' | 'below' | 'at'>('below');
   const [alertModalEditingAlert, setAlertModalEditingAlert] = useState<EditingAlertData | null>(null); // Alert being edited
+
+  // Memoized strategy lookup for O(1) access in alert evaluation (vs O(n) .find())
+  const strategyLookup = useMemo(() =>
+    new Map(riskGraphStrategies.map(s => [s.id, s])),
+    [riskGraphStrategies]
+  );
   const [tosCopied, setTosCopied] = useState(false);
   const [showTosImport, setShowTosImport] = useState(false);
   const [editingStrategy, setEditingStrategy] = useState<RiskGraphStrategy | null>(null);
@@ -726,6 +783,24 @@ function App() {
 
   // Close popup
   const closePopup = () => setSelectedTile(null);
+
+  // Handle trade recommendation selection
+  const handleTradeRecommendationSelect = useCallback((rec: TradeRecommendation) => {
+    // Convert recommendation to selectedTile format
+    const expDate = new Date();
+    expDate.setDate(expDate.getDate() + rec.dte);
+    const expiration = expDate.toISOString().split('T')[0];
+
+    setSelectedTile({
+      strategy: rec.strategy,
+      side: rec.side,
+      strike: rec.strike,
+      width: rec.width,
+      dte: rec.dte,
+      expiration,
+      debit: rec.debit,
+    });
+  }, []);
 
   // Remove strategy from risk graph
   const removeFromRiskGraph = (id: string) => {
@@ -927,29 +1002,37 @@ function App() {
     es.onopen = () => setConnected(true);
     es.onerror = () => setConnected(false);
 
+    // Throttle spot updates to max 2/second to reduce re-renders
+    // Humans can't perceive price changes faster than ~500ms anyway
+    const { throttled: throttledSpotUpdate, flush: flushSpot } = createThrottle((spotData: SpotData) => {
+      setSpot(spotData);
+
+      // Update Dealer Gravity snapshot with current spot (for selected underlying)
+      const currentUnderlying = (window as any).__currentUnderlying || 'I:SPX';
+      const underlyingSpot = spotData[currentUnderlying] || spotData['I:SPX'];
+      if (underlyingSpot) {
+        setDgSnapshot(prev => ({
+          ...prev,
+          spot: underlyingSpot.value,
+          ts: underlyingSpot.ts,
+          _index: {
+            ...prev?._index,
+            spot: underlyingSpot.value,
+            ts: underlyingSpot.ts,
+          }
+        }));
+      }
+    }, 500);
+
     es.addEventListener('spot', (e: MessageEvent) => {
       try {
         const spotData = JSON.parse(e.data);
-        setSpot(spotData);
-
-        // Update Dealer Gravity snapshot with current spot (for selected underlying)
-        // The component will build candles from live updates
-        const currentUnderlying = (window as any).__currentUnderlying || 'I:SPX';
-        const underlyingSpot = spotData[currentUnderlying] || spotData['I:SPX'];
-        if (underlyingSpot) {
-          setDgSnapshot(prev => ({
-            ...prev,
-            spot: underlyingSpot.value,
-            ts: underlyingSpot.ts,
-            _index: {
-              ...prev?._index,
-              spot: underlyingSpot.value,
-              ts: underlyingSpot.ts,
-            }
-          }));
-        }
+        throttledSpotUpdate(spotData);
       } catch {}
     });
+
+    // Store flush function for cleanup
+    (es as any)._flushSpot = flushSpot;
 
     // Candle data for Dealer Gravity chart
     es.addEventListener('candles', (e: MessageEvent) => {
@@ -1023,7 +1106,24 @@ function App() {
       } catch {}
     });
 
-    return () => es.close();
+    es.addEventListener('trade_selector', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        // Cache by symbol and dispatch event for underlying-aware handling
+        (window as any).__tradeSelectorCache = (window as any).__tradeSelectorCache || {};
+        if (data.symbol) {
+          (window as any).__tradeSelectorCache[data.symbol] = data;
+        }
+        window.dispatchEvent(new CustomEvent('trade-selector-update', { detail: data }));
+      } catch {}
+    });
+
+    return () => {
+      // Flush any pending throttled updates before closing
+      const flushSpot = (es as any)._flushSpot;
+      if (flushSpot) flushSpot();
+      es.close();
+    };
   }, []);
 
   // Handle SSE updates filtered by selected underlying
@@ -1047,25 +1147,38 @@ function App() {
       const diff = e.detail;
       if (diff.symbol !== underlying) return;
 
-      console.log(`[UI] heatmap_diff received: changed=${Object.keys(diff.changed || {}).length} v=${diff.version}`);
+      const changedKeys = diff.changed ? Object.keys(diff.changed) : [];
+      const removedKeys = diff.removed || [];
+
+      // Skip if no actual changes
+      if (changedKeys.length === 0 && removedKeys.length === 0) return;
+
       setHeatmap(prev => {
         if (prev?.version && diff.version && diff.version <= prev.version) {
-          console.log(`[UI] Skipping stale diff: ${diff.version} <= ${prev.version}`);
           return prev;
         }
 
-        const updatedTiles = { ...(prev?.tiles || {}) };
+        // Only copy tiles if we have previous tiles and changes to make
+        const prevTiles = prev?.tiles || {};
+        let updatedTiles: Record<string, HeatmapTile>;
 
-        if (diff.changed) {
-          Object.entries(diff.changed).forEach(([key, tile]) => {
-            updatedTiles[key] = tile as HeatmapTile;
-          });
+        // Optimization: if there are many changes, use Object.assign instead of spread
+        // This avoids creating intermediate iterator objects
+        if (changedKeys.length > 50 || removedKeys.length > 10) {
+          // For large diffs, build a new object with only changed tiles
+          updatedTiles = Object.assign({}, prevTiles);
+        } else {
+          updatedTiles = { ...prevTiles };
         }
 
-        if (diff.removed) {
-          diff.removed.forEach((key: string) => {
-            delete updatedTiles[key];
-          });
+        // Apply changes using direct key access (faster than Object.entries)
+        for (const key of changedKeys) {
+          updatedTiles[key] = diff.changed[key] as HeatmapTile;
+        }
+
+        // Apply removals
+        for (const key of removedKeys) {
+          delete updatedTiles[key];
         }
 
         return {
@@ -1078,30 +1191,41 @@ function App() {
       });
     };
 
+    const handleTradeSelectorUpdate = (e: CustomEvent) => {
+      const data = e.detail;
+      if (data.symbol === underlying) {
+        setTradeSelector(data);
+      }
+    };
+
     window.addEventListener('gex-update', handleGexUpdate as EventListener);
     window.addEventListener('heatmap-update', handleHeatmapUpdate as EventListener);
     window.addEventListener('heatmap-diff-update', handleHeatmapDiffUpdate as EventListener);
+    window.addEventListener('trade-selector-update', handleTradeSelectorUpdate as EventListener);
 
     return () => {
       window.removeEventListener('gex-update', handleGexUpdate as EventListener);
       window.removeEventListener('heatmap-update', handleHeatmapUpdate as EventListener);
       window.removeEventListener('heatmap-diff-update', handleHeatmapDiffUpdate as EventListener);
+      window.removeEventListener('trade-selector-update', handleTradeSelectorUpdate as EventListener);
     };
   }, [underlying]);
 
   // Fetch initial data via REST (refetch when underlying changes)
   useEffect(() => {
-    fetch(`${SSE_BASE}/api/models/spot`)
+    const opts = { credentials: 'include' as RequestCredentials };
+
+    fetch(`${SSE_BASE}/api/models/spot`, opts)
       .then(r => r.json())
       .then(d => d.success && setSpot(d.data))
       .catch(() => {});
 
-    fetch(`${SSE_BASE}/api/models/heatmap/${underlying}`)
+    fetch(`${SSE_BASE}/api/models/heatmap/${underlying}`, opts)
       .then(r => r.json())
       .then(d => d.success && setHeatmap(d.data))
       .catch(() => {});
 
-    fetch(`${SSE_BASE}/api/models/gex/${underlying}`)
+    fetch(`${SSE_BASE}/api/models/gex/${underlying}`, opts)
       .then(r => r.json())
       .then(d => {
         if (d.success && d.data) {
@@ -1115,19 +1239,24 @@ function App() {
       })
       .catch(() => {});
 
-    fetch(`${SSE_BASE}/api/models/vexy/latest`)
+    fetch(`${SSE_BASE}/api/models/vexy/latest`, opts)
       .then(r => r.json())
       .then(d => d.success && setVexy(d.data))
       .catch(() => {});
 
-    fetch(`${SSE_BASE}/api/models/bias_lfi`)
+    fetch(`${SSE_BASE}/api/models/bias_lfi`, opts)
       .then(r => r.json())
       .then(d => d.success && setBiasLfi(d.data))
       .catch(() => {});
 
-    fetch(`${SSE_BASE}/api/models/market_mode`)
+    fetch(`${SSE_BASE}/api/models/market_mode`, opts)
       .then(r => r.json())
       .then(d => d.success && setMarketMode(d.data))
+      .catch(() => {});
+
+    fetch(`${SSE_BASE}/api/models/trade_selector/${underlying}`, opts)
+      .then(r => r.json())
+      .then(d => d.success && setTradeSelector(d.data))
       .catch(() => {});
 
     // Reset scroll state when underlying changes
@@ -1147,7 +1276,7 @@ function App() {
     const minPrice = Math.floor(spotPrice - 300);
     const maxPrice = Math.ceil(spotPrice + 300);
 
-    fetch(`${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}`)
+    fetch(`${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
         if (d.success && d.data) {
@@ -1156,9 +1285,10 @@ function App() {
       })
       .catch(() => {});
 
-    // Refresh every 5 seconds
+    // Refresh every 5 seconds (only when tab is visible)
     const interval = setInterval(() => {
-      fetch(`${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}`)
+      if (document.hidden) return;
+      fetch(`${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}`, { credentials: 'include' })
         .then(r => r.json())
         .then(d => {
           if (d.success && d.data) {
@@ -1189,7 +1319,8 @@ function App() {
       const updated = prev.map(alert => {
         if (!alert.enabled) return alert;
 
-        const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
+        // Use memoized Map lookup for O(1) instead of O(n) .find()
+        const strategy = strategyLookup.get(alert.strategyId);
         let conditionMet = false;
         let isOnOtherSide = false;
         let updatedAlert = alert;
@@ -1409,7 +1540,7 @@ function App() {
         setRiskGraphAlerts(prev => prev.filter(a => !alertsToRemove.includes(a.id)));
       }, 100);
     }
-  }, [currentSpot, simulatedSpot, riskGraphStrategies, spot, timeMachineEnabled, simTimeOffsetHours, simVolatilityOffset]);
+  }, [currentSpot, simulatedSpot, strategyLookup, spot, timeMachineEnabled, simTimeOffsetHours, simVolatilityOffset]);
 
   const widths = WIDTHS[underlying][strategy];
 
@@ -1958,6 +2089,15 @@ function App() {
           />
         </div>
 
+        {/* Trade Recommendations Widget */}
+        <div className="widget trade-recommendations-widget">
+          <TradeRecommendationsPanel
+            model={tradeSelector}
+            onSelectTrade={handleTradeRecommendationSelect}
+            maxVisible={5}
+          />
+        </div>
+
         {/* Vexy / AI Advisor Widget - Tabbed (Far Right) */}
         <div className="widget vexy-advisor-widget">
           <div className="widget-tabs">
@@ -2061,7 +2201,8 @@ function App() {
 
               if (activeAlerts.length > 0 && effectiveSpot) {
                 activeAlerts.forEach(alert => {
-                  const strategy = riskGraphStrategies.find(s => s.id === alert.strategyId);
+                  // Use memoized Map lookup for O(1) instead of O(n) .find()
+                  const strategy = strategyLookup.get(alert.strategyId);
                   if (!strategy) return;
 
                   const entryDebit = alert.entryDebit || strategy.debit || 1;

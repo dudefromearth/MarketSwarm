@@ -247,9 +247,11 @@ export default function TradeLogPanel({
     fetchTrades();
   }, [fetchTrades, refreshTrigger]);
 
-  // Auto-refresh every 30 seconds
+  // Auto-refresh every 30 seconds (only when tab is visible)
   useEffect(() => {
-    const interval = setInterval(fetchTrades, 30000);
+    const interval = setInterval(() => {
+      if (!document.hidden) fetchTrades();
+    }, 30000);
     return () => clearInterval(interval);
   }, [fetchTrades]);
 
