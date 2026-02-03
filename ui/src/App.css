@@ -5201,8 +5201,8 @@ body {
 
 /* Trade Recommendations widget sizing */
 .trade-recommendations-widget {
-  width: 340px;
-  min-width: 340px;
+  width: 380px;
+  min-width: 380px;
   max-height: 380px;
 }
 
