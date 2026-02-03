@@ -229,6 +229,16 @@ header h1 {
     background: #da3633;
 }
 
+.btn-primary {
+    background: var(--accent-blue);
+    border-color: var(--accent-blue);
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background: #4a9eff;
+}
+
 .btn-secondary {
     background: var(--bg-tertiary);
 }

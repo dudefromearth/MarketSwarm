@@ -753,6 +753,79 @@ function saveEnvConfig() {
     }
 }
 
+async function saveAndRestartService() {
+    const serviceName = document.getElementById('env-service-select').value;
+    if (!serviceName) {
+        alert('Select a service first');
+        return;
+    }
+
+    // Save the config first
+    const config = loadEnvConfig();
+
+    // Save global settings
+    const logLevel = document.getElementById('env-global-log-level').value;
+    const customGlobal = parseEnvText(document.getElementById('env-global-custom').value);
+    config.global = customGlobal;
+    if (logLevel) {
+        config.global.LOG_LEVEL = logLevel;
+    }
+
+    // Save service-specific overrides
+    if (currentServiceConfig) {
+        const overrides = collectServiceOverrides();
+        if (Object.keys(overrides).length > 0) {
+            config.services[serviceName] = overrides;
+        } else {
+            delete config.services[serviceName];
+        }
+    }
+    saveEnvConfigToStorage(config);
+
+    // Close modal and show status
+    closeEnvConfig();
+
+    // Update UI
+    if (cachedServices.length) {
+        updateServicesList(cachedServices);
+    }
+
+    // Stop the service
+    try {
+        const stopResp = await fetch(`${API_BASE}/api/services/${serviceName}/stop`, { method: 'POST' });
+        if (!stopResp.ok) {
+            const data = await stopResp.json();
+            alert(`Failed to stop ${serviceName}: ${data.detail || 'Unknown error'}`);
+            return;
+        }
+    } catch (error) {
+        alert(`Failed to stop ${serviceName}: ${error.message}`);
+        return;
+    }
+
+    // Wait a moment for clean shutdown
+    await new Promise(resolve => setTimeout(resolve, 1500));
+
+    // Start with new ENV
+    const envOverrides = getEnvForService(serviceName);
+    try {
+        const startResp = await fetch(`${API_BASE}/api/services/${serviceName}/start`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ env: envOverrides })
+        });
+        const data = await startResp.json();
+        if (!startResp.ok) {
+            alert(`Failed to start ${serviceName}: ${data.detail || 'Unknown error'}`);
+        }
+    } catch (error) {
+        alert(`Failed to start ${serviceName}: ${error.message}`);
+    }
+
+    // Refresh status
+    setTimeout(refreshStatus, 1000);
+}
+
 function collectServiceOverrides() {
     const overrides = {};
     const container = document.getElementById('env-service-vars');
