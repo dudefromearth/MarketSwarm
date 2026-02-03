@@ -28,6 +28,8 @@ import type { ParsedStrategy } from './utils/tosParser';
 import { useAlerts } from './contexts/AlertContext';
 import type { AlertType, AlertBehavior } from './types/alerts';
 import ObserverPanel from './components/ObserverPanel';
+import GexChartPanel from './components/GexChartPanel';
+import { VolumeProfileSettings, useIndicatorSettings, sigmaToPercentile } from './components/chart-primitives';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -204,6 +206,54 @@ function gaussianSmooth(data: number[], kernelSize: number = 5): number[] {
   }
 
   return result;
+}
+
+/**
+ * Calculate Volume Profile using TradingView's VRVP algorithm
+ * Divides price range into N bins and accumulates volume into each bin
+ */
+function calculateVolumeProfileBins(
+  levels: { price: number; volume: number }[],
+  numBins: number
+): { price: number; volume: number }[] {
+  if (levels.length === 0) return [];
+
+  // Find price range
+  const prices = levels.map(l => l.price);
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+  const priceRange = maxPrice - minPrice;
+
+  if (priceRange <= 0) return levels;
+
+  // Clamp numBins to valid range
+  const effectiveBins = Math.max(20, Math.min(1000, numBins));
+
+  // TradingView formula: bin size = (High - Low) / Number of Rows
+  const binSize = priceRange / effectiveBins;
+
+  // Initialize bins
+  const bins: number[] = new Array(effectiveBins).fill(0);
+
+  // Assign each data point's volume to its bin
+  for (const level of levels) {
+    let binIndex = Math.floor((level.price - minPrice) / binSize);
+    // Handle edge case where price equals maxPrice
+    if (binIndex >= effectiveBins) binIndex = effectiveBins - 1;
+    if (binIndex < 0) binIndex = 0;
+    bins[binIndex] += level.volume;
+  }
+
+  // Convert bins back to levels with price at bin center
+  const rebinnedLevels: { price: number; volume: number }[] = [];
+  for (let i = 0; i < effectiveBins; i++) {
+    if (bins[i] > 0) {
+      const price = minPrice + (i + 0.5) * binSize; // Center of bin
+      rebinnedLevels.push({ price, volume: bins[i] });
+    }
+  }
+
+  return rebinnedLevels;
 }
 
 // Width options per strategy, per underlying
@@ -448,8 +498,14 @@ function App() {
   const [strikesDragActive, setStrikesDragActive] = useState(false);
   const strikesDragStart = useRef({ y: 0, compression: 0 });
 
-  const [vpSmoothing, setVpSmoothing] = useState(5); // Gaussian kernel size (3, 5, 7, 9)
-  const [vpOpacity, setVpOpacity] = useState(0.4); // Volume profile opacity
+  // Volume Profile settings - shared with Dealer Gravity panel
+  const {
+    vpConfig,
+    setVpConfig,
+    saveAsDefault: saveVpDefault,
+    resetToFactoryDefaults: resetVpToFactory,
+  } = useIndicatorSettings();
+  const [showVpSettingsDialog, setShowVpSettingsDialog] = useState(false); // VP settings dialog
 
   // User profile for header
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
@@ -482,6 +538,7 @@ function App() {
 
   // Panel collapse and layout state
   const [gexCollapsed, setGexCollapsed] = useState(false);
+  const [gexDrawerOpen, setGexDrawerOpen] = useState(false); // GEX drawer overlay state
   const [heatmapCollapsed, setHeatmapCollapsed] = useState(false);
   const [widgetsRowCollapsed, setWidgetsRowCollapsed] = useState(false);
   const prevWidgetsCollapsed = useRef(widgetsRowCollapsed);
@@ -502,7 +559,6 @@ function App() {
 
   const [scrollLocked, setScrollLocked] = useState(true);
   const [hasScrolledToAtm, setHasScrolledToAtm] = useState(false);
-  const [vpControlsExpanded, setVpControlsExpanded] = useState(false);
   const [strategyExpanded, setStrategyExpanded] = useState(false);
   const [sideExpanded, setSideExpanded] = useState(false);
   const [dteExpanded, setDteExpanded] = useState(false);
@@ -590,7 +646,7 @@ function App() {
       ? `${expParts[2]} ${months[parseInt(expParts[1]) - 1]} ${expParts[0].slice(2)}`
       : strat.expiration;
 
-    const price = strat.debit !== null ? `@${strat.debit.toFixed(2)}` : '';
+    const price = strat.debit !== null ? `@${strat.debit.toFixed(2)} LMT` : '';
 
     if (strat.strategy === 'single') {
       return `BUY +1 SPX 100 (Weeklys) ${expFormatted} ${strat.strike} ${sideUpper} ${price}`;
@@ -1564,38 +1620,37 @@ function App() {
     }
   }, [heatmapGrid, changeGrid, heatmapDisplayMode, calculateR2R]);
 
-  // Process volume profile with smoothing - keep full $0.10 resolution
+  // Process volume profile using TradingView VRVP bin algorithm
   // vpByPrice: key is price * 10 (e.g., 60001 = $6000.10)
   const vpByPrice = useMemo(() => {
-    const vpByPrice: Record<number, number> = {};
+    const result: Record<number, number> = {};
 
-    if (!volumeProfile?.levels) {
-      return vpByPrice;
+    if (!volumeProfile?.levels || volumeProfile.levels.length === 0) {
+      return result;
     }
 
-    // Build array at full $0.10 resolution
-    const priceToVolume: Record<number, number> = {};
-    for (const level of volumeProfile.levels) {
-      // Keep full resolution: price in tenths (e.g., 6000.10 -> 60001)
+    // Step 1: Apply sigma-based percentile capping to filter outliers
+    const percentile = sigmaToPercentile(vpConfig.cappingSigma);
+    const volumes = volumeProfile.levels.map(l => l.volume).sort((a, b) => a - b);
+    const capIndex = Math.floor(volumes.length * percentile);
+    const volumeCap = volumes[capIndex] || volumeProfile.maxVolume;
+
+    const cappedLevels = volumeProfile.levels.map((level) => ({
+      price: level.price,
+      volume: Math.min(level.volume, volumeCap),
+    }));
+
+    // Step 2: Apply TradingView VRVP algorithm to bin the data
+    const rebinnedLevels = calculateVolumeProfileBins(cappedLevels, vpConfig.numBins);
+
+    // Convert rebinned levels to price-tenths format for getVpLevelsForStrike
+    for (const level of rebinnedLevels) {
       const priceTenths = Math.round(level.price * 10);
-      priceToVolume[priceTenths] = (priceToVolume[priceTenths] || 0) + level.volume;
+      result[priceTenths] = level.volume;
     }
 
-    // Get sorted prices and volumes for smoothing
-    const sortedPrices = Object.keys(priceToVolume).map(Number).sort((a, b) => a - b);
-    const volumes = sortedPrices.map(p => priceToVolume[p]);
-
-    // Apply Gaussian smoothing at full resolution
-    const smoothedVolumes = gaussianSmooth(volumes, vpSmoothing);
-
-    // Map back to prices
-    for (let i = 0; i < sortedPrices.length; i++) {
-      const priceTenths = sortedPrices[i];
-      vpByPrice[priceTenths] = smoothedVolumes[i];
-    }
-
-    return vpByPrice;
-  }, [volumeProfile, vpSmoothing]);
+    return result;
+  }, [volumeProfile, vpConfig.numBins, vpConfig.cappingSigma]);
 
   // Get volume profile levels for a strike (all $0.10 levels within ±2.5 range)
   const getVpLevelsForStrike = (strike: number): { pos: number; volume: number }[] => {
@@ -1723,10 +1778,10 @@ function App() {
     return max;
   }, [visibleStrikes, vpByPrice]);
 
-  // Linear scale volume to width percentage (0-90%)
+  // Linear scale volume to width percentage based on config
   const vpVolumeToWidth = (volume: number): number => {
     if (volume <= 0 || maxVpVolume <= 0) return 0;
-    return (volume / maxVpVolume) * 90;
+    return (volume / maxVpVolume) * vpConfig.widthPercent;
   };
 
   // Color function based on % change from adjacent tile
@@ -2086,43 +2141,6 @@ function App() {
           )}
         </div>
 
-        <div className={`control-group vp-controls ${vpControlsExpanded ? 'expanded' : ''}`}>
-          <button
-            className={`vp-toggle ${vpControlsExpanded ? 'active' : ''}`}
-            onClick={() => setVpControlsExpanded(!vpControlsExpanded)}
-          >
-            VP
-          </button>
-          {vpControlsExpanded && (
-            <>
-              <div className="vp-slider">
-                <label>Opacity {Math.round(vpOpacity * 100)}%</label>
-                <input
-                  type="range"
-                  min="0.1"
-                  max="1"
-                  step="0.1"
-                  value={vpOpacity}
-                  onChange={(e) => setVpOpacity(parseFloat(e.target.value))}
-                  className="threshold-slider"
-                />
-              </div>
-              <div className="vp-slider">
-                <label>Smooth {vpSmoothing}</label>
-                <input
-                  type="range"
-                  min="1"
-                  max="51"
-                  step="2"
-                  value={vpSmoothing}
-                  onChange={(e) => setVpSmoothing(parseInt(e.target.value))}
-                  className="threshold-slider"
-                />
-              </div>
-            </>
-          )}
-        </div>
-
         {/* Strategy - collapsible */}
         <div className={`control-group collapsible-control ${strategyExpanded ? 'expanded' : ''}`}>
           <button
@@ -2246,7 +2264,7 @@ function App() {
           <input
             type="range"
             min="20"
-            max="75"
+            max="90"
             value={optimalZoneThreshold}
             onChange={(e) => setOptimalZoneThreshold(Number(e.target.value))}
             className="threshold-slider"
@@ -2261,14 +2279,61 @@ function App() {
 
       {/* Main Content Row - Horizontal Scrollable */}
       <div className="main-content-row">
-        {/* GEX Panel */}
+        {/* GEX Panel - Inline (collapsible via header) */}
         <div className={`panel gex-panel ${gexCollapsed ? 'collapsed' : ''}`}>
           <div className="panel-header" onClick={() => setGexCollapsed(!gexCollapsed)}>
             <span className="panel-toggle">{gexCollapsed ? '▶' : '▼'}</span>
             <h3>GEX + Volume Profile</h3>
           </div>
           {!gexCollapsed && (
-            <div className="panel-content">
+            <div className="panel-content gex-panel-content">
+              {/* Indicator Labels */}
+              <div className="gex-indicator-labels">
+                <div
+                  className={`gex-indicator-label ${!vpConfig.enabled ? 'disabled' : ''}`}
+                  onDoubleClick={() => setShowVpSettingsDialog(true)}
+                  title="Double-click for settings"
+                >
+                  <span className="indicator-dot" style={{ backgroundColor: vpConfig.color }} />
+                  <span className="indicator-text">VRVP</span>
+                  <button
+                    className="indicator-icon-btn"
+                    onClick={(e) => { e.stopPropagation(); setVpConfig({ ...vpConfig, enabled: !vpConfig.enabled }); }}
+                    title={vpConfig.enabled ? 'Hide' : 'Show'}
+                  >
+                    {vpConfig.enabled ? '👁' : '👁‍🗨'}
+                  </button>
+                  <button
+                    className="indicator-icon-btn"
+                    onClick={(e) => { e.stopPropagation(); setShowVpSettingsDialog(true); }}
+                    title="Settings"
+                  >
+                    ⚙️
+                  </button>
+                </div>
+              </div>
+
+              {/* VP Settings Dialog - Same floating dialog as Dealer Gravity */}
+              {showVpSettingsDialog && (
+                <div className="dg-settings-overlay" onClick={() => setShowVpSettingsDialog(false)}>
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <VolumeProfileSettings
+                      config={vpConfig}
+                      onConfigChange={setVpConfig}
+                      onSaveDefault={saveVpDefault}
+                      onResetToFactory={resetVpToFactory}
+                      onClose={() => setShowVpSettingsDialog(false)}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Invisible overlay over strike column - click to expand */}
+              <div
+                className="gex-strike-overlay"
+                onClick={() => setGexDrawerOpen(true)}
+                title="Click to expand"
+              />
               {/* GEX Header - outside scroll container */}
               <div className="gex-header">
                 <div className="header-gex">GEX</div>
@@ -2283,7 +2348,6 @@ function App() {
                 {visibleStrikes.map((strike, idx) => {
                   const gex = gexByStrike[strike] || { calls: 0, puts: 0 };
                   const netGex = gex.calls - gex.puts;
-                  // ATM: both strikes adjacent to spot (spot falls between them)
                   const prevStrike = idx > 0 ? visibleStrikes[idx - 1] : Infinity;
                   const nextStrike = idx < visibleStrikes.length - 1 ? visibleStrikes[idx + 1] : -Infinity;
                   const isAtmBelow = currentSpot && strike <= currentSpot && prevStrike > currentSpot;
@@ -2300,7 +2364,7 @@ function App() {
                     >
                       <div className="gex-cell-standalone" style={{ height: `${rowHeight}px` }}>
                         {/* Volume profile */}
-                        {getVpLevelsForStrike(strike).map((level, idx) => (
+                        {vpConfig.enabled && getVpLevelsForStrike(strike).map((level, idx) => (
                           <div
                             key={idx}
                             className="volume-profile-bar"
@@ -2308,7 +2372,8 @@ function App() {
                               width: `${vpVolumeToWidth(level.volume)}%`,
                               top: `${(level.pos / 50) * 100}%`,
                               height: `${100 / 50}%`,
-                              opacity: vpOpacity,
+                              backgroundColor: vpConfig.color,
+                              opacity: (100 - vpConfig.transparency) / 100,
                             }}
                           />
                         ))}
@@ -2623,6 +2688,29 @@ function App() {
               </div>
             </>
           )}
+        </div>
+      </div>
+
+      {/* GEX Expanded Drawer Overlay */}
+      <div className={`gex-overlay ${gexDrawerOpen ? 'open' : ''}`}>
+        <div
+          className="gex-close-bar"
+          onClick={() => setGexDrawerOpen(false)}
+        >
+          <span className="close-bar-label">Close</span>
+        </div>
+        <div className="gex-panel-inner">
+          <GexChartPanel
+            symbol="SPX"
+            volumeProfile={volumeProfile}
+            gexByStrike={gexByStrike}
+            maxGex={maxGex}
+            maxNetGex={maxNetGex}
+            gexMode={gexMode}
+            currentSpot={currentSpot}
+            height={window.innerHeight - 100}
+            isOpen={gexDrawerOpen}
+          />
         </div>
       </div>
 

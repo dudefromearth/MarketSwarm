@@ -1332,6 +1332,190 @@ body {
   font-weight: 700;
 }
 
+/* GEX panel content - needs relative positioning for overlay */
+.gex-panel-content {
+  position: relative;
+}
+
+/* Indicator Labels in GEX Panel */
+.gex-indicator-labels {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gex-indicator-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: rgba(10, 10, 20, 0.9);
+  border: 1px solid rgba(100, 100, 120, 0.3);
+  border-radius: 4px;
+  font-size: 10px;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.gex-indicator-label:hover {
+  background: rgba(30, 30, 50, 0.95);
+  border-color: rgba(147, 51, 234, 0.5);
+}
+
+.gex-indicator-label.disabled {
+  opacity: 0.5;
+}
+
+.gex-indicator-label .indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.gex-indicator-label .indicator-text {
+  color: #e5e5e5;
+  font-weight: 500;
+}
+
+.indicator-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  padding: 0 2px;
+  font-size: 16px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.15s;
+  color: #94a3b8;
+}
+
+.indicator-icon-btn:hover {
+  opacity: 1;
+  color: #e5e5e5;
+}
+
+/* VP Settings Dialog */
+.vp-settings-dialog-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+}
+
+.vp-settings-dialog {
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 8px;
+  min-width: 220px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.vp-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #333;
+}
+
+.vp-settings-header h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.vp-settings-close {
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.vp-settings-close:hover {
+  color: #ef4444;
+}
+
+.vp-settings-body {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vp-setting-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.vp-setting-row label {
+  font-size: 11px;
+  color: #94a3b8;
+  min-width: 60px;
+}
+
+.vp-setting-row input[type="range"] {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #333;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.vp-setting-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #9333ea;
+  cursor: pointer;
+}
+
+.vp-setting-row span {
+  font-size: 11px;
+  color: #60a5fa;
+  min-width: 30px;
+  text-align: right;
+  font-family: monospace;
+}
+
+/* Invisible overlay over strike column - glows on hover */
+.gex-strike-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 60px; /* Same as strike-label width */
+  height: 100%;
+  cursor: pointer;
+  z-index: 10;
+  transition: box-shadow 0.2s, background 0.2s;
+}
+
+.gex-strike-overlay:hover {
+  background: rgba(59, 130, 246, 0.08);
+  box-shadow:
+    inset 0 0 20px rgba(59, 130, 246, 0.3),
+    0 0 15px rgba(59, 130, 246, 0.2);
+}
+
 /* Heatmap Panel */
 .heatmap-panel {
   width: 500px;
@@ -1482,6 +1666,36 @@ body {
 
 .heatmap-select:hover {
   border-color: #555;
+}
+
+/* Display dropdown for heatmap - outline style with slight shading */
+.control-select {
+  background: rgba(26, 26, 26, 0.6);
+  border: 1px solid #555;
+  color: #e2e8f0;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.15s ease;
+  min-width: 70px;
+}
+
+.control-select:hover {
+  border-color: #777;
+  background: rgba(40, 40, 40, 0.7);
+}
+
+.control-select:focus {
+  border-color: #fbbf24;
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.2);
+}
+
+.control-select option {
+  background: #1a1a1a;
+  color: #e2e8f0;
 }
 
 .heatmap-control-group.optimal-slider {
@@ -8093,6 +8307,492 @@ body {
   overflow: hidden;
 }
 
+/* GEX Expanded Drawer (Right Side) */
+.gex-edge-bar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 100vh;
+  background: linear-gradient(to right, #444, #555);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 999;
+  box-shadow: -4px 0 16px rgba(150, 150, 150, 0.4), -8px 0 32px rgba(120, 120, 120, 0.3);
+  transition: background 0.2s, width 0.2s;
+}
+
+.gex-edge-bar:hover {
+  background: linear-gradient(to right, #555, #666);
+  width: 18px;
+  box-shadow: -6px 0 24px rgba(200, 200, 200, 0.7), -12px 0 48px rgba(180, 180, 180, 0.5), -2px 0 8px rgba(255, 255, 255, 0.3);
+}
+
+.gex-edge-bar.open {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.gex-edge-bar .edge-bar-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 9px;
+  font-weight: 600;
+  color: #bbb;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(200, 200, 200, 0.5);
+}
+
+.gex-edge-bar:hover .edge-bar-label {
+  color: #eee;
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
+}
+
+/* GEX Overlay - slides in from left, 50% width */
+.gex-overlay {
+  position: fixed;
+  top: 0;
+  left: -50vw;
+  width: 50vw;
+  height: 100vh;
+  background: #0d0d0d;
+  z-index: 1000;
+  display: flex;
+  flex-direction: row;
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.5);
+  transition: left 0.3s ease;
+}
+
+.gex-overlay.open {
+  left: 0;
+}
+
+.gex-close-bar {
+  order: 1; /* Move close bar to right side */
+  width: 16px;
+  min-width: 16px;
+  background: linear-gradient(to right, #444, #333);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.gex-close-bar:hover {
+  background: linear-gradient(to left, #555, #444);
+}
+
+.gex-close-bar .close-bar-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 9px;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(200, 200, 200, 0.5);
+}
+
+.gex-close-bar:hover .close-bar-label {
+  color: #eee;
+  text-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
+}
+
+.gex-panel-inner {
+  order: 0; /* Content on left, close bar on right */
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+  padding: 0;
+}
+
+.gex-overlay-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid #333;
+  background: #111;
+}
+
+.gex-overlay-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.gex-overlay-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Override gex-header width in overlay mode */
+.gex-overlay .gex-header {
+  display: flex;
+  border-bottom: 2px solid #333;
+  background: #0d0d0d;
+  flex-shrink: 0;
+}
+
+.gex-overlay .gex-header .header-gex {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+  text-align: center;
+}
+
+.gex-overlay .gex-header .header-strike {
+  width: 80px;
+  min-width: 80px;
+  padding: 8px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #888;
+  text-align: center;
+}
+
+.gex-overlay .gex-scroll-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.gex-overlay .gex-row {
+  display: flex;
+  width: 100%;
+}
+
+.gex-overlay .gex-cell-standalone {
+  flex: 1;
+}
+
+.gex-overlay .strike-label {
+  width: 80px;
+  min-width: 80px;
+}
+
+/* ============================================
+   GEX Chart Panel - Candlesticks + VP + GEX
+   ============================================ */
+
+.gex-chart-panel {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 400px;
+  background: #0a0a0a;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.gex-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: #111;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.gex-chart-header h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.gex-chart-tf-selector {
+  display: flex;
+  gap: 4px;
+}
+
+.gex-chart-tf-btn {
+  padding: 4px 10px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #888;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.gex-chart-tf-btn:hover {
+  background: #252525;
+  color: #ccc;
+  border-color: #444;
+}
+
+.gex-chart-tf-btn.active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+}
+
+.gex-chart-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #666;
+  font-size: 13px;
+}
+
+/* Chart area wrapper - contains chart and overlays */
+.gex-chart-area {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  overflow: visible;
+}
+
+/* Dealer Gravity Indicator Labels */
+.dealer-gravity-indicators {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+.dg-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: rgba(15, 15, 25, 0.95);
+  border: 1px solid rgba(100, 100, 120, 0.3);
+  border-radius: 5px;
+  font-size: 11px;
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.dg-indicator:hover {
+  background: rgba(30, 30, 50, 0.98);
+  border-color: rgba(147, 51, 234, 0.5);
+}
+
+.dg-indicator.disabled {
+  opacity: 0.5;
+}
+
+.dg-indicator.dg-indicator-static {
+  cursor: default;
+}
+
+.dg-indicator.dg-indicator-static:hover {
+  background: rgba(15, 15, 25, 0.95);
+  border-color: rgba(100, 100, 120, 0.3);
+}
+
+.dg-indicator-color {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.dg-indicator-color-pair {
+  display: flex;
+  gap: 2px;
+}
+
+.dg-indicator-color-pair span {
+  width: 5px;
+  height: 10px;
+  border-radius: 1px;
+}
+
+.dg-indicator-name {
+  color: #e5e5e5;
+  font-weight: 500;
+}
+
+.dg-indicator-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 3px;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.dg-indicator-btn:hover {
+  background: rgba(147, 51, 234, 0.2);
+  color: #e5e5e5;
+}
+
+/* Dealer Gravity Settings Overlay */
+.dg-settings-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.gex-chart-container {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  z-index: 1;
+}
+
+/* Volume Profile Overlay (left side) */
+.gex-chart-vp-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 120px;
+  height: calc(100% - 30px); /* Exclude time scale */
+  pointer-events: none;
+  z-index: 5;
+}
+
+.gex-chart-vp-overlay .vp-bar {
+  position: absolute;
+  left: 0;
+  height: 2px;
+  background: rgba(147, 51, 234, 0.5); /* Purple */
+  border-radius: 0 2px 2px 0;
+  transition: width 0.15s;
+}
+
+/* GEX Overlay (right side) */
+.gex-chart-gex-overlay {
+  position: absolute;
+  top: 0;
+  right: 60px; /* Leave room for price scale */
+  width: 150px;
+  height: calc(100% - 30px); /* Exclude time scale */
+  pointer-events: none;
+  z-index: 5;
+}
+
+.gex-chart-gex-overlay .gex-overlay-bar {
+  position: absolute;
+  height: 3px;
+  border-radius: 2px;
+  transition: width 0.15s;
+}
+
+.gex-chart-gex-overlay .gex-overlay-bar.atm {
+  height: 4px;
+  box-shadow: 0 0 6px rgba(251, 191, 36, 0.5);
+}
+
+.gex-chart-gex-overlay .gex-overlay-row {
+  position: absolute;
+  width: 100%;
+  height: 3px;
+  display: flex;
+  justify-content: center;
+}
+
+.gex-chart-gex-overlay .gex-overlay-row .put {
+  position: absolute;
+  right: 50%;
+  height: 100%;
+}
+
+.gex-chart-gex-overlay .gex-overlay-row .call {
+  position: absolute;
+  left: 50%;
+  height: 100%;
+}
+
+.gex-chart-gex-overlay .gex-overlay-atm-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(251, 191, 36, 0.8);
+  box-shadow: 0 0 8px rgba(251, 191, 36, 0.6);
+}
+
+/* Legend */
+.gex-chart-legend {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: flex;
+  gap: 12px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 4px;
+  z-index: 10;
+}
+
+.gex-chart-legend .legend-item {
+  font-size: 10px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.gex-chart-legend .legend-item::before {
+  content: '';
+  width: 12px;
+  height: 3px;
+  border-radius: 1px;
+}
+
+.gex-chart-legend .legend-item.vp::before {
+  background: rgba(147, 51, 234, 0.7);
+}
+
+.gex-chart-legend .legend-item.gex-call::before {
+  background: rgba(34, 197, 94, 0.7);
+}
+
+.gex-chart-legend .legend-item.gex-put::before {
+  background: rgba(239, 68, 68, 0.7);
+}
+
+.gex-chart-legend .legend-item.candle-count {
+  color: #666;
+  font-size: 9px;
+}
+
+.gex-chart-legend .legend-item.candle-count::before {
+  display: none;
+}
+
 /* ============================================
    Risk Graph Canvas - 5-Sigma Chart Surface
    ============================================ */
@@ -8690,4 +9390,452 @@ body {
 .risk-graph-sidebar .btn-edit-strategy:hover {
   background: #2563eb;
   color: white;
+}
+
+/* ============================================
+   Indicator Settings Dialogs
+   ============================================ */
+
+.indicator-settings-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.indicator-settings-dialog {
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 8px;
+  min-width: 280px;
+  max-width: 320px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.indicator-settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid #333;
+}
+
+.indicator-settings-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.indicator-settings-close {
+  background: none;
+  border: none;
+  color: #666;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+  transition: color 0.15s;
+}
+
+.indicator-settings-close:hover {
+  color: #ef4444;
+}
+
+.indicator-settings-body {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.setting-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.setting-row > label {
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+
+.setting-row > label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.setting-row > label:has(input[type="checkbox"]) span {
+  color: #e5e5e5;
+}
+
+.setting-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+  accent-color: #3b82f6;
+}
+
+.setting-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.setting-control input[type="range"] {
+  flex: 1;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: #333;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.setting-control input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #3b82f6;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.setting-control input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.setting-value {
+  font-size: 12px;
+  color: #60a5fa;
+  min-width: 40px;
+  text-align: right;
+  font-family: monospace;
+}
+
+.color-control {
+  gap: 12px;
+}
+
+.color-control input[type="color"] {
+  width: 32px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid #444;
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+}
+
+.color-control input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.color-control input[type="color"]::-webkit-color-swatch {
+  border-radius: 2px;
+  border: none;
+}
+
+.color-preview {
+  width: 60px;
+  height: 20px;
+  border-radius: 3px;
+  border: 1px solid #444;
+}
+
+.mode-toggle {
+  display: flex;
+  gap: 0;
+  background: #0f0f1a;
+  border-radius: 6px;
+  padding: 2px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+}
+
+.mode-btn:hover {
+  color: #94a3b8;
+}
+
+.mode-btn.active {
+  background: #3b82f6;
+  color: white;
+}
+
+.indicator-settings-footer {
+  padding: 12px 16px;
+  border-top: 1px solid #333;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.reset-btn {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #94a3b8;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.reset-btn:hover {
+  border-color: #666;
+  color: #e5e5e5;
+}
+
+/* Legend updates for clickable items */
+.gex-chart-legend .legend-item {
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gex-chart-legend .legend-item:hover {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.gex-chart-legend .legend-item.disabled {
+  opacity: 0.4;
+}
+
+.gex-chart-legend .legend-item.candle-count {
+  cursor: default;
+}
+
+.gex-chart-legend .legend-item.candle-count:hover {
+  background: transparent;
+}
+
+.gex-chart-legend .legend-color {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.gex-chart-legend .legend-color.call,
+.gex-chart-legend .legend-color.put {
+  width: 8px;
+  height: 8px;
+}
+
+.gex-chart-legend .legend-gear {
+  font-size: 12px;
+  color: #64748b;
+  margin-left: 4px;
+  transition: color 0.15s;
+}
+
+.gex-chart-legend .legend-item:hover .legend-gear {
+  color: #3b82f6;
+}
+
+/* ============================================
+   Indicator Labels (Top-Left inside chart)
+   ============================================ */
+
+/* Indicator labels positioned relative to gex-chart-panel */
+.gex-chart-panel .indicator-labels {
+  position: absolute;
+  top: 55px;  /* Below header */
+  left: 8px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: auto;
+}
+
+/* Settings overlay relative to panel */
+.gex-chart-panel .indicator-settings-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.indicator-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(15, 15, 25, 0.95);
+  border: 1px solid rgba(100, 100, 120, 0.3);
+  border-radius: 6px;
+  font-size: 11px;
+  color: #94a3b8;
+  backdrop-filter: blur(8px);
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.indicator-label:hover {
+  background: rgba(30, 30, 50, 0.98);
+  border-color: rgba(147, 51, 234, 0.5);
+}
+
+.indicator-label.gex-static {
+  cursor: default;
+}
+
+.indicator-label.gex-static:hover {
+  background: rgba(15, 15, 25, 0.95);
+  border-color: rgba(100, 100, 120, 0.3);
+}
+
+.indicator-label.disabled {
+  opacity: 0.5;
+}
+
+.indicator-label.disabled .indicator-name {
+  text-decoration: line-through;
+  color: #64748b;
+}
+
+.indicator-color {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.indicator-color-pair {
+  display: flex;
+  gap: 2px;
+}
+
+.indicator-color-pair .indicator-color {
+  width: 6px;
+  height: 10px;
+  border-radius: 1px;
+}
+
+.indicator-name {
+  color: #e5e5e5;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.indicator-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.indicator-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.indicator-btn:hover {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+}
+
+.indicator-btn.eye.visible {
+  color: #22c55e;
+}
+
+.indicator-btn.eye.visible:hover {
+  color: #16a34a;
+  background: rgba(34, 197, 94, 0.15);
+}
+
+.indicator-btn.eye.hidden {
+  color: #ef4444;
+}
+
+.indicator-btn.eye.hidden:hover {
+  color: #dc2626;
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.indicator-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Settings dialog button styles */
+.indicator-settings-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.settings-btn.reset {
+  background: transparent;
+  border: 1px solid #444;
+  color: #94a3b8;
+}
+
+.settings-btn.reset:hover {
+  border-color: #666;
+  color: #e5e5e5;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.settings-btn.save {
+  background: #3b82f6;
+  border: none;
+  color: white;
+}
+
+.settings-btn.save:hover {
+  background: #2563eb;
 }
