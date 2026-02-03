@@ -8,6 +8,133 @@ let isLive = true;
 let currentSort = { field: 'name', direction: 'asc' };
 let cachedServices = [];
 
+// ============================================================
+// Alerts System
+// ============================================================
+let systemAlerts = [];
+
+function addAlert(type, title, message, source = null) {
+    // Avoid duplicate alerts from same source
+    const existingIdx = systemAlerts.findIndex(a => a.source === source && a.title === title);
+    if (existingIdx >= 0) {
+        // Update existing alert
+        systemAlerts[existingIdx].message = message;
+        systemAlerts[existingIdx].time = new Date();
+    } else {
+        systemAlerts.push({
+            id: Date.now() + Math.random(),
+            type,  // 'error', 'warning', 'info'
+            title,
+            message,
+            source,
+            time: new Date()
+        });
+    }
+    updateAlertsUI();
+}
+
+function removeAlert(source, title = null) {
+    if (title) {
+        systemAlerts = systemAlerts.filter(a => !(a.source === source && a.title === title));
+    } else {
+        systemAlerts = systemAlerts.filter(a => a.source !== source);
+    }
+    updateAlertsUI();
+}
+
+function clearAlerts() {
+    systemAlerts = [];
+    updateAlertsUI();
+}
+
+function updateAlertsUI() {
+    const btn = document.getElementById('alerts-btn');
+    const countEl = document.getElementById('alerts-count');
+    const errorCount = systemAlerts.filter(a => a.type === 'error').length;
+    const totalCount = systemAlerts.length;
+
+    if (totalCount > 0) {
+        btn.classList.add('has-alerts');
+        countEl.textContent = totalCount;
+        countEl.classList.remove('hidden');
+    } else {
+        btn.classList.remove('has-alerts');
+        countEl.classList.add('hidden');
+    }
+}
+
+function openAlertsPanel() {
+    const modal = document.getElementById('alerts-modal');
+    const listEl = document.getElementById('alerts-list');
+
+    if (systemAlerts.length === 0) {
+        listEl.innerHTML = '<div class="alerts-empty">No alerts - all systems operational</div>';
+    } else {
+        listEl.innerHTML = systemAlerts.map(alert => {
+            const icon = alert.type === 'error' ? '✕' : alert.type === 'warning' ? '⚠' : 'ℹ';
+            const timeStr = alert.time.toLocaleTimeString();
+            return `
+                <div class="alert-item ${alert.type}">
+                    <span class="alert-icon">${icon}</span>
+                    <div class="alert-content">
+                        <div class="alert-title">${alert.title}</div>
+                        <div class="alert-message">${alert.message}</div>
+                        <div class="alert-time">${timeStr}</div>
+                    </div>
+                    <button class="alert-dismiss" onclick="dismissAlert(${alert.id})" title="Dismiss">&times;</button>
+                </div>
+            `;
+        }).join('');
+    }
+
+    modal.classList.remove('hidden');
+}
+
+function closeAlertsPanel() {
+    document.getElementById('alerts-modal').classList.add('hidden');
+}
+
+function dismissAlert(id) {
+    systemAlerts = systemAlerts.filter(a => a.id !== id);
+    updateAlertsUI();
+    // Re-render if modal is open
+    if (!document.getElementById('alerts-modal').classList.contains('hidden')) {
+        openAlertsPanel();
+    }
+}
+
+// Check status response for issues
+function checkStatusForAlerts(data) {
+    // Check Redis buses
+    if (data.redis) {
+        for (const [name, info] of Object.entries(data.redis)) {
+            if (!info.running) {
+                addAlert('error', `${name} Down`, `Redis bus ${name} is not running`, `redis:${name}`);
+            } else {
+                removeAlert(`redis:${name}`);
+            }
+        }
+    }
+
+    // Check truth loaded
+    if (data.truth === false) {
+        addAlert('warning', 'Truth Not Loaded', 'truth.json is not loaded in Redis', 'truth');
+    } else {
+        removeAlert('truth');
+    }
+}
+
+// Check analytics response for issues
+function checkAnalyticsForAlerts(analytics) {
+    for (const [name, info] of Object.entries(analytics)) {
+        if (info.error) {
+            addAlert('error', `Analytics: ${name}`, info.error, `analytics:${name}`);
+        } else {
+            removeAlert(`analytics:${name}`);
+        }
+    }
+}
+
 // ENV config storage
 const ENV_STORAGE_KEY = 'marketswarm_env_config';
 
@@ -60,6 +187,8 @@ document.addEventListener('DOMContentLoaded', () => {
     refreshStatus();
     startLiveUpdates();
     loadAdminVersion();
+    // Also fetch analytics on startup to populate alerts
+    setTimeout(refreshAnalytics, 1000);
 });
 
 // Load admin version on startup
@@ -163,8 +292,12 @@ async function refreshStatus() {
         updateServiceSummary(data.services);
         updateServiceSelect(data.services);
         updateLastUpdate(data.timestamp);
+
+        // Check for issues and update alerts
+        checkStatusForAlerts(data);
     } catch (error) {
         console.error('Failed to refresh status:', error);
+        addAlert('error', 'Status Fetch Failed', error.message, 'status-fetch');
     }
 }
 
@@ -895,6 +1028,9 @@ async function refreshAnalytics() {
         if (!response.ok) throw new Error('Failed to fetch analytics');
         const data = await response.json();
         cachedAnalytics = data.analytics || data;  // Handle both {analytics: {...}} and direct object
+
+        // Check for analytics errors and update alerts
+        checkAnalyticsForAlerts(cachedAnalytics);
 
         // Update analytics source dropdown
         updateAnalyticsSourceSelect();

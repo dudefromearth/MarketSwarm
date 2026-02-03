@@ -18,13 +18,14 @@ Configuration priority:
 # ============================================================
 # Admin Server Version & Info
 # ============================================================
-ADMIN_VERSION = "1.0.0"
-ADMIN_BUILD_DATE = "2025-02-03"
+ADMIN_VERSION = "1.1.0"
+ADMIN_BUILD_DATE = "2026-02-03"
 ADMIN_FEATURES = [
     {"id": "service-mgmt", "name": "Service Management", "desc": "Start, stop, restart services"},
     {"id": "log-viewer", "name": "Log Viewer", "desc": "View and tail service logs"},
     {"id": "env-overrides", "name": "ENV Overrides", "desc": "Override truth.json env vars per service"},
     {"id": "analytics", "name": "Analytics Dashboard", "desc": "View service instrumentation data"},
+    {"id": "alerts", "name": "System Alerts", "desc": "Auto-detect and display errors from services and analytics"},
     {"id": "self-config", "name": "Self-Configuring", "desc": "Auto-discover node from repo path"},
     {"id": "live-status", "name": "Live Status", "desc": "Auto-refresh service status every 5s"},
     {"id": "uptime-tracking", "name": "Uptime Tracking", "desc": "Track service uptime when started via admin"},

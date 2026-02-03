@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MarketSwarm Node Admin</title>
-    <link rel="stylesheet" href="/styles.css?v=13">
+    <link rel="stylesheet" href="/styles.css?v=14">
 </head>
 <body>
     <div class="container">
@@ -17,6 +17,10 @@
                 </button>
             </div>
             <div class="header-actions">
+                <button id="alerts-btn" class="alerts-btn" onclick="openAlertsPanel()" title="System Alerts">
+                    <span class="alerts-icon">⚠</span>
+                    <span id="alerts-count" class="alerts-count hidden">0</span>
+                </button>
                 <button id="refresh-btn" class="btn btn-secondary" onclick="refreshStatus()">Refresh</button>
                 <label class="live-toggle">
                     <input type="checkbox" id="live-toggle" checked onchange="toggleLive()">
@@ -209,6 +213,26 @@
         </div>
     </div>
 
-    <script src="/app.js?v=13"></script>
+    <!-- Alerts Panel Modal -->
+    <div id="alerts-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>System Alerts</h3>
+                <button class="modal-close" onclick="closeAlertsPanel()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div id="alerts-list" class="alerts-list">
+                    <div class="alerts-empty">No alerts</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="clearAlerts()">Clear All</button>
+                <span class="modal-footer-spacer"></span>
+                <button class="btn btn-secondary" onclick="closeAlertsPanel()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js?v=14"></script>
 </body>
 </html>
