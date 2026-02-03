@@ -5169,6 +5169,17 @@ body {
   height: 100%;
 }
 
+/* Trade Recommendations widget sizing */
+.trade-recommendations-widget {
+  width: 340px;
+  min-width: 340px;
+  max-height: 380px;
+}
+
+.trade-recommendations-widget .trade-recommendations-panel {
+  height: 100%;
+}
+
 /* Enhanced VIX Regime Card */
 .vix-regime-card.enhanced {
   padding: 12px;
@@ -8553,13 +8564,260 @@ body {
   font-size: 13px;
 }
 
+/* Chart body - contains chart area + GEX side panel */
+.gex-chart-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 /* Chart area wrapper - contains chart and overlays */
 .gex-chart-area {
   position: relative;
   flex: 1;
-  width: 100%;
   min-height: 0;
   overflow: visible;
+}
+
+/* Loading overlay - shows on top of existing data */
+.gex-chart-loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(10, 10, 10, 0.7);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  z-index: 50;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.gex-chart-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(59, 130, 246, 0.3);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: gex-spin 0.8s linear infinite;
+}
+
+@keyframes gex-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Skeleton placeholder during initial load */
+.gex-chart-skeleton {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #0a0a0a;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 40px 60px;
+}
+
+.skeleton-candles {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  width: 100%;
+  height: 80%;
+}
+
+.skeleton-candle {
+  flex: 1;
+  background: linear-gradient(180deg, rgba(51, 65, 85, 0.4) 0%, rgba(51, 65, 85, 0.2) 100%);
+  border-radius: 2px;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+.skeleton-candle:nth-child(odd) {
+  animation-delay: 0.2s;
+}
+
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}
+
+/* ============================================
+   GEX Side Panel - Separate from chart
+   ============================================ */
+.gex-side-panel {
+  width: 320px;
+  flex-shrink: 0;
+  background: #0d0d0d;
+  border-left: 1px solid #222;
+  display: flex;
+  flex-direction: column;
+}
+
+.gex-side-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: #111;
+  border-bottom: 1px solid #222;
+}
+
+.gex-side-header.disabled {
+  opacity: 0.5;
+}
+
+.gex-side-color-pair {
+  display: flex;
+  gap: 2px;
+}
+
+.gex-side-color-pair span {
+  width: 5px;
+  height: 12px;
+  border-radius: 1px;
+}
+
+.gex-side-title {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.gex-side-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid #444;
+  color: #aaa;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.15s;
+  flex-shrink: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.gex-side-btn:hover {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: #3b82f6;
+}
+
+.gex-side-disabled {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #444;
+  font-size: 11px;
+}
+
+.gex-side-bars {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.gex-side-bar-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  display: flex;
+  justify-content: center;
+  transition: top 0.15s ease-out;
+}
+
+.gex-side-bar-row.atm {
+  height: 4px;
+}
+
+.gex-side-bar-row.atm .gex-side-bar {
+  box-shadow: 0 0 6px rgba(251, 191, 36, 0.6);
+}
+
+.gex-side-bar {
+  position: absolute;
+  height: 100%;
+  border-radius: 1px;
+  transition: width 0.15s ease-out;
+}
+
+.gex-side-bar.put {
+  right: 50%;
+  transform-origin: right center;
+}
+
+.gex-side-bar.call {
+  left: 50%;
+  transform-origin: left center;
+}
+
+.gex-side-bar.net {
+  position: absolute;
+  height: 100%;
+}
+
+.gex-side-center-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: rgba(100, 100, 120, 0.3);
+  pointer-events: none;
+}
+
+.gex-side-atm-marker {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(251, 191, 36, 0.6);
+  pointer-events: none;
+}
+
+.gex-side-footer {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+  background: #111;
+  border-top: 1px solid #222;
+  justify-content: center;
+}
+
+.gex-mode-btn {
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 600;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 3px;
+  color: #666;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.gex-mode-btn:hover {
+  background: #252525;
+  color: #888;
+}
+
+.gex-mode-btn.active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
 }
 
 /* Dealer Gravity Indicator Labels */
@@ -9838,4 +10096,357 @@ body {
 
 .settings-btn.save:hover {
   background: #2563eb;
+}
+
+/* =========================================================
+   Trade Recommendations Panel
+   ========================================================= */
+
+.trade-recommendations-panel {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 400px;
+  overflow: hidden;
+}
+
+.recommendations-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #333;
+}
+
+.recommendations-header h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.header-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.regime-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.regime-badge.regime-chaos {
+  background: rgba(239, 68, 68, 0.2);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.regime-badge.regime-goldilocks {
+  background: rgba(234, 179, 8, 0.2);
+  color: #fbbf24;
+  border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.regime-badge.regime-zombieland {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.special-badge {
+  font-size: 10px;
+  font-weight: 500;
+  color: #fbbf24;
+}
+
+.vix-value {
+  font-size: 10px;
+  color: #666;
+  font-family: 'SF Mono', monospace;
+}
+
+.recommendations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.recommendations-loading,
+.no-recommendations {
+  text-align: center;
+  color: #666;
+  padding: 20px;
+  font-size: 12px;
+}
+
+/* Recommendation Card */
+.recommendation-card {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.recommendation-card:hover {
+  border-color: #444;
+  background: #1f1f1f;
+}
+
+.rec-card-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.rank-badge {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #333;
+  color: #888;
+  font-size: 11px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rank-badge.rank-1 {
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
+  color: #000;
+}
+
+.rank-badge.rank-2 {
+  background: linear-gradient(135deg, #94a3b8, #64748b);
+  color: #000;
+}
+
+.rank-badge.rank-3 {
+  background: linear-gradient(135deg, #cd7f32, #b87333);
+  color: #000;
+}
+
+.rec-strategy-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.rec-strategy-desc {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.side-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.side-badge.call {
+  background: rgba(34, 197, 94, 0.2);
+  color: #4ade80;
+}
+
+.side-badge.put {
+  background: rgba(248, 113, 113, 0.2);
+  color: #f87171;
+}
+
+.rec-width {
+  color: #e5e5e5;
+}
+
+.rec-strike {
+  color: #888;
+}
+
+.rec-meta {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 10px;
+  color: #666;
+  font-family: 'SF Mono', monospace;
+}
+
+.rec-debit {
+  color: #94a3b8;
+}
+
+.rec-r2r {
+  color: #22c55e;
+}
+
+.rec-distance {
+  color: #666;
+}
+
+.rec-score {
+  font-size: 18px;
+  font-weight: 700;
+  font-family: 'SF Mono', monospace;
+  flex-shrink: 0;
+  min-width: 32px;
+  text-align: right;
+}
+
+.rec-expand-btn {
+  background: transparent;
+  border: 1px solid #333;
+  border-radius: 4px;
+  width: 20px;
+  height: 20px;
+  color: #666;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+
+.rec-expand-btn:hover {
+  background: #333;
+  border-color: #444;
+  color: #e5e5e5;
+}
+
+/* Expanded Details */
+.rec-card-details {
+  padding: 8px 10px;
+  border-top: 1px solid #333;
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.score-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.score-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.score-bar-label {
+  font-size: 10px;
+  color: #888;
+  width: 60px;
+  flex-shrink: 0;
+}
+
+.score-bar-track {
+  flex: 1;
+  height: 6px;
+  background: #222;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.score-bar-value {
+  font-size: 10px;
+  font-weight: 500;
+  color: #94a3b8;
+  width: 24px;
+  text-align: right;
+  font-family: 'SF Mono', monospace;
+}
+
+.rec-extra-info {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #333;
+}
+
+.rec-profit-loss {
+  font-size: 11px;
+  font-family: 'SF Mono', monospace;
+}
+
+.rec-profit-loss .profit {
+  color: #22c55e;
+}
+
+.rec-profit-loss .separator {
+  color: #444;
+  margin: 0 4px;
+}
+
+.rec-profit-loss .loss {
+  color: #ef4444;
+}
+
+.rec-gamma-distance {
+  font-size: 10px;
+  color: #666;
+}
+
+/* Show More Button */
+.show-more-btn {
+  background: transparent;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #888;
+  cursor: pointer;
+  transition: all 0.15s;
+  align-self: center;
+  margin-top: 4px;
+}
+
+.show-more-btn:hover {
+  background: #222;
+  border-color: #444;
+  color: #e5e5e5;
+}
+
+/* Footer */
+.recommendations-footer {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 8px;
+  border-top: 1px solid #333;
+  font-size: 10px;
+  color: #666;
+}
+
+.scored-count {
+  font-family: 'SF Mono', monospace;
+}
+
+.gamma-magnet {
+  color: #f59e0b;
 }

@@ -1,18 +1,21 @@
 /**
- * GexChartPanel - Candlestick chart with Volume Profile and GEX as native chart primitives
+ * GexChartPanel - Candlestick chart with Volume Profile and separate GEX panel
  *
  * Combines:
  * - TradingView Lightweight Charts for candlesticks (1 week of data)
- * - Volume Profile as canvas-rendered horizontal bars (left side)
- * - GEX bars as canvas-rendered horizontal bars (right side)
+ * - Volume Profile as canvas-rendered horizontal bars (left side, inside chart)
+ * - GEX bars in a separate panel on the right (outside chart, no overlap)
  * - Timeframe selector: 5m, 10m, 15m
  * - Settings dialogs for each indicator
  *
- * All overlays are rendered using Lightweight Charts' Primitives API for perfect
- * synchronization with chart pan/zoom and native canvas performance.
+ * Performance optimizations:
+ * - Chart persists across open/close cycles
+ * - Loading overlay shows on top of existing data
+ * - No artificial delays
+ * - Skeleton placeholder during initial load
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import {
   createChart,
   ColorType,
@@ -21,14 +24,13 @@ import {
 } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import {
-  GexPrimitive,
   VolumeProfilePrimitive,
   GexSettings,
   VolumeProfileSettings,
   useIndicatorSettings,
   sigmaToPercentile,
 } from './chart-primitives';
-import type { GexDataPoint, VolumeProfileDataPoint } from './chart-primitives';
+import type { VolumeProfileDataPoint } from './chart-primitives';
 
 // Types
 type CandleData = {
@@ -177,13 +179,19 @@ export default function GexChartPanel({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  const gexPrimitiveRef = useRef<GexPrimitive | null>(null);
   const vpPrimitiveRef = useRef<VolumeProfilePrimitive | null>(null);
+  const gexPanelRef = useRef<HTMLDivElement>(null);
 
   const [timeframe, setTimeframe] = useState<Timeframe>('5m');
   const [candles, setCandles] = useState<CandleData[]>([]);
   const [loading, setLoading] = useState(true);
   const [chartReady, setChartReady] = useState(false);
+
+  // Track price range for GEX panel synchronization
+  const [priceRange, setPriceRange] = useState<{ min: number; max: number } | null>(null);
+  // Track the GEX panel's actual height for pixel-accurate positioning
+  const [gexPanelHeight, setGexPanelHeight] = useState<number>(0);
+  const gexBarsRef = useRef<HTMLDivElement>(null);
 
   // Persistent settings from hook
   const {
@@ -206,14 +214,14 @@ export default function GexChartPanel({
     }
   }, [externalGexMode]);
 
-  // Fetch candle data (1 week)
+  // Fetch candle data (5 DTE) and filter to market hours only
   useEffect(() => {
     const fetchCandles = async () => {
       setLoading(true);
       try {
         const apiSymbol = symbol.startsWith('I:') ? symbol : `I:${symbol}`;
         const encodedSymbol = encodeURIComponent(apiSymbol);
-        const response = await fetch(`/api/models/candles/${encodedSymbol}?days=7`, {
+        const response = await fetch(`/api/models/candles/${encodedSymbol}?days=5`, {
           credentials: 'include',
         });
         const data = await response.json();
@@ -221,7 +229,20 @@ export default function GexChartPanel({
           const candleKey = `candles_${timeframe}` as keyof typeof data.data;
           const candleData = data.data[candleKey] as CandleData[] | undefined;
           if (candleData && Array.isArray(candleData)) {
-            setCandles(candleData);
+            // Filter to regular trading hours only (9:30 AM - 4:00 PM ET)
+            // This removes overnight gaps and pre/post market
+            const filteredCandles = candleData.filter((candle) => {
+              const date = new Date(candle.t * 1000);
+              // Convert to Eastern Time
+              const etTime = date.toLocaleString('en-US', { timeZone: 'America/New_York' });
+              const etDate = new Date(etTime);
+              const hours = etDate.getHours();
+              const minutes = etDate.getMinutes();
+              const timeInMinutes = hours * 60 + minutes;
+              // Market hours: 9:30 AM (570 min) to 4:00 PM (960 min)
+              return timeInMinutes >= 570 && timeInMinutes < 960;
+            });
+            setCandles(filteredCandles);
           }
         }
       } catch (err) {
@@ -236,107 +257,161 @@ export default function GexChartPanel({
     return () => clearInterval(interval);
   }, [symbol, timeframe]);
 
-  // Create chart with primitives
+  // Create chart with primitives - no delay, chart persists across toggles
   useEffect(() => {
     if (!containerRef.current || !isOpen) return;
     if (chartRef.current) return;
 
-    const timer = setTimeout(() => {
-      if (!containerRef.current || chartRef.current) return;
+    const chart = createChart(containerRef.current, {
+      autoSize: true,
+      layout: {
+        background: { type: ColorType.Solid, color: '#0a0a0a' },
+        textColor: 'rgba(148, 163, 184, 1)',
+      },
+      grid: {
+        vertLines: { color: 'rgba(51, 65, 85, 0.3)' },
+        horzLines: { color: 'rgba(51, 65, 85, 0.3)' },
+      },
+      rightPriceScale: {
+        borderColor: 'rgba(30, 41, 59, 1)',
+        scaleMargins: { top: 0.05, bottom: 0.05 },
+      },
+      timeScale: {
+        borderColor: 'rgba(30, 41, 59, 1)',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      crosshair: {
+        mode: CrosshairMode.Normal,
+        vertLine: {
+          color: 'rgba(147, 51, 234, 0.5)',
+          width: 1,
+          style: 0, // Solid
+          labelBackgroundColor: 'rgba(147, 51, 234, 0.9)',
+        },
+        horzLine: {
+          color: 'rgba(147, 51, 234, 0.5)',
+          width: 1,
+          style: 0, // Solid
+          labelBackgroundColor: 'rgba(147, 51, 234, 0.9)',
+        },
+      },
+      localization: {
+        timeFormatter: (time: unknown) => formatCrosshairLabel(time),
+      },
+    });
 
-      const chart = createChart(containerRef.current, {
-        autoSize: true,
-        layout: {
-          background: { type: ColorType.Solid, color: '#0a0a0a' },
-          textColor: 'rgba(148, 163, 184, 1)',
-        },
-        grid: {
-          vertLines: { color: 'rgba(51, 65, 85, 0.3)' },
-          horzLines: { color: 'rgba(51, 65, 85, 0.3)' },
-        },
-        rightPriceScale: {
-          borderColor: 'rgba(30, 41, 59, 1)',
-          scaleMargins: { top: 0.05, bottom: 0.05 },
-        },
-        timeScale: {
-          borderColor: 'rgba(30, 41, 59, 1)',
-          timeVisible: true,
-          secondsVisible: false,
-        },
-        crosshair: {
-          mode: CrosshairMode.Normal,
-          vertLine: {
-            color: 'rgba(147, 51, 234, 0.5)',
-            width: 1,
-            style: 0, // Solid
-            labelBackgroundColor: 'rgba(147, 51, 234, 0.9)',
-          },
-          horzLine: {
-            color: 'rgba(147, 51, 234, 0.5)',
-            width: 1,
-            style: 0, // Solid
-            labelBackgroundColor: 'rgba(147, 51, 234, 0.9)',
-          },
-        },
-        localization: {
-          timeFormatter: (time: unknown) => formatCrosshairLabel(time),
-        },
-      });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const series = (chart as any).addSeries(CandlestickSeries, {
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      borderUpColor: '#22c55e',
+      borderDownColor: '#ef4444',
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444',
+      priceLineVisible: true,
+      lastValueVisible: true,
+      priceLineColor: 'rgba(16, 185, 129, 0.85)',
+    });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const series = (chart as any).addSeries(CandlestickSeries, {
-        upColor: '#22c55e',
-        downColor: '#ef4444',
-        borderUpColor: '#22c55e',
-        borderDownColor: '#ef4444',
-        wickUpColor: '#22c55e',
-        wickDownColor: '#ef4444',
-        priceLineVisible: true,
-        lastValueVisible: true,
-        priceLineColor: 'rgba(16, 185, 129, 0.85)',
-      });
+    chartRef.current = chart;
+    seriesRef.current = series;
 
-      chartRef.current = chart;
-      seriesRef.current = series;
+    try {
+      const vpPrimitive = new VolumeProfilePrimitive();
+      series.attachPrimitive(vpPrimitive);
+      vpPrimitiveRef.current = vpPrimitive;
+    } catch (err) {
+      console.error('[GexChartPanel] Failed to attach VP primitive:', err);
+    }
 
+    setChartReady(true);
+    chart.priceScale('right').applyOptions({ autoScale: true });
+
+    // Subscribe to crosshair move to detect any chart interaction (zoom/pan/resize)
+    // This will update the GEX panel to stay in sync with the chart's price scale
+    const updateVisiblePriceRange = () => {
+      if (!seriesRef.current || !chartRef.current) return;
       try {
-        const gexPrimitive = new GexPrimitive();
-        series.attachPrimitive(gexPrimitive);
-        gexPrimitiveRef.current = gexPrimitive;
+        // Get the visible price range by checking coordinates at top and bottom of chart
+        const chartHeight = containerRef.current?.clientHeight || 400;
+        const topPrice = seriesRef.current.coordinateToPrice(0);
+        const bottomPrice = seriesRef.current.coordinateToPrice(chartHeight - 30); // Account for time scale
 
-        const vpPrimitive = new VolumeProfilePrimitive();
-        series.attachPrimitive(vpPrimitive);
-        vpPrimitiveRef.current = vpPrimitive;
-      } catch (err) {
-        console.error('[GexChartPanel] Failed to attach primitives:', err);
+        if (topPrice !== null && bottomPrice !== null && topPrice !== bottomPrice) {
+          setPriceRange({
+            min: Math.min(topPrice, bottomPrice),
+            max: Math.max(topPrice, bottomPrice)
+          });
+        }
+      } catch (e) {
+        // Ignore errors during initialization
       }
+    };
 
-      setChartReady(true);
-      chart.priceScale('right').applyOptions({ autoScale: true });
+    // Subscribe to multiple events to catch all view changes
+    chart.subscribeCrosshairMove(updateVisiblePriceRange);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(updateVisiblePriceRange);
 
-      const handleResize = () => {
-        if (!containerRef.current || !chartRef.current) return;
-      };
+    // Also update on any chart click/drag
+    const chartElement = containerRef.current;
+    const handleMouseUp = () => {
+      // Delay slightly to let the chart finish updating
+      setTimeout(updateVisiblePriceRange, 50);
+    };
+    chartElement?.addEventListener('mouseup', handleMouseUp);
+    chartElement?.addEventListener('wheel', handleMouseUp);
 
-      window.addEventListener('resize', handleResize);
-      (chartRef.current as any)._resizeHandler = handleResize;
-    }, 400);
+    const handleResize = () => {
+      if (!containerRef.current || !chartRef.current) return;
+      setTimeout(updateVisiblePriceRange, 50);
+    };
+
+    window.addEventListener('resize', handleResize);
+    (chartRef.current as any)._resizeHandler = handleResize;
+    (chartRef.current as any)._rangeHandler = updateVisiblePriceRange;
+    (chartRef.current as any)._mouseHandler = handleMouseUp;
+    (chartRef.current as any)._chartElement = chartElement;
 
     return () => {
-      clearTimeout(timer);
       if (chartRef.current) {
         const handler = (chartRef.current as any)._resizeHandler;
+        const mouseHandler = (chartRef.current as any)._mouseHandler;
+        const element = (chartRef.current as any)._chartElement;
         if (handler) window.removeEventListener('resize', handler);
+        if (element && mouseHandler) {
+          element.removeEventListener('mouseup', mouseHandler);
+          element.removeEventListener('wheel', mouseHandler);
+        }
+        chartRef.current.unsubscribeCrosshairMove(
+          (chartRef.current as any)._rangeHandler
+        );
+        chartRef.current.timeScale().unsubscribeVisibleLogicalRangeChange(
+          (chartRef.current as any)._rangeHandler
+        );
         chartRef.current.remove();
         chartRef.current = null;
         seriesRef.current = null;
-        gexPrimitiveRef.current = null;
         vpPrimitiveRef.current = null;
       }
     };
   }, [isOpen]);
 
-  // Update candle data
+  // Track GEX bars panel height for pixel-accurate positioning
+  useEffect(() => {
+    if (!gexBarsRef.current) return;
+    const updateHeight = () => {
+      if (gexBarsRef.current) {
+        setGexPanelHeight(gexBarsRef.current.clientHeight);
+      }
+    };
+    updateHeight();
+    const resizeObserver = new ResizeObserver(updateHeight);
+    resizeObserver.observe(gexBarsRef.current);
+    return () => resizeObserver.disconnect();
+  }, [chartReady]);
+
+  // Update candle data and track price range
   useEffect(() => {
     if (!chartReady || !seriesRef.current || !candles || candles.length === 0) return;
 
@@ -350,36 +425,69 @@ export default function GexChartPanel({
 
     seriesRef.current.setData(formatted);
 
+    // Calculate price range from candle data for GEX panel
+    const highs = candles.map(c => c.h);
+    const lows = candles.map(c => c.l);
+    const minPrice = Math.min(...lows);
+    const maxPrice = Math.max(...highs);
+    setPriceRange({ min: minPrice, max: maxPrice });
+
     if (chartRef.current) {
       chartRef.current.timeScale().fitContent();
     }
   }, [candles, chartReady]);
 
-  // Update GEX primitive when data or config changes
-  useEffect(() => {
-    if (!gexPrimitiveRef.current) return;
+  // Calculate GEX bars for the separate panel with pixel-accurate positioning
+  const gexBars = useMemo(() => {
+    if (!gexConfig.enabled || !priceRange || gexPanelHeight === 0) return [];
 
-    const gexData: GexDataPoint[] = Object.entries(gexByStrike).map(([strike, values]) => ({
-      strike: parseFloat(strike),
-      calls: values.calls,
-      puts: values.puts,
-    }));
+    const { min: minPrice, max: maxPrice } = priceRange;
+    const priceSpan = maxPrice - minPrice;
+    if (priceSpan <= 0) return [];
 
-    const alpha = (100 - gexConfig.transparency) / 100;
+    // Chart has 5% margin top and bottom, so effective price range is in the middle 90%
+    const chartMargin = 0.05;
+    const effectiveHeight = gexPanelHeight * (1 - 2 * chartMargin);
+    const topOffset = gexPanelHeight * chartMargin;
 
-    gexPrimitiveRef.current.setData(gexConfig.enabled ? gexData : []);
-    gexPrimitiveRef.current.setOptions({
-      mode: gexConfig.mode,
-      maxGex,
-      maxNetGex,
-      currentSpot: gexConfig.showATM ? currentSpot : null,
-      barHeight: gexConfig.barHeight,
-      callColor: hexToRgba(gexConfig.callColor, alpha),
-      putColor: hexToRgba(gexConfig.putColor, alpha),
-      atmHighlightColor: hexToRgba(gexConfig.atmColor, 0.8),
-      maxBarWidthPercent: gexConfig.widthPercent,
-    });
-  }, [gexByStrike, maxGex, maxNetGex, currentSpot, gexConfig]);
+    // Filter GEX data to visible price range (with some margin)
+    const margin = priceSpan * 0.1;
+    const visibleMin = minPrice - margin;
+    const visibleMax = maxPrice + margin;
+
+    return Object.entries(gexByStrike)
+      .map(([strike, values]) => {
+        const strikePrice = parseFloat(strike);
+        if (strikePrice < visibleMin || strikePrice > visibleMax) return null;
+
+        const netGex = values.calls - values.puts;
+        // Only mark as ATM if showATM is enabled
+        const isATM = gexConfig.showATM && currentSpot && Math.abs(strikePrice - currentSpot) < 2;
+
+        // Calculate pixel position from top (higher price = smaller Y)
+        const priceRatio = (maxPrice - strikePrice) / priceSpan;
+        const pixelY = topOffset + (priceRatio * effectiveHeight);
+
+        return {
+          strike: strikePrice,
+          calls: values.calls,
+          puts: values.puts,
+          netGex,
+          isATM,
+          pixelY: Math.round(pixelY),
+        };
+      })
+      .filter((b): b is NonNullable<typeof b> => b !== null)
+      .sort((a, b) => b.strike - a.strike); // Sort by strike descending (top to bottom)
+  }, [gexByStrike, priceRange, currentSpot, gexConfig.enabled, gexConfig.showATM, gexPanelHeight]);
+
+  // Calculate max values for bar scaling
+  const gexScaleMax = useMemo(() => {
+    if (gexConfig.mode === 'net') {
+      return maxNetGex || 1;
+    }
+    return maxGex || 1;
+  }, [maxGex, maxNetGex, gexConfig.mode]);
 
   // Update Volume Profile primitive when data or config changes
   useEffect(() => {
@@ -438,16 +546,32 @@ export default function GexChartPanel({
         </div>
       </div>
 
-      {/* Loading indicator */}
-      {loading && candles.length === 0 && (
-        <div className="gex-chart-loading">Loading chart data...</div>
-      )}
+      {/* Chart + GEX Panel Container */}
+      <div className="gex-chart-body">
+        {/* Chart Area (left) */}
+        <div className="gex-chart-area">
+          {/* Loading overlay - shows on top of existing data */}
+          {loading && (
+            <div className="gex-chart-loading-overlay">
+              <div className="gex-chart-spinner" />
+              <span>Updating...</span>
+            </div>
+          )}
 
-      {/* Chart Container */}
-      <div className="gex-chart-area">
-        <div ref={containerRef} className="gex-chart-container" />
+          {/* Skeleton placeholder when no data yet */}
+          {!chartReady && candles.length === 0 && (
+            <div className="gex-chart-skeleton">
+              <div className="skeleton-candles">
+                {Array.from({ length: 20 }).map((_, i) => (
+                  <div key={i} className="skeleton-candle" style={{ height: `${30 + Math.random() * 40}%` }} />
+                ))}
+              </div>
+            </div>
+          )}
 
-        {/* Indicator Labels - Top Left inside chart */}
+          <div ref={containerRef} className="gex-chart-container" />
+
+        {/* Indicator Labels - Top Left inside chart (VRVP only) */}
         <div className="dealer-gravity-indicators">
           {/* Volume Profile */}
           <div
@@ -485,46 +609,6 @@ export default function GexChartPanel({
               </svg>
             </button>
           </div>
-
-          {/* GEX */}
-          <div
-            className={`dg-indicator ${!gexConfig.enabled ? 'disabled' : ''}`}
-            onDoubleClick={() => setShowGexSettings(true)}
-            title="Double-click for settings"
-          >
-            <span className="dg-indicator-color-pair">
-              <span style={{ backgroundColor: gexConfig.callColor }} />
-              <span style={{ backgroundColor: gexConfig.putColor }} />
-            </span>
-            <span className="dg-indicator-name">GEX</span>
-            <button
-              className="dg-indicator-btn"
-              onClick={() => setGexConfig(c => ({ ...c, enabled: !c.enabled }))}
-              title={gexConfig.enabled ? 'Hide' : 'Show'}
-            >
-              {gexConfig.enabled ? (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                  <circle cx="12" cy="12" r="3"/>
-                </svg>
-              ) : (
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
-                  <line x1="1" y1="1" x2="23" y2="23"/>
-                </svg>
-              )}
-            </button>
-            <button
-              className="dg-indicator-btn"
-              onClick={() => setShowGexSettings(true)}
-              title="Settings"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-              </svg>
-            </button>
-          </div>
         </div>
 
         {/* Volume Profile Settings Dialog */}
@@ -542,20 +626,136 @@ export default function GexChartPanel({
           </div>
         )}
 
-        {/* GEX Settings Dialog */}
-        {showGexSettings && (
-          <div className="dg-settings-overlay" onClick={() => setShowGexSettings(false)}>
-            <div onClick={(e) => e.stopPropagation()}>
-              <GexSettings
-                config={gexConfig}
-                onConfigChange={setGexConfig}
-                onSaveDefault={saveAsDefault}
-                onResetToFactory={resetToFactoryDefaults}
-                onClose={() => setShowGexSettings(false)}
-              />
-            </div>
+        </div>
+
+        {/* Separate GEX Panel (right side) - always visible */}
+        <div className="gex-side-panel" ref={gexPanelRef}>
+          <div className={`gex-side-header ${!gexConfig.enabled ? 'disabled' : ''}`}>
+            <span className="gex-side-color-pair">
+              <span style={{ backgroundColor: gexConfig.callColor }} />
+              <span style={{ backgroundColor: gexConfig.putColor }} />
+            </span>
+            <span className="gex-side-title">GEX</span>
+            <button
+              className="gex-side-btn"
+              onClick={() => setGexConfig(c => ({ ...c, enabled: !c.enabled }))}
+              title={gexConfig.enabled ? 'Hide GEX' : 'Show GEX'}
+            >
+              {gexConfig.enabled ? '👁' : '👁‍🗨'}
+            </button>
+            <button
+              className="gex-side-btn"
+              onClick={() => setShowGexSettings(true)}
+              title="GEX Settings"
+            >
+              ⚙
+            </button>
           </div>
-        )}
+          {/* GEX bars - only show when enabled */}
+          {gexConfig.enabled && (
+            <div className="gex-side-bars" ref={gexBarsRef}>
+              {gexConfig.mode === 'combined' ? (
+                // Combined mode: calls on right, puts on left
+                gexBars.map((bar) => {
+                  const callWidth = (bar.calls / gexScaleMax) * 50; // 50% max width each side
+                  const putWidth = (bar.puts / gexScaleMax) * 50;
+                  // barHeight controls the thickness of each bar (100-500 maps to 1-20px)
+                  const barThickness = Math.round(1 + ((gexConfig.barHeight - 100) / 400) * 19);
+
+                  return (
+                    <div
+                      key={bar.strike}
+                      className={`gex-side-bar-row ${bar.isATM ? 'atm' : ''}`}
+                      style={{ top: `${bar.pixelY}px`, height: `${barThickness}px` }}
+                      title={`Strike: ${bar.strike}\nCalls: ${bar.calls.toFixed(1)}M\nPuts: ${bar.puts.toFixed(1)}M`}
+                    >
+                      {/* Put bar (left side, grows right-to-left) */}
+                      <div
+                        className="gex-side-bar put"
+                        style={{
+                          width: `${putWidth}%`,
+                          height: `${barThickness}px`,
+                          backgroundColor: gexConfig.putColor,
+                        }}
+                      />
+                      {/* Call bar (right side, grows left-to-right) */}
+                      <div
+                        className="gex-side-bar call"
+                        style={{
+                          width: `${callWidth}%`,
+                          height: `${barThickness}px`,
+                          backgroundColor: gexConfig.callColor,
+                        }}
+                      />
+                      {bar.isATM && (
+                        <div
+                          className="gex-side-atm-marker"
+                          style={{ backgroundColor: hexToRgba(gexConfig.atmColor, 0.8) }}
+                        />
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                // Net mode: single bar showing net GEX
+                gexBars.map((bar) => {
+                  const netWidth = Math.abs(bar.netGex / gexScaleMax) * 45;
+                  const isPositive = bar.netGex >= 0;
+                  // barHeight controls the thickness of each bar (100-500 maps to 1-20px)
+                  const barThickness = Math.round(1 + ((gexConfig.barHeight - 100) / 400) * 19);
+
+                  return (
+                    <div
+                      key={bar.strike}
+                      className={`gex-side-bar-row net ${bar.isATM ? 'atm' : ''}`}
+                      style={{ top: `${bar.pixelY}px`, height: `${barThickness}px` }}
+                      title={`Strike: ${bar.strike}\nNet GEX: ${bar.netGex.toFixed(1)}M`}
+                    >
+                      <div
+                        className={`gex-side-bar net ${isPositive ? 'positive' : 'negative'}`}
+                        style={{
+                          width: `${netWidth}%`,
+                          height: `${barThickness}px`,
+                          backgroundColor: isPositive ? gexConfig.callColor : gexConfig.putColor,
+                          left: isPositive ? '50%' : `${50 - netWidth}%`,
+                        }}
+                      />
+                      {bar.isATM && (
+                        <div
+                          className="gex-side-atm-marker"
+                          style={{ backgroundColor: hexToRgba(gexConfig.atmColor, 0.8) }}
+                        />
+                      )}
+                    </div>
+                  );
+                })
+              )}
+              {/* Center line for combined mode */}
+              {gexConfig.mode === 'combined' && <div className="gex-side-center-line" />}
+            </div>
+          )}
+          {/* Placeholder when disabled */}
+          {!gexConfig.enabled && (
+            <div className="gex-side-disabled">
+              <span>GEX Hidden</span>
+            </div>
+          )}
+          {/* Mode toggle at bottom */}
+          <div className="gex-side-footer">
+            <button
+              className={`gex-mode-btn ${gexConfig.mode === 'combined' ? 'active' : ''}`}
+              onClick={() => setGexConfig(c => ({ ...c, mode: 'combined' }))}
+            >
+              C/P
+            </button>
+            <button
+              className={`gex-mode-btn ${gexConfig.mode === 'net' ? 'active' : ''}`}
+              onClick={() => setGexConfig(c => ({ ...c, mode: 'net' }))}
+            >
+              Net
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* Footer legend - just candle count now */}
@@ -564,6 +764,21 @@ export default function GexChartPanel({
           <span className="legend-item candle-count">{candles.length} candles</span>
         )}
       </div>
+
+      {/* GEX Settings Dialog - at root level for proper overlay */}
+      {showGexSettings && (
+        <div className="dg-settings-overlay" onClick={() => setShowGexSettings(false)}>
+          <div onClick={(e) => e.stopPropagation()}>
+            <GexSettings
+              config={gexConfig}
+              onConfigChange={setGexConfig}
+              onSaveDefault={saveAsDefault}
+              onResetToFactory={resetToFactoryDefaults}
+              onClose={() => setShowGexSettings(false)}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

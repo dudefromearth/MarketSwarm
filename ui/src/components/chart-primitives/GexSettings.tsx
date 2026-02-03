@@ -19,11 +19,11 @@ export interface GexConfig {
 export const defaultGexConfig: GexConfig = {
   enabled: true,
   mode: 'combined',
-  widthPercent: 25,
-  barHeight: 40,         // Bar width in pixels (20-100)
+  widthPercent: 100,     // Now always 100% of the side panel
+  barHeight: 150,        // Bar width in pixels (20-400)
   callColor: '#22c55e',  // Green
   putColor: '#ef4444',   // Red
-  transparency: 30,
+  transparency: 0,       // No longer used, kept for compatibility
   showATM: true,
   atmColor: '#fbbf24',   // Amber
 };
@@ -48,16 +48,6 @@ export default function GexSettings({ config, onConfigChange, onSaveDefault, onR
     setLocalConfig(newConfig);
     onConfigChange(newConfig); // Live preview
   };
-
-  const hexToRgba = (hex: string, alpha: number): string => {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-  };
-
-  const callPreview = hexToRgba(localConfig.callColor, (100 - localConfig.transparency) / 100);
-  const putPreview = hexToRgba(localConfig.putColor, (100 - localConfig.transparency) / 100);
 
   return (
     <div className="indicator-settings-dialog">
@@ -98,33 +88,18 @@ export default function GexSettings({ config, onConfigChange, onSaveDefault, onR
           </div>
         </div>
 
-        {/* Bar Width */}
+        {/* Bar Thickness */}
         <div className="setting-row">
-          <label>Bar Width</label>
+          <label>Bar Thickness</label>
           <div className="setting-control">
             <input
               type="range"
-              min="20"
-              max="100"
+              min="100"
+              max="500"
               value={localConfig.barHeight}
               onChange={(e) => handleChange('barHeight', parseInt(e.target.value))}
             />
             <span className="setting-value">{localConfig.barHeight}px</span>
-          </div>
-        </div>
-
-        {/* % of Window */}
-        <div className="setting-row">
-          <label>% of Window</label>
-          <div className="setting-control">
-            <input
-              type="range"
-              min="10"
-              max="75"
-              value={localConfig.widthPercent}
-              onChange={(e) => handleChange('widthPercent', parseInt(e.target.value))}
-            />
-            <span className="setting-value">{localConfig.widthPercent}%</span>
           </div>
         </div>
 
@@ -137,7 +112,7 @@ export default function GexSettings({ config, onConfigChange, onSaveDefault, onR
               value={localConfig.callColor}
               onChange={(e) => handleChange('callColor', e.target.value)}
             />
-            <div className="color-preview" style={{ backgroundColor: callPreview }} />
+            <div className="color-preview" style={{ backgroundColor: localConfig.callColor }} />
           </div>
         </div>
 
@@ -150,22 +125,7 @@ export default function GexSettings({ config, onConfigChange, onSaveDefault, onR
               value={localConfig.putColor}
               onChange={(e) => handleChange('putColor', e.target.value)}
             />
-            <div className="color-preview" style={{ backgroundColor: putPreview }} />
-          </div>
-        </div>
-
-        {/* Transparency */}
-        <div className="setting-row">
-          <label>Transparency</label>
-          <div className="setting-control">
-            <input
-              type="range"
-              min="0"
-              max="70"
-              value={localConfig.transparency}
-              onChange={(e) => handleChange('transparency', parseInt(e.target.value))}
-            />
-            <span className="setting-value">{localConfig.transparency}%</span>
+            <div className="color-preview" style={{ backgroundColor: localConfig.putColor }} />
           </div>
         </div>
 
