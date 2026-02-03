@@ -5,7 +5,7 @@
 const API_BASE = '';
 let refreshInterval = null;
 let isLive = true;
-let currentSort = { field: 'name', direction: 'asc' };
+let currentSort = { field: 'status', direction: 'asc' };
 let cachedServices = [];
 
 // ============================================================

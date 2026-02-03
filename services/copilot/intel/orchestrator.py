@@ -6,8 +6,6 @@ Receives config from SetupBase, manages service lifecycle.
 """
 
 import asyncio
-import signal
-import os
 from typing import Dict, Any
 from datetime import datetime
 
@@ -57,6 +55,7 @@ class CopilotOrchestrator:
         self.buses = config.get("buses", {})
         self.market_redis: Redis | None = None
         self.system_redis: Redis | None = None
+        self.intel_redis: Redis | None = None
 
         # Market data cache per DTE (populated from Redis subscriptions)
         # Key is DTE (0, 1, 2, etc.), value is market data dict
@@ -96,6 +95,14 @@ class CopilotOrchestrator:
                 decode_responses=True
             )
             self.logger.info(f"connected to system-redis", emoji="🔗")
+
+        intel_bus = self.buses.get("intel-redis", {})
+        if intel_bus.get("url"):
+            self.intel_redis = Redis.from_url(
+                intel_bus["url"],
+                decode_responses=True
+            )
+            self.logger.info(f"connected to intel-redis", emoji="🔗")
 
     def get_market_data(self, dte: int | None = None) -> dict:
         """
@@ -345,7 +352,7 @@ class CopilotOrchestrator:
         commentary_settings = self.config.get("commentary", {})
 
         ai_config = AIProviderConfig(
-            provider=commentary_settings.get("provider", "anthropic"),
+            provider=commentary_settings.get("provider", "openai"),
             api_key=self.config.get("OPENAI_API_KEY") or self.config.get("ANTHROPIC_API_KEY"),
             model=None,  # Use provider default
         )
@@ -383,7 +390,7 @@ class CopilotOrchestrator:
 
         # Setup AI provider manager for AI-powered alerts
         ai_config = AIProviderConfig(
-            provider=alerts_settings.get("provider", "anthropic"),
+            provider=alerts_settings.get("provider", "openai"),
             api_key=self.config.get("OPENAI_API_KEY") or self.config.get("ANTHROPIC_API_KEY"),
             model=alerts_settings.get("model"),
         )
@@ -415,6 +422,7 @@ class CopilotOrchestrator:
             redis_key_prefix=keys_config.get("alertPrefix", "copilot:alerts"),
             publish_channel=keys_config.get("events", "copilot:alerts:events"),
             latest_key=keys_config.get("latest", "copilot:alerts:latest"),
+            analytics_key=keys_config.get("analytics", "copilot:alerts:analytics"),
             # Role gating from Truth config
             role_gating=alerts_settings.get("roleGating"),
             limits=alerts_settings.get("limits"),
@@ -432,6 +440,7 @@ class CopilotOrchestrator:
         self.alert_engine = AlertEngine(
             config=alert_config,
             redis=self.market_redis,
+            intel_redis=self.intel_redis,
             logger=self.logger,
         )
 
@@ -496,11 +505,58 @@ class CopilotOrchestrator:
             "expiration": data.get("expiration"),
         })
 
+    async def get_analytics(self, request: web.Request) -> web.Response:
+        """GET /analytics - Get all Copilot analytics."""
+        analytics = {
+            "service": "copilot",
+            "timestamp": datetime.utcnow().isoformat(),
+            "mel": {
+                "enabled": self.mel_enabled,
+                "running": getattr(self, 'mel', None) is not None,
+            },
+            "adi": {
+                "enabled": self.adi_enabled,
+                "running": getattr(self, 'adi', None) is not None,
+            },
+            "commentary": {
+                "enabled": self.commentary_enabled,
+                "running": getattr(self, 'commentary', None) is not None,
+            },
+            "alerts": await self._get_alert_analytics() if getattr(self, 'alert_engine', None) else {},
+        }
+        return web.json_response(analytics)
+
+    async def get_alert_analytics(self, request: web.Request) -> web.Response:
+        """GET /analytics/alerts - Get alert-specific analytics."""
+        if not self.alert_engine:
+            return web.json_response({"error": "Alert engine not initialized"}, status=503)
+
+        analytics = await self._get_alert_analytics()
+        return web.json_response(analytics)
+
+    async def _get_alert_analytics(self) -> dict:
+        """Get alert analytics from the alert engine."""
+        if not self.alert_engine:
+            return {}
+
+        try:
+            analytics = await self.alert_engine.get_analytics_from_redis()
+            return {
+                "enabled": self.alerts_enabled,
+                "running": self.alert_engine._running,
+                **analytics,
+            }
+        except Exception as e:
+            self.logger.warn(f"Error getting alert analytics: {e}")
+            return self.alert_engine.get_analytics()
+
     async def setup_web_app(self):
         """Setup aiohttp web application."""
         self.app = web.Application()
         self.app.router.add_get("/health", self.health_check)
         self.app.router.add_get("/debug/market-data", self.debug_market_data)
+        self.app.router.add_get("/analytics", self.get_analytics)
+        self.app.router.add_get("/analytics/alerts", self.get_alert_analytics)
 
         # Register API routes
         if self.mel_api:
@@ -603,22 +659,13 @@ async def run(config: Dict[str, Any], logger):
         logger: LogUtil instance
     """
     orchestrator = CopilotOrchestrator(config, logger)
-
-    # Setup signal handlers
-    loop = asyncio.get_event_loop()
-    stop_event = asyncio.Event()
-
-    def handle_signal():
-        stop_event.set()
-
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, handle_signal)
-
-    # Start orchestrator
     await orchestrator.start()
 
-    # Wait for stop signal
-    await stop_event.wait()
-
-    # Cleanup
-    await orchestrator.stop()
+    try:
+        # Run forever until cancelled
+        while True:
+            await asyncio.sleep(1)
+    except asyncio.CancelledError:
+        logger.info("orchestrator cancelled", emoji="🛑")
+    finally:
+        await orchestrator.stop()
