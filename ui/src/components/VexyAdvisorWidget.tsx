@@ -6,10 +6,8 @@
  * - Advisor: AI-driven trading suggestions based on VIX regime and positions
  */
 
-import { useState, useEffect, useRef } from 'react';
-import { useEditor, EditorContent } from '@tiptap/react';
-import StarterKit from '@tiptap/starter-kit';
-import { Markdown } from 'tiptap-markdown';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { marked } from 'marked';
 
 // Types
 interface VexyMessage {
@@ -58,29 +56,24 @@ interface VexyAdvisorWidgetProps {
   onClearMessages?: () => void;
 }
 
-// Read-only markdown renderer using Tiptap
+// Configure marked for inline rendering
+marked.setOptions({
+  breaks: true,
+  gfm: true,
+});
+
+// Markdown renderer using marked
 function MarkdownText({ content }: { content: string }) {
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: { levels: [1, 2, 3] },
-      }),
-      Markdown.configure({
-        html: false,
-      }),
-    ],
-    content: '',
-    editable: false,
-  });
-
-  useEffect(() => {
-    if (editor && content) {
-      editor.commands.setContent(content);
+  const html = useMemo(() => {
+    if (!content) return '';
+    try {
+      return marked.parse(content) as string;
+    } catch {
+      return content;
     }
-  }, [editor, content]);
+  }, [content]);
 
-  if (!editor) return null;
-  return <EditorContent editor={editor} />;
+  return <div className="vexy-md" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 // Format timestamp for display

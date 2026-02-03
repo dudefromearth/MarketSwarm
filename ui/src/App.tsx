@@ -1,5 +1,9 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { marked } from 'marked';
 import './App.css';
+
+// Configure marked for markdown rendering
+marked.setOptions({ breaks: true, gfm: true });
 import './styles/mel.css';
 import './styles/commentary.css';
 import LightweightPriceChart from './components/LightweightPriceChart';
@@ -2161,7 +2165,7 @@ function App() {
                       <span className="vexy-epoch-name">{vexy.epoch.meta.epoch_name}</span>
                     )}
                   </div>
-                  <div className="vexy-text epoch-text">{vexy.epoch.text}</div>
+                  <div className="vexy-text epoch-text" dangerouslySetInnerHTML={{ __html: marked.parse(vexy.epoch.text || '') as string }} />
                 </div>
               ) : (
                 <div className="vexy-empty">Awaiting epoch...</div>
@@ -2177,7 +2181,7 @@ function App() {
                       </span>
                     )}
                   </div>
-                  <div className="vexy-text event-text">{vexy.event.text}</div>
+                  <div className="vexy-text event-text" dangerouslySetInnerHTML={{ __html: marked.parse(vexy.event.text || '') as string }} />
                 </div>
               )}
             </div>

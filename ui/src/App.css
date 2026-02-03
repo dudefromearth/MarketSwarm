@@ -627,6 +627,36 @@ body {
   padding: 20px;
 }
 
+/* Vexy Markdown Styles */
+.vexy-md-p {
+  margin: 0 0 8px 0;
+  line-height: 1.5;
+}
+.vexy-md-p:last-child {
+  margin-bottom: 0;
+}
+.vexy-md-strong {
+  color: #f0f0f0;
+  font-weight: 600;
+}
+.vexy-md-em {
+  color: #a5b4fc;
+}
+.vexy-md-ul,
+.vexy-md-ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.vexy-md-li {
+  margin: 2px 0;
+}
+.vexy-md-h {
+  font-size: 13px;
+  font-weight: 600;
+  color: #f0f0f0;
+  margin: 8px 0 4px 0;
+}
+
 /* Vexy/Advisor Tabbed Widget */
 .vexy-advisor-widget {
   min-width: 320px;

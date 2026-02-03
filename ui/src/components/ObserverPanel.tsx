@@ -2,7 +2,20 @@
  * ObserverPanel - Unified panel for Vexy commentary and alerts
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { marked } from 'marked';
+
+// Configure marked
+marked.setOptions({ breaks: true, gfm: true });
+
+// Simple markdown renderer
+function Markdown({ text }: { text: string }) {
+  const html = useMemo(() => {
+    if (!text) return '';
+    return marked.parse(text) as string;
+  }, [text]);
+  return <div dangerouslySetInnerHTML={{ __html: html }} />;
+}
 import type { PromptStage } from '../types/alerts';
 import { PROMPT_STAGE_STYLES } from '../types/alerts';
 import '../styles/prompt-alert.css';
@@ -230,7 +243,7 @@ export default function ObserverPanel() {
               )}
               <span className="commentary-time">{formatTime(msg.ts)}</span>
             </div>
-            <div className="commentary-text">{msg.text}</div>
+            <div className="commentary-text"><Markdown text={msg.text} /></div>
             {msg.type === 'prompt_alert' && msg.meta?.confidence != null && (
               <div className="observer-prompt-meta">
                 <div className="observer-prompt-confidence">
