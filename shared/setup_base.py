@@ -28,6 +28,17 @@ class SetupBase:
         "adi",
         "commentary",
         "alerts",
+        # vexy_ai service
+        "trading_days",
+        "non_trading_days",
+        "market_holidays",
+        "voice_agents",
+        "system_preferences",
+        "reflection_dial_behavior",
+        "response_format",
+        "disruptor_logic",
+        "fractal_lens",
+        "market_snapshot_schema",
         # future extensions:
         # "tiles",
         # "campaigns",
