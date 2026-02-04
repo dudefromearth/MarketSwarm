@@ -1371,6 +1371,7 @@ class TradeSelectorModelBuilder:
         spot: float,
         vix: float,
         regime: str,
+        gex_context: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Detect new trades entering the top 10 and start tracking them.
@@ -1387,7 +1388,21 @@ class TradeSelectorModelBuilder:
         new_entries = current_top10 - prev_top10
 
         now = time.time()
-        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        now_dt = datetime.now(timezone.utc)
+        now_iso = now_dt.isoformat(timespec="seconds")
+
+        # Time context
+        entry_hour = now_dt.hour + now_dt.minute / 60.0  # e.g., 14.5 = 2:30 PM
+        entry_day_of_week = now_dt.weekday()  # 0=Monday, 4=Friday
+
+        # GEX context (extract from bias_lfi model if available)
+        gex_flip = None
+        gex_call_wall = None
+        gex_put_wall = None
+        if gex_context:
+            gex_flip = gex_context.get("gamma_flip") or gex_context.get("gex_flip")
+            gex_call_wall = gex_context.get("call_wall") or gex_context.get("call_resistance")
+            gex_put_wall = gex_context.get("put_wall") or gex_context.get("put_support")
 
         for rec in recommendations:
             if rec["tile_key"] not in new_entries:
@@ -1411,6 +1426,13 @@ class TradeSelectorModelBuilder:
                 "entry_spot": spot,
                 "entry_vix": vix,
                 "entry_regime": regime,
+                # Time context
+                "entry_hour": round(entry_hour, 2),
+                "entry_day_of_week": entry_day_of_week,
+                # GEX context
+                "entry_gex_flip": gex_flip,
+                "entry_gex_call_wall": gex_call_wall,
+                "entry_gex_put_wall": gex_put_wall,
                 # Trade details
                 "strategy": rec["strategy"],
                 "side": rec["side"],
@@ -1581,6 +1603,14 @@ class TradeSelectorModelBuilder:
                 "entry_spot": trade["entry_spot"],
                 "entry_vix": trade["entry_vix"],
                 "entry_regime": trade["entry_regime"],
+                # Time context
+                "entry_hour": trade.get("entry_hour"),
+                "entry_day_of_week": trade.get("entry_day_of_week"),
+                # GEX context
+                "entry_gex_flip": trade.get("entry_gex_flip"),
+                "entry_gex_call_wall": trade.get("entry_gex_call_wall"),
+                "entry_gex_put_wall": trade.get("entry_gex_put_wall"),
+                # Trade params
                 "strategy": trade["strategy"],
                 "side": trade["side"],
                 "strike": trade["strike"],
@@ -2110,7 +2140,7 @@ class TradeSelectorModelBuilder:
                 # ----------------------------------------------------------
                 if self.tracking_enabled and recommendations:
                     # Track new entries into top 10
-                    await self._track_new_entries(symbol, recommendations, spot, vix, regime)
+                    await self._track_new_entries(symbol, recommendations, spot, vix, regime, bias_lfi)
 
                     # Update P&L for all active tracked trades
                     await self._update_tracked_pnl(symbol, spot)

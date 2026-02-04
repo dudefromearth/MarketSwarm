@@ -11187,3 +11187,170 @@ body {
 .activate-btn:hover {
   background: #1d4ed8;
 }
+
+/* Mode Toggle */
+.mode-toggle {
+  display: flex;
+  gap: 4px;
+  background: #222;
+  border-radius: 6px;
+  padding: 4px;
+}
+
+.mode-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: #888;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mode-btn:hover {
+  color: #e5e5e5;
+}
+
+.mode-btn.active {
+  background: #2563eb;
+  color: white;
+}
+
+/* Current Mode Styles */
+.current-summary {
+  margin-bottom: 24px;
+}
+
+.summary-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+}
+
+.summary-stat {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+}
+
+.summary-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #e5e5e5;
+  font-family: 'SF Mono', monospace;
+}
+
+.summary-label {
+  font-size: 11px;
+  color: #666;
+  margin-top: 6px;
+  text-transform: uppercase;
+}
+
+.current-ideas-section {
+  margin-bottom: 24px;
+}
+
+.current-ideas-section .section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.current-ideas-section .section-header h3 {
+  margin: 0;
+}
+
+.current-ideas-section .pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.current-ideas-section .pagination-btn {
+  background: #2a2a2a;
+  border: 1px solid #444;
+  color: #ccc;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.15s;
+}
+
+.current-ideas-section .pagination-btn:hover:not(:disabled) {
+  background: #3a3a3a;
+  border-color: #666;
+}
+
+.current-ideas-section .pagination-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.current-ideas-section .pagination-info {
+  font-size: 12px;
+  color: #888;
+  min-width: 50px;
+  text-align: center;
+}
+
+.current-ideas-section h3,
+.current-rank-stats h3,
+.current-pnl-aggregations h3 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #888;
+  font-weight: 500;
+}
+
+/* P&L Aggregation Tables */
+.current-pnl-aggregations {
+  margin: 24px 0;
+}
+
+.aggregation-tables-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.aggregation-table {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.aggregation-table h4 {
+  margin: 0 0 10px 0;
+  font-size: 12px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.analytics-table.compact {
+  font-size: 12px;
+}
+
+.analytics-table.compact th,
+.analytics-table.compact td {
+  padding: 6px 8px;
+}
+
+.current-rank-stats {
+  margin-top: 24px;
+}
+
+.no-data {
+  padding: 24px;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+}

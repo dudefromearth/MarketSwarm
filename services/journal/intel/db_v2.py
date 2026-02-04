@@ -19,7 +19,7 @@ from .models_v2 import (
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 12
+    SCHEMA_VERSION = 13
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -204,6 +204,9 @@ class JournalDBv2:
 
             if current_version < 12:
                 self._migrate_to_v12(conn)
+
+            if current_version < 13:
+                self._migrate_to_v13(conn)
 
             conn.commit()
         finally:
@@ -969,6 +972,45 @@ class JournalDBv2:
                 """)
 
             self._set_schema_version(conn, 12)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v13(self, conn):
+        """Migrate to v13: Add time and GEX context fields to tracked_ideas."""
+        cursor = conn.cursor()
+        try:
+            # Add time context columns
+            try:
+                cursor.execute("""
+                    ALTER TABLE tracked_ideas
+                    ADD COLUMN entry_hour DECIMAL(4,2) AFTER entry_regime,
+                    ADD COLUMN entry_day_of_week TINYINT AFTER entry_hour
+                """)
+            except Exception:
+                pass  # Columns may already exist
+
+            # Add GEX context columns
+            try:
+                cursor.execute("""
+                    ALTER TABLE tracked_ideas
+                    ADD COLUMN entry_gex_flip DECIMAL(10,2) AFTER entry_day_of_week,
+                    ADD COLUMN entry_gex_call_wall DECIMAL(10,2) AFTER entry_gex_flip,
+                    ADD COLUMN entry_gex_put_wall DECIMAL(10,2) AFTER entry_gex_call_wall
+                """)
+            except Exception:
+                pass  # Columns may already exist
+
+            # Add index for time-based analysis
+            try:
+                cursor.execute("""
+                    ALTER TABLE tracked_ideas
+                    ADD INDEX idx_tracked_hour (entry_hour),
+                    ADD INDEX idx_tracked_day (entry_day_of_week)
+                """)
+            except Exception:
+                pass  # Indexes may already exist
+
+            self._set_schema_version(conn, 13)
         finally:
             cursor.close()
 

@@ -1010,7 +1010,7 @@ class TrackedIdea:
     entry_vix: float
     entry_regime: str
 
-    # Trade Parameters
+    # Trade Parameters (required)
     strategy: str
     side: str
     strike: float
@@ -1018,6 +1018,17 @@ class TrackedIdea:
     dte: int
     debit: float
     max_profit_theoretical: float
+
+    # Time Context (optional)
+    entry_hour: Optional[float] = None  # Decimal hour (e.g., 14.5 = 2:30 PM)
+    entry_day_of_week: Optional[int] = None  # 0=Monday, 4=Friday
+
+    # GEX Context (optional)
+    entry_gex_flip: Optional[float] = None  # Gamma flip level
+    entry_gex_call_wall: Optional[float] = None  # Call wall / resistance
+    entry_gex_put_wall: Optional[float] = None  # Put wall / support
+
+    # Trade Parameters (optional)
     r2r_predicted: Optional[float] = None
     campaign: Optional[str] = None
 
@@ -1076,6 +1087,14 @@ class TrackedIdea:
             'entrySpot': self.entry_spot,
             'entryVix': self.entry_vix,
             'entryRegime': self.entry_regime,
+            # Time context
+            'entryHour': self.entry_hour,
+            'entryDayOfWeek': self.entry_day_of_week,
+            # GEX context
+            'entryGexFlip': self.entry_gex_flip,
+            'entryGexCallWall': self.entry_gex_call_wall,
+            'entryGexPutWall': self.entry_gex_put_wall,
+            # Trade params
             'strategy': self.strategy,
             'side': self.side,
             'strike': self.strike,

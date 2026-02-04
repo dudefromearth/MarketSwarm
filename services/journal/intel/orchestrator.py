@@ -3193,6 +3193,7 @@ class JournalOrchestrator:
                 entry_spot=data['entry_spot'],
                 entry_vix=data['entry_vix'],
                 entry_regime=data['entry_regime'],
+                # Trade params (required)
                 strategy=data['strategy'],
                 side=data['side'],
                 strike=data['strike'],
@@ -3200,6 +3201,14 @@ class JournalOrchestrator:
                 dte=data['dte'],
                 debit=data['debit'],
                 max_profit_theoretical=data['max_profit_theoretical'],
+                # Time context (optional)
+                entry_hour=data.get('entry_hour'),
+                entry_day_of_week=data.get('entry_day_of_week'),
+                # GEX context (optional)
+                entry_gex_flip=data.get('entry_gex_flip'),
+                entry_gex_call_wall=data.get('entry_gex_call_wall'),
+                entry_gex_put_wall=data.get('entry_gex_put_wall'),
+                # Trade params (optional)
                 r2r_predicted=data.get('r2r_predicted'),
                 campaign=data.get('campaign'),
                 max_pnl=data['max_pnl'],
