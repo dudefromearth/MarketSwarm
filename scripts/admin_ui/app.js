@@ -1144,3 +1144,177 @@ function formatMetricValue(value) {
     }
     return String(value);
 }
+
+// ============================================================
+// Data Diagnostics
+// ============================================================
+
+async function runDiagnostics() {
+    const container = document.getElementById('diagnostics-container');
+    container.innerHTML = '<div class="diagnostics-placeholder">Running diagnostics...</div>';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/diagnostics`);
+        if (!response.ok) throw new Error('Failed to run diagnostics');
+        const data = await response.json();
+        displayDiagnostics(data);
+    } catch (error) {
+        console.error('Diagnostics error:', error);
+        container.innerHTML = `<div class="diagnostics-placeholder error">Error: ${error.message}</div>`;
+    }
+}
+
+function displayDiagnostics(data) {
+    const container = document.getElementById('diagnostics-container');
+
+    // Redis connection status
+    const redisStatus = data.redis?.connected
+        ? '<span class="status-ok">Connected</span>'
+        : `<span class="status-error">Disconnected: ${data.redis?.error || 'Unknown'}</span>`;
+
+    // Build data availability table
+    const symbols = Object.keys(data.data || {}).filter(k => k !== 'global');
+    const dataTypes = ['spot', 'heatmap', 'gex', 'trade_selector'];
+
+    let tableRows = symbols.map(symbol => {
+        const symbolData = data.data[symbol];
+        const cells = dataTypes.map(type => {
+            const d = symbolData[type];
+            if (!d) return '<td><span class="status-unknown">-</span></td>';
+            if (d.exists) {
+                let detail = '';
+                if (type === 'spot' && d.value) detail = `$${d.value.toFixed(2)}`;
+                else if (type === 'heatmap' && d.tileCount) detail = `${d.tileCount} tiles`;
+                else if (type === 'trade_selector') {
+                    if (d.error) detail = `<span class="status-warn">${d.error}</span>`;
+                    else detail = d.vix_regime || '';
+                }
+                const age = d.age_sec !== null ? `(${formatAge(d.age_sec)})` : '';
+                return `<td><span class="status-ok">✓</span> <span class="status-detail">${detail} ${age}</span></td>`;
+            } else {
+                return `<td><span class="status-error">✗</span></td>`;
+            }
+        }).join('');
+        return `<tr><td class="symbol-cell">${symbol}</td>${cells}</tr>`;
+    }).join('');
+
+    // Global data
+    const global = data.data?.global || {};
+    let globalHtml = '';
+    if (global.vix) {
+        globalHtml += `<span class="global-item ${global.vix.exists ? 'ok' : 'error'}">
+            VIX: ${global.vix.exists ? global.vix.value + ' (' + formatAge(global.vix.age_sec) + ')' : 'Missing'}
+        </span>`;
+    }
+    if (global.market_mode) {
+        globalHtml += `<span class="global-item ${global.market_mode.exists ? 'ok' : 'error'}">
+            Mode: ${global.market_mode.exists ? global.market_mode.mode : 'Missing'}
+        </span>`;
+    }
+
+    container.innerHTML = `
+        <div class="diag-section">
+            <div class="diag-header">
+                <span class="diag-label">Redis (market-redis:6380):</span>
+                ${redisStatus}
+            </div>
+        </div>
+
+        <div class="diag-section">
+            <h4>Data Availability</h4>
+            <table class="diag-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Spot</th>
+                        <th>Heatmap</th>
+                        <th>GEX</th>
+                        <th>Trade Selector</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${tableRows}
+                </tbody>
+            </table>
+            ${globalHtml ? `<div class="global-data">${globalHtml}</div>` : ''}
+        </div>
+    `;
+}
+
+function formatAge(seconds) {
+    if (seconds === null || seconds === undefined) return '?';
+    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+    if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+    return `${Math.floor(seconds / 86400)}d`;
+}
+
+// Redis Key Explorer
+async function searchRedisKeys() {
+    const pattern = document.getElementById('redis-pattern').value || '*';
+    const content = document.getElementById('redis-explorer-content');
+    const keysList = document.getElementById('redis-keys-list');
+
+    content.classList.remove('hidden');
+    keysList.innerHTML = '<div class="loading">Searching...</div>';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/diagnostics/redis?pattern=${encodeURIComponent(pattern)}&limit=100`);
+        if (!response.ok) throw new Error('Failed to search Redis');
+        const data = await response.json();
+
+        if (data.error) {
+            keysList.innerHTML = `<div class="error">${data.error}</div>`;
+            return;
+        }
+
+        if (data.keys.length === 0) {
+            keysList.innerHTML = '<div class="empty">No keys found</div>';
+            return;
+        }
+
+        keysList.innerHTML = `
+            <div class="keys-header">${data.returned} of ${data.total} keys</div>
+            ${data.keys.map(k => `
+                <div class="redis-key-item" onclick="loadRedisKey('${k.key.replace(/'/g, "\\'")}')">
+                    <span class="key-name">${k.key}</span>
+                    <span class="key-meta">${k.type} | ${k.size || 0}${k.age_sec !== undefined ? ' | ' + formatAge(k.age_sec) : ''}</span>
+                </div>
+            `).join('')}
+        `;
+    } catch (error) {
+        console.error('Redis search error:', error);
+        keysList.innerHTML = `<div class="error">${error.message}</div>`;
+    }
+}
+
+async function loadRedisKey(key) {
+    const panel = document.getElementById('redis-value-panel');
+    const keySpan = document.getElementById('redis-value-key');
+    const content = document.getElementById('redis-value-content');
+
+    panel.classList.remove('hidden');
+    keySpan.textContent = key;
+    content.textContent = 'Loading...';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/diagnostics/redis/${encodeURIComponent(key)}`);
+        if (!response.ok) throw new Error('Failed to fetch key');
+        const data = await response.json();
+
+        if (data.error) {
+            content.textContent = `Error: ${data.error}`;
+            return;
+        }
+
+        content.textContent = typeof data.value === 'object'
+            ? JSON.stringify(data.value, null, 2)
+            : String(data.value);
+    } catch (error) {
+        content.textContent = `Error: ${error.message}`;
+    }
+}
+
+function closeRedisValue() {
+    document.getElementById('redis-value-panel').classList.add('hidden');
+}

@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MarketSwarm Node Admin</title>
-    <link rel="stylesheet" href="/styles.css?v=15">
+    <link rel="stylesheet" href="/styles.css?v=16">
 </head>
 <body>
     <div class="container">
@@ -111,6 +111,38 @@
             </div>
             <div id="analytics-container" class="analytics-container">
                 <div class="analytics-placeholder">Click Refresh to load analytics data...</div>
+            </div>
+        </div>
+
+        <div class="diagnostics-section">
+            <div class="panel-header">
+                <h2>Data Diagnostics</h2>
+                <div class="panel-actions">
+                    <button class="btn btn-primary btn-sm" onclick="runDiagnostics()">Run Diagnostics</button>
+                </div>
+            </div>
+            <div id="diagnostics-container" class="diagnostics-container">
+                <div class="diagnostics-placeholder">Click "Run Diagnostics" to check data pipeline health...</div>
+            </div>
+
+            <div class="redis-explorer">
+                <div class="redis-explorer-header">
+                    <h3>Redis Key Explorer</h3>
+                    <div class="redis-search">
+                        <input type="text" id="redis-pattern" value="massive:*" placeholder="Pattern (e.g., massive:*)">
+                        <button class="btn btn-secondary btn-sm" onclick="searchRedisKeys()">Search</button>
+                    </div>
+                </div>
+                <div id="redis-explorer-content" class="redis-explorer-content hidden">
+                    <div class="redis-keys-list" id="redis-keys-list"></div>
+                    <div class="redis-value-panel hidden" id="redis-value-panel">
+                        <div class="redis-value-header">
+                            <span id="redis-value-key">-</span>
+                            <button class="btn-close" onclick="closeRedisValue()">&times;</button>
+                        </div>
+                        <pre id="redis-value-content" class="redis-value-content"></pre>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -233,6 +265,6 @@
         </div>
     </div>
 
-    <script src="/app.js?v=15"></script>
+    <script src="/app.js?v=16"></script>
 </body>
 </html>

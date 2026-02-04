@@ -1348,3 +1348,264 @@ footer {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
+/* ============================================================
+   Data Diagnostics Section
+   ============================================================ */
+
+.diagnostics-section {
+    margin-top: 20px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+}
+
+.diagnostics-container {
+    padding: 16px;
+}
+
+.diagnostics-placeholder {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 32px;
+    font-style: italic;
+}
+
+.diagnostics-placeholder.error {
+    color: var(--danger);
+}
+
+.diag-section {
+    margin-bottom: 16px;
+}
+
+.diag-section h4 {
+    margin: 0 0 12px 0;
+    font-size: 13px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.diag-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.diag-label {
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+.status-ok {
+    color: var(--success);
+}
+
+.status-error {
+    color: var(--danger);
+}
+
+.status-warn {
+    color: var(--warning);
+    font-size: 11px;
+}
+
+.status-unknown {
+    color: var(--text-muted);
+}
+
+.status-detail {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+.diag-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.diag-table th {
+    text-align: left;
+    padding: 8px 12px;
+    background: var(--bg-primary);
+    color: var(--text-muted);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.diag-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.diag-table .symbol-cell {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.global-data {
+    margin-top: 12px;
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+
+.global-item {
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: var(--bg-primary);
+}
+
+.global-item.ok {
+    color: var(--success);
+}
+
+.global-item.error {
+    color: var(--danger);
+}
+
+/* Redis Explorer */
+.redis-explorer {
+    margin-top: 20px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border-color);
+}
+
+.redis-explorer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.redis-explorer-header h3 {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-primary);
+}
+
+.redis-search {
+    display: flex;
+    gap: 8px;
+}
+
+.redis-search input {
+    padding: 6px 10px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 12px;
+    font-family: var(--font-mono);
+    width: 200px;
+}
+
+.redis-search input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.redis-explorer-content {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    max-height: 350px;
+}
+
+.redis-keys-list {
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+}
+
+.keys-header {
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.redis-key-item {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.redis-key-item:hover {
+    background: var(--bg-secondary);
+}
+
+.redis-key-item:last-child {
+    border-bottom: none;
+}
+
+.key-name {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.key-meta {
+    display: block;
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.redis-value-panel {
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.redis-value-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.redis-value-header .btn-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 16px;
+    padding: 0;
+    line-height: 1;
+}
+
+.redis-value-header .btn-close:hover {
+    color: var(--text-primary);
+}
+
+.redis-value-content {
+    flex: 1;
+    overflow: auto;
+    padding: 12px;
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-muted);
+    background: var(--bg-primary);
+    max-height: 300px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}

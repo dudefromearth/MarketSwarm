@@ -901,6 +901,229 @@ def create_web_app():
 
         return {"analytics": analytics, "timestamp": datetime.now().isoformat()}
 
+    @app.get("/api/diagnostics")
+    def api_diagnostics():
+        """Get data availability diagnostics for market data pipeline."""
+        import redis
+
+        symbols = ["SPX", "NDX"]
+        results = {
+            "ts": int(time.time() * 1000),
+            "redis": {"connected": False},
+            "data": {},
+        }
+
+        # Check market-redis connection
+        try:
+            r = redis.Redis(host="127.0.0.1", port=6380, decode_responses=True)
+            r.ping()
+            results["redis"]["connected"] = True
+        except Exception as e:
+            results["redis"]["error"] = str(e)
+            return results
+
+        # Check data availability for each symbol
+        for symbol in symbols:
+            symbol_data = {
+                "spot": {"exists": False},
+                "heatmap": {"exists": False},
+                "gex": {"exists": False},
+                "trade_selector": {"exists": False},
+            }
+
+            # Check spot
+            try:
+                spot_raw = r.get(f"massive:model:spot:{symbol}")
+                if spot_raw:
+                    spot = json.loads(spot_raw)
+                    symbol_data["spot"] = {
+                        "exists": True,
+                        "ts": spot.get("ts"),
+                        "value": spot.get("value"),
+                        "age_sec": int((time.time() * 1000 - spot.get("ts", 0)) / 1000) if spot.get("ts") else None,
+                    }
+            except Exception as e:
+                symbol_data["spot"]["error"] = str(e)
+
+            # Check heatmap
+            try:
+                heatmap_raw = r.get(f"massive:heatmap:model:{symbol}:latest")
+                if heatmap_raw:
+                    heatmap = json.loads(heatmap_raw)
+                    symbol_data["heatmap"] = {
+                        "exists": True,
+                        "ts": heatmap.get("ts"),
+                        "tileCount": len(heatmap.get("tiles", {})) if heatmap.get("tiles") else 0,
+                        "age_sec": int((time.time() * 1000 - heatmap.get("ts", 0)) / 1000) if heatmap.get("ts") else None,
+                    }
+            except Exception as e:
+                symbol_data["heatmap"]["error"] = str(e)
+
+            # Check GEX
+            try:
+                gex_raw = r.get(f"massive:gex:model:{symbol}:latest")
+                if gex_raw:
+                    gex = json.loads(gex_raw)
+                    symbol_data["gex"] = {
+                        "exists": True,
+                        "ts": gex.get("ts"),
+                        "age_sec": int((time.time() * 1000 - gex.get("ts", 0)) / 1000) if gex.get("ts") else None,
+                    }
+            except Exception as e:
+                symbol_data["gex"]["error"] = str(e)
+
+            # Check trade_selector
+            try:
+                selector_raw = r.get(f"massive:selector:model:{symbol}:latest")
+                if selector_raw:
+                    selector = json.loads(selector_raw)
+                    symbol_data["trade_selector"] = {
+                        "exists": True,
+                        "ts": selector.get("ts"),
+                        "vix_regime": selector.get("vix_regime"),
+                        "recommendationCount": len(selector.get("recommendations", {})) if selector.get("recommendations") else 0,
+                        "error": selector.get("error"),  # Include any error from the model itself
+                        "age_sec": int((time.time() - selector.get("ts", 0))) if selector.get("ts") else None,
+                    }
+            except Exception as e:
+                symbol_data["trade_selector"]["error"] = str(e)
+
+            results["data"][symbol] = symbol_data
+
+        # Check global data
+        results["data"]["global"] = {}
+
+        # VIX from vexy_ai
+        try:
+            vix_raw = r.get("vexy_ai:signals:latest")
+            if vix_raw:
+                vix = json.loads(vix_raw)
+                results["data"]["global"]["vix"] = {
+                    "exists": True,
+                    "value": vix.get("vix"),
+                    "ts": vix.get("ts"),
+                    "age_sec": int((time.time() * 1000 - vix.get("ts", 0)) / 1000) if vix.get("ts") else None,
+                }
+            else:
+                results["data"]["global"]["vix"] = {"exists": False}
+        except Exception as e:
+            results["data"]["global"]["vix"] = {"exists": False, "error": str(e)}
+
+        # Market mode
+        try:
+            mode_raw = r.get("massive:market_mode:latest")
+            if mode_raw:
+                mode = json.loads(mode_raw)
+                results["data"]["global"]["market_mode"] = {
+                    "exists": True,
+                    "mode": mode.get("mode"),
+                    "ts": mode.get("ts"),
+                }
+            else:
+                results["data"]["global"]["market_mode"] = {"exists": False}
+        except Exception as e:
+            results["data"]["global"]["market_mode"] = {"exists": False, "error": str(e)}
+
+        return results
+
+    @app.get("/api/diagnostics/redis")
+    def api_diagnostics_redis(pattern: str = "*", limit: int = 100):
+        """Query Redis keys by pattern."""
+        import redis
+
+        limit = min(limit, 500)
+
+        try:
+            r = redis.Redis(host="127.0.0.1", port=6380, decode_responses=True)
+            all_keys = r.keys(pattern)
+            keys = all_keys[:limit]
+
+            results = []
+            for key in keys:
+                try:
+                    key_type = r.type(key)
+                    info = {"key": key, "type": key_type}
+
+                    if key_type == "string":
+                        val = r.get(key)
+                        info["size"] = len(val) if val else 0
+                        try:
+                            parsed = json.loads(val)
+                            if isinstance(parsed, dict) and "ts" in parsed:
+                                info["ts"] = parsed["ts"]
+                                # Handle both ms and seconds timestamps
+                                ts = parsed["ts"]
+                                if ts > 1e12:  # milliseconds
+                                    info["age_sec"] = int((time.time() * 1000 - ts) / 1000)
+                                else:  # seconds
+                                    info["age_sec"] = int(time.time() - ts)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    elif key_type == "list":
+                        info["size"] = r.llen(key)
+                    elif key_type == "set":
+                        info["size"] = r.scard(key)
+                    elif key_type == "hash":
+                        info["size"] = r.hlen(key)
+                    elif key_type == "zset":
+                        info["size"] = r.zcard(key)
+
+                    ttl = r.ttl(key)
+                    if ttl > 0:
+                        info["ttl"] = ttl
+
+                    results.append(info)
+                except Exception as e:
+                    results.append({"key": key, "error": str(e)})
+
+            return {
+                "pattern": pattern,
+                "total": len(all_keys),
+                "returned": len(results),
+                "keys": results,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    @app.get("/api/diagnostics/redis/{key:path}")
+    def api_diagnostics_redis_key(key: str):
+        """Get full value of a specific Redis key."""
+        import redis
+
+        try:
+            r = redis.Redis(host="127.0.0.1", port=6380, decode_responses=True)
+            key_type = r.type(key)
+
+            if key_type == "none":
+                return {"error": "Key not found", "key": key}
+
+            value = None
+            if key_type == "string":
+                raw = r.get(key)
+                try:
+                    value = json.loads(raw)
+                except (json.JSONDecodeError, TypeError):
+                    value = raw
+            elif key_type == "list":
+                value = r.lrange(key, 0, 100)
+            elif key_type == "set":
+                value = list(r.smembers(key))
+            elif key_type == "hash":
+                value = r.hgetall(key)
+            elif key_type == "zset":
+                value = r.zrange(key, 0, 100, withscores=True)
+
+            ttl = r.ttl(key)
+
+            return {
+                "key": key,
+                "type": key_type,
+                "ttl": ttl if ttl > 0 else None,
+                "value": value,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
     return app
 
 
