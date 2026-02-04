@@ -11380,6 +11380,9 @@ body {
   max-height: 85vh;
   display: flex;
   flex-direction: column;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 8px;
 }
 
 .leaderboard-modal .modal-header {
@@ -11653,6 +11656,9 @@ body {
 .leaderboard-settings-modal {
   width: 450px;
   max-width: 95vw;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 8px;
 }
 
 .leaderboard-settings-modal .settings-section {
