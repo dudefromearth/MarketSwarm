@@ -1250,6 +1250,17 @@ function formatAge(seconds) {
 }
 
 // Redis Key Explorer
+function setRedisPrefix(prefix) {
+    const patternInput = document.getElementById('redis-pattern');
+    if (prefix === '') {
+        patternInput.value = '*';
+    } else {
+        patternInput.value = prefix + '*';
+    }
+    // Auto-search when changing prefix
+    searchRedisKeys();
+}
+
 async function searchRedisKeys() {
     const pattern = document.getElementById('redis-pattern').value || '*';
     const content = document.getElementById('redis-explorer-content');

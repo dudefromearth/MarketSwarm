@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MarketSwarm Node Admin</title>
-    <link rel="stylesheet" href="/styles.css?v=16">
+    <link rel="stylesheet" href="/styles.css?v=17">
 </head>
 <body>
     <div class="container">
@@ -129,6 +129,20 @@
                 <div class="redis-explorer-header">
                     <h3>Redis Key Explorer</h3>
                     <div class="redis-search">
+                        <select id="redis-service-prefix" onchange="setRedisPrefix(this.value)">
+                            <option value="">All keys (*)</option>
+                            <option value="massive:" selected>massive</option>
+                            <option value="vexy:">vexy</option>
+                            <option value="rss:">rss</option>
+                            <option value="copilot:">copilot</option>
+                            <option value="journal:">journal</option>
+                            <option value="content:">content</option>
+                            <option value="heatmap:">heatmap</option>
+                            <option value="gex:">gex</option>
+                            <option value="spot:">spot</option>
+                            <option value="vix:">vix</option>
+                            <option value="truth">truth</option>
+                        </select>
                         <input type="text" id="redis-pattern" value="massive:*" placeholder="Pattern (e.g., massive:*)">
                         <button class="btn btn-secondary btn-sm" onclick="searchRedisKeys()">Search</button>
                     </div>
@@ -265,6 +279,6 @@
         </div>
     </div>
 
-    <script src="/app.js?v=16"></script>
+    <script src="/app.js?v=17"></script>
 </body>
 </html>
