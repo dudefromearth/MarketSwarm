@@ -33,6 +33,33 @@ interface TradeLog {
   tradeCount: number;
 }
 
+interface DataStatus {
+  exists: boolean;
+  ts?: number;
+  age_sec?: number;
+  value?: number;
+  tileCount?: number;
+  recommendationCount?: number;
+  vix_regime?: string;
+  mode?: string;
+  error?: string;
+}
+
+interface SymbolData {
+  spot: DataStatus;
+  heatmap: DataStatus;
+  gex: DataStatus;
+  trade_selector: DataStatus;
+}
+
+interface DiagnosticsData {
+  ts: number;
+  redis: { connected: boolean; error?: string };
+  data: {
+    [symbol: string]: SymbolData | { vix?: DataStatus; market_mode?: DataStatus; vexy?: DataStatus };
+  };
+}
+
 interface UserDetail {
   user: User;
   tradeLogs: TradeLog[];
@@ -45,6 +72,13 @@ export default function AdminPage() {
   const [selectedUser, setSelectedUser] = useState<UserDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Diagnostics state
+  const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
+  const [diagLoading, setDiagLoading] = useState(false);
+  const [redisPattern, setRedisPattern] = useState("massive:*");
+  const [redisKeys, setRedisKeys] = useState<any[] | null>(null);
+  const [selectedKey, setSelectedKey] = useState<{ key: string; value: any } | null>(null);
 
   // Fetch stats and users on mount
   useEffect(() => {
@@ -63,6 +97,49 @@ export default function AdminPage() {
       .catch((e) => setError(typeof e === "string" ? e : e.message))
       .finally(() => setLoading(false));
   }, []);
+
+  // Fetch diagnostics
+  const fetchDiagnostics = async () => {
+    setDiagLoading(true);
+    try {
+      const res = await fetch("/api/admin/diagnostics", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load diagnostics");
+      const data = await res.json();
+      setDiagnostics(data);
+    } catch (e) {
+      console.error("Error loading diagnostics:", e);
+    } finally {
+      setDiagLoading(false);
+    }
+  };
+
+  // Search Redis keys
+  const searchRedisKeys = async () => {
+    try {
+      const res = await fetch(`/api/admin/diagnostics/redis?pattern=${encodeURIComponent(redisPattern)}&limit=50`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to search Redis");
+      const data = await res.json();
+      setRedisKeys(data.keys);
+    } catch (e) {
+      console.error("Error searching Redis:", e);
+    }
+  };
+
+  // Get Redis key value
+  const getKeyValue = async (key: string) => {
+    try {
+      const res = await fetch(`/api/admin/diagnostics/redis/${encodeURIComponent(key)}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Failed to fetch key");
+      const data = await res.json();
+      setSelectedKey({ key, value: data.value });
+    } catch (e) {
+      console.error("Error fetching key:", e);
+    }
+  };
 
   // Fetch user detail when clicking on a user
   const handleUserClick = async (userId: number) => {
@@ -333,6 +410,204 @@ export default function AdminPage() {
             </div>
           </div>
         )}
+
+        {/* Diagnostics Section */}
+        <div className="diagnostics-section">
+          <div className="section-header-row">
+            <h2>System Diagnostics</h2>
+            <button
+              className="refresh-btn"
+              onClick={fetchDiagnostics}
+              disabled={diagLoading}
+            >
+              {diagLoading ? "Loading..." : "Run Diagnostics"}
+            </button>
+          </div>
+
+          {diagnostics && (
+            <div className="diagnostics-content">
+              {/* Redis Connection */}
+              <div className="diag-card">
+                <div className="diag-header">
+                  <span className={`status-dot ${diagnostics.redis.connected ? "ok" : "error"}`} />
+                  <span>Redis Connection</span>
+                </div>
+                <div className="diag-value">
+                  {diagnostics.redis.connected ? "Connected" : diagnostics.redis.error || "Disconnected"}
+                </div>
+              </div>
+
+              {/* Data Availability Grid */}
+              <div className="data-availability">
+                <h3>Data Availability</h3>
+                <table className="diag-table">
+                  <thead>
+                    <tr>
+                      <th>Symbol</th>
+                      <th>Spot</th>
+                      <th>Heatmap</th>
+                      <th>GEX</th>
+                      <th>Trade Selector</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(diagnostics.data)
+                      .filter(([key]) => key !== "global")
+                      .map(([symbol, data]) => {
+                        const d = data as SymbolData;
+                        return (
+                          <tr key={symbol}>
+                            <td className="symbol-cell">{symbol}</td>
+                            <td>
+                              <div className={`data-status ${d.spot?.exists ? "ok" : "missing"}`}>
+                                {d.spot?.exists ? (
+                                  <>
+                                    <span className="status-icon">✓</span>
+                                    <span className="status-detail">
+                                      {d.spot.value?.toFixed(2)} ({d.spot.age_sec}s ago)
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="status-icon">✗</span>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              <div className={`data-status ${d.heatmap?.exists ? "ok" : "missing"}`}>
+                                {d.heatmap?.exists ? (
+                                  <>
+                                    <span className="status-icon">✓</span>
+                                    <span className="status-detail">
+                                      {d.heatmap.tileCount} tiles ({d.heatmap.age_sec}s)
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="status-icon">✗</span>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              <div className={`data-status ${d.gex?.exists ? "ok" : "missing"}`}>
+                                {d.gex?.exists ? (
+                                  <>
+                                    <span className="status-icon">✓</span>
+                                    <span className="status-detail">({d.gex.age_sec}s)</span>
+                                  </>
+                                ) : (
+                                  <span className="status-icon">✗</span>
+                                )}
+                              </div>
+                            </td>
+                            <td>
+                              <div className={`data-status ${d.trade_selector?.exists ? "ok" : "missing"}`}>
+                                {d.trade_selector?.exists ? (
+                                  <>
+                                    <span className="status-icon">✓</span>
+                                    <span className="status-detail">
+                                      {d.trade_selector.vix_regime} ({d.trade_selector.age_sec}s)
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="status-icon">✗</span>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+
+                {/* Global data */}
+                {diagnostics.data.global && (
+                  <div className="global-data">
+                    <h4>Global Data</h4>
+                    <div className="global-items">
+                      {(diagnostics.data.global as any).vix && (
+                        <div className={`global-item ${(diagnostics.data.global as any).vix.exists ? "ok" : "missing"}`}>
+                          <span className="item-label">VIX:</span>
+                          <span className="item-value">
+                            {(diagnostics.data.global as any).vix.exists
+                              ? `${(diagnostics.data.global as any).vix.value} (${(diagnostics.data.global as any).vix.age_sec}s ago)`
+                              : "Missing"}
+                          </span>
+                        </div>
+                      )}
+                      {(diagnostics.data.global as any).market_mode && (
+                        <div className={`global-item ${(diagnostics.data.global as any).market_mode.exists ? "ok" : "missing"}`}>
+                          <span className="item-label">Market Mode:</span>
+                          <span className="item-value">
+                            {(diagnostics.data.global as any).market_mode.exists
+                              ? (diagnostics.data.global as any).market_mode.mode
+                              : "Missing"}
+                          </span>
+                        </div>
+                      )}
+                      {(diagnostics.data.global as any).vexy && (
+                        <div className={`global-item ${(diagnostics.data.global as any).vexy.exists ? "ok" : "missing"}`}>
+                          <span className="item-label">Vexy:</span>
+                          <span className="item-value">
+                            {(diagnostics.data.global as any).vexy.exists
+                              ? `Active (${(diagnostics.data.global as any).vexy.age_sec}s ago)`
+                              : "Missing"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Redis Key Explorer */}
+          <div className="redis-explorer">
+            <h3>Redis Key Explorer</h3>
+            <div className="redis-search">
+              <input
+                type="text"
+                value={redisPattern}
+                onChange={(e) => setRedisPattern(e.target.value)}
+                placeholder="Pattern (e.g., massive:*)"
+                onKeyDown={(e) => e.key === "Enter" && searchRedisKeys()}
+              />
+              <button onClick={searchRedisKeys}>Search</button>
+            </div>
+
+            {redisKeys && (
+              <div className="redis-results">
+                <div className="redis-keys-list">
+                  {redisKeys.map((k) => (
+                    <div
+                      key={k.key}
+                      className={`redis-key-item ${selectedKey?.key === k.key ? "selected" : ""}`}
+                      onClick={() => getKeyValue(k.key)}
+                    >
+                      <span className="key-name">{k.key}</span>
+                      <span className="key-meta">
+                        {k.type} | {k.size} {k.age_sec !== undefined && `| ${k.age_sec}s ago`}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {selectedKey && (
+                  <div className="redis-value-panel">
+                    <div className="value-header">
+                      <span>{selectedKey.key}</span>
+                      <button onClick={() => setSelectedKey(null)}>×</button>
+                    </div>
+                    <pre className="value-content">
+                      {typeof selectedKey.value === "object"
+                        ? JSON.stringify(selectedKey.value, null, 2)
+                        : String(selectedKey.value)}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       <style>{styles}</style>
@@ -782,5 +1057,333 @@ const styles = `
       width: 100%;
       left: 0;
     }
+  }
+
+  /* Diagnostics Section */
+  .diagnostics-section {
+    margin-top: 2rem;
+    padding-top: 2rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .section-header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+  }
+
+  .section-header-row h2 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  .refresh-btn {
+    padding: 0.5rem 1rem;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 0.5rem;
+    color: #60a5fa;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .refresh-btn:hover:not(:disabled) {
+    background: rgba(59, 130, 246, 0.25);
+  }
+
+  .refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .diagnostics-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .diag-card {
+    background: rgba(24, 24, 27, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.5rem;
+    padding: 1rem;
+  }
+
+  .diag-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: #a1a1aa;
+    margin-bottom: 0.5rem;
+  }
+
+  .status-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+  }
+
+  .status-dot.ok {
+    background: #22c55e;
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+  }
+
+  .status-dot.error {
+    background: #ef4444;
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+  }
+
+  .diag-value {
+    font-size: 1rem;
+    color: #f1f5f9;
+  }
+
+  .data-availability {
+    background: rgba(24, 24, 27, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.75rem;
+    padding: 1rem;
+  }
+
+  .data-availability h3 {
+    font-size: 0.875rem;
+    color: #71717a;
+    margin: 0 0 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .diag-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+  }
+
+  .diag-table th {
+    text-align: left;
+    padding: 0.5rem;
+    color: #71717a;
+    font-weight: 500;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .diag-table td {
+    padding: 0.5rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  }
+
+  .symbol-cell {
+    font-weight: 600;
+    color: #f1f5f9;
+  }
+
+  .data-status {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+
+  .data-status.ok .status-icon {
+    color: #22c55e;
+  }
+
+  .data-status.missing .status-icon {
+    color: #ef4444;
+  }
+
+  .status-detail {
+    font-size: 0.75rem;
+    color: #71717a;
+  }
+
+  .global-data {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .global-data h4 {
+    font-size: 0.75rem;
+    color: #71717a;
+    margin: 0 0 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .global-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+  }
+
+  .global-item {
+    display: flex;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+  }
+
+  .global-item.ok .item-value {
+    color: #22c55e;
+  }
+
+  .global-item.missing .item-value {
+    color: #ef4444;
+  }
+
+  .item-label {
+    color: #71717a;
+  }
+
+  .item-value {
+    color: #f1f5f9;
+  }
+
+  /* Redis Explorer */
+  .redis-explorer {
+    margin-top: 1.5rem;
+    background: rgba(24, 24, 27, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.75rem;
+    padding: 1rem;
+  }
+
+  .redis-explorer h3 {
+    font-size: 0.875rem;
+    color: #71717a;
+    margin: 0 0 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .redis-search {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .redis-search input {
+    flex: 1;
+    padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.375rem;
+    color: #f1f5f9;
+    font-size: 0.875rem;
+    font-family: 'SF Mono', monospace;
+  }
+
+  .redis-search input:focus {
+    outline: none;
+    border-color: rgba(59, 130, 246, 0.5);
+  }
+
+  .redis-search button {
+    padding: 0.5rem 1rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.375rem;
+    color: #a1a1aa;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .redis-search button:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #f1f5f9;
+  }
+
+  .redis-results {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    max-height: 400px;
+  }
+
+  .redis-keys-list {
+    overflow-y: auto;
+    max-height: 400px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.375rem;
+  }
+
+  .redis-key-item {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .redis-key-item:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .redis-key-item.selected {
+    background: rgba(59, 130, 246, 0.15);
+  }
+
+  .key-name {
+    display: block;
+    font-family: 'SF Mono', monospace;
+    font-size: 0.75rem;
+    color: #f1f5f9;
+    word-break: break-all;
+  }
+
+  .key-meta {
+    display: block;
+    font-size: 0.6875rem;
+    color: #52525b;
+    margin-top: 0.25rem;
+  }
+
+  .redis-value-panel {
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.375rem;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .value-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 0.75rem;
+    color: #a1a1aa;
+  }
+
+  .value-header button {
+    background: none;
+    border: none;
+    color: #71717a;
+    cursor: pointer;
+    font-size: 1rem;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .value-header button:hover {
+    color: #f1f5f9;
+  }
+
+  .value-content {
+    flex: 1;
+    overflow: auto;
+    padding: 0.75rem;
+    margin: 0;
+    font-family: 'SF Mono', monospace;
+    font-size: 0.6875rem;
+    line-height: 1.5;
+    color: #a1a1aa;
+    background: rgba(0, 0, 0, 0.2);
+    max-height: 350px;
   }
 `;

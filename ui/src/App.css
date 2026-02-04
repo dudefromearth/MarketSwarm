@@ -2370,6 +2370,14 @@ body {
   min-height: 0;
 }
 
+.strategies-empty {
+  padding: 16px 8px;
+  text-align: center;
+  font-size: 11px;
+  color: rgba(120, 120, 130, 0.7);
+  font-style: italic;
+}
+
 .risk-graph-sidebar .section-header {
   font-size: 11px;
   color: #888;
@@ -2678,32 +2686,65 @@ body {
   overflow: hidden;
 }
 
-.risk-graph-empty {
-  padding: 40px 20px;
-  text-align: center;
-  color: #666;
+/* Empty state - full framework visible, message in chart area */
+.risk-graph-chart-empty {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  background: rgba(20, 20, 24, 0.5);
+  border-radius: 4px;
+  min-height: 200px;
 }
 
-.risk-graph-empty .empty-icon {
-  font-size: 32px;
-  opacity: 0.5;
-  margin-bottom: 8px;
+.chart-empty-content {
+  text-align: center;
+  padding: 24px;
 }
 
-.risk-graph-empty p {
+.chart-empty-content .empty-title {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  color: rgba(200, 200, 210, 0.9);
+  font-weight: 500;
+}
+
+.chart-empty-content .empty-hint {
   margin: 0;
-  color: #888;
+  font-size: 12px;
+  color: rgba(120, 120, 130, 0.8);
 }
 
-.risk-graph-empty .hint {
+.btn-import-tos-empty {
+  margin-top: 16px;
+  padding: 6px 14px;
+  background: transparent;
+  border: 1px solid rgba(80, 80, 90, 0.5);
+  border-radius: 4px;
+  color: rgba(150, 150, 160, 0.8);
   font-size: 11px;
-  color: #555;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-import-tos-empty:hover {
+  border-color: rgba(100, 100, 110, 0.7);
+  color: rgba(200, 200, 210, 0.9);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Dim sidebar elements when empty */
+.risk-graph-consolidated.empty-state .risk-graph-sidebar {
+  opacity: 0.6;
+}
+
+.risk-graph-consolidated.empty-state .time-machine-panel {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.risk-graph-consolidated.empty-state .risk-graph-stats {
+  opacity: 0.4;
 }
 
 /* Risk Graph Content Layout */

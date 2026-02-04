@@ -412,36 +412,41 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
           </button>
         )}
       </div>
-      {(
-        <div className="panel-content risk-graph-consolidated">
-          {strategies.length === 0 ? (
-            <div className="risk-graph-empty">
-              <div className="empty-icon">📊</div>
-              <p>No strategies to analyze</p>
-              <p className="hint">Click a heatmap tile → "Add to Risk Graph"</p>
-            </div>
-          ) : (
-            <>
-              {/* Main content: Chart + Sidebar */}
-              <div className="risk-graph-main">
-                {/* Chart Area */}
-                <div className="risk-graph-chart-area">
-                  <PnLChart
-                    ref={pnlChartRef}
-                    expirationData={pnlChartData.expirationPoints}
-                    theoreticalData={pnlChartData.theoreticalPoints}
-                    spotPrice={simulatedSpot}
-                    expirationBreakevens={pnlChartData.expirationBreakevens}
-                    theoreticalBreakevens={pnlChartData.theoreticalBreakevens}
-                    strikes={chartStrikes}
-                    onOpenAlertDialog={handleOpenAlertDialog}
-                    alertLines={alertLinesForChart}
-                  />
+      <div className={`panel-content risk-graph-consolidated${strategies.length === 0 ? ' empty-state' : ''}`}>
+          {/* Main content: Chart + Sidebar */}
+          <div className="risk-graph-main">
+            {/* Chart Area */}
+            <div className="risk-graph-chart-area">
+              {strategies.length === 0 ? (
+                <div className="risk-graph-chart-empty">
+                  <div className="chart-empty-content">
+                    <p className="empty-title">Add a strategy to begin analysis</p>
+                    <p className="empty-hint">Click a heatmap tile → "Add to Risk Graph"</p>
+                    {onImportToS && (
+                      <button className="btn-import-tos-empty" onClick={onImportToS}>
+                        Import from ToS
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <PnLChart
+                  ref={pnlChartRef}
+                  expirationData={pnlChartData.expirationPoints}
+                  theoreticalData={pnlChartData.theoreticalPoints}
+                  spotPrice={simulatedSpot}
+                  expirationBreakevens={pnlChartData.expirationBreakevens}
+                  theoreticalBreakevens={pnlChartData.theoreticalBreakevens}
+                  strikes={chartStrikes}
+                  onOpenAlertDialog={handleOpenAlertDialog}
+                  alertLines={alertLinesForChart}
+                />
+              )}
+            </div>
+          </div>
 
-              {/* Sidebar: Strategies + Alerts */}
-              <div className="risk-graph-sidebar">
+          {/* Sidebar: Strategies + Alerts */}
+          <div className="risk-graph-sidebar">
                 {/* Strategy List */}
                 <div className="risk-graph-strategies">
                   <div className="section-header">
@@ -568,6 +573,11 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                         </div>
                       );
                     })}
+                    {strategies.length === 0 && (
+                      <div className="strategies-empty">
+                        No strategies loaded
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -937,10 +947,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                   </>
                 )}
               </div>
-            </>
-          )}
         </div>
-      )}
     </div>
   );
 });

@@ -1,9 +1,11 @@
 // services/sse/src/routes/admin.js
-// Admin API endpoints for user management and stats
+// Admin API endpoints for user management, stats, and diagnostics
 
 import { Router } from "express";
 import { getPool, isDbAvailable } from "../db/index.js";
 import { getCurrentUser, isAdmin as checkIsAdmin } from "../auth.js";
+import { getMarketRedis } from "../redis.js";
+import { getKeys } from "../keys.js";
 
 const router = Router();
 
@@ -244,6 +246,287 @@ router.get("/users/:id", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("[admin] Error fetching user detail:", err);
     res.status(500).json({ error: "Failed to fetch user" });
+  }
+});
+
+// =============================================================================
+// Diagnostics Endpoints
+// =============================================================================
+
+/**
+ * GET /api/admin/diagnostics
+ * Returns overall system health and data availability
+ */
+router.get("/diagnostics", requireAdmin, async (req, res) => {
+  const redis = getMarketRedis();
+  const keys = getKeys();
+  const symbols = ["SPX", "NDX"];
+
+  try {
+    const results = {
+      ts: Date.now(),
+      redis: { connected: false },
+      data: {},
+      services: {},
+    };
+
+    // Check Redis connection
+    try {
+      await redis.ping();
+      results.redis.connected = true;
+    } catch (e) {
+      results.redis.error = e.message;
+    }
+
+    // Check data availability for each symbol
+    for (const symbol of symbols) {
+      const symbolData = {
+        spot: { exists: false, ts: null, value: null },
+        heatmap: { exists: false, ts: null, tileCount: null },
+        gex: { exists: false, ts: null },
+        trade_selector: { exists: false, ts: null, recommendationCount: null },
+      };
+
+      // Check spot
+      try {
+        const spotRaw = await redis.get(`massive:model:spot:${symbol}`);
+        if (spotRaw) {
+          const spot = JSON.parse(spotRaw);
+          symbolData.spot = {
+            exists: true,
+            ts: spot.ts,
+            value: spot.value,
+            age_sec: spot.ts ? Math.floor((Date.now() - spot.ts) / 1000) : null,
+          };
+        }
+      } catch (e) {
+        symbolData.spot.error = e.message;
+      }
+
+      // Check heatmap
+      try {
+        const heatmapRaw = await redis.get(`massive:heatmap:model:${symbol}:latest`);
+        if (heatmapRaw) {
+          const heatmap = JSON.parse(heatmapRaw);
+          symbolData.heatmap = {
+            exists: true,
+            ts: heatmap.ts,
+            tileCount: heatmap.tiles ? Object.keys(heatmap.tiles).length : 0,
+            age_sec: heatmap.ts ? Math.floor((Date.now() - heatmap.ts) / 1000) : null,
+          };
+        }
+      } catch (e) {
+        symbolData.heatmap.error = e.message;
+      }
+
+      // Check GEX
+      try {
+        const gexRaw = await redis.get(keys.gexKey(symbol));
+        if (gexRaw) {
+          const gex = JSON.parse(gexRaw);
+          symbolData.gex = {
+            exists: true,
+            ts: gex.ts,
+            age_sec: gex.ts ? Math.floor((Date.now() - gex.ts) / 1000) : null,
+          };
+        }
+      } catch (e) {
+        symbolData.gex.error = e.message;
+      }
+
+      // Check trade_selector
+      try {
+        const selectorRaw = await redis.get(`massive:selector:model:${symbol}:latest`);
+        if (selectorRaw) {
+          const selector = JSON.parse(selectorRaw);
+          symbolData.trade_selector = {
+            exists: true,
+            ts: selector.ts,
+            recommendationCount: selector.recommendations ? Object.keys(selector.recommendations).length : 0,
+            vix_regime: selector.vix_regime,
+            age_sec: selector.ts ? Math.floor((Date.now() - selector.ts) / 1000) : null,
+          };
+        }
+      } catch (e) {
+        symbolData.trade_selector.error = e.message;
+      }
+
+      results.data[symbol] = symbolData;
+    }
+
+    // Check global data
+    results.data.global = {};
+
+    // VIX from vexy_ai
+    try {
+      const vixRaw = await redis.get("vexy_ai:signals:latest");
+      if (vixRaw) {
+        const vix = JSON.parse(vixRaw);
+        results.data.global.vix = {
+          exists: true,
+          value: vix.vix,
+          ts: vix.ts,
+          age_sec: vix.ts ? Math.floor((Date.now() - vix.ts) / 1000) : null,
+        };
+      } else {
+        results.data.global.vix = { exists: false };
+      }
+    } catch (e) {
+      results.data.global.vix = { exists: false, error: e.message };
+    }
+
+    // Market mode
+    try {
+      const modeRaw = await redis.get(keys.marketModeKey());
+      if (modeRaw) {
+        const mode = JSON.parse(modeRaw);
+        results.data.global.market_mode = {
+          exists: true,
+          mode: mode.mode,
+          ts: mode.ts,
+        };
+      } else {
+        results.data.global.market_mode = { exists: false };
+      }
+    } catch (e) {
+      results.data.global.market_mode = { exists: false, error: e.message };
+    }
+
+    // Vexy latest
+    try {
+      const vexyRaw = await redis.get(keys.vexyEpochKey());
+      if (vexyRaw) {
+        const vexy = JSON.parse(vexyRaw);
+        results.data.global.vexy = {
+          exists: true,
+          ts: vexy.ts,
+          age_sec: vexy.ts ? Math.floor((Date.now() - vexy.ts) / 1000) : null,
+        };
+      } else {
+        results.data.global.vexy = { exists: false };
+      }
+    } catch (e) {
+      results.data.global.vexy = { exists: false, error: e.message };
+    }
+
+    res.json(results);
+  } catch (err) {
+    console.error("[admin] Diagnostics error:", err);
+    res.status(500).json({ error: "Failed to run diagnostics" });
+  }
+});
+
+/**
+ * GET /api/admin/diagnostics/redis
+ * Query Redis keys by pattern
+ * Query params: pattern (default: "*"), limit (default: 100)
+ */
+router.get("/diagnostics/redis", requireAdmin, async (req, res) => {
+  const redis = getMarketRedis();
+  const pattern = req.query.pattern || "*";
+  const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+
+  try {
+    // Get matching keys
+    const allKeys = await redis.keys(pattern);
+    const keys = allKeys.slice(0, limit);
+
+    // Get values for each key (with size info)
+    const results = [];
+    for (const key of keys) {
+      try {
+        const type = await redis.type(key);
+        let info = { key, type };
+
+        if (type === "string") {
+          const val = await redis.get(key);
+          info.size = val ? val.length : 0;
+          // Try to parse as JSON and get ts
+          try {
+            const parsed = JSON.parse(val);
+            if (parsed.ts) {
+              info.ts = parsed.ts;
+              info.age_sec = Math.floor((Date.now() - parsed.ts) / 1000);
+            }
+          } catch {
+            // Not JSON, that's ok
+          }
+        } else if (type === "list") {
+          info.size = await redis.llen(key);
+        } else if (type === "set") {
+          info.size = await redis.scard(key);
+        } else if (type === "hash") {
+          info.size = await redis.hlen(key);
+        } else if (type === "zset") {
+          info.size = await redis.zcard(key);
+        }
+
+        // Get TTL
+        const ttl = await redis.ttl(key);
+        if (ttl > 0) info.ttl = ttl;
+
+        results.push(info);
+      } catch (e) {
+        results.push({ key, error: e.message });
+      }
+    }
+
+    res.json({
+      pattern,
+      total: allKeys.length,
+      returned: results.length,
+      keys: results,
+    });
+  } catch (err) {
+    console.error("[admin] Redis query error:", err);
+    res.status(500).json({ error: "Failed to query Redis" });
+  }
+});
+
+/**
+ * GET /api/admin/diagnostics/redis/:key
+ * Get full value of a specific Redis key
+ */
+router.get("/diagnostics/redis/:key(*)", requireAdmin, async (req, res) => {
+  const redis = getMarketRedis();
+  const key = req.params.key;
+
+  try {
+    const type = await redis.type(key);
+
+    if (type === "none") {
+      return res.status(404).json({ error: "Key not found", key });
+    }
+
+    let value;
+    if (type === "string") {
+      const raw = await redis.get(key);
+      try {
+        value = JSON.parse(raw);
+      } catch {
+        value = raw;
+      }
+    } else if (type === "list") {
+      value = await redis.lrange(key, 0, 100);
+    } else if (type === "set") {
+      value = await redis.smembers(key);
+    } else if (type === "hash") {
+      value = await redis.hgetall(key);
+    } else if (type === "zset") {
+      value = await redis.zrange(key, 0, 100, "WITHSCORES");
+    }
+
+    const ttl = await redis.ttl(key);
+
+    res.json({
+      key,
+      type,
+      ttl: ttl > 0 ? ttl : null,
+      value,
+    });
+  } catch (err) {
+    console.error("[admin] Redis key fetch error:", err);
+    res.status(500).json({ error: "Failed to fetch key" });
   }
 });
 
