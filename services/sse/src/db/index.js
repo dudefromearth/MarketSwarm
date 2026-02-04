@@ -113,6 +113,25 @@ async function createTables() {
       }
     }
 
+    // Add leaderboard columns (screen_name, show_screen_name) if they don't exist
+    try {
+      await pool.execute(`
+        ALTER TABLE users ADD COLUMN screen_name VARCHAR(100) DEFAULT NULL
+      `);
+      console.log("[db] Added screen_name column");
+    } catch (alterErr) {
+      // Column likely already exists
+    }
+
+    try {
+      await pool.execute(`
+        ALTER TABLE users ADD COLUMN show_screen_name TINYINT DEFAULT 1
+      `);
+      console.log("[db] Added show_screen_name column");
+    } catch (alterErr) {
+      // Column likely already exists
+    }
+
     console.log("[db] Users table ready");
   } catch (e) {
     console.error("[db] Failed to create tables:", e.message);

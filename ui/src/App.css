@@ -11354,3 +11354,457 @@ body {
   color: #666;
   font-style: italic;
 }
+
+/* ==================== Leaderboard ==================== */
+
+.header-leaderboard-btn {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  border: 1px solid #f59e0b;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: white;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-weight: 500;
+}
+
+.header-leaderboard-btn:hover {
+  background: linear-gradient(135deg, #d97706, #b45309);
+  border-color: #d97706;
+}
+
+.leaderboard-modal {
+  width: 900px;
+  max-width: 95vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.leaderboard-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #333;
+}
+
+.leaderboard-modal .modal-header h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.leaderboard-modal .header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.leaderboard-modal .btn-icon {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.leaderboard-modal .btn-icon:hover {
+  background: #333;
+}
+
+.leaderboard-modal .btn-icon:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.leaderboard-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #333;
+  background: #1a1a1a;
+}
+
+.leaderboard-tabs .tab-btn {
+  padding: 8px 20px;
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #888;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.leaderboard-tabs .tab-btn:hover {
+  background: #333;
+  color: #ccc;
+}
+
+.leaderboard-tabs .tab-btn.active {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: white;
+}
+
+.period-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 20px;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+}
+
+.period-info .period-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.period-info .participant-count {
+  font-size: 12px;
+  color: #666;
+}
+
+.leaderboard-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0;
+}
+
+.leaderboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.leaderboard-table th {
+  position: sticky;
+  top: 0;
+  background: #1a1a1a;
+  padding: 10px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: #888;
+  border-bottom: 1px solid #333;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.leaderboard-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #222;
+  vertical-align: middle;
+}
+
+.leaderboard-table tbody tr:hover {
+  background: #1a1a1a;
+}
+
+.leaderboard-table .current-user-row {
+  background: rgba(245, 158, 11, 0.1);
+  border-left: 3px solid #f59e0b;
+}
+
+.leaderboard-table .current-user-row:hover {
+  background: rgba(245, 158, 11, 0.15);
+}
+
+.col-rank {
+  width: 60px;
+  text-align: center;
+}
+
+.rank-badge {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.col-user {
+  min-width: 140px;
+}
+
+.user-name {
+  font-weight: 500;
+  color: #e5e5e5;
+}
+
+.you-badge {
+  margin-left: 8px;
+  padding: 2px 6px;
+  background: #f59e0b;
+  color: white;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.col-score {
+  width: 70px;
+  text-align: center;
+}
+
+.total-score {
+  font-size: 16px;
+  font-weight: 700;
+  color: #f59e0b;
+}
+
+.col-activity,
+.col-performance {
+  width: 120px;
+}
+
+.score-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.score-value {
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.score-detail {
+  font-size: 10px;
+  color: #666;
+}
+
+.col-stats {
+  width: 120px;
+}
+
+.pnl-value {
+  font-weight: 600;
+  display: block;
+}
+
+.pnl-value.positive {
+  color: #4ade80;
+}
+
+.pnl-value.negative {
+  color: #f87171;
+}
+
+.trades-count {
+  font-size: 10px;
+  color: #666;
+  display: block;
+}
+
+.sticky-user-row {
+  position: sticky;
+  bottom: 0;
+  background: #0a0a0a;
+  border-top: 2px solid #f59e0b;
+}
+
+.sticky-separator {
+  text-align: center;
+  padding: 4px;
+  color: #666;
+  font-size: 12px;
+  background: #1a1a1a;
+}
+
+.leaderboard-footer {
+  padding: 12px 20px;
+  border-top: 1px solid #333;
+  background: #1a1a1a;
+}
+
+.scoring-info {
+  font-size: 11px;
+  color: #666;
+}
+
+.scoring-info .info-label {
+  font-weight: 600;
+  margin-right: 8px;
+}
+
+.empty-state {
+  padding: 40px;
+  text-align: center;
+}
+
+.empty-state p {
+  margin: 8px 0;
+  color: #888;
+}
+
+.empty-state .hint {
+  font-size: 12px;
+  color: #666;
+}
+
+/* Leaderboard Settings Modal */
+.leaderboard-settings-modal {
+  width: 450px;
+  max-width: 95vw;
+}
+
+.leaderboard-settings-modal .settings-section {
+  margin-bottom: 20px;
+}
+
+.leaderboard-settings-modal .settings-section h3 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e5e5e5;
+}
+
+.leaderboard-settings-modal .settings-description {
+  margin: 0 0 16px 0;
+  font-size: 12px;
+  color: #888;
+}
+
+.leaderboard-settings-modal .form-group {
+  margin-bottom: 16px;
+}
+
+.leaderboard-settings-modal .form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #888;
+}
+
+.leaderboard-settings-modal .form-input {
+  width: 100%;
+  padding: 8px 12px;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e5e5e5;
+  font-size: 13px;
+}
+
+.leaderboard-settings-modal .form-input:focus {
+  outline: none;
+  border-color: #f59e0b;
+}
+
+.leaderboard-settings-modal .input-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #666;
+}
+
+.leaderboard-settings-modal .toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.leaderboard-settings-modal .toggle-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #f59e0b;
+}
+
+.leaderboard-settings-modal .toggle-text {
+  font-size: 13px;
+  color: #e5e5e5;
+}
+
+.leaderboard-settings-modal .preview-section {
+  margin-top: 20px;
+  padding: 12px;
+  background: #1a1a1a;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.leaderboard-settings-modal .preview-label {
+  font-size: 12px;
+  color: #666;
+}
+
+.leaderboard-settings-modal .preview-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #f59e0b;
+}
+
+.leaderboard-settings-modal .error-message {
+  margin-top: 12px;
+  padding: 10px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid #ef4444;
+  border-radius: 4px;
+  color: #f87171;
+  font-size: 12px;
+}
+
+.leaderboard-settings-modal .modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 20px;
+  border-top: 1px solid #333;
+}
+
+.leaderboard-settings-modal .btn-secondary {
+  padding: 8px 16px;
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: #888;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.leaderboard-settings-modal .btn-secondary:hover {
+  background: #333;
+  color: #e5e5e5;
+}
+
+.leaderboard-settings-modal .btn-primary {
+  padding: 8px 16px;
+  background: #f59e0b;
+  border: 1px solid #f59e0b;
+  border-radius: 4px;
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.leaderboard-settings-modal .btn-primary:hover {
+  background: #d97706;
+  border-color: #d97706;
+}
+
+.leaderboard-settings-modal .btn-primary:disabled,
+.leaderboard-settings-modal .btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.leaderboard-settings-modal .loading-state,
+.leaderboard-settings-modal .error-state {
+  padding: 40px;
+  text-align: center;
+  color: #888;
+}

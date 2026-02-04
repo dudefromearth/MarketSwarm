@@ -40,6 +40,7 @@ import GexChartPanel from './components/GexChartPanel';
 import TradeRecommendationsPanel from './components/TradeRecommendationsPanel';
 import TradeTrackingPanel from './components/TradeTrackingPanel';
 import TrackingAnalyticsDashboard from './components/TrackingAnalyticsDashboard';
+import LeaderboardView from './components/LeaderboardView';
 import { VolumeProfileSettings, useIndicatorSettings, sigmaToPercentile } from './components/chart-primitives';
 import type { TradeSelectorModel, TradeRecommendation } from './types/tradeSelector';
 
@@ -612,6 +613,7 @@ function App() {
   const [reportingLogId, setReportingLogId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [trackingAnalyticsOpen, setTrackingAnalyticsOpen] = useState(false);
+  const [leaderboardOpen, setLeaderboardOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
   const [journalTradeContext, setJournalTradeContext] = useState<TradeReflectionContext | null>(null);
   const [playbookOpen, setPlaybookOpen] = useState(false);
@@ -2045,6 +2047,13 @@ function App() {
           >
             Settings
           </button>
+          <button
+            className="header-leaderboard-btn"
+            onClick={() => setLeaderboardOpen(true)}
+            title="Leaderboard"
+          >
+            Leaderboard
+          </button>
           {userProfile?.is_admin && (
             <>
               <button
@@ -2980,6 +2989,11 @@ function App() {
           isOpen={trackingAnalyticsOpen}
           onClose={() => setTrackingAnalyticsOpen(false)}
         />
+      )}
+
+      {/* Leaderboard Modal */}
+      {leaderboardOpen && (
+        <LeaderboardView onClose={() => setLeaderboardOpen(false)} />
       )}
 
       {/* Strategy Popup Modal */}

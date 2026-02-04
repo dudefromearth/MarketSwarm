@@ -9,7 +9,7 @@ import {
   setSessionCookie,
   clearSessionCookie,
 } from "../auth.js";
-import { upsertUserFromWpToken, getUserProfile } from "../db/userStore.js";
+import { upsertUserFromWpToken, getUserProfile, getLeaderboardSettings, updateLeaderboardSettings } from "../db/userStore.js";
 import { isDbAvailable } from "../db/index.js";
 
 const router = Router();
@@ -116,6 +116,59 @@ router.get("/logout", (req, res) => {
 
   clearSessionCookie(res);
   return res.redirect(302, next);
+});
+
+/**
+ * GET /api/profile/leaderboard-settings
+ * Get leaderboard display settings for the current user
+ */
+router.get("/profile/leaderboard-settings", async (req, res) => {
+  const session = getCurrentUser(req);
+  if (!session) {
+    return res.status(401).json({ detail: "Not authenticated" });
+  }
+
+  if (!isDbAvailable()) {
+    return res.status(503).json({ detail: "Database not available" });
+  }
+
+  const settings = await getLeaderboardSettings(session.wp?.issuer, session.wp?.id);
+  if (!settings) {
+    return res.status(404).json({ detail: "Settings not found" });
+  }
+
+  return res.json(settings);
+});
+
+/**
+ * PATCH /api/profile/leaderboard-settings
+ * Update leaderboard display settings for the current user
+ */
+router.patch("/profile/leaderboard-settings", async (req, res) => {
+  const session = getCurrentUser(req);
+  if (!session) {
+    return res.status(401).json({ detail: "Not authenticated" });
+  }
+
+  if (!isDbAvailable()) {
+    return res.status(503).json({ detail: "Database not available" });
+  }
+
+  try {
+    const { screenName, showScreenName } = req.body;
+    const updated = await updateLeaderboardSettings(session.wp?.issuer, session.wp?.id, {
+      screenName,
+      showScreenName,
+    });
+
+    if (!updated) {
+      return res.status(404).json({ detail: "User not found" });
+    }
+
+    return res.json(updated);
+  } catch (e) {
+    return res.status(400).json({ detail: e.message });
+  }
 });
 
 /**

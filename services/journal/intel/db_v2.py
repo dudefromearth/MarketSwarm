@@ -19,7 +19,7 @@ from .models_v2 import (
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 13
+    SCHEMA_VERSION = 14
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -207,6 +207,9 @@ class JournalDBv2:
 
             if current_version < 13:
                 self._migrate_to_v13(conn)
+
+            if current_version < 14:
+                self._migrate_to_v14(conn)
 
             conn.commit()
         finally:
@@ -1011,6 +1014,47 @@ class JournalDBv2:
                 pass  # Indexes may already exist
 
             self._set_schema_version(conn, 13)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v14(self, conn):
+        """Migrate to v14: Add leaderboard_scores table for gamified leaderboard feature."""
+        cursor = conn.cursor()
+        try:
+            if not self._table_exists(conn, 'leaderboard_scores'):
+                cursor.execute("""
+                    CREATE TABLE leaderboard_scores (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        user_id INT NOT NULL,
+                        period_type ENUM('weekly', 'monthly', 'all_time') NOT NULL,
+                        period_key VARCHAR(20) NOT NULL,
+
+                        -- Activity Metrics
+                        trades_logged INT DEFAULT 0,
+                        journal_entries INT DEFAULT 0,
+                        tags_used INT DEFAULT 0,
+
+                        -- Performance Metrics
+                        total_pnl BIGINT DEFAULT 0,
+                        win_rate DECIMAL(5,2) DEFAULT 0,
+                        avg_r_multiple DECIMAL(6,3) DEFAULT 0,
+                        closed_trades INT DEFAULT 0,
+
+                        -- Computed Scores (0-50 each, 0-100 total)
+                        activity_score DECIMAL(10,2) DEFAULT 0,
+                        performance_score DECIMAL(10,2) DEFAULT 0,
+                        total_score DECIMAL(10,2) DEFAULT 0,
+                        rank_position INT DEFAULT 0,
+
+                        calculated_at DATETIME NOT NULL,
+
+                        UNIQUE KEY uq_user_period (user_id, period_type, period_key),
+                        INDEX idx_period_rank (period_type, period_key, rank_position),
+                        INDEX idx_user_id (user_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 14)
         finally:
             cursor.close()
 
@@ -3524,6 +3568,307 @@ class JournalDBv2:
             """, (total_ideas, win_count, win_rate, avg_pnl, avg_capture_rate, version))
             conn.commit()
             return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Leaderboard CRUD ====================
+
+    def upsert_leaderboard_score(
+        self,
+        user_id: int,
+        period_type: str,
+        period_key: str,
+        trades_logged: int,
+        journal_entries: int,
+        tags_used: int,
+        total_pnl: int,
+        win_rate: float,
+        avg_r_multiple: float,
+        closed_trades: int,
+        activity_score: float,
+        performance_score: float,
+        total_score: float,
+    ) -> bool:
+        """Upsert a leaderboard score for a user/period."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            now = datetime.utcnow().isoformat()
+
+            cursor.execute("""
+                INSERT INTO leaderboard_scores
+                    (user_id, period_type, period_key, trades_logged, journal_entries, tags_used,
+                     total_pnl, win_rate, avg_r_multiple, closed_trades,
+                     activity_score, performance_score, total_score, calculated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    trades_logged = VALUES(trades_logged),
+                    journal_entries = VALUES(journal_entries),
+                    tags_used = VALUES(tags_used),
+                    total_pnl = VALUES(total_pnl),
+                    win_rate = VALUES(win_rate),
+                    avg_r_multiple = VALUES(avg_r_multiple),
+                    closed_trades = VALUES(closed_trades),
+                    activity_score = VALUES(activity_score),
+                    performance_score = VALUES(performance_score),
+                    total_score = VALUES(total_score),
+                    calculated_at = VALUES(calculated_at)
+            """, (
+                user_id, period_type, period_key, trades_logged, journal_entries, tags_used,
+                total_pnl, win_rate, avg_r_multiple, closed_trades,
+                activity_score, performance_score, total_score, now
+            ))
+            conn.commit()
+            return True
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_leaderboard_ranks(self, period_type: str, period_key: str) -> int:
+        """Update rank positions for all users in a period. Returns count updated."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Get all scores sorted by total_score descending
+            cursor.execute("""
+                SELECT id FROM leaderboard_scores
+                WHERE period_type = %s AND period_key = %s
+                ORDER BY total_score DESC, activity_score DESC, user_id ASC
+            """, (period_type, period_key))
+
+            rows = cursor.fetchall()
+            count = 0
+
+            for rank, (score_id,) in enumerate(rows, start=1):
+                cursor.execute(
+                    "UPDATE leaderboard_scores SET rank_position = %s WHERE id = %s",
+                    (rank, score_id)
+                )
+                count += 1
+
+            conn.commit()
+            return count
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_leaderboard(
+        self,
+        period_type: str,
+        period_key: str,
+        limit: int = 20,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Get leaderboard rankings for a period."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    ls.user_id,
+                    ls.rank_position,
+                    ls.trades_logged,
+                    ls.journal_entries,
+                    ls.tags_used,
+                    ls.total_pnl,
+                    ls.win_rate,
+                    ls.avg_r_multiple,
+                    ls.closed_trades,
+                    ls.activity_score,
+                    ls.performance_score,
+                    ls.total_score,
+                    ls.calculated_at
+                FROM leaderboard_scores ls
+                WHERE ls.period_type = %s AND ls.period_key = %s
+                ORDER BY ls.rank_position ASC
+                LIMIT %s OFFSET %s
+            """, (period_type, period_key, limit, offset))
+
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append({
+                    'user_id': row[0],
+                    'rank': row[1],
+                    'trades_logged': row[2],
+                    'journal_entries': row[3],
+                    'tags_used': row[4],
+                    'total_pnl': row[5],
+                    'win_rate': float(row[6]) if row[6] else 0,
+                    'avg_r_multiple': float(row[7]) if row[7] else 0,
+                    'closed_trades': row[8],
+                    'activity_score': float(row[9]) if row[9] else 0,
+                    'performance_score': float(row[10]) if row[10] else 0,
+                    'total_score': float(row[11]) if row[11] else 0,
+                    'calculated_at': row[12],
+                })
+
+            return results
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_user_leaderboard_score(self, user_id: int, period_type: str, period_key: str) -> Optional[Dict[str, Any]]:
+        """Get a specific user's leaderboard score for a period."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    user_id, rank_position, trades_logged, journal_entries, tags_used,
+                    total_pnl, win_rate, avg_r_multiple, closed_trades,
+                    activity_score, performance_score, total_score, calculated_at
+                FROM leaderboard_scores
+                WHERE user_id = %s AND period_type = %s AND period_key = %s
+            """, (user_id, period_type, period_key))
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            return {
+                'user_id': row[0],
+                'rank': row[1],
+                'trades_logged': row[2],
+                'journal_entries': row[3],
+                'tags_used': row[4],
+                'total_pnl': row[5],
+                'win_rate': float(row[6]) if row[6] else 0,
+                'avg_r_multiple': float(row[7]) if row[7] else 0,
+                'closed_trades': row[8],
+                'activity_score': float(row[9]) if row[9] else 0,
+                'performance_score': float(row[10]) if row[10] else 0,
+                'total_score': float(row[11]) if row[11] else 0,
+                'calculated_at': row[12],
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_leaderboard_participant_count(self, period_type: str, period_key: str) -> int:
+        """Get total participant count for a period."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT COUNT(*) FROM leaderboard_scores
+                WHERE period_type = %s AND period_key = %s
+            """, (period_type, period_key))
+            return cursor.fetchone()[0]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_user_activity_metrics(self, user_id: int, start_date: str, end_date: str) -> Dict[str, int]:
+        """Get activity metrics (trades, journal entries, tags) for a user in date range."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Count trades logged in period
+            cursor.execute("""
+                SELECT COUNT(*) FROM trades t
+                JOIN trade_logs tl ON t.log_id = tl.id
+                WHERE tl.user_id = %s
+                AND t.entry_time >= %s AND t.entry_time < %s
+            """, (user_id, start_date, end_date))
+            trades_logged = cursor.fetchone()[0]
+
+            # Count journal entries in period
+            cursor.execute("""
+                SELECT COUNT(*) FROM journal_entries
+                WHERE user_id = %s
+                AND entry_date >= %s AND entry_date < %s
+            """, (user_id, start_date, end_date))
+            journal_entries = cursor.fetchone()[0]
+
+            # Count unique tags used on trades in period
+            cursor.execute("""
+                SELECT COUNT(DISTINCT tag_name) FROM (
+                    SELECT JSON_UNQUOTE(JSON_EXTRACT(t.tags, CONCAT('$[', n.n, ']'))) AS tag_name
+                    FROM trades t
+                    JOIN trade_logs tl ON t.log_id = tl.id
+                    JOIN (
+                        SELECT 0 AS n UNION SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4
+                        UNION SELECT 5 UNION SELECT 6 UNION SELECT 7 UNION SELECT 8 UNION SELECT 9
+                    ) n
+                    WHERE tl.user_id = %s
+                    AND t.entry_time >= %s AND t.entry_time < %s
+                    AND t.tags IS NOT NULL AND t.tags != '[]'
+                    AND JSON_UNQUOTE(JSON_EXTRACT(t.tags, CONCAT('$[', n.n, ']'))) IS NOT NULL
+                ) tag_list
+            """, (user_id, start_date, end_date))
+            tags_used = cursor.fetchone()[0]
+
+            return {
+                'trades_logged': trades_logged,
+                'journal_entries': journal_entries,
+                'tags_used': tags_used,
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_user_performance_metrics(self, user_id: int, start_date: str, end_date: str) -> Dict[str, Any]:
+        """Get performance metrics for a user in date range."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Get closed trades with P&L in period
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as closed_trades,
+                    SUM(pnl) as total_pnl,
+                    SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    AVG(r_multiple) as avg_r_multiple
+                FROM trades t
+                JOIN trade_logs tl ON t.log_id = tl.id
+                WHERE tl.user_id = %s
+                AND t.status = 'closed'
+                AND t.exit_time >= %s AND t.exit_time < %s
+            """, (user_id, start_date, end_date))
+
+            row = cursor.fetchone()
+            closed_trades = row[0] or 0
+            total_pnl = row[1] or 0
+            wins = row[2] or 0
+            avg_r_multiple = float(row[3]) if row[3] else 0
+
+            win_rate = (wins / closed_trades * 100) if closed_trades > 0 else 0
+
+            return {
+                'closed_trades': closed_trades,
+                'total_pnl': total_pnl,
+                'win_rate': win_rate,
+                'avg_r_multiple': avg_r_multiple,
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_all_user_ids_with_activity(self, start_date: str, end_date: str) -> List[int]:
+        """Get all user IDs that have any activity in the date range."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Get users with trades
+            cursor.execute("""
+                SELECT DISTINCT tl.user_id
+                FROM trade_logs tl
+                JOIN trades t ON t.log_id = tl.id
+                WHERE tl.user_id IS NOT NULL
+                AND (
+                    (t.entry_time >= %s AND t.entry_time < %s)
+                    OR (t.exit_time >= %s AND t.exit_time < %s)
+                )
+                UNION
+                SELECT DISTINCT user_id
+                FROM journal_entries
+                WHERE user_id IS NOT NULL
+                AND entry_date >= %s AND entry_date < %s
+            """, (start_date, end_date, start_date, end_date, start_date, end_date))
+
+            return [row[0] for row in cursor.fetchall()]
         finally:
             cursor.close()
             conn.close()

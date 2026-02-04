@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from aiohttp import web
 import openpyxl
@@ -3462,6 +3462,253 @@ class JournalOrchestrator:
             self.logger.error(f"legacy_equity error: {e}")
             return self._error_response(str(e), 500)
 
+    # ==================== Leaderboard API ====================
+
+    def _get_period_key(self, period_type: str) -> str:
+        """Get the current period key for a period type."""
+        now = datetime.utcnow()
+        if period_type == 'weekly':
+            # ISO week format: 2026-W06
+            return now.strftime('%G-W%V')
+        elif period_type == 'monthly':
+            # Month format: 2026-02
+            return now.strftime('%Y-%m')
+        else:
+            return 'all'
+
+    def _get_period_boundaries(self, period_type: str, period_key: str) -> tuple:
+        """Get start and end dates for a period."""
+        if period_type == 'weekly':
+            # Parse ISO week: 2026-W06
+            year, week = period_key.split('-W')
+            # Get first day of ISO week (Monday)
+            first_day = datetime.strptime(f'{year}-W{week}-1', '%G-W%V-%u')
+            start = first_day.strftime('%Y-%m-%d')
+            end = (first_day + timedelta(days=7)).strftime('%Y-%m-%d')
+        elif period_type == 'monthly':
+            # Parse month: 2026-02
+            year, month = period_key.split('-')
+            start = f'{year}-{month}-01'
+            # Get first day of next month
+            if int(month) == 12:
+                end = f'{int(year)+1}-01-01'
+            else:
+                end = f'{year}-{int(month)+1:02d}-01'
+        else:
+            # All time: use a very old start date
+            start = '2000-01-01'
+            end = '2100-01-01'
+        return start, end
+
+    def _calculate_activity_score(self, trades: int, entries: int, tags: int) -> float:
+        """Calculate activity score (0-50)."""
+        # Points with caps
+        trade_pts = min(trades * 5, 100)
+        entry_pts = min(entries * 10, 70)
+        tag_pts = min(tags * 2, 30)
+
+        # Raw total capped at 200, scaled to 0-50
+        raw = min(trade_pts + entry_pts + tag_pts, 200)
+        return raw / 4.0
+
+    def _calculate_performance_score(
+        self, win_rate: float, avg_r: float, pnl: int, pnl_percentile: float, closed_trades: int, min_trades: int
+    ) -> float:
+        """Calculate performance score (0-50)."""
+        if closed_trades < min_trades:
+            return 0.0
+
+        # Win rate: 0-100% maps to 0-20 points
+        win_rate_pts = min(win_rate / 100 * 20, 20)
+
+        # Avg R-Multiple: -2 to +3 maps to 0-17.5 points
+        # Clamp to reasonable range and normalize
+        r_clamped = max(-2, min(3, avg_r))
+        r_normalized = (r_clamped + 2) / 5  # 0 to 1
+        r_pts = r_normalized * 17.5
+
+        # P&L percentile: 0-100% maps to 0-12.5 points
+        pnl_pts = pnl_percentile / 100 * 12.5
+
+        return win_rate_pts + r_pts + pnl_pts
+
+    def _get_min_trades_for_period(self, period_type: str) -> int:
+        """Get minimum trades required for performance score."""
+        if period_type == 'weekly':
+            return 3
+        elif period_type == 'monthly':
+            return 10
+        else:
+            return 25
+
+    async def calculate_leaderboard(self, period_type: str) -> int:
+        """Calculate leaderboard scores for all users in a period. Returns count of users scored."""
+        period_key = self._get_period_key(period_type)
+        start_date, end_date = self._get_period_boundaries(period_type, period_key)
+        min_trades = self._get_min_trades_for_period(period_type)
+
+        # Get all users with activity
+        user_ids = self.db.get_all_user_ids_with_activity(start_date, end_date)
+
+        # Collect all P&L values for percentile calculation
+        all_pnl = []
+        user_data = []
+
+        for user_id in user_ids:
+            activity = self.db.get_user_activity_metrics(user_id, start_date, end_date)
+            performance = self.db.get_user_performance_metrics(user_id, start_date, end_date)
+
+            user_data.append({
+                'user_id': user_id,
+                'activity': activity,
+                'performance': performance,
+            })
+            all_pnl.append(performance['total_pnl'])
+
+        # Calculate P&L percentiles
+        sorted_pnl = sorted(all_pnl)
+
+        for data in user_data:
+            pnl = data['performance']['total_pnl']
+            if len(sorted_pnl) > 1:
+                # Find percentile rank
+                rank = sorted_pnl.index(pnl)
+                pnl_percentile = (rank / (len(sorted_pnl) - 1)) * 100
+            else:
+                pnl_percentile = 50.0
+
+            activity_score = self._calculate_activity_score(
+                data['activity']['trades_logged'],
+                data['activity']['journal_entries'],
+                data['activity']['tags_used'],
+            )
+
+            performance_score = self._calculate_performance_score(
+                data['performance']['win_rate'],
+                data['performance']['avg_r_multiple'],
+                data['performance']['total_pnl'],
+                pnl_percentile,
+                data['performance']['closed_trades'],
+                min_trades,
+            )
+
+            total_score = activity_score + performance_score
+
+            # Upsert score
+            self.db.upsert_leaderboard_score(
+                user_id=data['user_id'],
+                period_type=period_type,
+                period_key=period_key,
+                trades_logged=data['activity']['trades_logged'],
+                journal_entries=data['activity']['journal_entries'],
+                tags_used=data['activity']['tags_used'],
+                total_pnl=data['performance']['total_pnl'],
+                win_rate=data['performance']['win_rate'],
+                avg_r_multiple=data['performance']['avg_r_multiple'],
+                closed_trades=data['performance']['closed_trades'],
+                activity_score=activity_score,
+                performance_score=performance_score,
+                total_score=total_score,
+            )
+
+        # Update ranks
+        self.db.update_leaderboard_ranks(period_type, period_key)
+
+        return len(user_data)
+
+    async def get_leaderboard(self, request: web.Request) -> web.Response:
+        """GET /api/leaderboard - Get leaderboard rankings."""
+        try:
+            params = request.query
+            period_type = params.get('period', 'weekly')
+            if period_type not in ('weekly', 'monthly', 'all_time'):
+                return self._error_response('Invalid period type', 400, request)
+
+            limit = min(int(params.get('limit', 20)), 100)
+            offset = int(params.get('offset', 0))
+            recalculate = params.get('recalculate', 'false').lower() == 'true'
+
+            period_key = self._get_period_key(period_type)
+
+            # Optionally recalculate (admin/trigger)
+            if recalculate:
+                user = await self.auth.get_request_user(request)
+                if user:  # Only allow recalculation for authenticated users
+                    await self.calculate_leaderboard(period_type)
+
+            # Get rankings
+            rankings = self.db.get_leaderboard(period_type, period_key, limit, offset)
+            total_participants = self.db.get_leaderboard_participant_count(period_type, period_key)
+
+            # Get current user's rank if authenticated
+            current_user_rank = None
+            user = await self.auth.get_request_user(request)
+            if user:
+                current_user_rank = self.db.get_user_leaderboard_score(user['id'], period_type, period_key)
+
+            return self._json_response({
+                'success': True,
+                'data': {
+                    'rankings': rankings,
+                    'currentUserRank': current_user_rank,
+                    'totalParticipants': total_participants,
+                    'periodType': period_type,
+                    'periodKey': period_key,
+                }
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_leaderboard error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_my_leaderboard(self, request: web.Request) -> web.Response:
+        """GET /api/leaderboard/me - Get current user's leaderboard stats for all periods."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            result = {}
+            for period_type in ('weekly', 'monthly', 'all_time'):
+                period_key = self._get_period_key(period_type)
+                score = self.db.get_user_leaderboard_score(user['id'], period_type, period_key)
+                total = self.db.get_leaderboard_participant_count(period_type, period_key)
+                result[period_type] = {
+                    'score': score,
+                    'totalParticipants': total,
+                    'periodKey': period_key,
+                }
+
+            return self._json_response({
+                'success': True,
+                'data': result
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_my_leaderboard error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def trigger_leaderboard_calculation(self, request: web.Request) -> web.Response:
+        """POST /api/internal/leaderboard/calculate - Trigger leaderboard calculation (internal)."""
+        try:
+            params = request.query
+            period_type = params.get('period', 'weekly')
+            if period_type not in ('weekly', 'monthly', 'all_time'):
+                return self._error_response('Invalid period type', 400, request)
+
+            count = await self.calculate_leaderboard(period_type)
+            self.logger.info(f"Calculated leaderboard for {period_type}: {count} users", emoji="🏆")
+
+            return self._json_response({
+                'success': True,
+                'message': f'Calculated scores for {count} users',
+                'period': period_type,
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"trigger_leaderboard_calculation error: {e}")
+            return self._error_response(str(e), 500, request)
+
     # ==================== Health & App Setup ====================
 
     async def health_check(self, request: web.Request) -> web.Response:
@@ -3633,6 +3880,13 @@ class JournalOrchestrator:
         app.router.add_get('/api/internal/selector-params/active', self.get_active_params)
         app.router.add_post('/api/internal/selector-params', self.create_selector_params)
         app.router.add_post('/api/internal/selector-params/{version}/activate', self.activate_selector_params)
+
+        # =================================================================
+        # Leaderboard API
+        # =================================================================
+        app.router.add_get('/api/leaderboard', self.get_leaderboard)
+        app.router.add_get('/api/leaderboard/me', self.get_my_leaderboard)
+        app.router.add_post('/api/internal/leaderboard/calculate', self.trigger_leaderboard_calculation)
 
         return app
 

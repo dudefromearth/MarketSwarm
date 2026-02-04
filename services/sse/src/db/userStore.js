@@ -154,3 +154,115 @@ export async function getUserById(id) {
     return null;
   }
 }
+
+/**
+ * Get leaderboard settings for a user
+ */
+export async function getLeaderboardSettings(issuer, wpUserId) {
+  if (!isDbAvailable()) {
+    return null;
+  }
+
+  const pool = getPool();
+
+  try {
+    const [rows] = await pool.execute(
+      "SELECT id, screen_name, show_screen_name, display_name FROM users WHERE issuer = ? AND wp_user_id = ?",
+      [issuer, String(wpUserId)]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const user = rows[0];
+    return {
+      userId: user.id,
+      screenName: user.screen_name || null,
+      showScreenName: Boolean(user.show_screen_name),
+      displayName: user.display_name || null,
+    };
+  } catch (e) {
+    console.error("[userStore] Failed to get leaderboard settings:", e.message);
+    return null;
+  }
+}
+
+/**
+ * Update leaderboard settings for a user
+ */
+export async function updateLeaderboardSettings(issuer, wpUserId, settings) {
+  if (!isDbAvailable()) {
+    return null;
+  }
+
+  const pool = getPool();
+
+  try {
+    const updates = [];
+    const params = [];
+
+    if (settings.screenName !== undefined) {
+      updates.push("screen_name = ?");
+      // Validate screen name: alphanumeric, underscores, max 100 chars
+      const screenName = settings.screenName?.trim() || null;
+      if (screenName && (screenName.length > 100 || !/^[a-zA-Z0-9_\-\s]+$/.test(screenName))) {
+        throw new Error("Invalid screen name. Use letters, numbers, underscores, hyphens, or spaces (max 100 chars).");
+      }
+      params.push(screenName);
+    }
+
+    if (settings.showScreenName !== undefined) {
+      updates.push("show_screen_name = ?");
+      params.push(settings.showScreenName ? 1 : 0);
+    }
+
+    if (updates.length === 0) {
+      return await getLeaderboardSettings(issuer, wpUserId);
+    }
+
+    params.push(issuer, String(wpUserId));
+
+    await pool.execute(
+      `UPDATE users SET ${updates.join(", ")} WHERE issuer = ? AND wp_user_id = ?`,
+      params
+    );
+
+    console.log(`[userStore] Updated leaderboard settings for ${issuer}/${wpUserId}`);
+    return await getLeaderboardSettings(issuer, wpUserId);
+  } catch (e) {
+    console.error("[userStore] Failed to update leaderboard settings:", e.message);
+    throw e;
+  }
+}
+
+/**
+ * Get display name for leaderboard (respects show_screen_name preference)
+ */
+export async function getLeaderboardDisplayName(userId) {
+  if (!isDbAvailable()) {
+    return null;
+  }
+
+  const pool = getPool();
+
+  try {
+    const [rows] = await pool.execute(
+      "SELECT display_name, screen_name, show_screen_name FROM users WHERE id = ?",
+      [userId]
+    );
+
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const user = rows[0];
+    if (user.show_screen_name && user.screen_name) {
+      return user.screen_name;
+    }
+    return user.display_name || "Anonymous";
+  } catch (e) {
+    console.error("[userStore] Failed to get leaderboard display name:", e.message);
+    return null;
+  }
+}
