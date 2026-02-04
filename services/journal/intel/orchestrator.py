@@ -3512,18 +3512,22 @@ class JournalOrchestrator:
         return raw / 4.0
 
     def _calculate_performance_score(
-        self, win_rate: float, avg_r: float, pnl: int, pnl_percentile: float, closed_trades: int, min_trades: int
+        self, win_rate, avg_r, pnl, pnl_percentile: float, closed_trades: int, min_trades: int
     ) -> float:
         """Calculate performance score (0-50)."""
         if closed_trades < min_trades:
             return 0.0
+
+        # Convert to float to handle Decimal from DB
+        win_rate = float(win_rate) if win_rate else 0.0
+        avg_r = float(avg_r) if avg_r else 0.0
 
         # Win rate: 0-100% maps to 0-20 points
         win_rate_pts = min(win_rate / 100 * 20, 20)
 
         # Avg R-Multiple: -2 to +3 maps to 0-17.5 points
         # Clamp to reasonable range and normalize
-        r_clamped = max(-2, min(3, avg_r))
+        r_clamped = max(-2.0, min(3.0, avg_r))
         r_normalized = (r_clamped + 2) / 5  # 0 to 1
         r_pts = r_normalized * 17.5
 
