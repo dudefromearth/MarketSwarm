@@ -243,7 +243,7 @@ export default function ObserverPanel() {
           >
             <div className="commentary-msg-header">
               <span className="commentary-category-icon">{getIcon(msg)}</span>
-              {msg.type === 'vexy' && msg.meta?.epoch && (
+              {msg.type === 'vexy' && msg.meta?.epoch != null && (
                 <span className="commentary-epoch-label">{String(msg.meta.epoch)}</span>
               )}
               {msg.type === 'alert' && (

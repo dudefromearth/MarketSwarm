@@ -28,7 +28,7 @@ import SettingsModal from './components/SettingsModal';
 import JournalView from './components/JournalView';
 import PlaybookView from './components/PlaybookView';
 import AlertCreationModal, { type EditingAlertData } from './components/AlertCreationModal';
-import RiskGraphPanel, { type RiskGraphPanelHandle } from './components/RiskGraphPanel';
+import RiskGraphPanel from './components/RiskGraphPanel';
 import TosImportModal from './components/TosImportModal';
 import StrategyEditModal, { type StrategyData } from './components/StrategyEditModal';
 import type { ParsedStrategy } from './utils/tosParser';
@@ -129,6 +129,7 @@ interface SelectedStrategy {
   dte: number;
   expiration: string;
   debit: number | null;
+  symbol?: string;  // Underlying symbol (SPX, NDX, etc.)
 }
 
 interface RiskGraphStrategy extends SelectedStrategy {
@@ -174,48 +175,6 @@ interface PriceAlertLine {
   color: string;
   label?: string;
   createdAt: number;
-}
-
-
-// Gaussian smoothing for volume profile
-function gaussianSmooth(data: number[], kernelSize: number = 5): number[] {
-  if (data.length === 0) return data;
-
-  // Generate Gaussian kernel
-  const sigma = kernelSize / 4;
-  const kernel: number[] = [];
-  let kernelSum = 0;
-  const halfSize = Math.floor(kernelSize / 2);
-
-  for (let i = -halfSize; i <= halfSize; i++) {
-    const value = Math.exp(-(i * i) / (2 * sigma * sigma));
-    kernel.push(value);
-    kernelSum += value;
-  }
-
-  // Normalize kernel
-  for (let i = 0; i < kernel.length; i++) {
-    kernel[i] /= kernelSum;
-  }
-
-  // Apply convolution
-  const result: number[] = [];
-  for (let i = 0; i < data.length; i++) {
-    let sum = 0;
-    for (let j = 0; j < kernel.length; j++) {
-      const dataIndex = i + j - halfSize;
-      if (dataIndex >= 0 && dataIndex < data.length) {
-        sum += data[dataIndex] * kernel[j];
-      } else {
-        // Edge handling: use nearest value
-        const clampedIndex = Math.max(0, Math.min(data.length - 1, dataIndex));
-        sum += data[clampedIndex] * kernel[j];
-      }
-    }
-    result.push(sum);
-  }
-
-  return result;
 }
 
 /**

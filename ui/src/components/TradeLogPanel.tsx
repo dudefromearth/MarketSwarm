@@ -521,7 +521,8 @@ export default function TradeLogPanel({
                           onClick={(e) => {
                             e.stopPropagation();
                             onOpenJournal({
-                              tradeId: trade.id,
+                              trade,
+                              log: selectedLog!,
                               symbol: trade.symbol,
                               strategy: trade.strategy,
                               side: trade.side,
