@@ -1,6 +1,10 @@
 {
   "version": "3.1",
   "description": "Truth: Host-based Redis topology for MarketSwarm stack. Canonical configuration for all services.",
+  "node": {
+    "name": "marketswarm-local",
+    "env": "dev"
+  },
   "buses": {
     "system-redis": {
       "url": "redis://127.0.0.1:6379",
@@ -48,6 +52,12 @@
       "workflow": {
         "interval_sec": 600,
         "publish_dir": "/Users/ernie/Sites/feeds"
+      },
+      "env": {
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+        "ENRICHMENT_MODEL": "gpt-4o",
+        "LLM_MODE": "online",
+        "PIPELINE_MODE": "full"
       },
       "dependencies": []
     },
@@ -233,6 +243,8 @@
       ],
       "dependencies": [],
       "env": {
+        "MASSIVE_RUN_MODE": "direct",
+        "MASSIVE_WS_ENABLED": "true",
         "MASSIVE_API_KEY": "pdjraOWSpDbg3ER_RslZYe3dmn4Y7WCC",
         "MASSIVE_WS_HYDRATE_MAX_DTE": "4",
         "MASSIVE_HEATMAP_MAX_DTE": "10",
@@ -275,7 +287,9 @@
         "MASSIVE_WIDTHS_SPX": "20,25,30,35,40,45,50",
         "MASSIVE_WIDTHS_NDX": "50,60,70,80,100,120,130",
         "MASSIVE_DEBUG_ENABLED": "true",
-        "MASSIVE_DEBUG_CHAIN_INTERVAL_SEC": "5"
+        "MASSIVE_DEBUG_CHAIN_INTERVAL_SEC": "5",
+        "MASSIVE_SPOT_TRAIL_WINDOW_SEC": "604800",
+        "MASSIVE_SPOT_TRAIL_TTL_SEC": "691200"
       }
     },
     "vexy_ai": {
@@ -925,13 +939,25 @@
         "subscribe_to": [
           {
             "bus": "market-redis",
-            "key": "massive:spot"
+            "key": "massive:spot",
+            "description": "Live spot prices"
+          },
+          {
+            "bus": "intel-redis",
+            "key": "copilot:alerts:analytics",
+            "description": "Alert analytics from Copilot for collection"
           }
         ],
         "publish_to": [
           {
             "bus": "system-redis",
-            "key": "journal:heartbeat"
+            "key": "journal:heartbeat",
+            "description": "Service heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "alerts:sync",
+            "description": "Alert sync notifications to Copilot"
           }
         ]
       },
@@ -979,6 +1005,11 @@
             "bus": "market-redis",
             "key": "massive:heatmap:model:{symbol}:latest",
             "description": "Heatmap tile data"
+          },
+          {
+            "bus": "system-redis",
+            "key": "alerts:sync",
+            "description": "Alert sync notifications from Journal"
           }
         ],
         "publish_to": [
@@ -1021,6 +1052,11 @@
             "bus": "market-redis",
             "key": "copilot:alerts:{id}",
             "description": "Individual alert data by ID"
+          },
+          {
+            "bus": "intel-redis",
+            "key": "copilot:alerts:analytics",
+            "description": "Alert engine analytics and metrics"
           }
         ]
       },
@@ -1079,7 +1115,9 @@
         "COPILOT_COMMENTARY_RATE_LIMIT": "10",
         "COPILOT_ALERTS_FAST_LOOP_MS": "1000",
         "COPILOT_ALERTS_SLOW_LOOP_MS": "5000",
-        "DEBUG_COPILOT": "false"
+        "DEBUG_COPILOT": "false",
+        "OPENAI_API_KEY": "",
+        "CONVEXITY_ASSISTANT_ID": "asst_yNLi7GCN2q2TkixGLiDYLxwP"
       },
       "mel": {
         "weights": {
@@ -1110,14 +1148,15 @@
         "rateLimitPerMinute": 10
       },
       "alerts": {
-        "provider": "anthropic",
+        "provider": "openai",
         "fastLoopIntervalMs": 1000,
         "slowLoopIntervalMs": 5000,
         "maxAlertsPerUser": 50,
         "keys": {
           "events": "copilot:alerts:events",
           "latest": "copilot:alerts:latest",
-          "alertPrefix": "copilot:alerts"
+          "alertPrefix": "copilot:alerts",
+          "analytics": "copilot:alerts:analytics"
         },
         "roleGating": {
           "price": [

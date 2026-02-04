@@ -1,14 +1,19 @@
 /**
- * PathIndicator - FOTW Path Stage Indicator
+ * PathIndicator - FOTW Butterfly Avatar
  *
- * A quiet, persistent indicator showing the 5-stage path.
- * Layer 1: Collapsed view with dots and current stage name
- * Layer 2: Expanded panel with full stage content
+ * A quiet, ambient presence in the bottom-right corner.
+ * ~0.5" diameter stylized butterfly bubble.
  *
- * Design principles:
- * - Informs without interrupting
- * - Reminds without nagging
- * - Preserves user sovereignty
+ * Behavior:
+ * - Dim when idle (~0.35 opacity)
+ * - Brightens when mouse gets close (~0.7)
+ * - Full opacity on hover (1.0)
+ * - Click to expand the path panel
+ *
+ * After welcome modal:
+ * - Fades in gently after a pause
+ * - No motion, no greeting
+ * - The silence is the point
  */
 
 import { useState } from 'react';
@@ -21,9 +26,21 @@ import {
 } from '../constants/pathContent';
 
 export default function PathIndicator() {
-  const { currentStage, expanded, toggleExpanded, setExpanded } = usePath();
+  const {
+    currentStage,
+    expanded,
+    toggleExpanded,
+    setExpanded,
+    indicatorVisible,
+    transitionPhase,
+  } = usePath();
   const [selectedStage, setSelectedStage] = useState<Stage>(currentStage);
   const [videoOpen, setVideoOpen] = useState(false);
+
+  // Don't render until indicator should be visible
+  if (!indicatorVisible) {
+    return null;
+  }
 
   // When expanding, show the current stage
   const handleExpand = () => {
@@ -41,6 +58,9 @@ export default function PathIndicator() {
 
   // Get stage content
   const stageContent = STAGES[selectedStage];
+
+  // Determine fade-in class
+  const fadeClass = transitionPhase === 'fading-in' ? ' fading-in' : '';
 
   if (expanded) {
     return (
@@ -141,29 +161,81 @@ export default function PathIndicator() {
     );
   }
 
-  // Collapsed view
+  // Collapsed view - butterfly avatar bubble
   return (
     <div
-      className="path-indicator path-indicator-collapsed"
+      className={`path-avatar${fadeClass}`}
       onClick={handleExpand}
-      title="Click to expand path guide"
     >
-      {/* Stage dots */}
-      <div className="path-dots">
-        {STAGE_ORDER.map((stage, index) => (
-          <span key={stage}>
-            <span className={`path-dot${currentStage === stage ? ' active' : ''}`}>
-              {STAGES[stage].icon}
-            </span>
-            {index < STAGE_ORDER.length - 1 && <span className="path-connector" />}
-          </span>
-        ))}
-      </div>
-
-      {/* Current stage name */}
-      <div className="path-stage-name">
-        You're in {STAGES[currentStage].title}
-      </div>
+      <svg
+        viewBox="0 0 48 48"
+        className="path-avatar-svg"
+        aria-label="Path guide"
+      >
+        {/* Stylized butterfly - abstract, geometric */}
+        <g className="butterfly-shape">
+          {/* Left wing */}
+          <ellipse
+            cx="18"
+            cy="24"
+            rx="10"
+            ry="14"
+            fill="currentColor"
+            opacity="0.6"
+          />
+          {/* Right wing */}
+          <ellipse
+            cx="30"
+            cy="24"
+            rx="10"
+            ry="14"
+            fill="currentColor"
+            opacity="0.6"
+          />
+          {/* Body */}
+          <ellipse
+            cx="24"
+            cy="24"
+            rx="3"
+            ry="12"
+            fill="currentColor"
+            opacity="0.9"
+          />
+          {/* Wing details - subtle curves */}
+          <ellipse
+            cx="16"
+            cy="20"
+            rx="4"
+            ry="5"
+            fill="currentColor"
+            opacity="0.3"
+          />
+          <ellipse
+            cx="32"
+            cy="20"
+            rx="4"
+            ry="5"
+            fill="currentColor"
+            opacity="0.3"
+          />
+          <ellipse
+            cx="16"
+            cy="28"
+            rx="3"
+            ry="4"
+            fill="currentColor"
+            opacity="0.25"
+          />
+          <ellipse
+            cx="32"
+            cy="28"
+            rx="3"
+            ry="4"
+            fill="currentColor"
+            opacity="0.25"
+          />
+        </g>
+      </svg>
     </div>
   );
 }

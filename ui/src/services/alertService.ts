@@ -22,18 +22,23 @@ const COPILOT_API_BASE = 'http://localhost:8095';  // AI evaluations
 
 /**
  * Parse numeric fields from API response (database returns strings for DECIMAL)
+ * Uses 'any' assertion because Alert is a discriminated union and not all types have all fields
  */
 function parseAlertNumericFields(alert: Alert): Alert {
-  return {
-    ...alert,
-    targetValue: alert.targetValue != null ? Number(alert.targetValue) : undefined,
-    entryDebit: alert.entryDebit != null ? Number(alert.entryDebit) : undefined,
-    minProfitThreshold: alert.minProfitThreshold != null ? Number(alert.minProfitThreshold) : undefined,
-    zoneLow: alert.zoneLow != null ? Number(alert.zoneLow) : undefined,
-    zoneHigh: alert.zoneHigh != null ? Number(alert.zoneHigh) : undefined,
-    aiConfidence: alert.aiConfidence != null ? Number(alert.aiConfidence) : undefined,
-    highWaterMark: alert.highWaterMark != null ? Number(alert.highWaterMark) : undefined,
-  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const a = alert as any;
+  const result = { ...a };
+
+  // Convert numeric fields if they exist
+  if (a.targetValue != null) result.targetValue = Number(a.targetValue);
+  if (a.entryDebit != null) result.entryDebit = Number(a.entryDebit);
+  if (a.minProfitThreshold != null) result.minProfitThreshold = Number(a.minProfitThreshold);
+  if (a.zoneLow != null) result.zoneLow = Number(a.zoneLow);
+  if (a.zoneHigh != null) result.zoneHigh = Number(a.zoneHigh);
+  if (a.aiConfidence != null) result.aiConfidence = Number(a.aiConfidence);
+  if (a.highWaterMark != null) result.highWaterMark = Number(a.highWaterMark);
+
+  return result as Alert;
 }
 
 // Response wrapper

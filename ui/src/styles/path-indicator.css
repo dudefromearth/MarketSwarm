@@ -1,79 +1,81 @@
 /**
  * FOTW Path Indicator Styles
  *
- * Design principles:
- * - Quiet and persistent, not attention-grabbing
- * - Semi-transparent when collapsed
- * - Full opacity when expanded
- * - Never blocks or interrupts
+ * Butterfly avatar - a quiet, ambient presence
+ * ~0.5" diameter (~48px), bottom-right corner
+ *
+ * Behavior:
+ * - Dim when idle (~0.35 opacity)
+ * - Brightens when mouse approaches
+ * - Full opacity on direct hover
+ * - Click to expand path panel
+ *
+ * Transition:
+ * - Teaser appears briefly in welcome modal
+ * - Reappears as handoff cue before modal fades
+ * - Fades into dashboard corner after pause
+ * - The silence is the point
  */
 
 /* ============================================
-   Layer 1: Floating Path Indicator (Collapsed)
+   Butterfly Avatar (Collapsed State)
+   ============================================ */
+
+.path-avatar {
+  position: fixed;
+  bottom: 48px;
+  right: 48px;
+  z-index: 100;
+  width: 78px;
+  height: 78px;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.3s ease, transform 0.3s ease, filter 0.3s ease;
+  color: rgba(150, 175, 220, 1);
+  filter: drop-shadow(-4px 2px 6px rgba(0, 0, 0, 0.5));
+}
+
+.path-avatar:hover {
+  opacity: 1;
+  transform: scale(1.12) translateY(-3px);
+  filter: drop-shadow(-5px 4px 10px rgba(0, 0, 0, 0.4));
+}
+
+/* Subtle brightening when mouse is nearby (via CSS proximity hack isn't possible,
+   but the hover transition is smooth enough) */
+
+.path-avatar-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Fade-in animation for avatar appearing after welcome */
+.path-avatar.fading-in {
+  animation: avatarFadeIn 700ms ease-out forwards;
+}
+
+@keyframes avatarFadeIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0.7;
+  }
+}
+
+/* ============================================
+   Expanded Panel (from bottom-right)
    ============================================ */
 
 .path-indicator {
   position: fixed;
-  bottom: 16px;
-  left: 16px;
+  bottom: 20px;
+  right: 20px;
   z-index: 100;
   font-family: 'SF Mono', 'Menlo', 'Monaco', monospace;
   font-size: 11px;
-  transition: all 0.2s ease;
 }
-
-.path-indicator-collapsed {
-  background: rgba(20, 20, 22, 0.85);
-  border: 1px solid rgba(60, 60, 70, 0.6);
-  border-radius: 8px;
-  padding: 10px 14px;
-  cursor: pointer;
-  opacity: 0.7;
-  backdrop-filter: blur(8px);
-  min-width: 180px;
-}
-
-.path-indicator-collapsed:hover {
-  opacity: 1;
-  border-color: rgba(80, 80, 90, 0.8);
-  background: rgba(25, 25, 28, 0.95);
-}
-
-/* Stage dots row */
-.path-dots {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-bottom: 6px;
-}
-
-.path-dot {
-  font-size: 14px;
-  opacity: 0.4;
-  transition: opacity 0.2s;
-}
-
-.path-dot.active {
-  opacity: 1;
-}
-
-.path-connector {
-  width: 12px;
-  height: 1px;
-  background: rgba(100, 100, 110, 0.4);
-}
-
-/* Stage name */
-.path-stage-name {
-  color: rgba(180, 180, 190, 0.9);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-/* ============================================
-   Layer 2: Expanded Panel
-   ============================================ */
 
 .path-indicator-expanded {
   background: rgba(18, 18, 20, 0.98);
@@ -296,7 +298,7 @@
 }
 
 /* ============================================
-   Layer 3: Welcome Tour Modal
+   Welcome Tour Modal
    ============================================ */
 
 .welcome-tour-overlay {
@@ -308,6 +310,11 @@
   align-items: center;
   justify-content: center;
   backdrop-filter: blur(4px);
+  transition: opacity 300ms ease-out;
+}
+
+.welcome-tour-overlay.fading-out {
+  opacity: 0;
 }
 
 .welcome-tour-modal {
@@ -319,6 +326,13 @@
   max-height: 90vh;
   overflow: hidden;
   box-shadow: 0 16px 64px rgba(0, 0, 0, 0.5);
+  position: relative;
+  transition: opacity 300ms ease-out, transform 300ms ease-out;
+}
+
+.welcome-tour-modal.fading-out {
+  opacity: 0;
+  transform: scale(0.98);
 }
 
 .welcome-tour-content {
@@ -404,15 +418,80 @@
   background: #2563eb;
 }
 
-.welcome-tour-btn.secondary {
-  background: transparent;
-  border: 1px solid rgba(100, 100, 110, 0.5);
-  color: rgba(180, 180, 190, 0.9);
+.welcome-tour-btn.primary:disabled {
+  background: #3b82f6;
+  cursor: default;
 }
 
-.welcome-tour-btn.secondary:hover {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(120, 120, 130, 0.6);
+/* ============================================
+   Butterfly in Welcome Modal
+   ============================================ */
+
+/* Teaser: butterfly appears briefly then fades */
+.welcome-butterfly-teaser {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  color: rgba(140, 160, 200, 1);
+  pointer-events: none;
+  animation: teaserFadeIn 500ms ease-out forwards;
+}
+
+.welcome-butterfly-teaser.fading {
+  animation: teaserFadeOut 500ms ease-out forwards;
+}
+
+@keyframes teaserFadeIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 0.65;
+    transform: scale(1);
+  }
+}
+
+@keyframes teaserFadeOut {
+  0% {
+    opacity: 0.65;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.teaser-butterfly-svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* Handoff: butterfly reappears before modal fades */
+.welcome-butterfly-handoff {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  width: 44px;
+  height: 44px;
+  color: rgba(140, 160, 200, 1);
+  pointer-events: none;
+  animation: handoffFadeIn 300ms ease-out forwards;
+}
+
+@keyframes handoffFadeIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0.75;
+  }
+}
+
+.handoff-butterfly-svg {
+  width: 100%;
+  height: 100%;
 }
 
 /* ============================================
@@ -422,7 +501,6 @@
 @media (max-width: 480px) {
   .path-indicator-expanded {
     width: calc(100vw - 32px);
-    left: 16px;
     right: 16px;
   }
 
@@ -432,5 +510,11 @@
 
   .welcome-tour-content {
     padding: 24px;
+  }
+
+  .path-avatar {
+    width: 60px;
+    height: 60px;
+    bottom: 12px;
   }
 }

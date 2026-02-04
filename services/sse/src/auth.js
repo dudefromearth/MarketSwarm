@@ -167,7 +167,7 @@ export function isAdmin(user) {
   if (!user) return false;
   if (user.is_admin === true) return true;
   const roles = user?.wp?.roles || user?.roles || [];
-  return Array.isArray(roles) && roles.includes("administrator");
+  return Array.isArray(roles) && (roles.includes("administrator") || roles.includes("admin"));
 }
 
 /**

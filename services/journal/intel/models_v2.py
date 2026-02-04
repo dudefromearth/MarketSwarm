@@ -642,6 +642,22 @@ class Alert:
     # Trailing stop specific
     high_water_mark: Optional[float] = None
 
+    # Butterfly entry detection
+    entry_support_type: Optional[str] = None  # gex|hvn|poc|val|zero_gamma
+    entry_support_level: Optional[float] = None
+    entry_reversal_confirmed: bool = False
+    entry_target_strike: Optional[float] = None
+    entry_target_width: Optional[int] = None
+
+    # Butterfly profit management
+    mgmt_activation_threshold: Optional[float] = None  # default 0.75
+    mgmt_high_water_mark: Optional[float] = None
+    mgmt_initial_dte: Optional[int] = None
+    mgmt_initial_gamma: Optional[float] = None
+    mgmt_risk_score: Optional[float] = None
+    mgmt_recommendation: Optional[str] = None  # HOLD|EXIT|TIGHTEN
+    mgmt_last_assessment: Optional[str] = None
+
     # State
     enabled: bool = True
     triggered: bool = False
@@ -666,6 +682,7 @@ class Alert:
         d = asdict(self)
         d['enabled'] = 1 if d['enabled'] else 0
         d['triggered'] = 1 if d['triggered'] else 0
+        d['entry_reversal_confirmed'] = 1 if d['entry_reversal_confirmed'] else 0
         return d
 
     @classmethod
@@ -677,6 +694,8 @@ class Alert:
             d['enabled'] = bool(d['enabled'])
         if 'triggered' in d:
             d['triggered'] = bool(d['triggered'])
+        if 'entry_reversal_confirmed' in d:
+            d['entry_reversal_confirmed'] = bool(d['entry_reversal_confirmed'])
         return cls(**d)
 
     def to_api_dict(self) -> dict:
@@ -700,6 +719,21 @@ class Alert:
             'aiConfidence': self.ai_confidence,
             'aiReasoning': self.ai_reasoning,
             'highWaterMark': self.high_water_mark,
+            # Butterfly entry detection
+            'entrySupportType': self.entry_support_type,
+            'entrySupportLevel': self.entry_support_level,
+            'entryReversalConfirmed': self.entry_reversal_confirmed,
+            'entryTargetStrike': self.entry_target_strike,
+            'entryTargetWidth': self.entry_target_width,
+            # Butterfly profit management
+            'mgmtActivationThreshold': self.mgmt_activation_threshold,
+            'mgmtHighWaterMark': self.mgmt_high_water_mark,
+            'mgmtInitialDte': self.mgmt_initial_dte,
+            'mgmtInitialGamma': self.mgmt_initial_gamma,
+            'mgmtRiskScore': self.mgmt_risk_score,
+            'mgmtRecommendation': self.mgmt_recommendation,
+            'mgmtLastAssessment': self.mgmt_last_assessment,
+            # State
             'enabled': self.enabled,
             'triggered': self.triggered,
             'triggerCount': self.trigger_count,

@@ -68,18 +68,19 @@ async def main():
 
     # -------------------------------------------------
     # Start orchestrator (async)
+    # The orchestrator handles SIGINT/SIGTERM internally
+    # and performs graceful shutdown via stop_event
     # -------------------------------------------------
-    orch_task = asyncio.create_task(
-        orchestrator_run(config, logger),
-        name=f"{SERVICE_NAME}-orchestrator",
-    )
-
     try:
-        await orch_task
-        logger.warn("orchestrator exited unexpectedly", emoji="⚠️")
+        await orchestrator_run(config, logger)
+        # Orchestrator exited normally (via signal handler)
+        logger.ok("shutdown complete", emoji="✅")
+    except asyncio.CancelledError:
+        logger.info("orchestrator cancelled", emoji="🛑")
     finally:
         # Always stop heartbeat thread
         hb_stop.set()
+        logger.info("heartbeat stopped", emoji="💓")
 
 
 # ------------------------------------------------------------
@@ -89,4 +90,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Shutting down gracefully…")
+        print("\nShutdown complete.")

@@ -20,9 +20,20 @@ from datetime import datetime
 from openai import OpenAI
 
 # ------------------------------------------------------------
-# LLM Client
+# LLM Client (lazy initialization)
 # ------------------------------------------------------------
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+_client = None
+
+
+def get_client():
+    """Get OpenAI client, initializing lazily on first use."""
+    global _client
+    if _client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY environment variable not set")
+        _client = OpenAI(api_key=api_key)
+    return _client
 
 # ------------------------------------------------------------
 # Logging helper
@@ -128,7 +139,7 @@ def generate_tier3_metadata(raw_text: str, title: str, fallback_image: str = "")
     try:
         content = f"TITLE:\n{title}\n\nMARKDOWN ARTICLE CONTENT:\n{raw_text}\n\nFALLBACK IMAGE:\n{fallback_image}"
 
-        response = client.chat.completions.create(
+        response = get_client().chat.completions.create(
             model=os.getenv("ENRICHMENT_MODEL", "gpt-4o"),
             messages=[
                 {"role": "system", "content": TIER3_PROMPT},

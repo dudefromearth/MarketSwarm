@@ -12,14 +12,23 @@ from typing import Any, Dict, Optional
 
 import redis
 
-# Lazy connection — initialized on first publish
+# Lazy connection — initialized on first publish or via init()
 _r_market: Optional[redis.Redis] = None
+_market_url: Optional[str] = None
+
+
+def init(market_url: str) -> None:
+    """Initialize publisher with market Redis URL from config."""
+    global _market_url, _r_market
+    _market_url = market_url
+    _r_market = None  # Reset connection to use new URL
+    _log("init", "🔌", f"Publisher initialized with {market_url}")
 
 
 def _get_redis() -> redis.Redis:
     global _r_market
     if _r_market is None:
-        url = os.getenv("MARKET_REDIS_URL", "redis://127.0.0.1:6380")
+        url = _market_url or os.getenv("MARKET_REDIS_URL", "redis://127.0.0.1:6380")
         _r_market = redis.Redis.from_url(url, decode_responses=True)
     return _r_market
 

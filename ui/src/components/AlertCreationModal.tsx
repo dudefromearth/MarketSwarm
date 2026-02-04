@@ -1,10 +1,11 @@
 // src/components/AlertCreationModal.tsx
 import { useState, useEffect } from 'react';
 import '../styles/alert-modal.css';
-import type { AlertType, AlertCondition, AlertBehavior } from '../types/alerts';
+import type { AlertType, AlertCondition, AlertBehavior, SupportType } from '../types/alerts';
+import ButterflyEntryAlertCreator from './ButterflyEntryAlertCreator';
 
 // Alert types supported by this modal UI (subset of all AlertType)
-type SupportedAlertType = 'price' | 'debit' | 'profit_target' | 'trailing_stop' | 'ai_theta_gamma';
+type SupportedAlertType = 'price' | 'debit' | 'profit_target' | 'trailing_stop' | 'ai_theta_gamma' | 'butterfly_entry' | 'butterfly_profit_mgmt';
 
 // Conditions supported by this modal UI (subset of AlertCondition)
 type SupportedCondition = 'above' | 'below' | 'at';
@@ -31,6 +32,13 @@ interface AlertCreationModalProps {
     color: string;
     behavior: AlertBehavior;
     minProfitThreshold?: number;
+    // Butterfly entry specific
+    supportTypes?: SupportType[];
+    minMarketModeScore?: number;
+    minLfiScore?: number;
+    label?: string;
+    // Butterfly profit mgmt specific
+    mgmtActivationThreshold?: number;
   }) => void;
   strategyLabel: string;
   currentSpot: number | null;
@@ -49,6 +57,8 @@ const ALERT_COLORS = [
 
 const ALERT_TYPES: { value: SupportedAlertType; label: string; description: string }[] = [
   { value: 'ai_theta_gamma', label: 'AI Theta/Gamma', description: 'Dynamic safe zone based on theta decay and gamma risk' },
+  { value: 'butterfly_entry', label: 'Butterfly Entry', description: 'Detect support + reversal for OTM butterfly entries' },
+  { value: 'butterfly_profit_mgmt', label: 'Butterfly Profit', description: 'Track HWM, assess risk, recommend EXIT/HOLD' },
   { value: 'price', label: 'Spot Price', description: 'Alert when underlying price crosses a level' },
   { value: 'profit_target', label: 'Profit Target', description: 'Alert when position profit reaches target' },
   { value: 'trailing_stop', label: 'Trailing Stop', description: 'Alert that follows profit and triggers on pullback' },
@@ -75,7 +85,7 @@ export default function AlertCreationModal({
 
   // Supported types/conditions for this modal UI
   const isSupportedType = (t: AlertType): t is SupportedAlertType =>
-    ['price', 'debit', 'profit_target', 'trailing_stop', 'ai_theta_gamma'].includes(t);
+    ['price', 'debit', 'profit_target', 'trailing_stop', 'ai_theta_gamma', 'butterfly_entry', 'butterfly_profit_mgmt'].includes(t);
   const isSupportedCondition = (c: AlertCondition): c is SupportedCondition =>
     ['above', 'below', 'at'].includes(c);
 
@@ -116,8 +126,8 @@ export default function AlertCreationModal({
   if (!isOpen) return null;
 
   const handleSave = () => {
-    const value = type === 'ai_theta_gamma' ? 0 : parseFloat(targetValue);
-    if (type === 'ai_theta_gamma' || !isNaN(value)) {
+    const value = type === 'ai_theta_gamma' || type === 'butterfly_entry' || type === 'butterfly_profit_mgmt' ? 0 : parseFloat(targetValue);
+    if (type === 'ai_theta_gamma' || type === 'butterfly_entry' || type === 'butterfly_profit_mgmt' || !isNaN(value)) {
       onSave({
         id: editingAlert?.id, // Include id when editing
         type,
@@ -126,9 +136,33 @@ export default function AlertCreationModal({
         color,
         behavior,
         minProfitThreshold: type === 'ai_theta_gamma' ? parseFloat(minProfitThreshold) / 100 : undefined,
+        mgmtActivationThreshold: type === 'butterfly_profit_mgmt' ? parseFloat(minProfitThreshold) / 100 : undefined,
       });
       onClose();
     }
+  };
+
+  // Handler for butterfly entry alert creation
+  const handleButterflyEntrySave = (config: {
+    supportTypes: SupportType[];
+    minMarketModeScore: number;
+    minLfiScore: number;
+    behavior: AlertBehavior;
+    color: string;
+    label?: string;
+  }) => {
+    onSave({
+      type: 'butterfly_entry',
+      condition: 'at', // Not used for butterfly entry
+      targetValue: 0,  // Not used for butterfly entry
+      color: config.color,
+      behavior: config.behavior,
+      supportTypes: config.supportTypes,
+      minMarketModeScore: config.minMarketModeScore,
+      minLfiScore: config.minLfiScore,
+      label: config.label,
+    });
+    onClose();
   };
 
   const isEditing = !!editingAlert;
@@ -167,9 +201,17 @@ export default function AlertCreationModal({
           </div>
 
           {/* Type-specific settings */}
-          {type === 'ai_theta_gamma' ? (
+          {type === 'butterfly_entry' ? (
+            <ButterflyEntryAlertCreator
+              onSave={handleButterflyEntrySave}
+              onCancel={onClose}
+              strategyLabel={strategyLabel}
+            />
+          ) : type === 'ai_theta_gamma' || type === 'butterfly_profit_mgmt' ? (
             <div className="alert-settings-section">
-              <label className="alert-label">Activation Threshold</label>
+              <label className="alert-label">
+                {type === 'butterfly_profit_mgmt' ? 'Profit Activation Threshold' : 'Activation Threshold'}
+              </label>
               <div className="alert-threshold-row">
                 <input
                   type="number"
@@ -180,10 +222,12 @@ export default function AlertCreationModal({
                   step="5"
                   className="alert-input"
                 />
-                <span className="alert-input-suffix">% of debit profit to activate zone</span>
+                <span className="alert-input-suffix">% of debit profit to activate</span>
               </div>
               <p className="alert-help">
-                Zone appears when profit exceeds this threshold. Alerts when price exits the safe zone.
+                {type === 'butterfly_profit_mgmt'
+                  ? 'Profit management activates when profit exceeds this threshold. Tracks HWM and assesses exit risk.'
+                  : 'Zone appears when profit exceeds this threshold. Alerts when price exits the safe zone.'}
               </p>
             </div>
           ) : (
@@ -214,40 +258,47 @@ export default function AlertCreationModal({
             </div>
           )}
 
-          {/* Color Selection */}
-          <div className="alert-settings-section">
-            <label className="alert-label">Color</label>
-            <div className="alert-color-grid">
-              {ALERT_COLORS.map(c => (
-                <button
-                  key={c}
-                  className={`alert-color-btn ${color === c ? 'selected' : ''}`}
-                  style={{ backgroundColor: c }}
-                  onClick={() => setColor(c)}
-                />
-              ))}
-            </div>
-          </div>
+          {/* Color Selection - hide for butterfly_entry since it has its own */}
+          {type !== 'butterfly_entry' && (
+            <>
+              <div className="alert-settings-section">
+                <label className="alert-label">Color</label>
+                <div className="alert-color-grid">
+                  {ALERT_COLORS.map(c => (
+                    <button
+                      key={c}
+                      className={`alert-color-btn ${color === c ? 'selected' : ''}`}
+                      style={{ backgroundColor: c }}
+                      onClick={() => setColor(c)}
+                    />
+                  ))}
+                </div>
+              </div>
 
-          {/* Behavior Selection */}
-          <div className="alert-settings-section">
-            <label className="alert-label">When Triggered</label>
-            <select
-              value={behavior}
-              onChange={(e) => setBehavior(e.target.value as AlertBehavior)}
-              className="alert-select full-width"
-            >
-              <option value="remove_on_hit">Remove alert after triggered</option>
-              <option value="once_only">Alert once, keep visible</option>
-              <option value="repeat">Alert every time price crosses</option>
-            </select>
-          </div>
+              {/* Behavior Selection */}
+              <div className="alert-settings-section">
+                <label className="alert-label">When Triggered</label>
+                <select
+                  value={behavior}
+                  onChange={(e) => setBehavior(e.target.value as AlertBehavior)}
+                  className="alert-select full-width"
+                >
+                  <option value="remove_on_hit">Remove alert after triggered</option>
+                  <option value="once_only">Alert once, keep visible</option>
+                  <option value="repeat">Alert every time price crosses</option>
+                </select>
+              </div>
+            </>
+          )}
         </div>
 
-        <div className="alert-modal-footer">
-          <button className="alert-btn-cancel" onClick={onClose}>Cancel</button>
-          <button className="alert-btn-save" onClick={handleSave}>{isEditing ? 'Save Alert' : 'Create Alert'}</button>
-        </div>
+        {/* Footer - hide for butterfly_entry since it has its own */}
+        {type !== 'butterfly_entry' && (
+          <div className="alert-modal-footer">
+            <button className="alert-btn-cancel" onClick={onClose}>Cancel</button>
+            <button className="alert-btn-save" onClick={handleSave}>{isEditing ? 'Save Alert' : 'Create Alert'}</button>
+          </div>
+        )}
       </div>
     </div>
   );

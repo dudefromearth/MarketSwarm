@@ -30,7 +30,7 @@ export async function upsertUserFromWpToken(wpTokenPayload) {
   const email = (wpTokenPayload.email || "").trim();
   const displayName = (wpTokenPayload.name || "").trim();
   const roles = safeRoles(wpTokenPayload.roles);
-  const isAdmin = wpTokenPayload.is_admin === true || roles.includes("administrator");
+  const isAdmin = wpTokenPayload.is_admin === true || roles.includes("administrator") || roles.includes("admin");
   const subscriptionTier = (wpTokenPayload.subscription_tier || "").trim() || null;
 
   if (!issuer || !wpUserId || !email) {

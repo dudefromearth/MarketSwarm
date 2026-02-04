@@ -18,7 +18,7 @@ from .models_v2 import (
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 10
+    SCHEMA_VERSION = 11
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -197,6 +197,9 @@ class JournalDBv2:
 
             if current_version < 10:
                 self._migrate_to_v10(conn)
+
+            if current_version < 11:
+                self._migrate_to_v11(conn)
 
             conn.commit()
         finally:
@@ -795,6 +798,36 @@ class JournalDBv2:
                 """)
 
             self._set_schema_version(conn, 10)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v11(self, conn):
+        """Migrate to v11: Add butterfly entry detection and profit management fields to alerts."""
+        cursor = conn.cursor()
+        try:
+            # Entry detection fields
+            cursor.execute("""
+                ALTER TABLE alerts
+                ADD COLUMN entry_support_type VARCHAR(20),
+                ADD COLUMN entry_support_level DECIMAL(10,4),
+                ADD COLUMN entry_reversal_confirmed TINYINT DEFAULT 0,
+                ADD COLUMN entry_target_strike DECIMAL(10,4),
+                ADD COLUMN entry_target_width INT
+            """)
+
+            # Profit management fields
+            cursor.execute("""
+                ALTER TABLE alerts
+                ADD COLUMN mgmt_activation_threshold DECIMAL(5,4) DEFAULT 0.75,
+                ADD COLUMN mgmt_high_water_mark DECIMAL(12,4),
+                ADD COLUMN mgmt_initial_dte INT,
+                ADD COLUMN mgmt_initial_gamma DECIMAL(12,8),
+                ADD COLUMN mgmt_risk_score DECIMAL(5,2),
+                ADD COLUMN mgmt_recommendation VARCHAR(20),
+                ADD COLUMN mgmt_last_assessment VARCHAR(32)
+            """)
+
+            self._set_schema_version(conn, 11)
         finally:
             cursor.close()
 

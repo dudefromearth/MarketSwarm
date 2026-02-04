@@ -23,7 +23,7 @@ import redis
 
 from .epochs import should_speak_epoch, generate_epoch_commentary
 from .events import get_triggered_events
-from .publisher import publish
+from .publisher import publish, init as init_publisher
 from .intel_feed import process_intel_articles
 from .market_reader import MarketReader
 from .article_reader import ArticleReader
@@ -117,6 +117,9 @@ async def run(config: Dict[str, Any], logger) -> None:
     r_market = redis.Redis.from_url(market_url, decode_responses=True)
     r_intel = redis.Redis.from_url(intel_url, decode_responses=True)
 
+    # Initialize publisher with correct market Redis URL
+    init_publisher(market_url)
+
     # Market data reader (consumes Massive models)
     market_reader = MarketReader(r_market, logger)
 
@@ -182,8 +185,9 @@ async def run(config: Dict[str, Any], logger) -> None:
             # -----------------------------
             # Epochs (with market data + news synthesis)
             # -----------------------------
-            if ENABLE_EPOCHS and VEXY_MODE in ["full", "epochs_only"] and epochs:
-                emit("epoch", "epoch_check", f"Checking {len(epochs)} epoch triggers…")
+            force_epoch = os.getenv("FORCE_EPOCH", "false").lower() == "true"
+            if ENABLE_EPOCHS and VEXY_MODE in ["full", "epochs_only"] and (epochs or force_epoch):
+                emit("epoch", "epoch_check", f"Checking {len(epochs)} epoch triggers… (force={force_epoch})")
                 epoch = should_speak_epoch(current_time, epochs)
                 if epoch and epoch["name"] != last_epoch_name:
                     epoch_type = epoch.get("type", "standard")

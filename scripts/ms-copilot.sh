@@ -20,9 +20,9 @@ VENV_PY="$VENV/bin/python"
 export SYSTEM_REDIS_URL="redis://127.0.0.1:6379"
 export MARKET_REDIS_URL="redis://127.0.0.1:6380"
 
-# AI Provider Keys (required for Commentary and AI Alerts)
-export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
-export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
+# AI Provider Keys (only export if set - let Truth provide defaults)
+[[ -n "${ANTHROPIC_API_KEY:-}" ]] && export ANTHROPIC_API_KEY
+[[ -n "${OPENAI_API_KEY:-}" ]] && export OPENAI_API_KEY
 
 # Copilot config (can be overridden)
 export COPILOT_PORT="${COPILOT_PORT:-8095}"
@@ -137,6 +137,7 @@ menu() {
   echo "  8) View Latest Alerts"
   echo "  9) Debug Mode"
   echo ""
+  echo "  f) Run in Foreground (see startup logs)"
   echo "  r) Run Service"
   echo "  q) Quit"
   line
@@ -177,6 +178,12 @@ menu() {
       export DEBUG_COPILOT="true"
       echo "Debug mode enabled"
       ;;
+    f|F)
+      # Run in foreground immediately
+      echo "Starting Copilot in foreground..."
+      export SERVICE_ID="$SERVICE"
+      exec "$VENV_PY" "$MAIN"
+      ;;
     r|R) return 0 ;;
     q|Q) echo "Goodbye"; exit 0 ;;
     *) echo "Invalid choice"; sleep 1 ;;
@@ -187,10 +194,29 @@ menu() {
 ###############################################
 # Argument handling (CLI mode)
 ###############################################
+###############################################
+# Foreground mode: ./ms-copilot.sh fg
+###############################################
+if [[ "${1:-}" == "fg" ]]; then
+  echo "Starting Copilot in foreground..."
+  export SERVICE_ID="$SERVICE"
+  exec "$VENV_PY" "$MAIN"
+fi
+
 if [[ $# -gt 0 ]]; then
   case "$1" in
+    bg|background)
+      # Run in background with log file
+      LOG_FILE="${ROOT}/logs/copilot.log"
+      mkdir -p "${ROOT}/logs"
+      echo "Starting Copilot in background..."
+      echo "Log file: $LOG_FILE"
+      nohup "$VENV_PY" "$MAIN" > "$LOG_FILE" 2>&1 &
+      echo "PID: $!"
+      exit 0
+      ;;
     run|start)
-      # Just run with current settings
+      # Just run with current settings (foreground)
       ;;
     debug)
       export DEBUG_COPILOT="true"
@@ -233,7 +259,9 @@ if [[ $# -gt 0 ]]; then
       echo "Usage: $0 [command] [options]"
       echo ""
       echo "Commands:"
-      echo "  run           Run with current settings"
+      echo "  fg            Run in foreground (skip menu, see all output)"
+      echo "  bg            Run in background (logs to logs/copilot.log)"
+      echo "  run           Run with current settings (foreground)"
       echo "  debug         Enable debug logging"
       echo "  port <num>    Override default port (8095)"
       echo "  full          Enable all features"
@@ -243,6 +271,11 @@ if [[ $# -gt 0 ]]; then
       echo "  no-alerts     Disable alerts"
       echo "  commentary    Enable AI commentary"
       echo "  status        Show current status"
+      echo ""
+      echo "Foreground flags (use with 'fg'):"
+      echo "  --debug       Enable debug logging"
+      echo "  --alerts      Enable alerts"
+      echo "  --no-alerts   Disable alerts"
       echo ""
       echo "Without arguments, shows interactive menu."
       exit 0
@@ -274,11 +307,22 @@ echo "  Alerts:     $COPILOT_ALERTS_ENABLED"
 [[ "$DEBUG_COPILOT" == "true" ]] && echo "  DEBUG:      enabled"
 echo ""
 
-# Warn about missing API keys for AI features
+# Check API keys from Truth (not just shell env)
 if [[ "$COPILOT_COMMENTARY_ENABLED" == "true" || "$COPILOT_ALERTS_ENABLED" == "true" ]]; then
-  if [[ -z "$ANTHROPIC_API_KEY" && -z "$OPENAI_API_KEY" ]]; then
-    echo -e "${YELLOW}[WARN]${NC} AI features enabled but no API key set"
-    echo "       Set ANTHROPIC_API_KEY or OPENAI_API_KEY"
+  TRUTH_OPENAI=$($BREW_REDIS -h 127.0.0.1 -p 6379 GET truth 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('components',{}).get('copilot',{}).get('env',{}).get('OPENAI_API_KEY',''))" 2>/dev/null || echo "")
+  TRUTH_ANTHROPIC=$($BREW_REDIS -h 127.0.0.1 -p 6379 GET truth 2>/dev/null | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('components',{}).get('copilot',{}).get('env',{}).get('ANTHROPIC_API_KEY',''))" 2>/dev/null || echo "")
+
+  if [[ -n "$TRUTH_OPENAI" ]]; then
+    echo -e "${GREEN}[OK]${NC} OpenAI API key configured in Truth"
+  elif [[ -n "$TRUTH_ANTHROPIC" ]]; then
+    echo -e "${GREEN}[OK]${NC} Anthropic API key configured in Truth"
+  elif [[ -n "$OPENAI_API_KEY" ]]; then
+    echo -e "${GREEN}[OK]${NC} OpenAI API key set in environment"
+  elif [[ -n "$ANTHROPIC_API_KEY" ]]; then
+    echo -e "${GREEN}[OK]${NC} Anthropic API key set in environment"
+  else
+    echo -e "${YELLOW}[WARN]${NC} AI features enabled but no API key found"
+    echo "       Add OPENAI_API_KEY or ANTHROPIC_API_KEY to copilot.json"
     echo ""
   fi
 fi

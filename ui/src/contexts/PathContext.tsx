@@ -5,6 +5,7 @@
  * - Current stage inference from active UI panel
  * - Expansion state for the path indicator
  * - Tour completion tracking (persisted to localStorage)
+ * - Transition state for welcome → indicator handoff
  *
  * The system reflects where the user is — it does not tell them where to go.
  */
@@ -22,18 +23,33 @@ import { type Stage, PANEL_STAGE_MAP } from '../constants/pathContent';
 
 const TOUR_COMPLETED_KEY = 'fotw-tour-completed';
 
+/**
+ * Transition phases for welcome → indicator handoff
+ *
+ * 'idle'       - Normal state, no transition happening
+ * 'pre-dismiss' - Brief cue showing mini indicator in modal (300-500ms)
+ * 'fading-out' - Modal fading out (300ms)
+ * 'waiting'    - Pause before indicator appears (1-2s)
+ * 'fading-in'  - Indicator fading into existence (500-800ms)
+ * 'complete'   - Transition done, indicator at rest
+ */
+type TransitionPhase = 'idle' | 'pre-dismiss' | 'fading-out' | 'waiting' | 'fading-in' | 'complete';
+
 interface PathState {
   currentStage: Stage;
   activePanel: string | null;
   expanded: boolean;
   tourCompleted: boolean;
   showTour: boolean;
+  transitionPhase: TransitionPhase;
+  indicatorVisible: boolean;
 }
 
 interface PathContextValue extends PathState {
   setActivePanel: (panel: string | null) => void;
   setExpanded: (expanded: boolean) => void;
   toggleExpanded: () => void;
+  beginTourDismiss: () => void;
   completeTour: () => void;
   resetTour: () => void;
   showTourModal: () => void;
@@ -67,6 +83,22 @@ export function PathProvider({ children }: { children: ReactNode }) {
       return true;
     }
   });
+  const [transitionPhase, setTransitionPhase] = useState<TransitionPhase>(() => {
+    // If tour already completed, indicator should be visible
+    try {
+      return localStorage.getItem(TOUR_COMPLETED_KEY) === 'true' ? 'complete' : 'idle';
+    } catch {
+      return 'idle';
+    }
+  });
+  const [indicatorVisible, setIndicatorVisible] = useState(() => {
+    // Only visible if tour already completed
+    try {
+      return localStorage.getItem(TOUR_COMPLETED_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
 
   // Derive current stage from active panel
   const currentStage = inferStage(activePanel);
@@ -85,10 +117,49 @@ export function PathProvider({ children }: { children: ReactNode }) {
     setExpandedState(prev => !prev);
   }, []);
 
-  // Tour controls
+  /**
+   * Begin the tour dismissal sequence
+   * Called when user clicks "Begin"
+   */
+  const beginTourDismiss = useCallback(() => {
+    // Phase 1: Pre-dismiss cue (show mini indicator in modal)
+    setTransitionPhase('pre-dismiss');
+
+    // After 400ms, start fading out the modal
+    setTimeout(() => {
+      setTransitionPhase('fading-out');
+
+      // After 300ms fade, hide modal and start waiting
+      setTimeout(() => {
+        setShowTour(false);
+        setTourCompleted(true);
+        try {
+          localStorage.setItem(TOUR_COMPLETED_KEY, 'true');
+        } catch {
+          // localStorage may not be available
+        }
+        setTransitionPhase('waiting');
+
+        // After 1.5s pause, start fading in indicator
+        setTimeout(() => {
+          setIndicatorVisible(true);
+          setTransitionPhase('fading-in');
+
+          // After 700ms fade-in, transition complete
+          setTimeout(() => {
+            setTransitionPhase('complete');
+          }, 700);
+        }, 1500);
+      }, 300);
+    }, 400);
+  }, []);
+
+  // Legacy completeTour for skip functionality (immediate dismiss)
   const completeTour = useCallback(() => {
     setTourCompleted(true);
     setShowTour(false);
+    setIndicatorVisible(true);
+    setTransitionPhase('complete');
     try {
       localStorage.setItem(TOUR_COMPLETED_KEY, 'true');
     } catch {
@@ -99,6 +170,8 @@ export function PathProvider({ children }: { children: ReactNode }) {
   const resetTour = useCallback(() => {
     setTourCompleted(false);
     setShowTour(true);
+    setIndicatorVisible(false);
+    setTransitionPhase('idle');
     try {
       localStorage.removeItem(TOUR_COMPLETED_KEY);
     } catch {
@@ -108,6 +181,8 @@ export function PathProvider({ children }: { children: ReactNode }) {
 
   const showTourModal = useCallback(() => {
     setShowTour(true);
+    setIndicatorVisible(false);
+    setTransitionPhase('idle');
   }, []);
 
   const value: PathContextValue = {
@@ -116,9 +191,12 @@ export function PathProvider({ children }: { children: ReactNode }) {
     expanded,
     tourCompleted,
     showTour,
+    transitionPhase,
+    indicatorVisible,
     setActivePanel,
     setExpanded,
     toggleExpanded,
+    beginTourDismiss,
     completeTour,
     resetTour,
     showTourModal,

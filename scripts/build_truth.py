@@ -201,6 +201,7 @@ def build_truth() -> None:
     # Extract core fields
     version = node_def.get("version", "1.0")
     description = node_def.get("description", "")
+    node_info = node_def.get("node", {})
     buses = node_def.get("buses", {})
     # domain is optional now; can be empty if you don't use it
     domain = node_def.get("domain", {})
@@ -248,6 +249,7 @@ def build_truth() -> None:
     composite: Dict[str, Any] = {
         "version": version,
         "description": description,
+        "node": node_info,
         "buses": buses,
         "domain": domain,
         "components": components_out,

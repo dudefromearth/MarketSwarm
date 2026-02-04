@@ -10,15 +10,17 @@
 
 // Alert type categories
 export type AlertType =
-  | 'price'           // Spot price crosses level
-  | 'debit'           // Position debit crosses level
-  | 'profit_target'   // Profit reaches target
-  | 'trailing_stop'   // Trailing stop triggered
-  | 'ai_theta_gamma'  // AI-computed dynamic risk zone
-  | 'ai_sentiment'    // AI market sentiment analysis
-  | 'ai_risk_zone'    // AI-computed risk boundaries
-  | 'time_boundary'   // EOD/EOW/EOM alerts
-  | 'trade_closed';   // Trade closed notification
+  | 'price'                 // Spot price crosses level
+  | 'debit'                 // Position debit crosses level
+  | 'profit_target'         // Profit reaches target
+  | 'trailing_stop'         // Trailing stop triggered
+  | 'ai_theta_gamma'        // AI-computed dynamic risk zone
+  | 'ai_sentiment'          // AI market sentiment analysis
+  | 'ai_risk_zone'          // AI-computed risk boundaries
+  | 'time_boundary'         // EOD/EOW/EOM alerts
+  | 'trade_closed'          // Trade closed notification
+  | 'butterfly_entry'       // OTM butterfly entry detection
+  | 'butterfly_profit_mgmt'; // Butterfly profit management
 
 // Intent class - determines alert UX behavior
 // See fotw-alerts.md for philosophy
@@ -146,6 +148,47 @@ export interface AIRiskZoneAlert extends AlertBase {
   lastAIUpdate?: number;
 }
 
+// Support type for butterfly entry detection
+export type SupportType = 'gex' | 'hvn' | 'poc' | 'val' | 'zero_gamma';
+
+// Butterfly Entry alert - OTM butterfly entry detection
+export interface ButterflyEntryAlert extends AlertBase {
+  type: 'butterfly_entry';
+
+  // Entry detection results
+  entrySupportType?: SupportType;
+  entrySupportLevel?: number;
+  entryReversalConfirmed: boolean;
+  entryTargetStrike?: number;
+  entryTargetWidth?: number;
+
+  // Configuration
+  supportTypes: SupportType[];      // Which support types to monitor
+  minMarketModeScore?: number;      // Max market mode score (compression = low)
+  minLfiScore?: number;             // Min LFI score for absorbing regime
+}
+
+// Profit management recommendation
+export type MgmtRecommendation = 'HOLD' | 'EXIT' | 'TIGHTEN';
+
+// Butterfly Profit Management alert
+export interface ButterflyProfitMgmtAlert extends AlertBase {
+  type: 'butterfly_profit_mgmt';
+  strategyId: string;
+  entryDebit: number;
+
+  // Activation and tracking
+  mgmtActivationThreshold: number;  // Default 0.75 (75% profit)
+  mgmtHighWaterMark?: number;
+  mgmtInitialDte?: number;
+  mgmtInitialGamma?: number;
+
+  // Risk assessment
+  mgmtRiskScore?: number;           // 0-100 composite score
+  mgmtRecommendation?: MgmtRecommendation;
+  mgmtLastAssessment?: string;
+}
+
 // Union type of all alerts
 export type Alert =
   | PriceAlert
@@ -154,7 +197,9 @@ export type Alert =
   | TrailingStopAlert
   | AIThetaGammaAlert
   | AISentimentAlert
-  | AIRiskZoneAlert;
+  | AIRiskZoneAlert
+  | ButterflyEntryAlert
+  | ButterflyProfitMgmtAlert;
 
 // Input type for creating alerts (id, timestamps auto-generated)
 export interface CreateAlertInput {
@@ -175,6 +220,16 @@ export interface CreateAlertInput {
   sentimentThreshold?: number;
   direction?: 'bullish' | 'bearish' | 'either';
   zoneType?: 'support' | 'resistance' | 'pivot';
+
+  // Butterfly entry specific
+  supportTypes?: SupportType[];
+  minMarketModeScore?: number;
+  minLfiScore?: number;
+
+  // Butterfly profit management specific
+  mgmtActivationThreshold?: number;
+  mgmtInitialDte?: number;
+  mgmtInitialGamma?: number;
 }
 
 // Input type for editing alerts
@@ -287,6 +342,18 @@ export function isDebitAlert(alert: Alert): alert is DebitAlert {
 
 export function isAIAlert(alert: Alert): alert is AIThetaGammaAlert | AISentimentAlert | AIRiskZoneAlert {
   return alert.type.startsWith('ai_');
+}
+
+export function isButterflyEntryAlert(alert: Alert): alert is ButterflyEntryAlert {
+  return alert.type === 'butterfly_entry';
+}
+
+export function isButterflyProfitMgmtAlert(alert: Alert): alert is ButterflyProfitMgmtAlert {
+  return alert.type === 'butterfly_profit_mgmt';
+}
+
+export function isButterflyAlert(alert: Alert): alert is ButterflyEntryAlert | ButterflyProfitMgmtAlert {
+  return alert.type === 'butterfly_entry' || alert.type === 'butterfly_profit_mgmt';
 }
 
 export function hasAIReasoning(alert: Alert): boolean {

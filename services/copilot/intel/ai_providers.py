@@ -169,7 +169,7 @@ class OpenAIProvider(BaseAIProvider):
         for msg in messages:
             api_messages.append({"role": msg.role, "content": msg.content})
 
-        # Allow kwargs to override config defaults
+        # Use kwargs values if provided, otherwise use config defaults
         max_tokens = kwargs.pop("max_tokens", self.config.max_tokens)
         temperature = kwargs.pop("temperature", self.config.temperature)
 
@@ -298,7 +298,7 @@ class GrokProvider(BaseAIProvider):
         for msg in messages:
             api_messages.append({"role": msg.role, "content": msg.content})
 
-        # Allow kwargs to override config defaults
+        # Use kwargs values if provided, otherwise use config defaults
         max_tokens = kwargs.pop("max_tokens", self.config.max_tokens)
         temperature = kwargs.pop("temperature", self.config.temperature)
 
@@ -357,7 +357,7 @@ class AnthropicProvider(BaseAIProvider):
         for msg in messages:
             api_messages.append({"role": msg.role, "content": msg.content})
 
-        # Allow kwargs to override config defaults
+        # Use kwargs values if provided, otherwise use config defaults
         max_tokens = kwargs.pop("max_tokens", self.config.max_tokens)
 
         response = await client.messages.create(

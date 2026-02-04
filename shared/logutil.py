@@ -10,6 +10,16 @@ STATUS_EMOJI = {
     "OK": "✅",
 }
 
+# Log level hierarchy (lower number = more severe)
+LOG_LEVELS = {
+    "ERROR": 0,
+    "WARN": 1,
+    "WARNING": 1,
+    "INFO": 2,
+    "OK": 2,
+    "DEBUG": 3,
+}
+
 
 class LogUtil:
     """
@@ -19,16 +29,27 @@ class LogUtil:
 
     Safe to use before and after SetupBase.
     Logging must NEVER raise.
+
+    Log levels (from LOG_LEVEL env var):
+      - ERROR: Only errors
+      - WARNING: Warnings and errors
+      - INFO: Normal operational info (default)
+      - DEBUG: All messages including debug
     """
 
     def __init__(self, service_name: str):
         self.service_name = service_name
 
         # Phase 1: bootstrap (env only)
-        self.debug_enabled = (
-            os.getenv("DEBUG_MASSIVE", "false").lower() == "true"
-        )
+        # Support both LOG_LEVEL and legacy DEBUG_MASSIVE
+        env_level = os.getenv("LOG_LEVEL", "INFO").upper()
+        self.log_level = LOG_LEVELS.get(env_level, LOG_LEVELS["INFO"])
 
+        # Legacy debug flag support
+        if os.getenv("DEBUG_MASSIVE", "false").lower() == "true":
+            self.log_level = LOG_LEVELS["DEBUG"]
+
+        self.debug_enabled = self.log_level >= LOG_LEVELS["DEBUG"]
         self._configured = False
 
     # -------------------------------------------------
@@ -40,16 +61,25 @@ class LogUtil:
             return
 
         try:
+            # Check for LOG_LEVEL in config first
+            cfg_level = str(config.get("LOG_LEVEL", "")).upper()
+            if cfg_level and cfg_level in LOG_LEVELS:
+                self.log_level = LOG_LEVELS[cfg_level]
+
+            # Legacy DEBUG_MASSIVE support (overrides to DEBUG if true)
             cfg_debug = str(
                 config.get("DEBUG_MASSIVE", "false")
             ).lower() == "true"
+            if cfg_debug:
+                self.log_level = LOG_LEVELS["DEBUG"]
 
-            self.debug_enabled = cfg_debug
+            self.debug_enabled = self.log_level >= LOG_LEVELS["DEBUG"]
             self._configured = True
 
+            level_name = [k for k, v in LOG_LEVELS.items() if v == self.log_level and k != "WARNING" and k != "OK"][0]
             self.info(
-                f"[LOG CONFIGURED] debug={'ON' if cfg_debug else 'OFF'}",
-                emoji="🧪" if cfg_debug else "🔊",
+                f"[LOG CONFIGURED] level={level_name}",
+                emoji="🧪" if self.debug_enabled else "🔊",
             )
         except Exception:
             # Logging must never break the process
@@ -66,7 +96,9 @@ class LogUtil:
 
     def _emit(self, level: str, message: str, emoji: str = ""):
         try:
-            if level == "DEBUG" and not self.debug_enabled:
+            # Check if this level should be emitted based on configured log level
+            msg_level = LOG_LEVELS.get(level, LOG_LEVELS["INFO"])
+            if msg_level > self.log_level:
                 return
             print(self._stamp(level, message, emoji))
         except Exception:

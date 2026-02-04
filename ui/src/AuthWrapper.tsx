@@ -43,7 +43,7 @@ interface AuthWrapperProps {
 export function isAdmin(user: AuthState['user']): boolean {
   if (!user) return false;
   const roles = user?.wp?.roles || [];
-  return Array.isArray(roles) && roles.includes('administrator');
+  return Array.isArray(roles) && (roles.includes('administrator') || roles.includes('admin'));
 }
 
 /**

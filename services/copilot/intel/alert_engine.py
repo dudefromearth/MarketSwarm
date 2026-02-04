@@ -58,6 +58,16 @@ class AlertEvaluation:
     model: Optional[str] = None
     tokens_used: Optional[int] = None
     latency_ms: Optional[float] = None
+    # Butterfly entry detection
+    entry_support_type: Optional[str] = None
+    entry_support_level: Optional[float] = None
+    entry_reversal_confirmed: bool = False
+    entry_target_strike: Optional[float] = None
+    entry_target_width: Optional[int] = None
+    # Butterfly profit management
+    mgmt_risk_score: Optional[float] = None
+    mgmt_recommendation: Optional[str] = None
+    mgmt_high_water_mark: Optional[float] = None
 
 
 @dataclass
@@ -95,6 +105,22 @@ class Alert:
     ai_confidence: Optional[float] = None
     ai_reasoning: Optional[str] = None
     last_ai_update: Optional[float] = None
+
+    # Butterfly entry detection
+    entry_support_type: Optional[str] = None
+    entry_support_level: Optional[float] = None
+    entry_reversal_confirmed: bool = False
+    entry_target_strike: Optional[float] = None
+    entry_target_width: Optional[int] = None
+
+    # Butterfly profit management
+    mgmt_activation_threshold: Optional[float] = None
+    mgmt_high_water_mark: Optional[float] = None
+    mgmt_initial_dte: Optional[int] = None
+    mgmt_initial_gamma: Optional[float] = None
+    mgmt_risk_score: Optional[float] = None
+    mgmt_recommendation: Optional[str] = None
+    mgmt_last_assessment: Optional[str] = None
 
     # Legacy compatibility - construct source dict from source_type/source_id
     @property
@@ -149,6 +175,20 @@ class Alert:
             ai_confidence=get("ai_confidence", get("aiConfidence")),
             ai_reasoning=get("ai_reasoning", get("aiReasoning")),
             last_ai_update=get("last_ai_update", get("lastAIUpdate")),
+            # Butterfly entry detection
+            entry_support_type=get("entry_support_type", get("entrySupportType")),
+            entry_support_level=get("entry_support_level", get("entrySupportLevel")),
+            entry_reversal_confirmed=get("entry_reversal_confirmed", get("entryReversalConfirmed", False)),
+            entry_target_strike=get("entry_target_strike", get("entryTargetStrike")),
+            entry_target_width=get("entry_target_width", get("entryTargetWidth")),
+            # Butterfly profit management
+            mgmt_activation_threshold=get("mgmt_activation_threshold", get("mgmtActivationThreshold")),
+            mgmt_high_water_mark=get("mgmt_high_water_mark", get("mgmtHighWaterMark")),
+            mgmt_initial_dte=get("mgmt_initial_dte", get("mgmtInitialDte")),
+            mgmt_initial_gamma=get("mgmt_initial_gamma", get("mgmtInitialGamma")),
+            mgmt_risk_score=get("mgmt_risk_score", get("mgmtRiskScore")),
+            mgmt_recommendation=get("mgmt_recommendation", get("mgmtRecommendation")),
+            mgmt_last_assessment=get("mgmt_last_assessment", get("mgmtLastAssessment")),
         )
 
     def to_dict(self) -> dict:
@@ -185,6 +225,20 @@ class Alert:
             "aiConfidence": self.ai_confidence,
             "aiReasoning": self.ai_reasoning,
             "lastAIUpdate": self.last_ai_update,
+            # Butterfly entry detection
+            "entrySupportType": self.entry_support_type,
+            "entrySupportLevel": self.entry_support_level,
+            "entryReversalConfirmed": self.entry_reversal_confirmed,
+            "entryTargetStrike": self.entry_target_strike,
+            "entryTargetWidth": self.entry_target_width,
+            # Butterfly profit management
+            "mgmtActivationThreshold": self.mgmt_activation_threshold,
+            "mgmtHighWaterMark": self.mgmt_high_water_mark,
+            "mgmtInitialDte": self.mgmt_initial_dte,
+            "mgmtInitialGamma": self.mgmt_initial_gamma,
+            "mgmtRiskScore": self.mgmt_risk_score,
+            "mgmtRecommendation": self.mgmt_recommendation,
+            "mgmtLastAssessment": self.mgmt_last_assessment,
         }
 
 
@@ -650,6 +704,23 @@ class AlertEngine:
                 "tokensUsed": evaluation.tokens_used,
                 "latencyMs": evaluation.latency_ms,
             })
+
+        # Update butterfly entry detection fields if present
+        if evaluation.entry_support_type is not None:
+            alert.entry_support_type = evaluation.entry_support_type
+            alert.entry_support_level = evaluation.entry_support_level
+            alert.entry_reversal_confirmed = evaluation.entry_reversal_confirmed
+            alert.entry_target_strike = evaluation.entry_target_strike
+            alert.entry_target_width = evaluation.entry_target_width
+            await self.save_alert(alert)
+
+        # Update butterfly profit management fields if present
+        if evaluation.mgmt_risk_score is not None:
+            alert.mgmt_risk_score = evaluation.mgmt_risk_score
+            alert.mgmt_recommendation = evaluation.mgmt_recommendation
+            if evaluation.mgmt_high_water_mark is not None:
+                alert.mgmt_high_water_mark = evaluation.mgmt_high_water_mark
+            await self.save_alert(alert)
 
         # Notify subscribers
         self._notify_subscribers(evaluation)

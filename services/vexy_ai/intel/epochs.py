@@ -12,7 +12,6 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-
 def should_speak_epoch(current_time: str, epochs: List[Dict[str, str]]) -> Optional[Dict[str, str]]:
     """
     Determine if Vexy should deliver scheduled epoch commentary.
@@ -22,13 +21,24 @@ def should_speak_epoch(current_time: str, epochs: List[Dict[str, str]]) -> Optio
         current_time: Current time as HH:MM string (ET)
         epochs: List of epoch definitions from config
     """
-    if not epochs:
-        return None
-
     force = os.getenv("FORCE_EPOCH", "false").lower() == "true"
 
+    # If forcing and no epochs, create a test epoch
     if force:
-        return epochs[0]
+        if epochs:
+            return epochs[0]
+        else:
+            return {
+                "name": "Forced Test",
+                "time": current_time,
+                "context": "Forced epoch for testing.",
+                "voice": "Observer",
+                "partitions": ["tldr"],
+                "reflection_dial": 0.2,
+            }
+
+    if not epochs:
+        return None
 
     # Find the latest epoch that has triggered (reverse search)
     active_epoch = None

@@ -82,7 +82,7 @@ router.get("/profile/me", async (req, res) => {
       display_name: session.wp?.name,
       issuer: session.wp?.issuer,
       roles: session.wp?.roles || [],
-      is_admin: (session.wp?.roles || []).includes("administrator"),
+      is_admin: (session.wp?.roles || []).includes("administrator") || (session.wp?.roles || []).includes("admin"),
     });
   }
 
@@ -91,7 +91,15 @@ router.get("/profile/me", async (req, res) => {
     return res.status(404).json({ detail: "Profile not found" });
   }
 
-  return res.json(profile);
+  // Also check session roles for admin (in case DB record is stale)
+  const sessionRoles = session.wp?.roles || [];
+  const sessionIsAdmin = sessionRoles.includes("administrator") || sessionRoles.includes("admin");
+
+  return res.json({
+    ...profile,
+    // Use session's admin status if it says admin (freshest source)
+    is_admin: profile.is_admin || sessionIsAdmin,
+  });
 });
 
 /**

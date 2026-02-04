@@ -1249,10 +1249,29 @@ export function useRiskGraphCalculations({
     const volatility = Math.max(5, adjustedVix) / 100; // Convert VIX to decimal (e.g., 20 -> 0.20)
 
     // Time to expiration
-    const baseDte = visibleStrategies[0]?.dte || 30;
+    // Use nullish coalescing (??) instead of || to preserve 0 DTE
+    const baseDte = visibleStrategies[0]?.dte ?? 30;
+
+    // For 0DTE, calculate actual hours remaining until market close (4pm ET)
+    // This ensures the theoretical curve matches real market conditions
+    const now = new Date();
+    const etOffset = -5; // ET is UTC-5 (approximate, ignores DST)
+    const utcHours = now.getUTCHours() + now.getUTCMinutes() / 60;
+    const etHours = (utcHours + etOffset + 24) % 24;
+    const marketCloseHour = 16; // 4pm ET
+    const hoursUntilClose = Math.max(0.5, marketCloseHour - etHours); // Min 30 min
+
+    // Base time in days:
+    // - 0DTE: actual hours until close converted to days
+    // - Non-0DTE: full DTE days
+    const baseTimeDays = baseDte === 0
+      ? hoursUntilClose / 24
+      : baseDte;
+
+    // Apply time offset from simulation slider
     const timeOffsetDays = timeMachineEnabled ? simTimeOffsetHours / 24 : 0;
-    const daysToExpiry = Math.max(0, baseDte - timeOffsetDays);
-    const timeToExpiryYears = daysToExpiry / 365;
+    const effectiveDaysToExpiry = Math.max(0, baseTimeDays - timeOffsetDays);
+    const timeToExpiryYears = Math.max(effectiveDaysToExpiry, 0.001) / 365;
 
     // Risk-free rate
     const riskFreeRate = 0.05;
@@ -1260,7 +1279,7 @@ export function useRiskGraphCalculations({
     // Price range calculation
     // Always calculate for a wide range regardless of time to expiration
     // Use the ORIGINAL DTE (not time-adjusted) for sigma calculation to maintain consistent range
-    const baseDteForRange = visibleStrategies[0]?.dte || 30;
+    const baseDteForRange = visibleStrategies[0]?.dte ?? 30;
     const sigma1Day = spotPrice * (adjustedVix / 100) / Math.sqrt(252);
     const sigmaPadding = sigma1Day * Math.sqrt(Math.max(baseDteForRange, 7)) * 3; // Use at least 7 days for range calc
     const strategyPadding = strikeRange * 2;

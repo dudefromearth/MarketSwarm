@@ -493,6 +493,367 @@ Provide sentiment score (-1 bearish to +1 bullish)."""
             )
 
 
+class ButterflyEntryEvaluator(BaseEvaluator):
+    """
+    Evaluates entry conditions for OTM butterfly options trading.
+    Detects market support using GEX, Volume Profile, LIM, and Market Mode.
+    Confirms reversal before triggering.
+    No AI required, evaluates instantly (fast loop).
+    """
+
+    @property
+    def alert_type(self) -> str:
+        return "butterfly_entry"
+
+    @property
+    def is_ai_powered(self) -> bool:
+        return False
+
+    async def evaluate(self, alert: Alert, market_data: dict) -> AlertEvaluation:
+        # Step 1: Check market mode (prefer compression)
+        market_mode = market_data.get('market_mode', {}).get('score', 50)
+        if market_mode > 50:  # Expansion mode - not ideal for butterflies
+            return AlertEvaluation(
+                alert_id=alert.id,
+                should_trigger=False,
+                confidence=0.0,
+                reasoning="Market in expansion mode (score > 50)",
+            )
+
+        # Step 2: Check Liquidity Intent Map
+        bias_lfi = market_data.get('bias_lfi', {})
+        lfi_score = bias_lfi.get('lfi_score', 50)
+        directional = bias_lfi.get('directional_strength', 0)
+
+        # Ideal: Absorbing (LFI > 50) + Not hostile (directional >= -30)
+        if lfi_score < 50 or directional < -30:
+            return AlertEvaluation(
+                alert_id=alert.id,
+                should_trigger=False,
+                confidence=0.0,
+                reasoning=f"Liquidity unfavorable: LFI={lfi_score}, directional={directional}",
+            )
+
+        # Step 3: Detect support from GEX + Volume Profile
+        support = self._detect_support(market_data)
+        if not support:
+            return AlertEvaluation(
+                alert_id=alert.id,
+                should_trigger=False,
+                confidence=0.0,
+                reasoning="No support level detected near current price",
+            )
+
+        # Step 4: Confirm reversal
+        reversal = self._confirm_reversal(support, market_data)
+        if not reversal:
+            return AlertEvaluation(
+                alert_id=alert.id,
+                should_trigger=False,
+                confidence=0.0,
+                reasoning=f"Support detected at {support['level']:.2f} ({support['type']}) but no reversal confirmed",
+            )
+
+        # Step 5: Calculate butterfly target
+        butterfly = self._calculate_butterfly(support, market_data)
+
+        # Calculate overall confidence
+        confidence = support['strength'] * reversal['strength']
+
+        return AlertEvaluation(
+            alert_id=alert.id,
+            should_trigger=True,
+            confidence=confidence,
+            reasoning=f"Entry signal: {support['type'].upper()} support at {support['level']:.2f}, {reversal['type']} reversal. Target: {butterfly['strike']} {butterfly['side']} butterfly, width {butterfly['width']}",
+            entry_support_type=support['type'],
+            entry_support_level=support['level'],
+            entry_reversal_confirmed=True,
+            entry_target_strike=butterfly['strike'],
+            entry_target_width=butterfly['width'],
+        )
+
+    def _detect_support(self, market_data: dict) -> Optional[dict]:
+        """Detect support from GEX and Volume Profile data."""
+        spot = market_data.get('spot_price') or market_data.get('spot')
+        if spot is None:
+            return None
+
+        tolerance = 5.0  # Points from support
+        supports = []
+
+        # GEX Support (strongest)
+        gamma_levels = market_data.get('gamma_levels', [])
+        for level in gamma_levels:
+            net_gamma = level.get('net_gamma', 0)
+            strike = level.get('strike')
+            if net_gamma > 0 and strike and abs(spot - strike) <= tolerance:
+                supports.append({'type': 'gex', 'level': strike, 'strength': 0.9})
+
+        # Volume Profile
+        vp = market_data.get('volume_profile', {})
+        poc = vp.get('poc')
+        if poc and abs(spot - poc) <= tolerance:
+            supports.append({'type': 'poc', 'level': poc, 'strength': 0.85})
+
+        val = vp.get('val')
+        if val and abs(spot - val) <= tolerance:
+            supports.append({'type': 'val', 'level': val, 'strength': 0.8})
+
+        for hvn in vp.get('hvns', []):
+            if abs(spot - hvn) <= tolerance:
+                supports.append({'type': 'hvn', 'level': hvn, 'strength': 0.7})
+
+        # Zero gamma pivot
+        zero_gamma = market_data.get('zero_gamma')
+        if zero_gamma and abs(spot - zero_gamma) <= tolerance:
+            supports.append({'type': 'zero_gamma', 'level': zero_gamma, 'strength': 0.6})
+
+        return max(supports, key=lambda s: s['strength']) if supports else None
+
+    def _confirm_reversal(self, support: dict, market_data: dict) -> Optional[dict]:
+        """Confirm reversal pattern from price history."""
+        price_history = market_data.get('price_history', [])[-10:]
+        spot = market_data.get('spot_price') or market_data.get('spot')
+
+        if not price_history or spot is None:
+            return None
+
+        # Pattern 1: Bounce (touched support, now above)
+        lows = [p.get('low', p.get('price', spot)) for p in price_history]
+        if min(lows) <= support['level'] + 1 and spot > support['level'] + 3:
+            return {'type': 'bounce', 'strength': 0.8}
+
+        # Pattern 2: Higher lows forming
+        if len(lows) >= 3 and lows[-1] > lows[-3] > support['level']:
+            return {'type': 'higher_lows', 'strength': 0.7}
+
+        return None
+
+    def _calculate_butterfly(self, support: dict, market_data: dict) -> dict:
+        """Calculate butterfly target based on gamma magnet or round numbers."""
+        spot = market_data.get('spot_price') or market_data.get('spot')
+        gamma_magnet = market_data.get('gamma_magnet')
+
+        # Target the gamma magnet or next round number
+        if gamma_magnet and gamma_magnet > spot:
+            target = gamma_magnet
+        else:
+            target = round((spot + 15) / 5) * 5
+
+        return {'side': 'call', 'strike': target, 'width': 10}
+
+
+class ButterflyProfitMgmtEvaluator(BaseEvaluator):
+    """
+    AI-powered profit management for butterfly positions.
+    Activates at 75% profit threshold, tracks high water mark,
+    assesses risk of losing gains via theta/gamma.
+    Slow loop (5s) with AI analysis.
+    """
+
+    def __init__(self, ai_manager: Optional[AIProviderManager] = None):
+        self._ai_manager = ai_manager
+
+    @property
+    def alert_type(self) -> str:
+        return "butterfly_profit_mgmt"
+
+    @property
+    def is_ai_powered(self) -> bool:
+        return True
+
+    async def evaluate(self, alert: Alert, market_data: dict) -> AlertEvaluation:
+        # Get strategy data
+        strategies = market_data.get("strategies", {})
+        strategy = strategies.get(alert.strategy_id, {})
+        current_debit = strategy.get("current_debit") or strategy.get("debit")
+        entry_debit = alert.entry_debit or strategy.get("entry_debit")
+
+        if current_debit is None or entry_debit is None or entry_debit == 0:
+            return AlertEvaluation(
+                alert_id=alert.id,
+                should_trigger=False,
+                confidence=0.0,
+                reasoning="Missing debit data for profit management",
+            )
+
+        # Step 1: Check if activated (profit >= 75% of debit)
+        profit_pct = (entry_debit - current_debit) / entry_debit
+        activation_threshold = alert.mgmt_activation_threshold or 0.75
+
+        if profit_pct < activation_threshold:
+            return AlertEvaluation(
+                alert_id=alert.id,
+                should_trigger=False,
+                confidence=0.0,
+                reasoning=f"Profit {profit_pct*100:.1f}% below activation threshold {activation_threshold*100:.0f}%",
+            )
+
+        # Step 2: Update high water mark
+        current_profit = entry_debit - current_debit
+        hwm = alert.mgmt_high_water_mark or 0
+        if current_profit > hwm:
+            alert.mgmt_high_water_mark = current_profit
+            hwm = current_profit
+
+        # Step 3: Calculate risk score
+        risk_score = self._calculate_risk_score(alert, strategy, market_data, hwm, current_profit)
+        alert.mgmt_risk_score = risk_score
+
+        # Step 4: Determine recommendation
+        recommendation = self._get_recommendation(risk_score, hwm, current_profit)
+        alert.mgmt_recommendation = recommendation
+
+        # Step 5: Optionally use AI for nuanced assessment
+        ai_reasoning = None
+        if self._ai_manager and recommendation in ('EXIT', 'TIGHTEN'):
+            ai_result = await self._get_ai_assessment(alert, strategy, market_data, risk_score, recommendation)
+            if ai_result:
+                ai_reasoning = ai_result.get('reasoning')
+                # AI can override recommendation to EXIT if risk is extreme
+                if ai_result.get('override_to_exit'):
+                    recommendation = 'EXIT'
+                    alert.mgmt_recommendation = recommendation
+
+        alert.mgmt_last_assessment = market_data.get('timestamp') or ''
+
+        # Step 6: Trigger if EXIT recommended
+        should_trigger = recommendation == 'EXIT'
+
+        reasoning = f"Risk score: {risk_score:.1f}/100, Recommendation: {recommendation}"
+        if ai_reasoning:
+            reasoning += f". AI: {ai_reasoning}"
+
+        return AlertEvaluation(
+            alert_id=alert.id,
+            should_trigger=should_trigger,
+            confidence=min(1.0, risk_score / 100),
+            reasoning=reasoning,
+            mgmt_risk_score=risk_score,
+            mgmt_recommendation=recommendation,
+            mgmt_high_water_mark=hwm,
+        )
+
+    def _calculate_risk_score(self, alert: Alert, strategy: dict, market_data: dict,
+                               hwm: float, current_profit: float) -> float:
+        """
+        Calculate composite risk score (0-100).
+
+        Weights:
+        - Time Risk: 35%
+        - Gamma Risk: 30%
+        - Drawdown Risk: 20%
+        - VIX Risk: 15%
+        """
+        dte = strategy.get('dte', alert.mgmt_initial_dte or 7)
+        spot = market_data.get('spot_price') or market_data.get('spot', 0)
+        strike = strategy.get('strike', 0)
+        vix = market_data.get('vix', 15)
+
+        # Time risk (0-100): accelerates as DTE -> 0
+        if dte == 0:
+            time_risk = 100
+        else:
+            time_risk = max(0, 100 - dte * 15)
+
+        # Gamma risk (0-100): increases as spot -> strike
+        if spot and strike:
+            distance_pct = abs(spot - strike) / spot * 100 if spot != 0 else 0
+            gamma_risk = max(0, 100 - distance_pct * 20)
+        else:
+            gamma_risk = 50  # Default if data missing
+
+        # Drawdown risk (0-100): (HWM - current) / HWM
+        if hwm > 0:
+            drawdown_risk = ((hwm - current_profit) / hwm) * 100
+        else:
+            drawdown_risk = 0
+
+        # VIX risk (0-100): VIX > 25 = elevated
+        vix_risk = min(100, max(0, (vix - 15) * 5))
+
+        # Weighted composite
+        return (time_risk * 0.35 +
+                gamma_risk * 0.30 +
+                drawdown_risk * 0.20 +
+                vix_risk * 0.15)
+
+    def _get_recommendation(self, risk_score: float, hwm: float, current_profit: float) -> str:
+        """Determine recommendation based on risk score and drawdown."""
+        # 50% drawdown from HWM is immediate exit
+        if hwm > 0 and current_profit < hwm * 0.5:
+            return 'EXIT'
+
+        if risk_score > 80:
+            return 'EXIT'
+        elif risk_score > 60:
+            return 'TIGHTEN'
+        else:
+            return 'HOLD'
+
+    async def _get_ai_assessment(self, alert: Alert, strategy: dict, market_data: dict,
+                                  risk_score: float, recommendation: str) -> Optional[dict]:
+        """Get AI assessment for nuanced analysis."""
+        if not self._ai_manager:
+            return None
+
+        try:
+            prompt = self._build_ai_prompt(alert, strategy, market_data, risk_score, recommendation)
+            response = await self._ai_manager.generate(
+                messages=[AIMessage(role="user", content=prompt)],
+                system_prompt=self._get_system_prompt(),
+                max_tokens=256,
+                temperature=0.3,
+            )
+            return self._parse_ai_response(response.content)
+        except Exception:
+            return None
+
+    def _get_system_prompt(self) -> str:
+        return """You are an options profit management specialist. Analyze butterfly position risk.
+
+Respond with ONLY a valid JSON object:
+{
+  "reasoning": "Brief risk assessment",
+  "override_to_exit": boolean (true only if immediate exit is critical)
+}
+
+Consider theta decay acceleration, gamma exposure, and potential for profit erosion."""
+
+    def _build_ai_prompt(self, alert: Alert, strategy: dict, market_data: dict,
+                          risk_score: float, recommendation: str) -> str:
+        spot = market_data.get('spot_price') or market_data.get('spot', 'N/A')
+        vix = market_data.get('vix', 'N/A')
+        dte = strategy.get('dte', alert.mgmt_initial_dte or 'N/A')
+        strike = strategy.get('strike', 'N/A')
+        current_profit = (alert.entry_debit or 0) - (strategy.get('current_debit', 0) or 0)
+        hwm = alert.mgmt_high_water_mark or 0
+
+        return f"""Butterfly profit management assessment:
+
+Position: Strike {strike}, DTE {dte}
+Spot: {spot}
+VIX: {vix}
+
+Current Profit: ${current_profit:.2f}
+High Water Mark: ${hwm:.2f}
+Risk Score: {risk_score:.1f}/100
+Initial Recommendation: {recommendation}
+
+Should we override to EXIT? Only if position is at critical risk of losing all profits."""
+
+    def _parse_ai_response(self, content: str) -> Optional[dict]:
+        """Parse AI response."""
+        try:
+            content = content.strip()
+            if content.startswith("```"):
+                lines = content.split("\n")
+                content = "\n".join(lines[1:-1])
+            return json.loads(content)
+        except Exception:
+            return None
+
+
 class AIRiskZoneEvaluator(BaseEvaluator):
     """
     AI-powered risk zone evaluation.
@@ -631,5 +992,7 @@ def create_all_evaluators(ai_manager: Optional[AIProviderManager] = None, logger
         AIThetaGammaEvaluator(ai_manager),
         AISentimentEvaluator(ai_manager),
         AIRiskZoneEvaluator(ai_manager),
+        ButterflyEntryEvaluator(),
+        ButterflyProfitMgmtEvaluator(ai_manager),
         PromptDrivenEvaluator(ai_manager, reference_service, logger),
     ]

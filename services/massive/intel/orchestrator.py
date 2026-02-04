@@ -13,6 +13,7 @@ from .model_builders.builder import Builder
 from .model_builders.model_publisher import ModelPublisher
 from .model_builders.gex import GexModelBuilder
 from .model_builders.bias_lfi import BiasLfiModelBuilder
+from .model_builders.trade_selector import TradeSelectorModelBuilder
 from .volume_profile.vp_worker import VolumeProfileWorker
 
 
@@ -34,7 +35,7 @@ async def run(config: Dict[str, Any], logger) -> None:
     tasks = []
 
     logger.info(
-        "orchestrator starting (spot + chain + snapshot + builder + model + gex + bias_lfi + ws + vp)",
+        "orchestrator starting (spot + chain + snapshot + builder + model + gex + bias_lfi + trade_selector + ws + vp)",
         emoji="🚀",
     )
 
@@ -81,22 +82,28 @@ async def run(config: Dict[str, Any], logger) -> None:
             asyncio.create_task(bias_lfi.run(stop_event), name="massive-bias-lfi")
         )
 
-        # 8. WsWorker (streams real-time ticks to Redis stream)
+        # 8. Trade Selector Model Builder (scores heatmap tiles for optimal entries)
+        trade_selector = TradeSelectorModelBuilder(config, logger)
+        tasks.append(
+            asyncio.create_task(trade_selector.run(stop_event), name="massive-trade-selector")
+        )
+
+        # 9. WsWorker (streams real-time ticks to Redis stream)
         ws_worker = WsWorker(config, logger)
         tasks.append(
             asyncio.create_task(ws_worker.run(stop_event), name="massive-ws")
         )
 
-        # 9. WsHydrator (maintains in-memory price state from WS ticks)
+        # 10. WsHydrator (maintains in-memory price state from WS ticks)
         hydrator = WsHydrator(config, logger)
 
-        # 10. WsConsumer (reads stream, drives hydrator, triggers builder at 2-5 Hz)
+        # 11. WsConsumer (reads stream, drives hydrator, triggers builder at 2-5 Hz)
         ws_consumer = WsConsumer(config, logger)
         tasks.append(
             asyncio.create_task(ws_consumer.run(stop_event), name="massive-ws-consumer")
         )
 
-        # 11. VolumeProfileWorker (real-time SPY volume → SPX profile)
+        # 12. VolumeProfileWorker (real-time SPY volume → SPX profile)
         vp_worker = VolumeProfileWorker(config, logger)
         tasks.append(
             asyncio.create_task(vp_worker.run(stop_event), name="massive-volume-profile")
