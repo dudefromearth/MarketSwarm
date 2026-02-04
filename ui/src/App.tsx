@@ -1371,6 +1371,27 @@ function App() {
 
   const currentSpot = spot?.[underlying]?.value || null;
 
+  // Market hours check (9:30 AM - 4:00 PM ET, Mon-Fri)
+  const isMarketOpen = useMemo(() => {
+    const now = new Date();
+    const day = now.getDay();
+    // Weekend check
+    if (day === 0 || day === 6) return false;
+
+    // Convert to ET (Eastern Time)
+    const etTime = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false,
+    }).format(now);
+    const [hours, minutes] = etTime.split(':').map(Number);
+    const timeMinutes = hours * 60 + minutes;
+
+    // Market hours: 9:30 AM (570 min) to 4:00 PM (960 min)
+    return timeMinutes >= 570 && timeMinutes < 960;
+  }, []);
+
   // Simulated spot for 3D of Options (actual spot + offset when enabled)
   const simulatedSpot = currentSpot && timeMachineEnabled
     ? currentSpot + simSpotOffset
@@ -2822,6 +2843,22 @@ function App() {
             const strat = riskGraphStrategies.find(s => s.id === id);
             if (strat) setEditingStrategy(strat);
           }}
+          onLogTrade={(strategy) => {
+            // Prefill trade entry with strategy data
+            setTradeEntryPrefill({
+              symbol: strategy.symbol || underlying.replace('I:', ''),
+              underlying: underlying,
+              strategy: strategy.strategy,
+              side: strategy.side,
+              strike: strategy.strike,
+              width: strategy.width,
+              dte: strategy.dte,
+              entry_price: strategy.debit || undefined,
+              entry_spot: currentSpot || undefined,
+              source: 'risk_graph',
+            });
+            setTradeEntryOpen(true);
+          }}
         />
 
       </div>
@@ -3099,6 +3136,7 @@ function App() {
         prefillData={tradeEntryPrefill}
         editTrade={editingTrade}
         currentSpot={currentSpot}
+        isMarketOpen={isMarketOpen}
       />
 
       {/* Alert Creation Modal */}

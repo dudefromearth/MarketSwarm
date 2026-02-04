@@ -120,6 +120,9 @@ export interface RiskGraphPanelProps {
 
   // Edit strategy - opens modal to edit existing strategy
   onEditStrategy?: (id: string) => void;
+
+  // Log trade - opens TradeEntryModal with strategy data
+  onLogTrade?: (strategy: RiskGraphStrategy) => void;
 }
 
 export interface RiskGraphPanelHandle {
@@ -152,6 +155,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   onOpenJournal,
   onImportToS,
   onEditStrategy,
+  onLogTrade,
 }, ref) {
   // Get alerts from shared context
   const {
@@ -561,6 +565,15 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                               >
                                 Alert
                               </button>
+                              {onLogTrade && (
+                                <button
+                                  className="btn-log-trade"
+                                  onClick={() => onLogTrade(strat)}
+                                  title="Log trade with this strategy"
+                                >
+                                  Log
+                                </button>
+                              )}
                               <button
                                 className="btn-remove"
                                 onClick={() => onRemoveStrategy(strat.id)}

@@ -10351,6 +10351,17 @@ body {
   color: white;
 }
 
+/* Log Trade button in strategy list */
+.risk-graph-sidebar .btn-log-trade {
+  background: #1e3a4f;
+  color: #22c55e;
+}
+
+.risk-graph-sidebar .btn-log-trade:hover {
+  background: #166534;
+  color: white;
+}
+
 /* ============================================
    Indicator Settings Dialogs
    ============================================ */
