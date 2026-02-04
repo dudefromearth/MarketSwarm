@@ -269,16 +269,25 @@ class TradeSelectorModelBuilder:
             return None
 
     async def _load_vix(self) -> Optional[float]:
-        """Load current VIX value from vexy_ai signals."""
+        """Load current VIX value from spot worker."""
         r = await self._redis_conn()
+        # Primary source: live VIX spot from massive spot worker
+        raw = await r.get("massive:model:spot:I:VIX")
+        if raw:
+            try:
+                data = json.loads(raw)
+                return float(data.get("value"))
+            except (json.JSONDecodeError, TypeError, KeyError):
+                pass
+        # Fallback: try vexy_ai signals
         raw = await r.get("vexy_ai:signals:latest")
-        if not raw:
-            return None
-        try:
-            data = json.loads(raw)
-            return float(data.get("vix") or data.get("VIX", 15))
-        except (json.JSONDecodeError, TypeError, KeyError):
-            return None
+        if raw:
+            try:
+                data = json.loads(raw)
+                return float(data.get("vix") or data.get("VIX"))
+            except (json.JSONDecodeError, TypeError, KeyError):
+                pass
+        return None
 
     async def _load_heatmap(self, symbol: str) -> Optional[Dict[str, Any]]:
         """Load unified heatmap model for symbol."""
