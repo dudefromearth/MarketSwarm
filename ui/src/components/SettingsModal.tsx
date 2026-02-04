@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { usePath } from '../contexts/PathContext';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 interface Symbol {
   symbol: string;

@@ -10,7 +10,7 @@
 
 import { useState, useCallback, useEffect } from 'react';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 interface AvailableSymbol {
   symbol: string;

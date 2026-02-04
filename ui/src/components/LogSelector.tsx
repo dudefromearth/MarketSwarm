@@ -1,7 +1,7 @@
 // src/components/LogSelector.tsx
 import { useState, useEffect } from 'react';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 export interface TradeLog {
   id: string;

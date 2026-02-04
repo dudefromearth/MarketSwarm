@@ -61,6 +61,43 @@ app.use("/api/admin", adminRoutes);
 app.use("/sse", sseRoutes);
 app.use("/api/models", modelsRoutes);
 
+// Proxy journal endpoints to journal service (port 3002)
+// This handles /api/logs/*, /api/trades/*, /api/playbooks/*, /api/journals/*
+const JOURNAL_SERVICE = "http://localhost:3002";
+const journalPaths = ["/api/logs", "/api/trades", "/api/playbooks", "/api/journals"];
+
+journalPaths.forEach(path => {
+  app.use(path, async (req, res) => {
+    const url = `${JOURNAL_SERVICE}${req.originalUrl}`;
+    try {
+      const response = await fetch(url, {
+        method: req.method,
+        headers: {
+          "Content-Type": "application/json",
+          // Forward user info for journal service
+          "X-User-Id": req.user?.wp?.id || "",
+          "X-User-Email": req.user?.wp?.email || "",
+          "X-User-Name": req.user?.wp?.name || "",
+          "X-User-Issuer": req.user?.wp?.issuer || "",
+        },
+        body: ["GET", "HEAD"].includes(req.method) ? undefined : JSON.stringify(req.body),
+      });
+
+      const contentType = response.headers.get("content-type");
+      if (contentType?.includes("application/json")) {
+        const data = await response.json();
+        res.status(response.status).json(data);
+      } else {
+        const text = await response.text();
+        res.status(response.status).send(text);
+      }
+    } catch (err) {
+      console.error(`[proxy] Journal proxy error for ${req.method} ${url}:`, err.message);
+      res.status(502).json({ success: false, error: "Journal service unavailable" });
+    }
+  });
+});
+
 // Graceful shutdown
 async function shutdown(signal) {
   console.log(`\n[sse] Received ${signal}, shutting down...`);

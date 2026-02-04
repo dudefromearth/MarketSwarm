@@ -3588,7 +3588,11 @@ class JournalOrchestrator:
     async def legacy_list_trades(self, request: web.Request) -> web.Response:
         """GET /api/trades - Legacy: List trades from first active log."""
         try:
-            logs = self.db.list_logs()
+            # Get user from request for proper filtering
+            user = await self.auth.get_request_user(request)
+            user_id = user['id'] if user else None
+
+            logs = self.db.list_logs(user_id=user_id)
             if not logs:
                 return self._json_response({
                     'success': True,
@@ -3623,21 +3627,85 @@ class JournalOrchestrator:
     async def legacy_create_trade(self, request: web.Request) -> web.Response:
         """POST /api/trades - Legacy: Create trade in first active log."""
         try:
-            logs = self.db.list_logs()
+            # Get user from request for proper filtering
+            user = await self.auth.get_request_user(request)
+            user_id = user['id'] if user else None
+
+            logs = self.db.list_logs(user_id=user_id)
             if not logs:
-                # Create default log
+                # Create default log for this user
                 default_log = TradeLog(
                     id=TradeLog.new_id(),
                     name='Default Log',
+                    user_id=user_id,
                     starting_capital=2500000,  # $25,000
                     intent='Auto-created default log'
                 )
                 self.db.create_log(default_log)
                 logs = [default_log]
 
-            # Inject log_id and forward to normal create
-            request._match_info = {'logId': logs[0].id}
-            return await self.create_trade(request)
+            log_id = logs[0].id
+            body = await request.json()
+
+            # Verify log exists
+            log = self.db.get_log(log_id)
+            if not log:
+                return self._error_response('Trade log not found', 404)
+
+            # Set defaults
+            entry_time = body.get('entry_time') or datetime.utcnow().isoformat()
+
+            # Convert prices to cents if needed
+            entry_price = body['entry_price']
+            if isinstance(entry_price, float) or entry_price < 1000:
+                entry_price = int(entry_price * 100)
+
+            planned_risk = body.get('planned_risk')
+            if planned_risk and (isinstance(planned_risk, float) or planned_risk < 1000):
+                planned_risk = int(planned_risk * 100)
+
+            max_profit = body.get('max_profit')
+            if max_profit and (isinstance(max_profit, float) or max_profit < 1000):
+                max_profit = int(max_profit * 100)
+
+            max_loss = body.get('max_loss')
+            if max_loss and (isinstance(max_loss, float) or max_loss < 1000):
+                max_loss = int(max_loss * 100)
+
+            trade = Trade(
+                id=Trade.new_id(),
+                log_id=log_id,
+                symbol=body.get('symbol', 'SPX'),
+                underlying=body.get('underlying', 'I:SPX'),
+                strategy=body['strategy'],
+                side=body['side'],
+                strike=float(body['strike']),
+                width=body.get('width'),
+                dte=body.get('dte'),
+                quantity=int(body.get('quantity', 1)),
+                entry_time=entry_time,
+                entry_price=entry_price,
+                entry_spot=body.get('entry_spot'),
+                entry_iv=body.get('entry_iv'),
+                planned_risk=planned_risk or max_loss,
+                max_profit=max_profit,
+                max_loss=max_loss,
+                notes=body.get('notes'),
+                tags=body.get('tags', []),
+                source=body.get('source', 'manual'),
+                playbook_id=body.get('playbook_id')
+            )
+
+            created = self.db.create_trade(trade)
+            self.logger.info(f"[Legacy] Created trade: {created.strategy} {created.strike} @ ${entry_price/100:.2f}", emoji="📝")
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201)
+
+        except KeyError as e:
+            return self._error_response(f'Missing required field: {e}')
         except Exception as e:
             self.logger.error(f"legacy_create_trade error: {e}")
             return self._error_response(str(e), 500)

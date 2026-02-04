@@ -1,7 +1,7 @@
 // src/hooks/useJournal.ts
 import { useState, useCallback } from 'react';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 // Simplified Trade interface for journal linking
 export interface JournalTrade {

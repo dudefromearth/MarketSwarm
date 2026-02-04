@@ -34,6 +34,10 @@ class WsHydrator:
         # Structure: {symbol: {strike: {ticks, bids, asks, calls, puts}}}
         self.strike_activity: Dict[str, Dict[int, Dict[str, int]]] = {}
 
+        # Symbols to track for strike activity (from config or default to SPX/NDX)
+        chain_symbols = config.get("env", {}).get("MASSIVE_CHAIN_SYMBOLS", "I:SPX,I:NDX")
+        self.tracked_symbols: Set[str] = set(s.strip() for s in chain_symbols.split(","))
+
         # Cached chain baseline - persists across snapshots so WS can work
         # even when chain worker hasn't updated recently
         self._cached_chain: Dict[str, Any] | None = None
@@ -43,7 +47,7 @@ class WsHydrator:
         self._redis: Redis | None = None
 
         self.logger.info(
-            "[WS HYDRATOR INIT] hydration + strike-level activity tracking",
+            f"[WS HYDRATOR INIT] hydration + strike-level activity tracking for {self.tracked_symbols}",
             emoji="💧",
         )
 
@@ -147,15 +151,20 @@ class WsHydrator:
                 self.chain_states[norm_sym] = {}
                 self.dirty[norm_sym] = set()
                 self.ws_paused[norm_sym] = False
-                self.strike_activity[norm_sym] = {}
 
-            # Initialize strike activity tracking
-            if strike_int not in self.strike_activity.get(norm_sym, {}):
-                self.strike_activity.setdefault(norm_sym, {})[strike_int] = {
-                    "ticks": 0, "bids": 0, "asks": 0, "calls": 0, "puts": 0
-                }
+            # Only track strike activity for configured symbols (I:SPX, I:NDX by default)
+            track_strikes = norm_sym in self.tracked_symbols
+            strike_stats = None
 
-            strike_stats = self.strike_activity[norm_sym][strike_int]
+            if track_strikes:
+                if norm_sym not in self.strike_activity:
+                    self.strike_activity[norm_sym] = {}
+                # Initialize strike activity tracking
+                if strike_int not in self.strike_activity[norm_sym]:
+                    self.strike_activity[norm_sym][strike_int] = {
+                        "ticks": 0, "bids": 0, "asks": 0, "calls": 0, "puts": 0
+                    }
+                strike_stats = self.strike_activity[norm_sym][strike_int]
 
             ticker = sym_raw
             is_new = ticker not in self.chain_states[norm_sym]
@@ -185,13 +194,15 @@ class WsHydrator:
                 saw_price_field = True
                 if self._update_field(contract, "bid", float(e["b"])):
                     updated = True
-                    strike_stats["bids"] += 1
+                    if strike_stats:
+                        strike_stats["bids"] += 1
 
             if e.get("a") is not None:
                 saw_price_field = True
                 if self._update_field(contract, "ask", float(e["a"])):
                     updated = True
-                    strike_stats["asks"] += 1
+                    if strike_stats:
+                        strike_stats["asks"] += 1
 
             # Size
             if e.get("s") is not None:
@@ -201,8 +212,8 @@ class WsHydrator:
 
             contract["ts"] = ts
 
-            # Track per-strike activity
-            if updated:
+            # Track per-strike activity (only for tracked symbols)
+            if updated and strike_stats:
                 strike_stats["ticks"] += 1
                 if option_side == "C":
                     strike_stats["calls"] += 1
@@ -409,11 +420,12 @@ class WsHydrator:
                 sorted_by_ticks = sorted(active_strikes.items(), key=lambda x: x[1]["ticks"], reverse=True)
                 top_strikes = sorted_by_ticks[:10]
 
+                hot_key = f"massive:ws:strike:hot:{sym}"
                 for strike, stats in top_strikes:
                     # Directional pressure: positive = more bids (bullish), negative = more asks (bearish)
                     pressure = stats["bids"] - stats["asks"]
                     pipe.hset(
-                        f"massive:ws:strike:hot:{sym}",
+                        hot_key,
                         str(strike),
                         json.dumps({
                             "ticks": stats["ticks"],
@@ -425,6 +437,9 @@ class WsHydrator:
                             "ts": now,
                         })
                     )
+                # Set TTL on keys to prevent unbounded growth (24 hours)
+                pipe.expire(hot_key, 86400)
+                pipe.expire(f"massive:ws:strike:stream:{sym}", 86400)
 
         await pipe.execute()
 

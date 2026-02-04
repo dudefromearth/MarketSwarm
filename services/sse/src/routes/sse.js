@@ -36,10 +36,22 @@ const modelState = {
   alerts: null, // Latest alerts state
 };
 
-// SSE helper - send event to client
+// SSE helper - send event to client with backpressure handling
 function sendEvent(res, event, data) {
+  // Check if socket is writable and not backed up
+  if (!res.writable || res.writableEnded) {
+    return false;
+  }
+
+  // Check buffer size - if too large, skip this update (client is slow)
+  const bufferSize = res.writableLength || 0;
+  if (bufferSize > 1024 * 1024) { // 1MB buffer limit per client
+    return false; // Skip update for slow client
+  }
+
   res.write(`event: ${event}\n`);
   res.write(`data: ${JSON.stringify(data)}\n\n`);
+  return true;
 }
 
 // SSE headers (including CORS for EventSource)
@@ -277,10 +289,11 @@ function broadcastToChannel(channel, event, data, symbol = null) {
     }
   }
 
-  // Also broadcast to /all clients
+  // Also broadcast to /all clients - create combined object ONCE, not per client
+  const allData = symbol ? { symbol, ...data } : data;
   for (const client of clients.all) {
     try {
-      sendEvent(client, event, symbol ? { symbol, ...data } : data);
+      sendEvent(client, event, allData);
     } catch (err) {
       clients.all.delete(client);
     }
@@ -442,7 +455,12 @@ export async function startPolling(config) {
             }
           }
         }
-        if (JSON.stringify(spotData) !== JSON.stringify(modelState.spot)) {
+        // Use timestamp check instead of full JSON comparison to reduce memory churn
+        const spotChanged = !modelState.spot ||
+          Object.keys(spotData).some(sym =>
+            !modelState.spot[sym] || modelState.spot[sym].ts !== spotData[sym]?.ts
+          );
+        if (spotChanged) {
           modelState.spot = spotData;
           broadcastToChannel("spot", "spot", spotData);
         }
@@ -470,7 +488,11 @@ export async function startPolling(config) {
       }
       for (const [symbol, data] of gexBySymbol) {
         const prev = modelState.gex.get(symbol);
-        if (JSON.stringify(data) !== JSON.stringify(prev)) {
+        // Use timestamp check instead of full JSON comparison
+        const gexChanged = !prev ||
+          prev.calls?.ts !== data.calls?.ts ||
+          prev.puts?.ts !== data.puts?.ts;
+        if (gexChanged) {
           modelState.gex.set(symbol, data);
           broadcastToChannel("gex", "gex", data, symbol);
         }
@@ -483,7 +505,11 @@ export async function startPolling(config) {
         epoch: vexyEpoch ? JSON.parse(vexyEpoch) : null,
         event: vexyEvent ? JSON.parse(vexyEvent) : null,
       };
-      if (JSON.stringify(vexyData) !== JSON.stringify(modelState.vexy)) {
+      // Use timestamp check instead of full JSON comparison
+      const vexyChanged = !modelState.vexy ||
+        modelState.vexy.epoch?.ts !== vexyData.epoch?.ts ||
+        modelState.vexy.event?.ts !== vexyData.event?.ts;
+      if (vexyChanged) {
         modelState.vexy = vexyData;
         broadcastToChannel("vexy", "vexy", vexyData);
       }
@@ -493,7 +519,8 @@ export async function startPolling(config) {
       if (biasLfiRaw) {
         try {
           const biasLfiData = JSON.parse(biasLfiRaw);
-          if (JSON.stringify(biasLfiData) !== JSON.stringify(modelState.bias_lfi)) {
+          // Use timestamp check instead of full JSON comparison
+          if (!modelState.bias_lfi || modelState.bias_lfi.ts !== biasLfiData.ts) {
             modelState.bias_lfi = biasLfiData;
             broadcastToChannel("bias_lfi", "bias_lfi", biasLfiData);
           }
@@ -507,7 +534,8 @@ export async function startPolling(config) {
       if (marketModeRaw) {
         try {
           const marketModeData = JSON.parse(marketModeRaw);
-          if (JSON.stringify(marketModeData) !== JSON.stringify(modelState.market_mode)) {
+          // Use timestamp check instead of full JSON comparison
+          if (!modelState.market_mode || modelState.market_mode.ts !== marketModeData.ts) {
             modelState.market_mode = marketModeData;
             broadcastToChannel("market_mode", "market_mode", marketModeData);
           }
@@ -526,7 +554,8 @@ export async function startPolling(config) {
             const symbol = data.symbol;
             if (symbol) {
               const prev = modelState.trade_selector.get(symbol);
-              if (JSON.stringify(data) !== JSON.stringify(prev)) {
+              // Use timestamp check instead of full JSON comparison
+              if (!prev || prev.ts !== data.ts) {
                 modelState.trade_selector.set(symbol, data);
                 broadcastToChannel("trade_selector", "trade_selector", data, symbol);
               }
@@ -597,16 +626,18 @@ export function subscribeVexyPubSub() {
   });
 
   sub.on("message", (channel, message) => {
-    console.log(`[sse] pub/sub message on channel: ${channel}`);
     if (channel === vexyChannel) {
       try {
         const data = JSON.parse(message);
         console.log(`[sse] vexy pub/sub received: kind=${data.kind}, clients=${clients.vexy.size}`);
-        // Merge into modelState based on kind
+        // Update modelState in place based on kind (avoid object spread)
+        if (!modelState.vexy) {
+          modelState.vexy = { epoch: null, event: null };
+        }
         if (data.kind === "epoch") {
-          modelState.vexy = { ...modelState.vexy, epoch: data };
+          modelState.vexy.epoch = data;
         } else if (data.kind === "event") {
-          modelState.vexy = { ...modelState.vexy, event: data };
+          modelState.vexy.event = data;
         }
         // Broadcast the updated state
         broadcastToChannel("vexy", "vexy", modelState.vexy);
@@ -639,9 +670,8 @@ export function subscribeAlertsPubSub() {
         const eventType = event.type || "alert_update";
         const eventData = event.data || event;
 
-        // Update modelState with latest
+        // Update modelState with latest (overwrite, don't accumulate)
         modelState.alerts = {
-          ...modelState.alerts,
           lastEvent: event,
           ts: Date.now(),
         };
@@ -662,14 +692,53 @@ let diffStats = {
   errors: 0,
 };
 
+// Max tiles per symbol to prevent unbounded growth
+const MAX_TILES_PER_SYMBOL = 5000;
+
 // Periodic stats logging (every 10s)
 setInterval(() => {
   const allClients = clients.all.size;
   const lastAgo = diffStats.lastReceived
     ? `${((Date.now() - diffStats.lastReceived) / 1000).toFixed(1)}s ago`
     : 'never';
-  console.log(`[sse] STATS: clients=${allClients} diffs=${diffStats.received} last=${lastAgo}`);
+
+  // Count tiles for memory monitoring
+  let totalTiles = 0;
+  for (const [, data] of modelState.heatmap) {
+    totalTiles += Object.keys(data.tiles || {}).length;
+  }
+
+  const memMB = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+  console.log(`[sse] STATS: clients=${allClients} diffs=${diffStats.received} tiles=${totalTiles} mem=${memMB}MB last=${lastAgo}`);
+
+  // Reset diff counter periodically to prevent number overflow
+  if (diffStats.received > 1000000) {
+    diffStats.received = 0;
+  }
 }, 10000);
+
+// Periodic tile cleanup (every 5 minutes) - remove old/expired tiles
+setInterval(() => {
+  for (const [symbol, data] of modelState.heatmap) {
+    if (data.tiles) {
+      const tileCount = Object.keys(data.tiles).length;
+      if (tileCount > MAX_TILES_PER_SYMBOL) {
+        // Keep only most recent tiles (by DTE - lower DTE = more recent)
+        const entries = Object.entries(data.tiles);
+        entries.sort((a, b) => (a[1].dte || 999) - (b[1].dte || 999));
+        const toKeep = entries.slice(0, MAX_TILES_PER_SYMBOL);
+        data.tiles = Object.fromEntries(toKeep);
+        console.log(`[sse] Cleaned up ${symbol} tiles: ${tileCount} -> ${toKeep.length}`);
+      }
+    }
+  }
+
+  // Force garbage collection hint (if available)
+  if (global.gc) {
+    global.gc();
+    console.log('[sse] Forced garbage collection');
+  }
+}, 300000); // 5 minutes
 
 // Subscribe to heatmap diffs for real-time updates
 export function subscribeHeatmapDiffs(symbols = ["I:SPX", "I:NDX"]) {
@@ -694,32 +763,30 @@ export function subscribeHeatmapDiffs(symbols = ["I:SPX", "I:NDX"]) {
         const diff = JSON.parse(message);
         const symbol = diff.symbol;
 
-        // Update local state with changes
+        // Update local state with changes - MUTATE IN PLACE to avoid memory churn
         if (modelState.heatmap.has(symbol)) {
           const current = modelState.heatmap.get(symbol);
-          const updatedTiles = { ...current.tiles };
 
-          // Apply changed tiles
+          // Apply changed tiles directly (no copy)
           if (diff.changed) {
-            Object.entries(diff.changed).forEach(([key, tile]) => {
-              updatedTiles[key] = tile;
-            });
+            for (const key in diff.changed) {
+              current.tiles[key] = diff.changed[key];
+            }
           }
 
-          // Apply removed tiles
+          // Apply removed tiles directly
           if (diff.removed) {
-            diff.removed.forEach((key) => {
-              delete updatedTiles[key];
-            });
+            for (const key of diff.removed) {
+              delete current.tiles[key];
+            }
           }
 
-          modelState.heatmap.set(symbol, {
-            ...current,
-            ts: diff.ts,
-            version: diff.version,
-            tiles: updatedTiles,
-            dtes_available: diff.dtes_available || current.dtes_available,
-          });
+          // Update metadata in place
+          current.ts = diff.ts;
+          current.version = diff.version;
+          if (diff.dtes_available) {
+            current.dtes_available = diff.dtes_available;
+          }
         }
 
         // Broadcast diff event to clients

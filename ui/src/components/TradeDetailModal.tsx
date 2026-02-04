@@ -2,7 +2,7 @@
 import { useState, useEffect, Component, type ReactNode } from 'react';
 import type { Trade, TradeEvent } from './TradeLogPanel';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 // Error boundary to catch render crashes
 interface ErrorBoundaryState {

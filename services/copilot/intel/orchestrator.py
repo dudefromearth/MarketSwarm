@@ -39,7 +39,7 @@ class CopilotOrchestrator:
         self.logger = logger
 
         # Extract config values
-        self.host = "127.0.0.1"
+        self.host = "0.0.0.0"
         self.port = int(config.get("COPILOT_PORT", "8095"))
         self.mel_enabled = config.get("COPILOT_MEL_ENABLED", "true") == "true"
         self.adi_enabled = config.get("COPILOT_ADI_ENABLED", "true") == "true"

@@ -6,7 +6,7 @@
 
 import { useState, useCallback } from 'react';
 
-const COPILOT_BASE = 'http://localhost:8095';
+const COPILOT_BASE = '';
 
 export type ExportFormat = 'json' | 'csv' | 'text';
 

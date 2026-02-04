@@ -2,7 +2,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import type { Trade } from './TradeLogPanel';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 type Strategy = 'single' | 'vertical' | 'butterfly';
 type Side = 'call' | 'put';

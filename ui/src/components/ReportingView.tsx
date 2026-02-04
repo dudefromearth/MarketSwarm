@@ -7,7 +7,7 @@ import {
 } from 'lightweight-charts';
 import type { IChartApi, UTCTimestamp } from 'lightweight-charts';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 interface LogAnalytics {
   log_id: string;

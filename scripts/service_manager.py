@@ -467,8 +467,8 @@ class ServiceManager:
             cmd = [str(self.venv_py), str(main_path)]
             cwd = str(self.root)
         else:
-            # Node.js service runs from its directory
-            cmd = ["node", main_path.name]
+            # Node.js service runs from its directory with increased memory limit
+            cmd = ["node", "--max-old-space-size=8192", main_path.name]
             cwd = str(main_path.parent)
 
         if foreground:

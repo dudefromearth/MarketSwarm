@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from 'react';
 import LogSelector from './LogSelector';
 import type { TradeLog } from './LogSelector';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 interface PendingOrder {
   id: number;
@@ -620,16 +620,18 @@ export default function TradeLogPanel({
                           title="Capture a thought?"
                           onClick={(e) => {
                             e.stopPropagation();
-                            onOpenJournal({
-                              trade,
-                              log: selectedLog!,
-                              symbol: trade.symbol,
-                              strategy: trade.strategy,
-                              side: trade.side,
-                              strike: trade.strike,
-                              width: trade.width,
-                              closeDate: trade.exit_time || trade.entry_time,
-                            });
+                            if (selectedLog) {
+                              onOpenJournal({
+                                trade,
+                                log: selectedLog,
+                                symbol: trade.symbol,
+                                strategy: trade.strategy,
+                                side: trade.side,
+                                strike: trade.strike,
+                                width: trade.width,
+                                closeDate: trade.exit_time || trade.entry_time,
+                              });
+                            }
                           }}
                         >
                           📝

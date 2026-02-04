@@ -1,7 +1,7 @@
 // src/hooks/usePlaybook.ts
 import { useState, useCallback } from 'react';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 export interface PlaybookEntry {
   id: string;

@@ -6,8 +6,11 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-const COPILOT_BASE = 'http://localhost:8095';
-const COPILOT_WS_BASE = 'ws://localhost:8095/ws/mel';
+const COPILOT_BASE = '';
+const getWsBase = () => {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws/mel`;
+};
 
 export type ModelState = 'VALID' | 'DEGRADED' | 'REVOKED';
 export type CoherenceState = 'STABLE' | 'MIXED' | 'COLLAPSING' | 'RECOVERED';
@@ -77,7 +80,7 @@ export function useMEL(dte: number = 0): UseMELResult {
     currentDteRef.current = dte;
 
     try {
-      const ws = new WebSocket(`${COPILOT_WS_BASE}?dte=${dte}`);
+      const ws = new WebSocket(`${getWsBase()}?dte=${dte}`);
 
       ws.onopen = () => {
         setConnected(true);

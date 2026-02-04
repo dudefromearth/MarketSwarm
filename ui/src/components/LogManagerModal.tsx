@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import type { TradeLog } from './LogSelector';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 interface LogManagerModalProps {
   isOpen: boolean;

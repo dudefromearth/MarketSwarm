@@ -17,8 +17,8 @@ import type {
 } from '../types/alerts';
 
 // API base URLs
-const JOURNAL_API_BASE = 'http://localhost:3002';  // Alert CRUD
-const COPILOT_API_BASE = 'http://localhost:8095';  // AI evaluations
+const JOURNAL_API_BASE = '';  // Alert CRUD
+const COPILOT_API_BASE = '';  // AI evaluations
 
 /**
  * Parse numeric fields from API response (database returns strings for DECIMAL)

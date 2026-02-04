@@ -12,7 +12,7 @@ import TradeDetailModal from './TradeDetailModal';
 import type { Trade } from './TradeLogPanel';
 import { useAuth } from '../AuthWrapper';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 // Base props shared by both modes
 interface BaseEditorProps {

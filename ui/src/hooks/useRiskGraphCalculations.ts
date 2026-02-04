@@ -448,7 +448,7 @@ function hestonCallPrice(
   r: number,
   v0: number,     // Initial variance (sigma^2)
   kappa: number,
-  _theta: number,  // Long-term variance (unused in simplified approximation)
+  _theta: number,
   xi: number,
   rho: number
 ): number {
@@ -470,7 +470,7 @@ function hestonPutPrice(
   r: number,
   v0: number,
   kappa: number,
-  _theta: number,  // Long-term variance (unused in simplified approximation)
+  _theta: number,
   xi: number,
   rho: number
 ): number {
@@ -485,6 +485,158 @@ function hestonPutPrice(
 // ============================================================
 // Monte Carlo Simulation
 // ============================================================
+
+/**
+ * Simple seeded random number generator (Mulberry32)
+ */
+function mulberry32(seed: number): () => number {
+  return function() {
+    let t = seed += 0x6D2B79F5;
+    t = Math.imul(t ^ t >>> 15, t | 1);
+    t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Box-Muller transform for normal random numbers
+ */
+function boxMuller(random: () => number): number {
+  const u1 = random();
+  const u2 = random();
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+/**
+ * Monte Carlo option pricing with GBM
+ */
+export function _monteCarloPrice(
+  S: number,
+  K: number,
+  T: number,
+  r: number,
+  sigma: number,
+  isCall: boolean,
+  numPaths: number,
+  numSteps: number,
+  seed: number = 42
+): { price: number; stdError: number } {
+  if (T <= 0) {
+    return {
+      price: isCall ? Math.max(0, S - K) : Math.max(0, K - S),
+      stdError: 0,
+    };
+  }
+
+  const random = mulberry32(seed);
+  const dt = T / numSteps;
+  const drift = (r - 0.5 * sigma * sigma) * dt;
+  const diffusion = sigma * Math.sqrt(dt);
+
+  let sumPayoffs = 0;
+  let sumPayoffsSquared = 0;
+
+  for (let path = 0; path < numPaths; path++) {
+    let price = S;
+
+    // Simulate price path
+    for (let step = 0; step < numSteps; step++) {
+      const z = boxMuller(random);
+      price *= Math.exp(drift + diffusion * z);
+    }
+
+    // Calculate payoff
+    const payoff = isCall
+      ? Math.max(0, price - K)
+      : Math.max(0, K - price);
+
+    sumPayoffs += payoff;
+    sumPayoffsSquared += payoff * payoff;
+  }
+
+  // Discounted average payoff
+  const discountFactor = Math.exp(-r * T);
+  const meanPayoff = sumPayoffs / numPaths;
+  const price = discountFactor * meanPayoff;
+
+  // Standard error
+  const variance = (sumPayoffsSquared / numPaths) - (meanPayoff * meanPayoff);
+  const stdError = discountFactor * Math.sqrt(variance / numPaths);
+
+  return { price, stdError };
+}
+
+/**
+ * Monte Carlo with Heston dynamics (more realistic)
+ */
+export function _monteCarloHeston(
+  S: number,
+  K: number,
+  T: number,
+  r: number,
+  v0: number,
+  kappa: number,
+  theta: number,
+  xi: number,
+  rho: number,
+  isCall: boolean,
+  numPaths: number,
+  numSteps: number,
+  seed: number = 42
+): { price: number; stdError: number } {
+  if (T <= 0) {
+    return {
+      price: isCall ? Math.max(0, S - K) : Math.max(0, K - S),
+      stdError: 0,
+    };
+  }
+
+  const random = mulberry32(seed);
+  const dt = T / numSteps;
+  const sqrtDt = Math.sqrt(dt);
+  const sqrtOneMinusRhoSq = Math.sqrt(1 - rho * rho);
+
+  let sumPayoffs = 0;
+  let sumPayoffsSquared = 0;
+
+  for (let path = 0; path < numPaths; path++) {
+    let price = S;
+    let v = v0;
+
+    // Simulate price and variance paths
+    for (let step = 0; step < numSteps; step++) {
+      const z1 = boxMuller(random);
+      const z2 = rho * z1 + sqrtOneMinusRhoSq * boxMuller(random);
+
+      // Variance process (ensure non-negative with reflection)
+      const sqrtV = Math.sqrt(Math.max(0, v));
+      v = v + kappa * (theta - v) * dt + xi * sqrtV * sqrtDt * z2;
+      v = Math.max(0, v);
+
+      // Price process
+      price = price * Math.exp((r - 0.5 * v) * dt + sqrtV * sqrtDt * z1);
+    }
+
+    // Calculate payoff
+    const payoff = isCall
+      ? Math.max(0, price - K)
+      : Math.max(0, K - price);
+
+    sumPayoffs += payoff;
+    sumPayoffsSquared += payoff * payoff;
+  }
+
+  // Discounted average payoff
+  const discountFactor = Math.exp(-r * T);
+  const meanPayoff = sumPayoffs / numPaths;
+  const price = discountFactor * meanPayoff;
+
+  // Standard error
+  const variance = (sumPayoffsSquared / numPaths) - (meanPayoff * meanPayoff);
+  const stdError = discountFactor * Math.sqrt(variance / numPaths);
+
+  return { price, stdError };
+}
 
 // ============================================================
 // Expiration P&L Calculations (Intrinsic Value)
@@ -825,6 +977,119 @@ function calculateTheoreticalPnL(
 // ============================================================
 // Curve Generation
 // ============================================================
+
+/**
+ * Cubic spline interpolation to upsample a curve
+ * Takes sparse points and creates a smooth interpolated curve
+ */
+export function _interpolateCurve(points: PnLPoint[], targetPoints: number): PnLPoint[] {
+  if (points.length < 4 || points.length >= targetPoints) return points;
+
+  const n = points.length;
+  const x = points.map(p => p.price);
+  const y = points.map(p => p.pnl);
+
+  // Calculate second derivatives for cubic spline (natural spline: y''=0 at ends)
+  const h: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    h.push(x[i + 1] - x[i]);
+  }
+
+  // Solve tridiagonal system for second derivatives
+  const alpha: number[] = [0];
+  for (let i = 1; i < n - 1; i++) {
+    alpha.push((3 / h[i]) * (y[i + 1] - y[i]) - (3 / h[i - 1]) * (y[i] - y[i - 1]));
+  }
+
+  const l: number[] = [1];
+  const mu: number[] = [0];
+  const z: number[] = [0];
+
+  for (let i = 1; i < n - 1; i++) {
+    l.push(2 * (x[i + 1] - x[i - 1]) - h[i - 1] * mu[i - 1]);
+    mu.push(h[i] / l[i]);
+    z.push((alpha[i] - h[i - 1] * z[i - 1]) / l[i]);
+  }
+
+  l.push(1);
+  z.push(0);
+
+  const c: number[] = new Array(n).fill(0);
+  const b: number[] = new Array(n - 1).fill(0);
+  const d: number[] = new Array(n - 1).fill(0);
+
+  for (let j = n - 2; j >= 0; j--) {
+    c[j] = z[j] - mu[j] * c[j + 1];
+    b[j] = (y[j + 1] - y[j]) / h[j] - h[j] * (c[j + 1] + 2 * c[j]) / 3;
+    d[j] = (c[j + 1] - c[j]) / (3 * h[j]);
+  }
+
+  // Generate interpolated points
+  const result: PnLPoint[] = [];
+  const minX = x[0];
+  const maxX = x[n - 1];
+  const step = (maxX - minX) / (targetPoints - 1);
+
+  let segmentIdx = 0;
+  for (let i = 0; i < targetPoints; i++) {
+    const px = minX + i * step;
+
+    // Find the right segment
+    while (segmentIdx < n - 2 && px > x[segmentIdx + 1]) {
+      segmentIdx++;
+    }
+
+    const dx = px - x[segmentIdx];
+    const py = y[segmentIdx] + b[segmentIdx] * dx + c[segmentIdx] * dx * dx + d[segmentIdx] * dx * dx * dx;
+
+    result.push({ price: px, pnl: py });
+  }
+
+  return result;
+}
+
+/**
+ * Gaussian smoothing for P&L curves
+ * Applies weighted average using Gaussian kernel
+ */
+export function _smoothPnLCurve(points: PnLPoint[], windowSize: number = 5): PnLPoint[] {
+  if (points.length < windowSize) return points;
+
+  // Generate Gaussian weights
+  const sigma = windowSize / 4;
+  const weights: number[] = [];
+  const halfWindow = Math.floor(windowSize / 2);
+
+  for (let i = -halfWindow; i <= halfWindow; i++) {
+    weights.push(Math.exp(-(i * i) / (2 * sigma * sigma)));
+  }
+  const weightSum = weights.reduce((a, b) => a + b, 0);
+  const normalizedWeights = weights.map(w => w / weightSum);
+
+  // Apply smoothing
+  const smoothed: PnLPoint[] = [];
+
+  for (let i = 0; i < points.length; i++) {
+    let smoothedPnL = 0;
+    let totalWeight = 0;
+
+    for (let j = -halfWindow; j <= halfWindow; j++) {
+      const idx = i + j;
+      if (idx >= 0 && idx < points.length) {
+        const weight = normalizedWeights[j + halfWindow];
+        smoothedPnL += points[idx].pnl * weight;
+        totalWeight += weight;
+      }
+    }
+
+    smoothed.push({
+      price: points[i].price,
+      pnl: smoothedPnL / totalWeight,
+    });
+  }
+
+  return smoothed;
+}
 
 /**
  * Get all critical strike prices from strategies
