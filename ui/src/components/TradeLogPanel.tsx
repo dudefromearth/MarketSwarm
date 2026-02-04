@@ -5,6 +5,19 @@ import type { TradeLog } from './LogSelector';
 
 const JOURNAL_API = 'http://localhost:3002';
 
+interface PendingOrder {
+  id: number;
+  order_type: 'entry' | 'exit';
+  symbol: string;
+  direction: 'long' | 'short';
+  limit_price: number;
+  quantity: number;
+  status: string;
+  created_at: string;
+  expires_at: string | null;
+  trade_id?: string;
+}
+
 export interface Trade {
   id: string;
   log_id: string;
@@ -102,6 +115,10 @@ export default function TradeLogPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Pending orders state
+  const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
+  const [ordersExpanded, setOrdersExpanded] = useState(false);
+
   // Filters
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
@@ -154,6 +171,40 @@ export default function TradeLogPanel({
       setLoading(false);
     }
   }, [selectedLogId, statusFilter]);
+
+  const fetchPendingOrders = useCallback(async () => {
+    try {
+      const response = await fetch(`${JOURNAL_API}/api/orders/active`);
+      const result = await response.json();
+      if (result.success) {
+        const allOrders = [
+          ...result.data.pending_entries,
+          ...result.data.pending_exits
+        ];
+        setPendingOrders(allOrders);
+      }
+    } catch (err) {
+      console.error('Failed to fetch pending orders:', err);
+    }
+  }, []);
+
+  const handleCancelOrder = async (orderId: number) => {
+    if (!confirm('Cancel this order?')) return;
+
+    try {
+      const response = await fetch(`${JOURNAL_API}/api/orders/${orderId}`, {
+        method: 'DELETE'
+      });
+      const result = await response.json();
+      if (result.success) {
+        fetchPendingOrders();
+      } else {
+        setError(result.error || 'Failed to cancel order');
+      }
+    } catch (err) {
+      setError('Failed to cancel order');
+    }
+  };
 
   // Reset to page 1 when filter or log changes
   useEffect(() => {
@@ -245,15 +296,19 @@ export default function TradeLogPanel({
 
   useEffect(() => {
     fetchTrades();
-  }, [fetchTrades, refreshTrigger]);
+    fetchPendingOrders();
+  }, [fetchTrades, fetchPendingOrders, refreshTrigger]);
 
   // Auto-refresh every 30 seconds (only when tab is visible)
   useEffect(() => {
     const interval = setInterval(() => {
-      if (!document.hidden) fetchTrades();
+      if (!document.hidden) {
+        fetchTrades();
+        fetchPendingOrders();
+      }
     }, 30000);
     return () => clearInterval(interval);
-  }, [fetchTrades]);
+  }, [fetchTrades, fetchPendingOrders]);
 
   const formatDateTime = (isoString: string) => {
     const date = new Date(isoString);
@@ -432,6 +487,51 @@ export default function TradeLogPanel({
           </button>
         </div>
       </div>
+
+      {/* Pending Orders Section */}
+      {pendingOrders.length > 0 && (
+        <div className="pending-orders-section">
+          <div
+            className="pending-orders-header"
+            onClick={() => setOrdersExpanded(!ordersExpanded)}
+          >
+            <span className="pending-orders-title">
+              Pending Orders
+              <span className="pending-orders-count">{pendingOrders.length}</span>
+            </span>
+            <span className="pending-orders-expand">
+              {ordersExpanded ? '▼' : '▶'}
+            </span>
+          </div>
+
+          {ordersExpanded && (
+            <div className="pending-orders-list">
+              {pendingOrders.map(order => (
+                <div key={order.id} className={`pending-order-item ${order.order_type}`}>
+                  <div className="order-info">
+                    <span className={`order-direction ${order.direction}`}>
+                      {order.direction.toUpperCase()}
+                    </span>
+                    <span className="order-symbol">{order.symbol}</span>
+                    <span className="order-type-badge">{order.order_type}</span>
+                    <span className="order-price">@ ${order.limit_price.toFixed(2)}</span>
+                    <span className="order-qty">x{order.quantity}</span>
+                  </div>
+                  <div className="order-actions">
+                    <button
+                      className="btn-cancel-order"
+                      onClick={() => handleCancelOrder(order.id)}
+                      title="Cancel order"
+                    >
+                      ×
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="trade-log-table-container">
         {!selectedLogId ? (

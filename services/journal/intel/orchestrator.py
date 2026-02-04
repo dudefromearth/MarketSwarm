@@ -18,7 +18,7 @@ import redis.asyncio as redis
 
 from .db_v2 import JournalDBv2
 from .models_v2 import (
-    TradeLog, Trade, TradeEvent, Symbol, Setting, Tag,
+    TradeLog, Trade, TradeEvent, Symbol, Setting, Tag, Order,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
     PlaybookEntry, PlaybookSourceRef, Alert,
     PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger,
@@ -293,8 +293,19 @@ class JournalOrchestrator:
             if not log:
                 return self._error_response('Trade log not found', 404)
 
-            # Set defaults
-            entry_time = body.get('entry_time') or datetime.utcnow().isoformat()
+            # Entry mode: instant (default), freeform, or simulated
+            entry_mode = body.get('entry_mode', 'instant')
+            if entry_mode not in ('instant', 'freeform', 'simulated'):
+                return self._error_response('entry_mode must be "instant", "freeform", or "simulated"', 400)
+
+            # Set entry_time based on mode
+            if entry_mode == 'freeform':
+                # Freeform requires user-specified entry_time
+                entry_time = body.get('entry_time')
+                if not entry_time:
+                    return self._error_response('entry_time is required for freeform trades', 400)
+            else:
+                entry_time = body.get('entry_time') or datetime.utcnow().isoformat()
 
             # Convert prices to cents if needed
             entry_price = body['entry_price']
@@ -313,6 +324,18 @@ class JournalOrchestrator:
             if max_loss and (isinstance(max_loss, float) or max_loss < 1000):
                 max_loss = int(max_loss * 100)
 
+            # Determine initial status
+            # Freeform can create already-closed trades if exit_time provided
+            status = 'open'
+            exit_time = body.get('exit_time')
+            exit_price = body.get('exit_price')
+            exit_spot = body.get('exit_spot')
+
+            if entry_mode == 'freeform' and exit_time and exit_price is not None:
+                status = 'closed'
+                if isinstance(exit_price, float) or exit_price < 1000:
+                    exit_price = int(exit_price * 100)
+
             trade = Trade(
                 id=Trade.new_id(),
                 log_id=log_id,
@@ -328,17 +351,26 @@ class JournalOrchestrator:
                 entry_price=entry_price,
                 entry_spot=body.get('entry_spot'),
                 entry_iv=body.get('entry_iv'),
+                exit_time=exit_time if status == 'closed' else None,
+                exit_price=exit_price if status == 'closed' else None,
+                exit_spot=exit_spot if status == 'closed' else None,
                 planned_risk=planned_risk or max_loss,  # Default to max_loss
                 max_profit=max_profit,
                 max_loss=max_loss,
+                status=status,
+                entry_mode=entry_mode,
                 notes=body.get('notes'),
                 tags=body.get('tags', []),
                 source=body.get('source', 'manual'),
                 playbook_id=body.get('playbook_id')
             )
 
+            # Calculate P&L if closed
+            if status == 'closed':
+                trade.calculate_pnl()
+
             created = self.db.create_trade(trade)
-            self.logger.info(f"Created trade: {created.strategy} {created.strike} @ ${entry_price/100:.2f}", emoji="📝")
+            self.logger.info(f"Created {entry_mode} trade: {created.strategy} {created.strike} @ ${entry_price/100:.2f}", emoji="📝")
 
             return self._json_response({
                 'success': True,
@@ -352,14 +384,69 @@ class JournalOrchestrator:
             return self._error_response(str(e), 500)
 
     async def update_trade(self, request: web.Request) -> web.Response:
-        """PUT /api/trades/:id - Update a trade."""
+        """PUT /api/trades/:id - Update a trade.
+
+        Edit rules by entry_mode:
+        - freeform: Full edit freedom (design sandbox)
+        - instant: Protected fields only
+        - simulated (before immutable_at): Full edit freedom (planning stage)
+        - simulated (after immutable_at): Core immutable, notes/tags editable
+        """
         try:
             trade_id = request.match_info['id']
             body = await request.json()
 
-            # Don't allow updating certain fields
+            # Get existing trade to check entry mode and immutability
+            existing_trade = self.db.get_trade(trade_id)
+            if not existing_trade:
+                return self._error_response('Trade not found', 404, request)
+
+            # Always protected fields
             protected = ['id', 'log_id', 'created_at']
-            updates = {k: v for k, v in body.items() if k not in protected}
+
+            # Immutable core fields for locked simulated trades
+            # These define the position at risk and cannot be changed after the fact
+            sim_immutable_fields = [
+                'entry_time', 'entry_price', 'entry_spot', 'entry_iv',
+                'symbol', 'underlying', 'strategy', 'side', 'strike', 'width',
+                'dte', 'quantity', 'entry_mode', 'immutable_at'
+            ]
+
+            # Check if simulated trade is locked (has immutable_at timestamp)
+            is_locked_sim = (
+                existing_trade.entry_mode == 'simulated' and
+                existing_trade.immutable_at is not None
+            )
+
+            if is_locked_sim:
+                # Check if trying to edit immutable fields
+                attempted_core_edits = [k for k in body.keys() if k in sim_immutable_fields]
+                if attempted_core_edits:
+                    # Check if this is a correction request (has correction_reason)
+                    correction_reason = body.get('correction_reason')
+                    if correction_reason:
+                        # Allow correction but log it
+                        user = await self.auth.get_request_user(request)
+                        user_id = user['id'] if user else None
+                        for field in attempted_core_edits:
+                            if field in body and field != 'correction_reason':
+                                self.db.record_trade_correction(
+                                    trade_id=trade_id,
+                                    field_name=field,
+                                    original_value=str(getattr(existing_trade, field, '')),
+                                    corrected_value=str(body[field]),
+                                    correction_reason=correction_reason,
+                                    user_id=user_id
+                                )
+                    else:
+                        return self._error_response(
+                            f"Cannot modify core fields ({', '.join(attempted_core_edits)}) on locked simulated trade. "
+                            "Provide 'correction_reason' for auditable corrections, or edit notes/tags instead.",
+                            403, request
+                        )
+
+            # Filter updates based on protection rules
+            updates = {k: v for k, v in body.items() if k not in protected and k != 'correction_reason'}
 
             # Handle tags serialization
             if 'tags' in updates:
@@ -368,15 +455,15 @@ class JournalOrchestrator:
             trade = self.db.update_trade(trade_id, updates)
 
             if not trade:
-                return self._error_response('Trade not found', 404)
+                return self._error_response('Trade not found', 404, request)
 
             return self._json_response({
                 'success': True,
                 'data': trade.to_api_dict()
-            })
+            }, request=request)
         except Exception as e:
             self.logger.error(f"update_trade error: {e}")
-            return self._error_response(str(e), 500)
+            return self._error_response(str(e), 500, request)
 
     async def add_adjustment(self, request: web.Request) -> web.Response:
         """POST /api/trades/:id/adjust - Add an adjustment event."""
@@ -471,6 +558,143 @@ class JournalOrchestrator:
         except Exception as e:
             self.logger.error(f"delete_trade error: {e}")
             return self._error_response(str(e), 500)
+
+    # ==================== Order Queue Endpoints ====================
+
+    async def list_orders(self, request: web.Request) -> web.Response:
+        """GET /api/orders - List orders for authenticated user."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            # Optional filters
+            status = request.query.get('status')
+            order_type = request.query.get('type')
+            symbol = request.query.get('symbol')
+
+            orders = self.db.list_orders(
+                user_id=user['id'],
+                status=status,
+                order_type=order_type,
+                symbol=symbol
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': [o.to_api_dict() for o in orders],
+                'count': len(orders)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"list_orders error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_orders_active(self, request: web.Request) -> web.Response:
+        """GET /api/orders/active - Get active orders summary."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            # Get pending orders
+            pending_orders = self.db.list_pending_orders(user['id'])
+
+            # Split by type
+            pending_entries = [o.to_api_dict() for o in pending_orders if o.order_type == 'entry']
+            pending_exits = [o.to_api_dict() for o in pending_orders if o.order_type == 'exit']
+
+            return self._json_response({
+                'success': True,
+                'data': {
+                    'pending_entries': pending_entries,
+                    'pending_exits': pending_exits,
+                    'total': len(pending_orders)
+                }
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"get_orders_active error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def create_order(self, request: web.Request) -> web.Response:
+        """POST /api/orders - Create a new order."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            body = await request.json()
+
+            # Validate required fields
+            order_type = body.get('order_type')
+            if order_type not in ('entry', 'exit'):
+                return self._error_response('order_type must be "entry" or "exit"', 400, request)
+
+            symbol = body.get('symbol')
+            direction = body.get('direction')
+            limit_price = body.get('limit_price')
+
+            if not symbol or not direction or limit_price is None:
+                return self._error_response('symbol, direction, and limit_price are required', 400, request)
+
+            if direction not in ('long', 'short'):
+                return self._error_response('direction must be "long" or "short"', 400, request)
+
+            # For exit orders, trade_id is required
+            trade_id = body.get('trade_id')
+            if order_type == 'exit' and not trade_id:
+                return self._error_response('trade_id is required for exit orders', 400, request)
+
+            order = self.db.create_order(
+                user_id=user['id'],
+                order_type=order_type,
+                symbol=symbol,
+                direction=direction,
+                limit_price=float(limit_price),
+                quantity=int(body.get('quantity', 1)),
+                trade_id=trade_id,
+                strategy=body.get('strategy'),
+                stop_loss=float(body['stop_loss']) if body.get('stop_loss') else None,
+                take_profit=float(body['take_profit']) if body.get('take_profit') else None,
+                notes=body.get('notes'),
+                expires_at=body.get('expires_at')
+            )
+
+            if not order:
+                return self._error_response('Failed to create order', 500, request)
+
+            self.logger.info(f"Created {order_type} order for {symbol} @ ${limit_price}", emoji="📋")
+
+            return self._json_response({
+                'success': True,
+                'data': order.to_api_dict()
+            }, 201, request)
+
+        except Exception as e:
+            self.logger.error(f"create_order error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def cancel_order(self, request: web.Request) -> web.Response:
+        """DELETE /api/orders/:id - Cancel an order."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            order_id = int(request.match_info['id'])
+            cancelled = self.db.cancel_order(order_id, user['id'])
+
+            if not cancelled:
+                return self._error_response('Order not found or already processed', 404, request)
+
+            self.logger.info(f"Cancelled order {order_id}", emoji="❌")
+
+            return self._json_response({
+                'success': True,
+                'message': 'Order cancelled'
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"cancel_order error: {e}")
+            return self._error_response(str(e), 500, request)
 
     # ==================== Analytics Endpoints (Log-Scoped) ====================
 
@@ -3771,6 +3995,12 @@ class JournalOrchestrator:
         app.router.add_delete('/api/trades/{id}', self.delete_trade)
         app.router.add_post('/api/trades/{id}/adjust', self.add_adjustment)
         app.router.add_post('/api/trades/{id}/close', self.close_trade)
+
+        # Order Queue (Simulated Trading)
+        app.router.add_get('/api/orders', self.list_orders)
+        app.router.add_get('/api/orders/active', self.get_orders_active)
+        app.router.add_post('/api/orders', self.create_order)
+        app.router.add_delete('/api/orders/{id}', self.cancel_order)
 
         # Log-scoped analytics (v2)
         app.router.add_get('/api/logs/{logId}/analytics', self.get_log_analytics)

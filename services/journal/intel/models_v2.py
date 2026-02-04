@@ -94,6 +94,8 @@ class Trade:
 
     # State
     status: str = "open"  # open/closed
+    entry_mode: str = "instant"  # instant/freeform/simulated
+    immutable_at: Optional[str] = None  # Timestamp when sim trade became locked
 
     # Metadata
     notes: Optional[str] = None
@@ -189,6 +191,83 @@ class TradeEvent:
         if d['price']:
             d['price_dollars'] = d['price'] / 100
         return d
+
+
+@dataclass
+class TradeCorrection:
+    """Auditable correction to a locked simulated trade."""
+    id: int  # Auto-increment ID
+    trade_id: str
+
+    # What was corrected
+    field_name: str
+    original_value: Optional[str] = None
+    corrected_value: str = ""
+    correction_reason: str = ""
+
+    # Audit trail
+    corrected_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    corrected_by: Optional[int] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'TradeCorrection':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return self.to_dict()
+
+
+@dataclass
+class Order:
+    """A pending order in the order queue for simulated trading."""
+    id: int  # Auto-increment ID
+    user_id: int
+
+    # Order details
+    order_type: str  # entry/exit
+    symbol: str
+    direction: str  # long/short
+
+    # Limit order parameters
+    limit_price: float  # in dollars
+    quantity: int = 1
+
+    # Trade reference (for exit orders)
+    trade_id: Optional[str] = None
+
+    # Trade parameters (for entry orders)
+    strategy: Optional[str] = None
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
+    notes: Optional[str] = None
+
+    # Order lifecycle
+    status: str = "pending"  # pending/filled/cancelled/expired
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    expires_at: Optional[str] = None  # End of trading day if not set
+    filled_at: Optional[str] = None
+    filled_price: Optional[float] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'Order':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return self.to_dict()
 
 
 @dataclass

@@ -10,7 +10,7 @@ from datetime import datetime
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint, Symbol, Setting,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
-    PlaybookEntry, PlaybookSourceRef, Tag, Alert,
+    PlaybookEntry, PlaybookSourceRef, Tag, Alert, Order, TradeCorrection,
     PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger,
     TrackedIdea, SelectorParams
 )
@@ -19,7 +19,7 @@ from .models_v2 import (
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 14
+    SCHEMA_VERSION = 15
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -210,6 +210,9 @@ class JournalDBv2:
 
             if current_version < 14:
                 self._migrate_to_v14(conn)
+
+            if current_version < 15:
+                self._migrate_to_v15(conn)
 
             conn.commit()
         finally:
@@ -1055,6 +1058,92 @@ class JournalDBv2:
                 """)
 
             self._set_schema_version(conn, 14)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v15(self, conn):
+        """Migrate to v15: Add trade entry modes and order queue for simulated trading."""
+        cursor = conn.cursor()
+        try:
+            # Add entry_mode column to trades table
+            try:
+                cursor.execute("""
+                    ALTER TABLE trades
+                    ADD COLUMN entry_mode ENUM('instant', 'freeform', 'simulated') DEFAULT 'instant'
+                    AFTER status
+                """)
+            except Exception:
+                pass  # Column may already exist
+
+            # Add immutable_at timestamp for simulated trades (core fields locked after this)
+            try:
+                cursor.execute("""
+                    ALTER TABLE trades
+                    ADD COLUMN immutable_at DATETIME DEFAULT NULL
+                    AFTER entry_mode
+                """)
+            except Exception:
+                pass  # Column may already exist
+
+            # Create trade_corrections table for auditable corrections to locked trades
+            if not self._table_exists(conn, 'trade_corrections'):
+                cursor.execute("""
+                    CREATE TABLE trade_corrections (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        trade_id VARCHAR(36) NOT NULL,
+
+                        -- What was corrected
+                        field_name VARCHAR(50) NOT NULL,
+                        original_value TEXT,
+                        corrected_value TEXT NOT NULL,
+                        correction_reason TEXT NOT NULL,
+
+                        -- Audit trail
+                        corrected_at DATETIME NOT NULL,
+                        corrected_by INT,
+
+                        INDEX idx_corrections_trade (trade_id),
+                        FOREIGN KEY (trade_id) REFERENCES trades(id) ON DELETE CASCADE
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create order_queue table for simulated orders
+            if not self._table_exists(conn, 'order_queue'):
+                cursor.execute("""
+                    CREATE TABLE order_queue (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        user_id INT NOT NULL,
+                        trade_id VARCHAR(36) DEFAULT NULL,
+
+                        -- Order details
+                        order_type ENUM('entry', 'exit') NOT NULL,
+                        symbol VARCHAR(20) NOT NULL,
+                        direction ENUM('long', 'short') NOT NULL,
+
+                        -- Limit order parameters
+                        limit_price DECIMAL(10,2) NOT NULL,
+                        quantity INT DEFAULT 1,
+
+                        -- Trade parameters (for entry orders)
+                        strategy VARCHAR(100) DEFAULT NULL,
+                        stop_loss DECIMAL(10,2) DEFAULT NULL,
+                        take_profit DECIMAL(10,2) DEFAULT NULL,
+                        notes TEXT DEFAULT NULL,
+
+                        -- Order lifecycle
+                        status ENUM('pending', 'filled', 'cancelled', 'expired') DEFAULT 'pending',
+                        created_at DATETIME NOT NULL,
+                        expires_at DATETIME DEFAULT NULL,
+                        filled_at DATETIME DEFAULT NULL,
+                        filled_price DECIMAL(10,2) DEFAULT NULL,
+
+                        INDEX idx_user_status (user_id, status),
+                        INDEX idx_symbol_status (symbol, status),
+                        FOREIGN KEY (trade_id) REFERENCES trades(id) ON DELETE CASCADE
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 15)
         finally:
             cursor.close()
 
@@ -2495,6 +2584,269 @@ class JournalDBv2:
                 'first_trade': dates[0],
                 'last_trade': dates[1]
             }
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Order Queue CRUD ====================
+
+    def create_order(
+        self,
+        user_id: int,
+        order_type: str,
+        symbol: str,
+        direction: str,
+        limit_price: float,
+        quantity: int = 1,
+        trade_id: Optional[str] = None,
+        strategy: Optional[str] = None,
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
+        notes: Optional[str] = None,
+        expires_at: Optional[str] = None
+    ) -> Optional[Order]:
+        """Create a new order in the order queue."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            now = datetime.utcnow()
+            cursor.execute("""
+                INSERT INTO order_queue
+                (user_id, trade_id, order_type, symbol, direction, limit_price, quantity,
+                 strategy, stop_loss, take_profit, notes, status, created_at, expires_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'pending', %s, %s)
+            """, (
+                user_id, trade_id, order_type, symbol, direction, limit_price, quantity,
+                strategy, stop_loss, take_profit, notes, now, expires_at
+            ))
+            conn.commit()
+
+            order_id = cursor.lastrowid
+            return self.get_order(order_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_order(self, order_id: int) -> Optional[Order]:
+        """Get an order by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM order_queue WHERE id = %s", (order_id,))
+            row = cursor.fetchone()
+            if row:
+                return Order.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_orders(
+        self,
+        user_id: int,
+        status: Optional[str] = None,
+        order_type: Optional[str] = None,
+        symbol: Optional[str] = None
+    ) -> List[Order]:
+        """List orders for a user with optional filters."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM order_queue WHERE user_id = %s"
+            params = [user_id]
+
+            if status:
+                query += " AND status = %s"
+                params.append(status)
+
+            if order_type:
+                query += " AND order_type = %s"
+                params.append(order_type)
+
+            if symbol:
+                query += " AND symbol = %s"
+                params.append(symbol)
+
+            query += " ORDER BY created_at DESC"
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [Order.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_pending_orders(self, user_id: Optional[int] = None) -> List[Order]:
+        """List all pending orders, optionally filtered by user."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if user_id:
+                cursor.execute(
+                    "SELECT * FROM order_queue WHERE status = 'pending' AND user_id = %s ORDER BY created_at",
+                    (user_id,)
+                )
+            else:
+                cursor.execute("SELECT * FROM order_queue WHERE status = 'pending' ORDER BY created_at")
+            rows = cursor.fetchall()
+            return [Order.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_order_status(
+        self,
+        order_id: int,
+        status: str,
+        filled_price: Optional[float] = None
+    ) -> Optional[Order]:
+        """Update order status (fill, cancel, expire)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if status == 'filled':
+                cursor.execute("""
+                    UPDATE order_queue
+                    SET status = %s, filled_at = %s, filled_price = %s
+                    WHERE id = %s
+                """, (status, datetime.utcnow(), filled_price, order_id))
+            else:
+                cursor.execute("""
+                    UPDATE order_queue
+                    SET status = %s
+                    WHERE id = %s
+                """, (status, order_id))
+            conn.commit()
+            return self.get_order(order_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def cancel_order(self, order_id: int, user_id: int) -> bool:
+        """Cancel an order (only if pending and owned by user)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE order_queue
+                SET status = 'cancelled'
+                WHERE id = %s AND user_id = %s AND status = 'pending'
+            """, (order_id, user_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def expire_orders(self) -> int:
+        """Mark expired orders as expired. Returns count of expired orders."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            now = datetime.utcnow()
+            cursor.execute("""
+                UPDATE order_queue
+                SET status = 'expired'
+                WHERE status = 'pending' AND expires_at IS NOT NULL AND expires_at < %s
+            """, (now,))
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_active_orders_summary(self, user_id: int) -> Dict[str, Any]:
+        """Get summary of active orders for a user."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN order_type = 'entry' THEN 1 ELSE 0 END) as entry_count,
+                    SUM(CASE WHEN order_type = 'exit' THEN 1 ELSE 0 END) as exit_count
+                FROM order_queue
+                WHERE user_id = %s AND status = 'pending'
+            """, (user_id,))
+            row = cursor.fetchone()
+            return {
+                'total': row[0] or 0,
+                'pending_entries': row[1] or 0,
+                'pending_exits': row[2] or 0
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Trade Corrections (Audit Trail) ====================
+
+    def record_trade_correction(
+        self,
+        trade_id: str,
+        field_name: str,
+        original_value: str,
+        corrected_value: str,
+        correction_reason: str,
+        user_id: Optional[int] = None
+    ) -> TradeCorrection:
+        """Record a correction to a locked simulated trade (audit trail)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            now = datetime.utcnow()
+            cursor.execute("""
+                INSERT INTO trade_corrections
+                (trade_id, field_name, original_value, corrected_value, correction_reason,
+                 corrected_at, corrected_by)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (trade_id, field_name, original_value, corrected_value, correction_reason,
+                  now, user_id))
+            conn.commit()
+
+            correction_id = cursor.lastrowid
+            return TradeCorrection(
+                id=correction_id,
+                trade_id=trade_id,
+                field_name=field_name,
+                original_value=original_value,
+                corrected_value=corrected_value,
+                correction_reason=correction_reason,
+                corrected_at=now.isoformat(),
+                corrected_by=user_id
+            )
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_trade_corrections(self, trade_id: str) -> List[TradeCorrection]:
+        """Get all corrections for a trade (audit log)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT * FROM trade_corrections
+                WHERE trade_id = %s
+                ORDER BY corrected_at ASC
+            """, (trade_id,))
+            rows = cursor.fetchall()
+            return [TradeCorrection.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def lock_simulated_trade(self, trade_id: str) -> Optional[Trade]:
+        """Lock a simulated trade by setting immutable_at timestamp."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            now = datetime.utcnow().isoformat()
+            cursor.execute("""
+                UPDATE trades
+                SET immutable_at = %s, updated_at = %s
+                WHERE id = %s AND entry_mode = 'simulated' AND immutable_at IS NULL
+            """, (now, now, trade_id))
+            conn.commit()
+            return self.get_trade(trade_id)
         finally:
             cursor.close()
             conn.close()

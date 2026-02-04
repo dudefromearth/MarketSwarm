@@ -968,6 +968,186 @@ Find the nearest {zone_type} zone boundaries."""
             )
 
 
+class OrderQueueEvaluator:
+    """
+    Evaluator for the order queue in simulated trading.
+    Monitors pending orders against current prices and fills them when conditions are met.
+    Also handles order expiration and auto-close of open trades at market close.
+    """
+
+    def __init__(self, db=None, logger=None):
+        self._db = db
+        self._logger = logger
+
+    async def evaluate_orders(self, market_data: dict) -> dict:
+        """
+        Evaluate all pending orders against current market data.
+
+        Returns dict with:
+        - filled_entries: List of orders that were filled (new trades created)
+        - filled_exits: List of orders that were filled (trades closed)
+        - expired: List of orders that expired
+        - auto_closed: List of trades auto-closed at market close
+        """
+        if not self._db:
+            return {'filled_entries': [], 'filled_exits': [], 'expired': [], 'auto_closed': []}
+
+        results = {
+            'filled_entries': [],
+            'filled_exits': [],
+            'expired': [],
+            'auto_closed': []
+        }
+
+        # First, expire any orders past their expiration time
+        expired_count = self._db.expire_orders()
+        if expired_count > 0 and self._logger:
+            self._logger.info(f"Expired {expired_count} orders", emoji="⏰")
+
+        # Get all pending orders
+        pending_orders = self._db.list_pending_orders()
+
+        for order in pending_orders:
+            # Get current price for the symbol
+            symbol_data = market_data.get(order.symbol, {})
+            spot = symbol_data.get('spot_price') or symbol_data.get('spot') or market_data.get('spot_price') or market_data.get('spot')
+
+            if spot is None:
+                continue
+
+            # Get bid/ask for realistic execution
+            bid = symbol_data.get('bid') or spot * 0.9999
+            ask = symbol_data.get('ask') or spot * 1.0001
+
+            filled = False
+            fill_price = None
+
+            if order.order_type == 'entry':
+                # Entry order fill logic
+                if order.direction == 'long':
+                    # Long entry: fill at ask when spot reaches limit price
+                    if spot <= order.limit_price:
+                        filled = True
+                        fill_price = ask  # Buy at ask
+                else:  # short
+                    # Short entry: fill at bid when spot reaches limit price
+                    if spot >= order.limit_price:
+                        filled = True
+                        fill_price = bid  # Sell at bid
+            else:  # exit order
+                if order.direction == 'long':
+                    # Long exit (take profit): fill at bid when spot reaches limit
+                    if spot >= order.limit_price:
+                        filled = True
+                        fill_price = bid  # Sell at bid
+                else:  # short
+                    # Short exit (take profit): fill at ask when spot reaches limit
+                    if spot <= order.limit_price:
+                        filled = True
+                        fill_price = ask  # Buy at ask
+
+            if filled:
+                await self._fill_order(order, fill_price, market_data, results)
+
+        return results
+
+    async def _fill_order(self, order, fill_price: float, market_data: dict, results: dict):
+        """Fill an order and create/close the trade.
+
+        When an entry order is filled, the resulting trade becomes immutable (core fields locked).
+        This preserves the time-anchored truth of the position for learning and bias detection.
+        """
+        from datetime import datetime
+
+        if order.order_type == 'entry':
+            # Create a new trade from the entry order
+            # Note: This would require log_id which isn't stored in order
+            # For now, we mark the order as filled and let the UI handle trade creation
+            # The UI should call lock_simulated_trade after creating the trade
+            self._db.update_order_status(order.id, 'filled', fill_price)
+            results['filled_entries'].append({
+                'order_id': order.id,
+                'symbol': order.symbol,
+                'direction': order.direction,
+                'limit_price': order.limit_price,
+                'fill_price': fill_price,
+                'quantity': order.quantity,
+                # Flag that this trade should be locked immediately
+                'should_lock': True
+            })
+            if self._logger:
+                self._logger.info(
+                    f"Filled entry order #{order.id}: {order.direction} {order.symbol} @ ${fill_price:.2f}",
+                    emoji="✅"
+                )
+        else:  # exit order
+            # Close the associated trade
+            if order.trade_id:
+                trade = self._db.get_trade(order.trade_id)
+                if trade and trade.status == 'open':
+                    # Close the trade at fill price
+                    fill_price_cents = int(fill_price * 100)
+                    self._db.close_trade(
+                        trade_id=order.trade_id,
+                        exit_price=fill_price_cents,
+                        exit_spot=market_data.get('spot_price') or market_data.get('spot'),
+                        exit_time=datetime.utcnow().isoformat()
+                    )
+
+            self._db.update_order_status(order.id, 'filled', fill_price)
+            results['filled_exits'].append({
+                'order_id': order.id,
+                'trade_id': order.trade_id,
+                'symbol': order.symbol,
+                'direction': order.direction,
+                'limit_price': order.limit_price,
+                'fill_price': fill_price
+            })
+            if self._logger:
+                self._logger.info(
+                    f"Filled exit order #{order.id}: closed trade {order.trade_id} @ ${fill_price:.2f}",
+                    emoji="✅"
+                )
+
+    async def auto_close_at_market_close(self, market_data: dict) -> list:
+        """
+        Auto-close all open simulated trades at market close (4:00 PM ET).
+        Called at market close by the alert engine.
+
+        Returns list of auto-closed trade IDs.
+        """
+        if not self._db:
+            return []
+
+        from datetime import datetime
+
+        auto_closed = []
+        spot = market_data.get('spot_price') or market_data.get('spot')
+
+        if spot is None:
+            return []
+
+        # Get all open trades with entry_mode='simulated'
+        # This requires adding a method to db_v2.py to list simulated open trades
+        # For now, we'll handle this via a direct query pattern
+
+        # Mark spot as exit price
+        exit_price_cents = int(spot * 100)
+        exit_time = datetime.utcnow().isoformat()
+
+        # TODO: Add db method to get open simulated trades and close them
+        # For now, return empty - the actual implementation would need
+        # a list_open_simulated_trades method in the DB layer
+
+        if self._logger and auto_closed:
+            self._logger.info(
+                f"Auto-closed {len(auto_closed)} simulated trades at market close",
+                emoji="🔔"
+            )
+
+        return auto_closed
+
+
 def create_all_evaluators(ai_manager: Optional[AIProviderManager] = None, logger=None) -> list:
     """
     Factory function to create all evaluators.
