@@ -12,7 +12,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 interface Order {
   id: number;

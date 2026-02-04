@@ -7,7 +7,7 @@ import type {
 } from '../types/leaderboard';
 import LeaderboardSettingsModal from './LeaderboardSettingsModal';
 
-const JOURNAL_API = 'http://localhost:3002';
+const JOURNAL_API = '';
 
 interface LeaderboardViewProps {
   onClose: () => void;

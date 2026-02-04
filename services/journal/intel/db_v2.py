@@ -4030,8 +4030,14 @@ class JournalDBv2:
                     ls.activity_score,
                     ls.performance_score,
                     ls.total_score,
-                    ls.calculated_at
+                    ls.calculated_at,
+                    CASE
+                        WHEN u.show_screen_name = 1 AND u.screen_name IS NOT NULL AND u.screen_name != ''
+                        THEN u.screen_name
+                        ELSE NULL
+                    END as display_name
                 FROM leaderboard_scores ls
+                LEFT JOIN users u ON ls.user_id = u.id
                 WHERE ls.period_type = %s AND ls.period_key = %s
                 ORDER BY ls.rank_position ASC
                 LIMIT %s OFFSET %s
@@ -4054,6 +4060,7 @@ class JournalDBv2:
                     'performance_score': float(row[10]) if row[10] else 0,
                     'total_score': float(row[11]) if row[11] else 0,
                     'calculated_at': row[12],
+                    'displayName': row[13],
                 })
 
             return results
@@ -4068,11 +4075,17 @@ class JournalDBv2:
         try:
             cursor.execute("""
                 SELECT
-                    user_id, rank_position, trades_logged, journal_entries, tags_used,
-                    total_pnl, win_rate, avg_r_multiple, closed_trades,
-                    activity_score, performance_score, total_score, calculated_at
-                FROM leaderboard_scores
-                WHERE user_id = %s AND period_type = %s AND period_key = %s
+                    ls.user_id, ls.rank_position, ls.trades_logged, ls.journal_entries, ls.tags_used,
+                    ls.total_pnl, ls.win_rate, ls.avg_r_multiple, ls.closed_trades,
+                    ls.activity_score, ls.performance_score, ls.total_score, ls.calculated_at,
+                    CASE
+                        WHEN u.show_screen_name = 1 AND u.screen_name IS NOT NULL AND u.screen_name != ''
+                        THEN u.screen_name
+                        ELSE NULL
+                    END as display_name
+                FROM leaderboard_scores ls
+                LEFT JOIN users u ON ls.user_id = u.id
+                WHERE ls.user_id = %s AND ls.period_type = %s AND ls.period_key = %s
             """, (user_id, period_type, period_key))
 
             row = cursor.fetchone()
@@ -4093,6 +4106,7 @@ class JournalDBv2:
                 'performance_score': float(row[10]) if row[10] else 0,
                 'total_score': float(row[11]) if row[11] else 0,
                 'calculated_at': row[12],
+                'displayName': row[13],
             }
         finally:
             cursor.close()
