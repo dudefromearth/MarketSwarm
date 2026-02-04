@@ -4031,11 +4031,10 @@ class JournalDBv2:
                     ls.performance_score,
                     ls.total_score,
                     ls.calculated_at,
-                    CASE
-                        WHEN u.show_screen_name = 1 AND u.screen_name IS NOT NULL AND u.screen_name != ''
-                        THEN u.screen_name
-                        ELSE NULL
-                    END as display_name
+                    COALESCE(
+                        CASE WHEN u.show_screen_name = 1 AND u.screen_name IS NOT NULL AND u.screen_name != '' THEN u.screen_name END,
+                        u.display_name
+                    ) as display_name
                 FROM leaderboard_scores ls
                 LEFT JOIN users u ON ls.user_id = u.id
                 WHERE ls.period_type = %s AND ls.period_key = %s
@@ -4078,11 +4077,10 @@ class JournalDBv2:
                     ls.user_id, ls.rank_position, ls.trades_logged, ls.journal_entries, ls.tags_used,
                     ls.total_pnl, ls.win_rate, ls.avg_r_multiple, ls.closed_trades,
                     ls.activity_score, ls.performance_score, ls.total_score, ls.calculated_at,
-                    CASE
-                        WHEN u.show_screen_name = 1 AND u.screen_name IS NOT NULL AND u.screen_name != ''
-                        THEN u.screen_name
-                        ELSE NULL
-                    END as display_name
+                    COALESCE(
+                        CASE WHEN u.show_screen_name = 1 AND u.screen_name IS NOT NULL AND u.screen_name != '' THEN u.screen_name END,
+                        u.display_name
+                    ) as display_name
                 FROM leaderboard_scores ls
                 LEFT JOIN users u ON ls.user_id = u.id
                 WHERE ls.user_id = %s AND ls.period_type = %s AND ls.period_key = %s
