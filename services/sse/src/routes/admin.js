@@ -250,6 +250,135 @@ router.get("/users/:id", requireAdmin, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/admin/users/:id/performance
+ * Returns user trading performance stats
+ */
+router.get("/users/:id/performance", requireAdmin, async (req, res) => {
+  const pool = getPool();
+  const userId = req.params.id;
+
+  try {
+    // Get all closed trades for this user
+    const [trades] = await pool.execute(`
+      SELECT t.id, t.symbol, t.strategy, t.side, t.entry_price, t.exit_price,
+             t.quantity, t.pnl, t.r_multiple, t.status, t.entry_time, t.exit_time
+      FROM trades t
+      JOIN trade_logs tl ON t.log_id = tl.id
+      WHERE tl.user_id = ?
+      ORDER BY t.entry_time DESC
+    `, [userId]);
+
+    const closedTrades = trades.filter(t => t.status === 'closed');
+    const openTrades = trades.filter(t => t.status === 'open');
+
+    const totalPnl = closedTrades.reduce((sum, t) => sum + (t.pnl || 0), 0);
+    const winners = closedTrades.filter(t => t.pnl > 0);
+    const losers = closedTrades.filter(t => t.pnl < 0);
+    const winRate = closedTrades.length > 0 ? (winners.length / closedTrades.length * 100) : 0;
+
+    const grossProfit = winners.reduce((sum, t) => sum + t.pnl, 0);
+    const grossLoss = Math.abs(losers.reduce((sum, t) => sum + t.pnl, 0));
+    const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : grossProfit > 0 ? Infinity : 0;
+
+    const avgWin = winners.length > 0 ? grossProfit / winners.length : 0;
+    const avgLoss = losers.length > 0 ? grossLoss / losers.length : 0;
+
+    // Strategy breakdown
+    const strategyStats = {};
+    for (const t of closedTrades) {
+      const key = t.strategy || 'unknown';
+      if (!strategyStats[key]) {
+        strategyStats[key] = { count: 0, pnl: 0, wins: 0 };
+      }
+      strategyStats[key].count++;
+      strategyStats[key].pnl += t.pnl || 0;
+      if (t.pnl > 0) strategyStats[key].wins++;
+    }
+
+    // Recent trades (last 10)
+    const recentTrades = trades.slice(0, 10).map(t => ({
+      id: t.id,
+      symbol: t.symbol,
+      strategy: t.strategy,
+      side: t.side,
+      pnl: t.pnl,
+      rMultiple: t.r_multiple,
+      status: t.status,
+      entryTime: t.entry_time,
+      exitTime: t.exit_time,
+    }));
+
+    res.json({
+      summary: {
+        totalTrades: trades.length,
+        closedTrades: closedTrades.length,
+        openTrades: openTrades.length,
+        totalPnl,
+        winRate: Math.round(winRate * 10) / 10,
+        profitFactor: Math.round(profitFactor * 100) / 100,
+        avgWin: Math.round(avgWin),
+        avgLoss: Math.round(avgLoss),
+        winners: winners.length,
+        losers: losers.length,
+        breakeven: closedTrades.length - winners.length - losers.length,
+      },
+      strategyStats,
+      recentTrades,
+    });
+  } catch (err) {
+    console.error("[admin] Error fetching user performance:", err);
+    res.status(500).json({ error: "Failed to fetch performance" });
+  }
+});
+
+/**
+ * GET /api/admin/users/:id/trades
+ * Returns paginated trades for a user
+ */
+router.get("/users/:id/trades", requireAdmin, async (req, res) => {
+  const pool = getPool();
+  const userId = req.params.id;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 20;
+  const offset = (page - 1) * limit;
+
+  try {
+    // Get total count
+    const [countResult] = await pool.execute(`
+      SELECT COUNT(*) as total
+      FROM trades t
+      JOIN trade_logs tl ON t.log_id = tl.id
+      WHERE tl.user_id = ?
+    `, [userId]);
+
+    const total = countResult[0]?.total || 0;
+
+    // Get trades with pagination
+    const [trades] = await pool.execute(`
+      SELECT t.*, tl.name as log_name
+      FROM trades t
+      JOIN trade_logs tl ON t.log_id = tl.id
+      WHERE tl.user_id = ?
+      ORDER BY t.entry_time DESC
+      LIMIT ? OFFSET ?
+    `, [userId, limit, offset]);
+
+    res.json({
+      trades,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (err) {
+    console.error("[admin] Error fetching user trades:", err);
+    res.status(500).json({ error: "Failed to fetch trades" });
+  }
+});
+
 // =============================================================================
 // Diagnostics Endpoints
 // =============================================================================

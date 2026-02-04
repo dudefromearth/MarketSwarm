@@ -1,5 +1,5 @@
 // ui/src/pages/Admin.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 
 interface AdminStats {
@@ -31,6 +31,52 @@ interface TradeLog {
   created_at: string;
   updated_at: string;
   tradeCount: number;
+}
+
+interface Trade {
+  id: string;
+  symbol: string;
+  strategy: string;
+  side: string;
+  strike: number;
+  width: number | null;
+  quantity: number;
+  entry_price: number;
+  exit_price: number | null;
+  pnl: number | null;
+  r_multiple: number | null;
+  status: string;
+  entry_time: string;
+  exit_time: string | null;
+  log_name: string;
+}
+
+interface PerformanceStats {
+  summary: {
+    totalTrades: number;
+    closedTrades: number;
+    openTrades: number;
+    totalPnl: number;
+    winRate: number;
+    profitFactor: number;
+    avgWin: number;
+    avgLoss: number;
+    winners: number;
+    losers: number;
+    breakeven: number;
+  };
+  strategyStats: Record<string, { count: number; pnl: number; wins: number }>;
+  recentTrades: {
+    id: string;
+    symbol: string;
+    strategy: string;
+    side: string;
+    pnl: number | null;
+    rMultiple: number | null;
+    status: string;
+    entryTime: string;
+    exitTime: string | null;
+  }[];
 }
 
 interface DataStatus {
@@ -73,12 +119,49 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Search and pagination
+  const [searchQuery, setSearchQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(15);
+
+  // User performance
+  const [performance, setPerformance] = useState<PerformanceStats | null>(null);
+  const [performanceLoading, setPerformanceLoading] = useState(false);
+
+  // User trades (expanded view)
+  const [userTrades, setUserTrades] = useState<Trade[]>([]);
+  const [tradesLoading, setTradesLoading] = useState(false);
+  const [tradesPage, setTradesPage] = useState(1);
+  const [tradesTotalPages, setTradesTotalPages] = useState(1);
+
   // Diagnostics state
   const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
   const [diagLoading, setDiagLoading] = useState(false);
   const [redisPattern, setRedisPattern] = useState("massive:*");
   const [redisKeys, setRedisKeys] = useState<any[] | null>(null);
   const [selectedKey, setSelectedKey] = useState<{ key: string; value: any } | null>(null);
+
+  // Filtered and paginated users
+  const filteredUsers = useMemo(() => {
+    if (!searchQuery.trim()) return users;
+    const q = searchQuery.toLowerCase();
+    return users.filter(u =>
+      u.display_name?.toLowerCase().includes(q) ||
+      u.email?.toLowerCase().includes(q) ||
+      u.subscription_tier?.toLowerCase().includes(q)
+    );
+  }, [users, searchQuery]);
+
+  const totalPages = Math.ceil(filteredUsers.length / pageSize);
+  const paginatedUsers = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredUsers.slice(start, start + pageSize);
+  }, [filteredUsers, currentPage, pageSize]);
+
+  // Reset page when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery]);
 
   // Fetch stats and users on mount
   useEffect(() => {
@@ -150,8 +233,51 @@ export default function AdminPage() {
       if (!res.ok) throw new Error("Failed to load user");
       const data = await res.json();
       setSelectedUser(data);
+      setPerformance(null);
+      setUserTrades([]);
+      setTradesPage(1);
+
+      // Fetch performance stats
+      fetchUserPerformance(userId);
+      fetchUserTrades(userId, 1);
     } catch (e) {
       console.error("Error loading user detail:", e);
+    }
+  };
+
+  const fetchUserPerformance = async (userId: number) => {
+    setPerformanceLoading(true);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/performance`, {
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPerformance(data);
+      }
+    } catch (e) {
+      console.error("Error loading performance:", e);
+    } finally {
+      setPerformanceLoading(false);
+    }
+  };
+
+  const fetchUserTrades = async (userId: number, page: number) => {
+    setTradesLoading(true);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/trades?page=${page}&limit=10`, {
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUserTrades(data.trades);
+        setTradesTotalPages(data.pagination.totalPages);
+        setTradesPage(page);
+      }
+    } catch (e) {
+      console.error("Error loading trades:", e);
+    } finally {
+      setTradesLoading(false);
     }
   };
 
@@ -160,6 +286,13 @@ export default function AdminPage() {
 
   const formatCurrency = (cents: number) =>
     `$${(cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
+
+  const formatPnL = (cents: number | null) => {
+    if (cents === null) return "—";
+    const dollars = cents / 100;
+    const formatted = Math.abs(dollars).toFixed(2);
+    return dollars >= 0 ? `+$${formatted}` : `-$${formatted}`;
+  };
 
   if (loading) {
     return (
@@ -199,7 +332,6 @@ export default function AdminPage() {
 
         {/* Stats Widgets */}
         <div className="stats-grid">
-          {/* Logins Last 24h */}
           <div className="stat-card">
             <div className="stat-icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -213,7 +345,6 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* Live Users */}
           <div className="stat-card">
             <div className="stat-icon live">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -227,14 +358,24 @@ export default function AdminPage() {
             </div>
           </div>
 
-          {/* Most Active */}
-          <div className="stat-card wide">
-            <div className="stat-icon">
+          <div className="stat-card">
+            <div className="stat-icon users">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                 <circle cx="9" cy="7" r="4" />
-                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+            </div>
+            <div className="stat-content">
+              <div className="stat-value">{users.length}</div>
+              <div className="stat-label">Total Users</div>
+            </div>
+          </div>
+
+          <div className="stat-card wide">
+            <div className="stat-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
               </svg>
             </div>
             <div className="stat-content">
@@ -265,9 +406,27 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* User List */}
+        {/* User List with Search and Pagination */}
         <div className="users-section">
-          <h2>All Users ({users.length})</h2>
+          <div className="users-header">
+            <h2>All Users ({filteredUsers.length})</h2>
+            <div className="search-box">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="11" cy="11" r="8" />
+                <path d="M21 21l-4.35-4.35" />
+              </svg>
+              <input
+                type="text"
+                placeholder="Search by name, email, or tier..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+              {searchQuery && (
+                <button className="clear-search" onClick={() => setSearchQuery("")}>×</button>
+              )}
+            </div>
+          </div>
+
           <div className="users-table-container">
             <table className="users-table">
               <thead>
@@ -282,7 +441,7 @@ export default function AdminPage() {
                 </tr>
               </thead>
               <tbody>
-                {users.map((user) => (
+                {paginatedUsers.map((user) => (
                   <tr
                     key={user.id}
                     className={selectedUser?.user.id === user.id ? "selected" : ""}
@@ -301,7 +460,7 @@ export default function AdminPage() {
                     <td>{user.email}</td>
                     <td>
                       <span className={`platform-badge ${user.issuer}`}>
-                        {user.issuer === "fotw" ? "FOTW" : user.issuer}
+                        {user.issuer === "fotw" ? "FOTW" : user.issuer === "0-dte" ? "0DTE" : user.issuer}
                       </span>
                     </td>
                     <td>
@@ -324,89 +483,246 @@ export default function AdminPage() {
               </tbody>
             </table>
           </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="pagination">
+              <button
+                className="page-btn"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(1)}
+              >
+                ««
+              </button>
+              <button
+                className="page-btn"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage(p => p - 1)}
+              >
+                «
+              </button>
+              <div className="page-info">
+                Page {currentPage} of {totalPages}
+              </div>
+              <button
+                className="page-btn"
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage(p => p + 1)}
+              >
+                »
+              </button>
+              <button
+                className="page-btn"
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage(totalPages)}
+              >
+                »»
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* User Detail Panel */}
+        {/* User Detail Panel - Enhanced */}
         {selectedUser && (
           <div className="user-detail-panel">
             <div className="detail-header">
-              <h2>{selectedUser.user.display_name}</h2>
-              <button
-                className="close-btn"
-                onClick={() => setSelectedUser(null)}
-              >
-                ×
-              </button>
+              <div className="user-avatar">
+                {selectedUser.user.display_name?.charAt(0).toUpperCase() || "?"}
+              </div>
+              <div className="user-header-info">
+                <h2>{selectedUser.user.display_name}</h2>
+                <span className="user-email">{selectedUser.user.email}</span>
+              </div>
+              <button className="close-btn" onClick={() => setSelectedUser(null)}>×</button>
             </div>
 
-            <div className="detail-grid">
-              <div className="detail-section">
-                <h3>Profile</h3>
-                <div className="detail-row">
-                  <span className="label">Email</span>
-                  <span className="value">{selectedUser.user.email}</span>
+            {/* Performance Widget */}
+            {performanceLoading ? (
+              <div className="performance-loading">Loading performance...</div>
+            ) : performance ? (
+              <div className="performance-widget">
+                <h3>Trading Performance</h3>
+                <div className="perf-grid">
+                  <div className="perf-stat main">
+                    <span className={`perf-value ${performance.summary.totalPnl >= 0 ? 'profit' : 'loss'}`}>
+                      {formatPnL(performance.summary.totalPnl)}
+                    </span>
+                    <span className="perf-label">Total P&L</span>
+                  </div>
+                  <div className="perf-stat">
+                    <span className="perf-value">{performance.summary.winRate}%</span>
+                    <span className="perf-label">Win Rate</span>
+                  </div>
+                  <div className="perf-stat">
+                    <span className="perf-value">{performance.summary.profitFactor}x</span>
+                    <span className="perf-label">Profit Factor</span>
+                  </div>
+                  <div className="perf-stat">
+                    <span className="perf-value">{performance.summary.totalTrades}</span>
+                    <span className="perf-label">Total Trades</span>
+                  </div>
                 </div>
-                <div className="detail-row">
-                  <span className="label">Platform</span>
-                  <span className="value">{selectedUser.user.issuer}</span>
-                </div>
-                <div className="detail-row">
-                  <span className="label">WP User ID</span>
-                  <span className="value">{selectedUser.user.wp_user_id}</span>
-                </div>
-                <div className="detail-row">
-                  <span className="label">Subscription</span>
-                  <span className="value">
-                    {selectedUser.user.subscription_tier || "None"}
-                  </span>
-                </div>
-                <div className="detail-row">
-                  <span className="label">Roles</span>
-                  <span className="value">
-                    {selectedUser.user.roles.join(", ") || "None"}
-                  </span>
-                </div>
-                <div className="detail-row">
-                  <span className="label">Admin</span>
-                  <span className="value">
-                    {selectedUser.user.is_admin ? "Yes" : "No"}
-                  </span>
-                </div>
-                <div className="detail-row">
-                  <span className="label">Member Since</span>
-                  <span className="value">
-                    {formatDate(selectedUser.user.created_at)}
-                  </span>
-                </div>
-                <div className="detail-row">
-                  <span className="label">Last Login</span>
-                  <span className="value">
-                    {formatDate(selectedUser.user.last_login_at)}
-                  </span>
-                </div>
-              </div>
 
-              <div className="detail-section">
-                <h3>Trade Logs ({selectedUser.tradeLogs.length})</h3>
-                {selectedUser.tradeLogs.length === 0 ? (
-                  <p className="no-data">No trade logs</p>
-                ) : (
-                  <div className="trade-logs-list">
-                    {selectedUser.tradeLogs.map((log) => (
-                      <div key={log.id} className="trade-log-item">
-                        <div className="log-name">{log.name}</div>
-                        <div className="log-stats">
-                          <span>Capital: {formatCurrency(log.starting_capital)}</span>
-                          <span>Trades: {log.tradeCount}</span>
-                          <span className={log.is_active ? "active" : "inactive"}>
-                            {log.is_active ? "Active" : "Inactive"}
+                <div className="perf-breakdown">
+                  <div className="breakdown-row">
+                    <span className="breakdown-label">Winners</span>
+                    <span className="breakdown-value win">{performance.summary.winners}</span>
+                    <span className="breakdown-avg">Avg: {formatCurrency(performance.summary.avgWin)}</span>
+                  </div>
+                  <div className="breakdown-row">
+                    <span className="breakdown-label">Losers</span>
+                    <span className="breakdown-value loss">{performance.summary.losers}</span>
+                    <span className="breakdown-avg">Avg: {formatCurrency(performance.summary.avgLoss)}</span>
+                  </div>
+                  <div className="breakdown-row">
+                    <span className="breakdown-label">Open</span>
+                    <span className="breakdown-value">{performance.summary.openTrades}</span>
+                  </div>
+                </div>
+
+                {/* Strategy Breakdown */}
+                {Object.keys(performance.strategyStats).length > 0 && (
+                  <div className="strategy-breakdown">
+                    <h4>By Strategy</h4>
+                    <div className="strategy-list">
+                      {Object.entries(performance.strategyStats).map(([strategy, stats]) => (
+                        <div key={strategy} className="strategy-item">
+                          <span className="strategy-name">{strategy}</span>
+                          <span className="strategy-count">{stats.count} trades</span>
+                          <span className={`strategy-pnl ${stats.pnl >= 0 ? 'profit' : 'loss'}`}>
+                            {formatPnL(stats.pnl)}
                           </span>
+                          <span className="strategy-winrate">
+                            {Math.round(stats.wins / stats.count * 100)}%
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="no-performance">No trading data available</div>
+            )}
+
+            {/* Profile Info */}
+            <div className="detail-section">
+              <h3>Profile</h3>
+              <div className="detail-row">
+                <span className="label">Platform</span>
+                <span className="value">{selectedUser.user.issuer}</span>
+              </div>
+              <div className="detail-row">
+                <span className="label">WP User ID</span>
+                <span className="value">{selectedUser.user.wp_user_id}</span>
+              </div>
+              <div className="detail-row">
+                <span className="label">Subscription</span>
+                <span className="value">{selectedUser.user.subscription_tier || "None"}</span>
+              </div>
+              <div className="detail-row">
+                <span className="label">Roles</span>
+                <span className="value">{selectedUser.user.roles.join(", ") || "None"}</span>
+              </div>
+              <div className="detail-row">
+                <span className="label">Admin</span>
+                <span className="value">{selectedUser.user.is_admin ? "Yes" : "No"}</span>
+              </div>
+              <div className="detail-row">
+                <span className="label">Member Since</span>
+                <span className="value">{formatDate(selectedUser.user.created_at)}</span>
+              </div>
+            </div>
+
+            {/* Trade Logs */}
+            <div className="detail-section">
+              <h3>Trade Logs ({selectedUser.tradeLogs.length})</h3>
+              {selectedUser.tradeLogs.length === 0 ? (
+                <p className="no-data">No trade logs</p>
+              ) : (
+                <div className="trade-logs-list">
+                  {selectedUser.tradeLogs.map((log) => (
+                    <div key={log.id} className="trade-log-item">
+                      <div className="log-name">{log.name}</div>
+                      <div className="log-stats">
+                        <span>Capital: {formatCurrency(log.starting_capital)}</span>
+                        <span>Trades: {log.tradeCount}</span>
+                        <span className={log.is_active ? "active" : "inactive"}>
+                          {log.is_active ? "Active" : "Inactive"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Recent Trades - Expanded View */}
+            <div className="detail-section trades-section">
+              <h3>Recent Trades</h3>
+              {tradesLoading ? (
+                <div className="trades-loading">Loading trades...</div>
+              ) : userTrades.length === 0 ? (
+                <p className="no-data">No trades recorded</p>
+              ) : (
+                <>
+                  <div className="trades-list">
+                    {userTrades.map((trade) => (
+                      <div key={trade.id} className={`trade-item ${trade.status}`}>
+                        <div className="trade-main">
+                          <span className={`trade-side ${trade.side}`}>
+                            {trade.side?.toUpperCase()}
+                          </span>
+                          <span className="trade-symbol">{trade.symbol}</span>
+                          <span className="trade-strategy">{trade.strategy}</span>
+                          <span className="trade-strike">{trade.strike}{trade.width ? `/${trade.width}` : ''}</span>
+                        </div>
+                        <div className="trade-details">
+                          <span className="trade-qty">x{trade.quantity}</span>
+                          <span className="trade-entry">@ ${(trade.entry_price / 100).toFixed(2)}</span>
+                          {trade.exit_price && (
+                            <span className="trade-exit">→ ${(trade.exit_price / 100).toFixed(2)}</span>
+                          )}
+                        </div>
+                        <div className="trade-result">
+                          {trade.pnl !== null ? (
+                            <span className={`trade-pnl ${trade.pnl >= 0 ? 'profit' : 'loss'}`}>
+                              {formatPnL(trade.pnl)}
+                            </span>
+                          ) : (
+                            <span className="trade-status-badge">{trade.status}</span>
+                          )}
+                          {trade.r_multiple !== null && (
+                            <span className="trade-r">{Number(trade.r_multiple).toFixed(2)}R</span>
+                          )}
+                        </div>
+                        <div className="trade-time">
+                          {new Date(trade.entry_time).toLocaleDateString()}
                         </div>
                       </div>
                     ))}
                   </div>
-                )}
-              </div>
+
+                  {/* Trades Pagination */}
+                  {tradesTotalPages > 1 && (
+                    <div className="trades-pagination">
+                      <button
+                        disabled={tradesPage === 1}
+                        onClick={() => fetchUserTrades(selectedUser.user.id, tradesPage - 1)}
+                      >
+                        ← Prev
+                      </button>
+                      <span>{tradesPage} / {tradesTotalPages}</span>
+                      <button
+                        disabled={tradesPage === tradesTotalPages}
+                        onClick={() => fetchUserTrades(selectedUser.user.id, tradesPage + 1)}
+                      >
+                        Next →
+                      </button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         )}
@@ -415,18 +731,13 @@ export default function AdminPage() {
         <div className="diagnostics-section">
           <div className="section-header-row">
             <h2>System Diagnostics</h2>
-            <button
-              className="refresh-btn"
-              onClick={fetchDiagnostics}
-              disabled={diagLoading}
-            >
+            <button className="refresh-btn" onClick={fetchDiagnostics} disabled={diagLoading}>
               {diagLoading ? "Loading..." : "Run Diagnostics"}
             </button>
           </div>
 
           {diagnostics && (
             <div className="diagnostics-content">
-              {/* Redis Connection */}
               <div className="diag-card">
                 <div className="diag-header">
                   <span className={`status-dot ${diagnostics.redis.connected ? "ok" : "error"}`} />
@@ -437,7 +748,6 @@ export default function AdminPage() {
                 </div>
               </div>
 
-              {/* Data Availability Grid */}
               <div className="data-availability">
                 <h3>Data Availability</h3>
                 <table className="diag-table">
@@ -464,7 +774,7 @@ export default function AdminPage() {
                                   <>
                                     <span className="status-icon">✓</span>
                                     <span className="status-detail">
-                                      {d.spot.value?.toFixed(2)} ({d.spot.age_sec}s ago)
+                                      {d.spot.value?.toFixed(2)} ({d.spot.age_sec}s)
                                     </span>
                                   </>
                                 ) : (
@@ -477,9 +787,7 @@ export default function AdminPage() {
                                 {d.heatmap?.exists ? (
                                   <>
                                     <span className="status-icon">✓</span>
-                                    <span className="status-detail">
-                                      {d.heatmap.tileCount} tiles ({d.heatmap.age_sec}s)
-                                    </span>
+                                    <span className="status-detail">{d.heatmap.tileCount} tiles</span>
                                   </>
                                 ) : (
                                   <span className="status-icon">✗</span>
@@ -488,14 +796,7 @@ export default function AdminPage() {
                             </td>
                             <td>
                               <div className={`data-status ${d.gex?.exists ? "ok" : "missing"}`}>
-                                {d.gex?.exists ? (
-                                  <>
-                                    <span className="status-icon">✓</span>
-                                    <span className="status-detail">({d.gex.age_sec}s)</span>
-                                  </>
-                                ) : (
-                                  <span className="status-icon">✗</span>
-                                )}
+                                {d.gex?.exists ? <span className="status-icon">✓</span> : <span className="status-icon">✗</span>}
                               </div>
                             </td>
                             <td>
@@ -503,9 +804,7 @@ export default function AdminPage() {
                                 {d.trade_selector?.exists ? (
                                   <>
                                     <span className="status-icon">✓</span>
-                                    <span className="status-detail">
-                                      {d.trade_selector.vix_regime} ({d.trade_selector.age_sec}s)
-                                    </span>
+                                    <span className="status-detail">{d.trade_selector.vix_regime}</span>
                                   </>
                                 ) : (
                                   <span className="status-icon">✗</span>
@@ -517,50 +816,11 @@ export default function AdminPage() {
                       })}
                   </tbody>
                 </table>
-
-                {/* Global data */}
-                {diagnostics.data.global && (
-                  <div className="global-data">
-                    <h4>Global Data</h4>
-                    <div className="global-items">
-                      {(diagnostics.data.global as any).vix && (
-                        <div className={`global-item ${(diagnostics.data.global as any).vix.exists ? "ok" : "missing"}`}>
-                          <span className="item-label">VIX:</span>
-                          <span className="item-value">
-                            {(diagnostics.data.global as any).vix.exists
-                              ? `${(diagnostics.data.global as any).vix.value} (${(diagnostics.data.global as any).vix.age_sec}s ago)`
-                              : "Missing"}
-                          </span>
-                        </div>
-                      )}
-                      {(diagnostics.data.global as any).market_mode && (
-                        <div className={`global-item ${(diagnostics.data.global as any).market_mode.exists ? "ok" : "missing"}`}>
-                          <span className="item-label">Market Mode:</span>
-                          <span className="item-value">
-                            {(diagnostics.data.global as any).market_mode.exists
-                              ? (diagnostics.data.global as any).market_mode.mode
-                              : "Missing"}
-                          </span>
-                        </div>
-                      )}
-                      {(diagnostics.data.global as any).vexy && (
-                        <div className={`global-item ${(diagnostics.data.global as any).vexy.exists ? "ok" : "missing"}`}>
-                          <span className="item-label">Vexy:</span>
-                          <span className="item-value">
-                            {(diagnostics.data.global as any).vexy.exists
-                              ? `Active (${(diagnostics.data.global as any).vexy.age_sec}s ago)`
-                              : "Missing"}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           )}
 
-          {/* Redis Key Explorer */}
+          {/* Redis Explorer */}
           <div className="redis-explorer">
             <h3>Redis Key Explorer</h3>
             <div className="redis-search">
@@ -638,11 +898,7 @@ const styles = `
     text-align: center;
   }
 
-  .admin-error h2 {
-    color: #f87171;
-    margin-bottom: 0.5rem;
-  }
-
+  .admin-error h2 { color: #f87171; margin-bottom: 0.5rem; }
   .admin-error button {
     margin-top: 1rem;
     padding: 0.5rem 1rem;
@@ -685,20 +941,13 @@ const styles = `
     transition: all 0.15s;
   }
 
-  .back-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #e4e4e7;
-  }
-
-  .back-btn svg {
-    width: 1rem;
-    height: 1rem;
-  }
+  .back-btn:hover { background: rgba(255, 255, 255, 0.08); color: #e4e4e7; }
+  .back-btn svg { width: 1rem; height: 1rem; }
 
   /* Stats Grid */
   .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 1rem;
     margin-bottom: 1.5rem;
   }
@@ -713,9 +962,7 @@ const styles = `
     gap: 1rem;
   }
 
-  .stat-card.wide {
-    grid-column: span 2;
-  }
+  .stat-card.wide { grid-column: span 2; }
 
   .stat-icon {
     width: 2.5rem;
@@ -729,42 +976,16 @@ const styles = `
     flex-shrink: 0;
   }
 
-  .stat-icon.live {
-    background: rgba(34, 197, 94, 0.15);
-    color: #22c55e;
-    animation: pulse 2s infinite;
-  }
+  .stat-icon.live { background: rgba(34, 197, 94, 0.15); color: #22c55e; animation: pulse 2s infinite; }
+  .stat-icon.users { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+  .stat-icon svg { width: 1.25rem; height: 1.25rem; }
 
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.6; }
-  }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
 
-  .stat-icon svg {
-    width: 1.25rem;
-    height: 1.25rem;
-  }
+  .stat-value { font-size: 2rem; font-weight: 700; color: #f1f5f9; line-height: 1; }
+  .stat-label { font-size: 0.8125rem; color: #71717a; margin-top: 0.25rem; }
 
-  .stat-value {
-    font-size: 2rem;
-    font-weight: 700;
-    color: #f1f5f9;
-    line-height: 1;
-  }
-
-  .stat-label {
-    font-size: 0.8125rem;
-    color: #71717a;
-    margin-top: 0.25rem;
-  }
-
-  .active-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-  }
-
+  .active-list { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
   .active-user {
     font-size: 0.8125rem;
     color: #a1a1aa;
@@ -774,10 +995,7 @@ const styles = `
   }
 
   /* Live Users */
-  .live-users-section {
-    margin-bottom: 1.5rem;
-  }
-
+  .live-users-section { margin-bottom: 1.5rem; }
   .live-users-section h3 {
     font-size: 0.875rem;
     color: #71717a;
@@ -786,12 +1004,7 @@ const styles = `
     letter-spacing: 0.05em;
   }
 
-  .live-users-list {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
+  .live-users-list { display: flex; flex-wrap: wrap; gap: 0.5rem; }
   .live-user-tag {
     display: flex;
     align-items: center;
@@ -812,17 +1025,57 @@ const styles = `
     animation: pulse 2s infinite;
   }
 
+  /* Users Section with Search */
+  .users-section { margin-bottom: 1.5rem; }
+
+  .users-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .users-header h2 { font-size: 1.125rem; font-weight: 600; margin: 0; }
+
+  .search-box {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.5rem;
+    min-width: 280px;
+  }
+
+  .search-box svg { width: 1rem; height: 1rem; color: #71717a; flex-shrink: 0; }
+
+  .search-box input {
+    flex: 1;
+    background: none;
+    border: none;
+    color: #f1f5f9;
+    font-size: 0.875rem;
+    outline: none;
+  }
+
+  .search-box input::placeholder { color: #52525b; }
+
+  .clear-search {
+    background: none;
+    border: none;
+    color: #71717a;
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+  }
+
+  .clear-search:hover { color: #f1f5f9; }
+
   /* Users Table */
-  .users-section {
-    margin-bottom: 1.5rem;
-  }
-
-  .users-section h2 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin: 0 0 1rem;
-  }
-
   .users-table-container {
     background: rgba(24, 24, 27, 0.6);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -830,11 +1083,7 @@ const styles = `
     overflow: hidden;
   }
 
-  .users-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.875rem;
-  }
+  .users-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
 
   .users-table th {
     text-align: left;
@@ -845,40 +1094,15 @@ const styles = `
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
-  .users-table td {
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  }
+  .users-table td { padding: 0.75rem 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+  .users-table tr { cursor: pointer; transition: background 0.15s; }
+  .users-table tr:hover { background: rgba(255, 255, 255, 0.03); }
+  .users-table tr.selected { background: rgba(99, 102, 241, 0.1); }
 
-  .users-table tr {
-    cursor: pointer;
-    transition: background 0.15s;
-  }
+  .user-name { font-weight: 500; color: #f1f5f9; }
+  .online-status { text-align: center; width: 60px; }
 
-  .users-table tr:hover {
-    background: rgba(255, 255, 255, 0.03);
-  }
-
-  .users-table tr.selected {
-    background: rgba(99, 102, 241, 0.1);
-  }
-
-  .user-name {
-    font-weight: 500;
-    color: #f1f5f9;
-  }
-
-  .online-status {
-    text-align: center;
-    width: 60px;
-  }
-
-  .online-indicator {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-
+  .online-indicator { display: inline-flex; align-items: center; justify-content: center; }
   .online-dot {
     width: 0.5rem;
     height: 0.5rem;
@@ -888,9 +1112,7 @@ const styles = `
     animation: pulse 2s infinite;
   }
 
-  .offline-indicator {
-    color: #52525b;
-  }
+  .offline-indicator { color: #52525b; }
 
   .platform-badge {
     display: inline-block;
@@ -900,10 +1122,8 @@ const styles = `
     font-weight: 500;
   }
 
-  .platform-badge.fotw {
-    background: rgba(59, 130, 246, 0.15);
-    color: #60a5fa;
-  }
+  .platform-badge.fotw { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+  .platform-badge.0-dte { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
 
   .tier-badge {
     display: inline-block;
@@ -914,9 +1134,7 @@ const styles = `
     color: #22d3ee;
   }
 
-  .no-tier {
-    color: #52525b;
-  }
+  .no-tier { color: #52525b; }
 
   .admin-badge {
     display: inline-block;
@@ -928,18 +1146,41 @@ const styles = `
     font-weight: 500;
   }
 
-  .last-login {
-    color: #71717a;
-    font-size: 0.8125rem;
+  .last-login { color: #71717a; font-size: 0.8125rem; }
+
+  /* Pagination */
+  .pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    padding: 0.75rem;
   }
 
-  /* User Detail Panel */
+  .page-btn {
+    padding: 0.375rem 0.75rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.375rem;
+    color: #a1a1aa;
+    font-size: 0.875rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .page-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); color: #f1f5f9; }
+  .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .page-info { font-size: 0.875rem; color: #71717a; padding: 0 0.5rem; }
+
+  /* User Detail Panel - Enhanced */
   .user-detail-panel {
     position: fixed;
     right: 0;
     top: 0;
     bottom: 0;
-    width: 450px;
+    width: 520px;
     background: #18181b;
     border-left: 1px solid rgba(255, 255, 255, 0.1);
     padding: 1.5rem;
@@ -951,14 +1192,27 @@ const styles = `
   .detail-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 1rem;
     margin-bottom: 1.5rem;
   }
 
-  .detail-header h2 {
+  .user-avatar {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #7c3aed, #6366f1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
     font-size: 1.25rem;
-    margin: 0;
+    font-weight: 600;
+    color: white;
+    flex-shrink: 0;
   }
+
+  .user-header-info { flex: 1; }
+  .user-header-info h2 { font-size: 1.25rem; margin: 0; }
+  .user-email { font-size: 0.8125rem; color: #71717a; }
 
   .close-btn {
     width: 2rem;
@@ -975,19 +1229,108 @@ const styles = `
     transition: all 0.15s;
   }
 
-  .close-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #f1f5f9;
-  }
+  .close-btn:hover { background: rgba(255, 255, 255, 0.1); color: #f1f5f9; }
 
-  .detail-section {
+  /* Performance Widget */
+  .performance-widget {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.75rem;
+    padding: 1rem;
     margin-bottom: 1.5rem;
   }
 
-  .detail-section h3 {
-    font-size: 0.875rem;
+  .performance-widget h3 {
+    font-size: 0.75rem;
     color: #71717a;
     margin: 0 0 1rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .perf-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+  }
+
+  .perf-stat {
+    text-align: center;
+    padding: 0.75rem 0.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0.5rem;
+  }
+
+  .perf-stat.main {
+    grid-column: span 2;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(124, 58, 237, 0.1));
+    border: 1px solid rgba(99, 102, 241, 0.2);
+  }
+
+  .perf-value { display: block; font-size: 1.25rem; font-weight: 700; color: #f1f5f9; }
+  .perf-stat.main .perf-value { font-size: 1.5rem; }
+  .perf-value.profit { color: #22c55e; }
+  .perf-value.loss { color: #ef4444; }
+  .perf-label { display: block; font-size: 0.6875rem; color: #71717a; margin-top: 0.25rem; }
+
+  .perf-breakdown { border-top: 1px solid rgba(255, 255, 255, 0.06); padding-top: 0.75rem; }
+
+  .breakdown-row {
+    display: flex;
+    align-items: center;
+    padding: 0.375rem 0;
+    font-size: 0.8125rem;
+  }
+
+  .breakdown-label { flex: 1; color: #71717a; }
+  .breakdown-value { width: 3rem; font-weight: 600; }
+  .breakdown-value.win { color: #22c55e; }
+  .breakdown-value.loss { color: #ef4444; }
+  .breakdown-avg { color: #52525b; font-size: 0.75rem; }
+
+  .strategy-breakdown { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid rgba(255, 255, 255, 0.06); }
+  .strategy-breakdown h4 {
+    font-size: 0.6875rem;
+    color: #71717a;
+    margin: 0 0 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .strategy-list { display: flex; flex-direction: column; gap: 0.375rem; }
+
+  .strategy-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.375rem 0.5rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0.375rem;
+    font-size: 0.75rem;
+  }
+
+  .strategy-name { flex: 1; color: #e4e4e7; text-transform: capitalize; }
+  .strategy-count { color: #71717a; }
+  .strategy-pnl { font-weight: 600; width: 4rem; text-align: right; }
+  .strategy-pnl.profit { color: #22c55e; }
+  .strategy-pnl.loss { color: #ef4444; }
+  .strategy-winrate { color: #60a5fa; width: 2.5rem; text-align: right; }
+
+  .performance-loading, .no-performance {
+    padding: 2rem;
+    text-align: center;
+    color: #71717a;
+    font-size: 0.875rem;
+  }
+
+  /* Detail Section */
+  .detail-section { margin-bottom: 1.5rem; }
+
+  .detail-section h3 {
+    font-size: 0.75rem;
+    color: #71717a;
+    margin: 0 0 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
@@ -995,31 +1338,17 @@ const styles = `
   .detail-row {
     display: flex;
     justify-content: space-between;
-    padding: 0.625rem 0;
+    padding: 0.5rem 0;
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    font-size: 0.8125rem;
   }
 
-  .detail-row .label {
-    color: #71717a;
-    font-size: 0.875rem;
-  }
+  .detail-row .label { color: #71717a; }
+  .detail-row .value { color: #e4e4e7; text-align: right; }
 
-  .detail-row .value {
-    color: #e4e4e7;
-    font-size: 0.875rem;
-    text-align: right;
-  }
+  .no-data { color: #52525b; font-size: 0.875rem; }
 
-  .no-data {
-    color: #52525b;
-    font-size: 0.875rem;
-  }
-
-  .trade-logs-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-  }
+  .trade-logs-list { display: flex; flex-direction: column; gap: 0.5rem; }
 
   .trade-log-item {
     background: rgba(255, 255, 255, 0.03);
@@ -1028,38 +1357,76 @@ const styles = `
     padding: 0.75rem;
   }
 
-  .log-name {
-    font-weight: 500;
-    margin-bottom: 0.375rem;
+  .log-name { font-weight: 500; margin-bottom: 0.25rem; font-size: 0.875rem; }
+  .log-stats { display: flex; gap: 1rem; font-size: 0.75rem; color: #71717a; }
+  .log-stats .active { color: #22c55e; }
+  .log-stats .inactive { color: #f87171; }
+
+  /* Trades Section */
+  .trades-section { max-height: 400px; overflow-y: auto; }
+  .trades-loading { padding: 1rem; text-align: center; color: #71717a; }
+  .trades-list { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .trade-item {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 0.5rem;
+    padding: 0.75rem;
+    display: grid;
+    grid-template-columns: 1fr auto auto auto;
+    gap: 0.75rem;
+    align-items: center;
+    font-size: 0.8125rem;
   }
 
-  .log-stats {
+  .trade-item.open { border-left: 3px solid #60a5fa; }
+  .trade-item.closed { border-left: 3px solid #22c55e; }
+
+  .trade-main { display: flex; align-items: center; gap: 0.5rem; }
+  .trade-side { font-weight: 600; font-size: 0.6875rem; padding: 0.125rem 0.375rem; border-radius: 0.25rem; }
+  .trade-side.call { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
+  .trade-side.put { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+
+  .trade-symbol { font-weight: 600; color: #f1f5f9; }
+  .trade-strategy { color: #71717a; text-transform: capitalize; }
+  .trade-strike { color: #a1a1aa; }
+
+  .trade-details { display: flex; gap: 0.5rem; color: #71717a; font-size: 0.75rem; }
+
+  .trade-result { text-align: right; }
+  .trade-pnl { font-weight: 600; }
+  .trade-pnl.profit { color: #22c55e; }
+  .trade-pnl.loss { color: #ef4444; }
+  .trade-r { font-size: 0.6875rem; color: #71717a; margin-left: 0.25rem; }
+  .trade-status-badge { font-size: 0.6875rem; color: #60a5fa; text-transform: uppercase; }
+
+  .trade-time { color: #52525b; font-size: 0.75rem; text-align: right; }
+
+  .trades-pagination {
     display: flex;
-    gap: 1rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .trades-pagination button {
+    padding: 0.25rem 0.5rem;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 0.25rem;
+    color: #a1a1aa;
     font-size: 0.75rem;
-    color: #71717a;
+    cursor: pointer;
   }
 
-  .log-stats .active {
-    color: #22c55e;
-  }
+  .trades-pagination button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.1); }
+  .trades-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .trades-pagination span { font-size: 0.75rem; color: #71717a; }
 
-  .log-stats .inactive {
-    color: #f87171;
-  }
-
-  @media (max-width: 768px) {
-    .stat-card.wide {
-      grid-column: span 1;
-    }
-
-    .user-detail-panel {
-      width: 100%;
-      left: 0;
-    }
-  }
-
-  /* Diagnostics Section */
+  /* Diagnostics */
   .diagnostics-section {
     margin-top: 2rem;
     padding-top: 2rem;
@@ -1073,11 +1440,7 @@ const styles = `
     margin-bottom: 1rem;
   }
 
-  .section-header-row h2 {
-    font-size: 1.125rem;
-    font-weight: 600;
-    margin: 0;
-  }
+  .section-header-row h2 { font-size: 1.125rem; font-weight: 600; margin: 0; }
 
   .refresh-btn {
     padding: 0.5rem 1rem;
@@ -1090,20 +1453,10 @@ const styles = `
     transition: all 0.15s;
   }
 
-  .refresh-btn:hover:not(:disabled) {
-    background: rgba(59, 130, 246, 0.25);
-  }
+  .refresh-btn:hover:not(:disabled) { background: rgba(59, 130, 246, 0.25); }
+  .refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  .refresh-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .diagnostics-content {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
+  .diagnostics-content { display: flex; flex-direction: column; gap: 1rem; }
 
   .diag-card {
     background: rgba(24, 24, 27, 0.6);
@@ -1121,26 +1474,11 @@ const styles = `
     margin-bottom: 0.5rem;
   }
 
-  .status-dot {
-    width: 0.5rem;
-    height: 0.5rem;
-    border-radius: 50%;
-  }
+  .status-dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; }
+  .status-dot.ok { background: #22c55e; box-shadow: 0 0 6px rgba(34, 197, 94, 0.5); }
+  .status-dot.error { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.5); }
 
-  .status-dot.ok {
-    background: #22c55e;
-    box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
-  }
-
-  .status-dot.error {
-    background: #ef4444;
-    box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
-  }
-
-  .diag-value {
-    font-size: 1rem;
-    color: #f1f5f9;
-  }
+  .diag-value { font-size: 1rem; color: #f1f5f9; }
 
   .data-availability {
     background: rgba(24, 24, 27, 0.6);
@@ -1150,63 +1488,6 @@ const styles = `
   }
 
   .data-availability h3 {
-    font-size: 0.875rem;
-    color: #71717a;
-    margin: 0 0 1rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-  }
-
-  .diag-table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.8125rem;
-  }
-
-  .diag-table th {
-    text-align: left;
-    padding: 0.5rem;
-    color: #71717a;
-    font-weight: 500;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .diag-table td {
-    padding: 0.5rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-  }
-
-  .symbol-cell {
-    font-weight: 600;
-    color: #f1f5f9;
-  }
-
-  .data-status {
-    display: flex;
-    align-items: center;
-    gap: 0.375rem;
-  }
-
-  .data-status.ok .status-icon {
-    color: #22c55e;
-  }
-
-  .data-status.missing .status-icon {
-    color: #ef4444;
-  }
-
-  .status-detail {
-    font-size: 0.75rem;
-    color: #71717a;
-  }
-
-  .global-data {
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .global-data h4 {
     font-size: 0.75rem;
     color: #71717a;
     margin: 0 0 0.75rem;
@@ -1214,33 +1495,21 @@ const styles = `
     letter-spacing: 0.05em;
   }
 
-  .global-items {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 1rem;
-  }
-
-  .global-item {
-    display: flex;
-    gap: 0.5rem;
-    font-size: 0.8125rem;
-  }
-
-  .global-item.ok .item-value {
-    color: #22c55e;
-  }
-
-  .global-item.missing .item-value {
-    color: #ef4444;
-  }
-
-  .item-label {
+  .diag-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+  .diag-table th {
+    text-align: left;
+    padding: 0.5rem;
     color: #71717a;
+    font-weight: 500;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
+  .diag-table td { padding: 0.5rem; border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
+  .symbol-cell { font-weight: 600; color: #f1f5f9; }
 
-  .item-value {
-    color: #f1f5f9;
-  }
+  .data-status { display: flex; align-items: center; gap: 0.375rem; }
+  .data-status.ok .status-icon { color: #22c55e; }
+  .data-status.missing .status-icon { color: #ef4444; }
+  .status-detail { font-size: 0.75rem; color: #71717a; }
 
   /* Redis Explorer */
   .redis-explorer {
@@ -1252,18 +1521,14 @@ const styles = `
   }
 
   .redis-explorer h3 {
-    font-size: 0.875rem;
+    font-size: 0.75rem;
     color: #71717a;
-    margin: 0 0 1rem;
+    margin: 0 0 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
 
-  .redis-search {
-    display: flex;
-    gap: 0.5rem;
-    margin-bottom: 1rem;
-  }
+  .redis-search { display: flex; gap: 0.5rem; margin-bottom: 1rem; }
 
   .redis-search input {
     flex: 1;
@@ -1276,10 +1541,7 @@ const styles = `
     font-family: 'SF Mono', monospace;
   }
 
-  .redis-search input:focus {
-    outline: none;
-    border-color: rgba(59, 130, 246, 0.5);
-  }
+  .redis-search input:focus { outline: none; border-color: rgba(59, 130, 246, 0.5); }
 
   .redis-search button {
     padding: 0.5rem 1rem;
@@ -1292,17 +1554,9 @@ const styles = `
     transition: all 0.15s;
   }
 
-  .redis-search button:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #f1f5f9;
-  }
+  .redis-search button:hover { background: rgba(255, 255, 255, 0.1); color: #f1f5f9; }
 
-  .redis-results {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1rem;
-    max-height: 400px;
-  }
+  .redis-results { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; max-height: 400px; }
 
   .redis-keys-list {
     overflow-y: auto;
@@ -1318,13 +1572,8 @@ const styles = `
     transition: background 0.15s;
   }
 
-  .redis-key-item:hover {
-    background: rgba(255, 255, 255, 0.03);
-  }
-
-  .redis-key-item.selected {
-    background: rgba(59, 130, 246, 0.15);
-  }
+  .redis-key-item:hover { background: rgba(255, 255, 255, 0.03); }
+  .redis-key-item.selected { background: rgba(59, 130, 246, 0.15); }
 
   .key-name {
     display: block;
@@ -1334,12 +1583,7 @@ const styles = `
     word-break: break-all;
   }
 
-  .key-meta {
-    display: block;
-    font-size: 0.6875rem;
-    color: #52525b;
-    margin-top: 0.25rem;
-  }
+  .key-meta { display: block; font-size: 0.6875rem; color: #52525b; margin-top: 0.25rem; }
 
   .redis-value-panel {
     border: 1px solid rgba(255, 255, 255, 0.06);
@@ -1370,9 +1614,7 @@ const styles = `
     line-height: 1;
   }
 
-  .value-header button:hover {
-    color: #f1f5f9;
-  }
+  .value-header button:hover { color: #f1f5f9; }
 
   .value-content {
     flex: 1;
@@ -1385,5 +1627,12 @@ const styles = `
     color: #a1a1aa;
     background: rgba(0, 0, 0, 0.2);
     max-height: 350px;
+  }
+
+  @media (max-width: 768px) {
+    .stat-card.wide { grid-column: span 1; }
+    .user-detail-panel { width: 100%; left: 0; }
+    .perf-grid { grid-template-columns: repeat(2, 1fr); }
+    .perf-stat.main { grid-column: span 2; }
   }
 `;

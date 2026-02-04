@@ -39,7 +39,7 @@ interface OrderQueuePanelProps {
 
 export default function OrderQueuePanel({
   onClose,
-  onOrderFilled,
+  onOrderFilled: _onOrderFilled,
   refreshTrigger = 0
 }: OrderQueuePanelProps) {
   const [pendingEntries, setPendingEntries] = useState<Order[]>([]);
