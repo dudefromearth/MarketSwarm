@@ -56,7 +56,7 @@ export default function ObserverPanel() {
       console.log('[Observer] Vexy error');
     };
 
-    es.addEventListener('vexy', (e) => {
+    const handleVexy = (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data);
         const newMsgs: ObserverMessage[] = [];
@@ -93,9 +93,14 @@ export default function ObserverPanel() {
       } catch (err) {
         console.error('[Observer] Vexy parse error', err);
       }
-    });
+    };
 
-    return () => es.close();
+    es.addEventListener('vexy', handleVexy);
+
+    return () => {
+      es.removeEventListener('vexy', handleVexy);
+      es.close();
+    };
   }, []);
 
   // Alerts SSE connection
@@ -113,7 +118,7 @@ export default function ObserverPanel() {
       console.log('[Observer] Alerts error');
     };
 
-    es.addEventListener('alert_triggered', (e) => {
+    const handleTriggered = (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data);
         const msg: ObserverMessage = {
@@ -128,9 +133,9 @@ export default function ObserverPanel() {
       } catch (err) {
         console.error('[Observer] Alert parse error', err);
       }
-    });
+    };
 
-    es.addEventListener('alert_added', (e) => {
+    const handleAdded = (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data);
         const msg: ObserverMessage = {
@@ -145,10 +150,9 @@ export default function ObserverPanel() {
       } catch (err) {
         console.error('[Observer] Alert parse error', err);
       }
-    });
+    };
 
-    // Prompt alert stage changes
-    es.addEventListener('prompt_alert_stage_change', (e) => {
+    const handlePromptStage = (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data);
         const stage = data.stage as PromptStage;
@@ -170,9 +174,18 @@ export default function ObserverPanel() {
       } catch (err) {
         console.error('[Observer] Prompt alert parse error', err);
       }
-    });
+    };
 
-    return () => es.close();
+    es.addEventListener('alert_triggered', handleTriggered);
+    es.addEventListener('alert_added', handleAdded);
+    es.addEventListener('prompt_alert_stage_change', handlePromptStage);
+
+    return () => {
+      es.removeEventListener('alert_triggered', handleTriggered);
+      es.removeEventListener('alert_added', handleAdded);
+      es.removeEventListener('prompt_alert_stage_change', handlePromptStage);
+      es.close();
+    };
   }, []);
 
   const formatTime = (ts: string) => {

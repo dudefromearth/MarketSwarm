@@ -1,7 +1,7 @@
 // ui/src/components/TradeRecommendationsPanel.tsx
 // Trade recommendations display with score breakdowns
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, memo } from 'react';
 import type { TradeRecommendation, TradeSelectorModel, VixRegime } from '../types/tradeSelector';
 
 interface ScoreBarProps {
@@ -35,7 +35,7 @@ interface RecommendationCardProps {
   onSelect: (rec: TradeRecommendation) => void;
 }
 
-function RecommendationCard({ rec, expanded, onToggle, onSelect }: RecommendationCardProps) {
+const RecommendationCard = memo(function RecommendationCard({ rec, expanded, onToggle, onSelect }: RecommendationCardProps) {
   const handleClick = () => {
     onSelect(rec);
   };
@@ -136,7 +136,7 @@ function RecommendationCard({ rec, expanded, onToggle, onSelect }: Recommendatio
       )}
     </div>
   );
-}
+});
 
 interface TradeRecommendationsPanelProps {
   model: TradeSelectorModel | null;
@@ -144,7 +144,7 @@ interface TradeRecommendationsPanelProps {
   maxVisible?: number;
 }
 
-export default function TradeRecommendationsPanel({
+export default memo(function TradeRecommendationsPanel({
   model,
   onSelectTrade,
   maxVisible = 5,
@@ -251,4 +251,4 @@ export default function TradeRecommendationsPanel({
       </div>
     </div>
   );
-}
+});

@@ -92,6 +92,7 @@ export function useTradeSelector({
   // Track last update time for throttling
   const lastUpdateRef = useRef<number>(0);
   const pendingUpdateRef = useRef<TradeSelectorModel | null>(null);
+  const throttleTimeoutRef = useRef<number | null>(null);
 
   // Listen for SSE updates via window events (throttled)
   useEffect(() => {
@@ -121,15 +122,21 @@ export function useTradeSelector({
         // Throttle: store pending update
         pendingUpdateRef.current = data;
 
+        // Clear any existing timeout before scheduling new one
+        if (throttleTimeoutRef.current) {
+          clearTimeout(throttleTimeoutRef.current);
+        }
+
         // Schedule update for when throttle period ends
         const delay = UPDATE_THROTTLE_MS - timeSinceLastUpdate;
-        setTimeout(() => {
+        throttleTimeoutRef.current = window.setTimeout(() => {
           if (pendingUpdateRef.current) {
             lastUpdateRef.current = Date.now();
             setModel(pendingUpdateRef.current);
             setError(null);
             pendingUpdateRef.current = null;
           }
+          throttleTimeoutRef.current = null;
         }, delay);
       }
     };
@@ -138,6 +145,10 @@ export function useTradeSelector({
 
     return () => {
       window.removeEventListener('trade-selector-update', handleTradeSelectorUpdate as EventListener);
+      if (throttleTimeoutRef.current) {
+        clearTimeout(throttleTimeoutRef.current);
+        throttleTimeoutRef.current = null;
+      }
     };
   }, [symbol, enabled, model?.recommendations]);
 

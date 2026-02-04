@@ -189,6 +189,14 @@ export function AlertProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(alertReducer, initialState);
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Store event listener refs for proper cleanup
+  const listenersRef = useRef<{
+    triggered: ((e: MessageEvent) => void) | null;
+    updated: ((e: MessageEvent) => void) | null;
+    evaluation: ((e: MessageEvent) => void) | null;
+  }>({ triggered: null, updated: null, evaluation: null });
 
   // Load alerts from API on mount
   useEffect(() => {
@@ -206,11 +214,48 @@ export function AlertProvider({ children }: { children: ReactNode }) {
     loadAlerts();
   }, []);
 
+  // Initialize audio element once
+  useEffect(() => {
+    const audio = new Audio(
+      'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleQA6s+DZpGgLJJPo7bN1'
+    );
+    audio.volume = 0.3;
+    audioRef.current = audio;
+
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
+  // Play alert sound (reuses single audio element)
+  const playAlertSound = useCallback(() => {
+    try {
+      if (audioRef.current) {
+        audioRef.current.currentTime = 0;
+        audioRef.current.play().catch(() => {});
+      }
+    } catch {
+      // Ignore audio errors
+    }
+  }, []);
+
   // SSE connection for real-time updates
   useEffect(() => {
     const connect = () => {
-      // Close existing connection
+      // Close existing connection and remove listeners
       if (eventSourceRef.current) {
+        if (listenersRef.current.triggered) {
+          eventSourceRef.current.removeEventListener('alert_triggered', listenersRef.current.triggered);
+        }
+        if (listenersRef.current.updated) {
+          eventSourceRef.current.removeEventListener('alert_updated', listenersRef.current.updated);
+        }
+        if (listenersRef.current.evaluation) {
+          eventSourceRef.current.removeEventListener('ai_evaluation', listenersRef.current.evaluation);
+        }
         eventSourceRef.current.close();
       }
 
@@ -232,8 +277,8 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         reconnectTimeoutRef.current = window.setTimeout(connect, 5000);
       };
 
-      // Alert triggered event
-      es.addEventListener('alert_triggered', (event: MessageEvent) => {
+      // Alert triggered event handler
+      const handleTriggered = (event: MessageEvent) => {
         try {
           const data: AlertTriggerEvent = JSON.parse(event.data);
           dispatch({ type: 'TRIGGER_ALERT', id: data.alertId, triggeredAt: data.triggeredAt });
@@ -261,27 +306,38 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         } catch (err) {
           console.error('Failed to parse alert_triggered event:', err);
         }
-      });
+      };
 
-      // Alert updated event
-      es.addEventListener('alert_updated', (event: MessageEvent) => {
+      // Alert updated event handler
+      const handleUpdated = (event: MessageEvent) => {
         try {
           const data: AlertUpdateEvent = JSON.parse(event.data);
           dispatch({ type: 'UPDATE_ALERT', id: data.alertId, updates: data.updates });
         } catch (err) {
           console.error('Failed to parse alert_updated event:', err);
         }
-      });
+      };
 
-      // AI evaluation event
-      es.addEventListener('ai_evaluation', (event: MessageEvent) => {
+      // AI evaluation event handler
+      const handleEvaluation = (event: MessageEvent) => {
         try {
           const evaluation: AIEvaluation = JSON.parse(event.data);
           dispatch({ type: 'AI_EVALUATION', alertId: evaluation.alertId, evaluation });
         } catch (err) {
           console.error('Failed to parse ai_evaluation event:', err);
         }
-      });
+      };
+
+      // Store refs for cleanup
+      listenersRef.current = {
+        triggered: handleTriggered,
+        updated: handleUpdated,
+        evaluation: handleEvaluation,
+      };
+
+      es.addEventListener('alert_triggered', handleTriggered);
+      es.addEventListener('alert_updated', handleUpdated);
+      es.addEventListener('ai_evaluation', handleEvaluation);
 
       eventSourceRef.current = es;
     };
@@ -290,26 +346,22 @@ export function AlertProvider({ children }: { children: ReactNode }) {
 
     return () => {
       if (eventSourceRef.current) {
+        if (listenersRef.current.triggered) {
+          eventSourceRef.current.removeEventListener('alert_triggered', listenersRef.current.triggered);
+        }
+        if (listenersRef.current.updated) {
+          eventSourceRef.current.removeEventListener('alert_updated', listenersRef.current.updated);
+        }
+        if (listenersRef.current.evaluation) {
+          eventSourceRef.current.removeEventListener('ai_evaluation', listenersRef.current.evaluation);
+        }
         eventSourceRef.current.close();
       }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
     };
-  }, []);
-
-  // Play alert sound
-  const playAlertSound = useCallback(() => {
-    try {
-      const audio = new Audio(
-        'data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2teleQA6s+DZpGgLJJPo7bN1'
-      );
-      audio.volume = 0.3;
-      audio.play().catch(() => {});
-    } catch {
-      // Ignore audio errors
-    }
-  }, []);
+  }, [playAlertSound]);
 
   // Create alert (calls API, updates local state on success)
   const createAlert = useCallback((input: CreateAlertInput): Alert => {

@@ -601,6 +601,7 @@ function App() {
     [riskGraphStrategies]
   );
   const [tosCopied, setTosCopied] = useState(false);
+  const tosCopiedTimeoutRef = useRef<number | null>(null);
   const [showTosImport, setShowTosImport] = useState(false);
   const [editingStrategy, setEditingStrategy] = useState<RiskGraphStrategy | null>(null);
 
@@ -814,7 +815,14 @@ function App() {
     const script = generateTosScript(selectedTile);
     await navigator.clipboard.writeText(script);
     setTosCopied(true);
-    setTimeout(() => setTosCopied(false), 2000);
+    // Clear any existing timeout before setting new one
+    if (tosCopiedTimeoutRef.current) {
+      clearTimeout(tosCopiedTimeoutRef.current);
+    }
+    tosCopiedTimeoutRef.current = window.setTimeout(() => {
+      setTosCopied(false);
+      tosCopiedTimeoutRef.current = null;
+    }, 2000);
   };
 
   // Add strategy to risk graph list
@@ -902,6 +910,15 @@ function App() {
   useEffect(() => {
     localStorage.setItem('priceAlertLines', JSON.stringify(priceAlertLines));
   }, [priceAlertLines]);
+
+  // Cleanup ToS copy timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (tosCopiedTimeoutRef.current) {
+        clearTimeout(tosCopiedTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Fetch user profile for header greeting
   useEffect(() => {

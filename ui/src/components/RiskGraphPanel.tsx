@@ -905,16 +905,25 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                   <span className="stat-label">Max Profit</span>
                   <span className="stat-value profit">
                     +${riskGraphData.maxPnL.toFixed(0)}
-                    {riskGraphData.minPnL < 0 && (
-                      <span className="stat-ratio" title="Risk/Reward ratio">
-                        {' '}({Math.abs(riskGraphData.maxPnL / riskGraphData.minPnL).toFixed(1)}:1)
-                      </span>
-                    )}
                   </span>
                 </div>
                 <div className="stat">
                   <span className="stat-label">Max Loss</span>
                   <span className="stat-value loss">${riskGraphData.minPnL.toFixed(0)}</span>
+                </div>
+                <div className="stat">
+                  <span className="stat-label">R2R</span>
+                  <span className="stat-value">
+                    {(() => {
+                      const visible = strategies.filter(s => s.visible && s.debit && s.debit > 0);
+                      if (visible.length === 0) return '-';
+                      const totalMaxProfit = visible.reduce((sum, s) => sum + (s.width - s.debit!), 0);
+                      const totalDebit = visible.reduce((sum, s) => sum + s.debit!, 0);
+                      if (totalDebit <= 0) return '-';
+                      const r2r = totalMaxProfit / totalDebit;
+                      return r2r.toFixed(1);
+                    })()}
+                  </span>
                 </div>
                 <div className="stat-divider" />
                 <div className="stat">
