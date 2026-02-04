@@ -21,7 +21,8 @@ from .models_v2 import (
     TradeLog, Trade, TradeEvent, Symbol, Setting, Tag,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
     PlaybookEntry, PlaybookSourceRef, Alert,
-    PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger
+    PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger,
+    TrackedIdea, SelectorParams
 )
 from .analytics_v2 import AnalyticsV2
 from .auth import JournalAuth, require_auth, optional_auth
@@ -3175,6 +3176,180 @@ class JournalOrchestrator:
             self.logger.error(f"list_prompt_alerts_internal error: {e}")
             return self._error_response(str(e), 500, request)
 
+    # ==================== Trade Idea Tracking (Feedback Loop) ====================
+
+    async def create_tracked_idea(self, request: web.Request) -> web.Response:
+        """POST /api/internal/tracked-ideas - Create a tracked idea record (called on settlement)."""
+        try:
+            data = await request.json()
+
+            # Build TrackedIdea from data
+            idea = TrackedIdea(
+                id=data['id'],
+                symbol=data['symbol'],
+                entry_rank=data['entry_rank'],
+                entry_time=data['entry_time'],
+                entry_ts=data['entry_ts'],
+                entry_spot=data['entry_spot'],
+                entry_vix=data['entry_vix'],
+                entry_regime=data['entry_regime'],
+                strategy=data['strategy'],
+                side=data['side'],
+                strike=data['strike'],
+                width=data['width'],
+                dte=data['dte'],
+                debit=data['debit'],
+                max_profit_theoretical=data['max_profit_theoretical'],
+                r2r_predicted=data.get('r2r_predicted'),
+                campaign=data.get('campaign'),
+                max_pnl=data['max_pnl'],
+                max_pnl_time=data.get('max_pnl_time'),
+                max_pnl_spot=data.get('max_pnl_spot'),
+                max_pnl_dte=data.get('max_pnl_dte'),
+                settlement_time=data['settlement_time'],
+                settlement_spot=data['settlement_spot'],
+                final_pnl=data['final_pnl'],
+                is_winner=data['is_winner'],
+                pnl_captured_pct=data.get('pnl_captured_pct'),
+                r2r_achieved=data.get('r2r_achieved'),
+                score_total=data.get('score_total'),
+                score_regime=data.get('score_regime'),
+                score_r2r=data.get('score_r2r'),
+                score_convexity=data.get('score_convexity'),
+                score_campaign=data.get('score_campaign'),
+                score_decay=data.get('score_decay'),
+                score_edge=data.get('score_edge'),
+                params_version=data.get('params_version'),
+                edge_cases=json.dumps(data.get('edge_cases', [])) if data.get('edge_cases') else None,
+            )
+
+            self.db.create_tracked_idea(idea)
+            self.logger.info(f"Tracked idea created: {idea.id} rank={idea.entry_rank} winner={idea.is_winner}")
+
+            return self._json_response({
+                'success': True,
+                'data': idea.to_api_dict()
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"create_tracked_idea error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def list_tracked_ideas(self, request: web.Request) -> web.Response:
+        """GET /api/internal/tracked-ideas - List tracked ideas with filters."""
+        try:
+            params = request.query
+            ideas = self.db.list_tracked_ideas(
+                limit=int(params.get('limit', 100)),
+                offset=int(params.get('offset', 0)),
+                regime=params.get('regime'),
+                strategy=params.get('strategy'),
+                rank=int(params['rank']) if params.get('rank') else None,
+                is_winner=params.get('is_winner') == 'true' if params.get('is_winner') else None,
+                params_version=int(params['params_version']) if params.get('params_version') else None,
+                start_date=params.get('start_date'),
+                end_date=params.get('end_date'),
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': [i.to_api_dict() for i in ideas],
+                'count': len(ideas)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"list_tracked_ideas error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_tracking_analytics(self, request: web.Request) -> web.Response:
+        """GET /api/internal/tracked-ideas/analytics - Get aggregated analytics."""
+        try:
+            params = request.query
+            analytics = self.db.get_tracking_analytics(
+                params_version=int(params['params_version']) if params.get('params_version') else None,
+                start_date=params.get('start_date'),
+                end_date=params.get('end_date'),
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': analytics
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"get_tracking_analytics error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def list_selector_params(self, request: web.Request) -> web.Response:
+        """GET /api/internal/selector-params - List all parameter versions."""
+        try:
+            include_retired = request.query.get('include_retired') == 'true'
+            params_list = self.db.list_params(include_retired=include_retired)
+
+            return self._json_response({
+                'success': True,
+                'data': [p.to_api_dict() for p in params_list],
+                'count': len(params_list)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"list_selector_params error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_active_params(self, request: web.Request) -> web.Response:
+        """GET /api/internal/selector-params/active - Get currently active parameters."""
+        try:
+            params = self.db.get_active_params()
+            if not params:
+                return self._error_response("No active parameters found", 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': params.to_api_dict()
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"get_active_params error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def create_selector_params(self, request: web.Request) -> web.Response:
+        """POST /api/internal/selector-params - Create new parameter version."""
+        try:
+            data = await request.json()
+
+            params = SelectorParams(
+                name=data.get('name'),
+                description=data.get('description'),
+                weights=json.dumps(data.get('weights', {})),
+                regime_thresholds=json.dumps(data.get('regime_thresholds', {})) if data.get('regime_thresholds') else None,
+                status=data.get('status', 'draft'),
+            )
+
+            created = self.db.create_params(params)
+            self.logger.info(f"Selector params created: version={created.version} name={created.name}")
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"create_selector_params error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def activate_selector_params(self, request: web.Request) -> web.Response:
+        """POST /api/internal/selector-params/{version}/activate - Activate a parameter version."""
+        try:
+            version = int(request.match_info['version'])
+            success = self.db.activate_params(version)
+
+            if not success:
+                return self._error_response(f"Parameter version {version} not found", 404, request)
+
+            self.logger.info(f"Selector params activated: version={version}")
+
+            return self._json_response({
+                'success': True,
+                'message': f'Parameter version {version} activated'
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"activate_selector_params error: {e}")
+            return self._error_response(str(e), 500, request)
+
     # ==================== Legacy Endpoints (for backwards compatibility) ====================
 
     async def legacy_list_trades(self, request: web.Request) -> web.Response:
@@ -3438,6 +3613,17 @@ class JournalOrchestrator:
         app.router.add_post('/api/trades', self.legacy_create_trade)
         app.router.add_get('/api/analytics', self.legacy_analytics)
         app.router.add_get('/api/analytics/equity', self.legacy_equity)
+
+        # =================================================================
+        # Trade Idea Tracking (Feedback Optimization Loop) - Internal API
+        # =================================================================
+        app.router.add_post('/api/internal/tracked-ideas', self.create_tracked_idea)
+        app.router.add_get('/api/internal/tracked-ideas', self.list_tracked_ideas)
+        app.router.add_get('/api/internal/tracked-ideas/analytics', self.get_tracking_analytics)
+        app.router.add_get('/api/internal/selector-params', self.list_selector_params)
+        app.router.add_get('/api/internal/selector-params/active', self.get_active_params)
+        app.router.add_post('/api/internal/selector-params', self.create_selector_params)
+        app.router.add_post('/api/internal/selector-params/{version}/activate', self.activate_selector_params)
 
         return app
 

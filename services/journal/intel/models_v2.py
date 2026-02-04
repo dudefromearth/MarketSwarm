@@ -990,3 +990,203 @@ class PromptAlertTrigger:
             'marketSnapshot': json.loads(self.market_snapshot) if self.market_snapshot else None,
             'triggeredAt': self.triggered_at,
         }
+
+
+# =============================================================================
+# Trade Idea Tracking Models (Feedback Optimization Loop)
+# =============================================================================
+
+@dataclass
+class TrackedIdea:
+    """A tracked trade idea for analytics and feedback optimization."""
+    id: str
+
+    # Entry Context
+    symbol: str
+    entry_rank: int
+    entry_time: str
+    entry_ts: int
+    entry_spot: float
+    entry_vix: float
+    entry_regime: str
+
+    # Trade Parameters
+    strategy: str
+    side: str
+    strike: float
+    width: int
+    dte: int
+    debit: float
+    max_profit_theoretical: float
+    r2r_predicted: Optional[float] = None
+    campaign: Optional[str] = None
+
+    # Max Profit Tracking
+    max_pnl: float = 0.0
+    max_pnl_time: Optional[str] = None
+    max_pnl_spot: Optional[float] = None
+    max_pnl_dte: Optional[int] = None
+
+    # Settlement
+    settlement_time: Optional[str] = None
+    settlement_spot: Optional[float] = None
+    final_pnl: Optional[float] = None
+    is_winner: Optional[bool] = None
+    pnl_captured_pct: Optional[float] = None
+    r2r_achieved: Optional[float] = None
+
+    # Scoring Context (for feedback analysis)
+    score_total: Optional[float] = None
+    score_regime: Optional[float] = None
+    score_r2r: Optional[float] = None
+    score_convexity: Optional[float] = None
+    score_campaign: Optional[float] = None
+    score_decay: Optional[float] = None
+    score_edge: Optional[float] = None
+
+    # Parameter Version
+    params_version: Optional[int] = None
+
+    # Metadata
+    edge_cases: Optional[str] = None  # JSON array
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        if d.get('is_winner') is not None:
+            d['is_winner'] = 1 if d['is_winner'] else 0
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'TrackedIdea':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if 'is_winner' in d and d['is_winner'] is not None:
+            d['is_winner'] = bool(d['is_winner'])
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'symbol': self.symbol,
+            'entryRank': self.entry_rank,
+            'entryTime': self.entry_time,
+            'entrySpot': self.entry_spot,
+            'entryVix': self.entry_vix,
+            'entryRegime': self.entry_regime,
+            'strategy': self.strategy,
+            'side': self.side,
+            'strike': self.strike,
+            'width': self.width,
+            'dte': self.dte,
+            'debit': self.debit,
+            'maxProfitTheoretical': self.max_profit_theoretical,
+            'r2rPredicted': self.r2r_predicted,
+            'campaign': self.campaign,
+            'maxPnl': self.max_pnl,
+            'maxPnlTime': self.max_pnl_time,
+            'maxPnlSpot': self.max_pnl_spot,
+            'maxPnlDte': self.max_pnl_dte,
+            'settlementTime': self.settlement_time,
+            'settlementSpot': self.settlement_spot,
+            'finalPnl': self.final_pnl,
+            'isWinner': self.is_winner,
+            'pnlCapturedPct': self.pnl_captured_pct,
+            'r2rAchieved': self.r2r_achieved,
+            'scores': {
+                'total': self.score_total,
+                'regime': self.score_regime,
+                'r2r': self.score_r2r,
+                'convexity': self.score_convexity,
+                'campaign': self.score_campaign,
+                'decay': self.score_decay,
+                'edge': self.score_edge,
+            },
+            'paramsVersion': self.params_version,
+            'edgeCases': json.loads(self.edge_cases) if self.edge_cases else [],
+            'createdAt': self.created_at,
+        }
+
+
+@dataclass
+class SelectorParams:
+    """Versioned scoring parameters for the Trade Selector algorithm."""
+    id: Optional[int] = None
+    version: int = 1
+
+    # Status
+    status: str = 'draft'  # draft, active, testing, retired
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+    # Scoring Weights (JSON)
+    weights: str = '{}'  # JSON object
+
+    # Regime Thresholds (JSON)
+    regime_thresholds: Optional[str] = None  # JSON object
+
+    # Performance Metrics (updated by feedback loop)
+    total_ideas: int = 0
+    win_count: int = 0
+    win_rate: Optional[float] = None
+    avg_pnl: Optional[float] = None
+    avg_capture_rate: Optional[float] = None
+
+    # A/B Testing
+    ab_test_group: Optional[str] = None
+    ab_test_id: Optional[str] = None
+
+    # Metadata
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    activated_at: Optional[str] = None
+    retired_at: Optional[str] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        # Remove id if None (for inserts)
+        if d['id'] is None:
+            del d['id']
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'SelectorParams':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        return cls(**d)
+
+    def get_weights(self) -> dict:
+        """Parse and return weights as dict."""
+        return json.loads(self.weights) if self.weights else {}
+
+    def get_regime_thresholds(self) -> dict:
+        """Parse and return regime thresholds as dict."""
+        return json.loads(self.regime_thresholds) if self.regime_thresholds else {}
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'version': self.version,
+            'status': self.status,
+            'name': self.name,
+            'description': self.description,
+            'weights': self.get_weights(),
+            'regimeThresholds': self.get_regime_thresholds(),
+            'performance': {
+                'totalIdeas': self.total_ideas,
+                'winCount': self.win_count,
+                'winRate': self.win_rate,
+                'avgPnl': self.avg_pnl,
+                'avgCaptureRate': self.avg_capture_rate,
+            },
+            'abTest': {
+                'group': self.ab_test_group,
+                'id': self.ab_test_id,
+            } if self.ab_test_id else None,
+            'createdAt': self.created_at,
+            'activatedAt': self.activated_at,
+            'retiredAt': self.retired_at,
+        }

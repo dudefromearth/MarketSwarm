@@ -4,6 +4,7 @@
 import { Router } from "express";
 import { getMarketRedis } from "../redis.js";
 import { getKeys } from "../keys.js";
+import { requireAdmin } from "./admin.js";
 
 const router = Router();
 
@@ -392,11 +393,11 @@ router.get("/trade_selector/:symbol", async (req, res) => {
 });
 
 // ===========================================================================
-// Trade Idea Tracking Endpoints
+// Trade Idea Tracking Endpoints (Admin Only)
 // ===========================================================================
 
 // GET /api/models/trade_tracking/stats - Aggregated stats by rank
-router.get("/trade_tracking/stats", async (req, res) => {
+router.get("/trade_tracking/stats", requireAdmin, async (req, res) => {
   try {
     const redis = getMarketRedis();
     const rawStats = await redis.hgetall("massive:selector:tracking:stats");
@@ -439,7 +440,7 @@ router.get("/trade_tracking/stats", async (req, res) => {
 });
 
 // GET /api/models/trade_tracking/active - List of active tracked trades
-router.get("/trade_tracking/active", async (req, res) => {
+router.get("/trade_tracking/active", requireAdmin, async (req, res) => {
   try {
     const redis = getMarketRedis();
     const activeRaw = await redis.hgetall("massive:selector:tracking:active");
@@ -473,7 +474,7 @@ router.get("/trade_tracking/active", async (req, res) => {
 
 // GET /api/models/trade_tracking/history - List of settled trades
 // Query params: limit (default 100, max 500)
-router.get("/trade_tracking/history", async (req, res) => {
+router.get("/trade_tracking/history", requireAdmin, async (req, res) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);
     const redis = getMarketRedis();

@@ -11,14 +11,15 @@ from .models_v2 import (
     TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint, Symbol, Setting,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
     PlaybookEntry, PlaybookSourceRef, Tag, Alert,
-    PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger
+    PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger,
+    TrackedIdea, SelectorParams
 )
 
 
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 11
+    SCHEMA_VERSION = 12
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -200,6 +201,9 @@ class JournalDBv2:
 
             if current_version < 11:
                 self._migrate_to_v11(conn)
+
+            if current_version < 12:
+                self._migrate_to_v12(conn)
 
             conn.commit()
         finally:
@@ -828,6 +832,143 @@ class JournalDBv2:
             """)
 
             self._set_schema_version(conn, 11)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v12(self, conn):
+        """Migrate to v12: Add Trade Idea Tracking tables for feedback optimization loop."""
+        cursor = conn.cursor()
+        try:
+            # Create tracked_ideas table - stores all settled trade ideas for analytics
+            if not self._table_exists(conn, 'tracked_ideas'):
+                cursor.execute("""
+                    CREATE TABLE tracked_ideas (
+                        id VARCHAR(64) PRIMARY KEY,
+
+                        -- Entry Context
+                        symbol VARCHAR(20) NOT NULL,
+                        entry_rank INT NOT NULL,
+                        entry_time VARCHAR(32) NOT NULL,
+                        entry_ts BIGINT NOT NULL,
+                        entry_spot DECIMAL(10,2) NOT NULL,
+                        entry_vix DECIMAL(6,2) NOT NULL,
+                        entry_regime VARCHAR(20) NOT NULL,
+
+                        -- Trade Parameters
+                        strategy VARCHAR(30) NOT NULL,
+                        side VARCHAR(10) NOT NULL,
+                        strike DECIMAL(10,2) NOT NULL,
+                        width INT NOT NULL,
+                        dte INT NOT NULL,
+                        debit DECIMAL(10,2) NOT NULL,
+                        max_profit_theoretical DECIMAL(10,2) NOT NULL,
+                        r2r_predicted DECIMAL(6,2),
+                        campaign VARCHAR(50),
+
+                        -- Max Profit Tracking
+                        max_pnl DECIMAL(10,2) NOT NULL,
+                        max_pnl_time VARCHAR(32),
+                        max_pnl_spot DECIMAL(10,2),
+                        max_pnl_dte INT,
+
+                        -- Settlement
+                        settlement_time VARCHAR(32) NOT NULL,
+                        settlement_spot DECIMAL(10,2) NOT NULL,
+                        final_pnl DECIMAL(10,2) NOT NULL,
+                        is_winner TINYINT NOT NULL,
+                        pnl_captured_pct DECIMAL(6,2),
+                        r2r_achieved DECIMAL(6,2),
+
+                        -- Scoring Context (for feedback analysis)
+                        score_total DECIMAL(8,4),
+                        score_regime DECIMAL(8,4),
+                        score_r2r DECIMAL(8,4),
+                        score_convexity DECIMAL(8,4),
+                        score_campaign DECIMAL(8,4),
+                        score_decay DECIMAL(8,4),
+                        score_edge DECIMAL(8,4),
+
+                        -- Parameter Version (links to selector_params)
+                        params_version INT,
+
+                        -- Metadata
+                        edge_cases TEXT,
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+
+                        INDEX idx_tracked_entry_time (entry_ts),
+                        INDEX idx_tracked_regime (entry_regime),
+                        INDEX idx_tracked_strategy (strategy),
+                        INDEX idx_tracked_rank (entry_rank),
+                        INDEX idx_tracked_winner (is_winner),
+                        INDEX idx_tracked_params (params_version)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create selector_params table - versioned scoring parameters
+            if not self._table_exists(conn, 'selector_params'):
+                cursor.execute("""
+                    CREATE TABLE selector_params (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        version INT NOT NULL UNIQUE,
+
+                        -- Status
+                        status ENUM('draft', 'active', 'testing', 'retired') DEFAULT 'draft',
+                        name VARCHAR(100),
+                        description TEXT,
+
+                        -- Scoring Weights (JSON for flexibility)
+                        weights JSON NOT NULL,
+
+                        -- Regime Thresholds
+                        regime_thresholds JSON,
+
+                        -- Performance Metrics (updated by feedback loop)
+                        total_ideas INT DEFAULT 0,
+                        win_count INT DEFAULT 0,
+                        win_rate DECIMAL(5,2),
+                        avg_pnl DECIMAL(10,2),
+                        avg_capture_rate DECIMAL(5,2),
+
+                        -- A/B Testing
+                        ab_test_group VARCHAR(20),
+                        ab_test_id VARCHAR(36),
+
+                        -- Metadata
+                        created_at VARCHAR(32) DEFAULT (NOW()),
+                        activated_at VARCHAR(32),
+                        retired_at VARCHAR(32),
+
+                        INDEX idx_params_status (status),
+                        INDEX idx_params_ab (ab_test_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+                # Insert initial baseline parameters (version 1)
+                cursor.execute("""
+                    INSERT INTO selector_params (version, status, name, description, weights, regime_thresholds)
+                    VALUES (
+                        1,
+                        'active',
+                        'Baseline v1',
+                        'Initial scoring weights based on FOTW methodology',
+                        JSON_OBJECT(
+                            'regime', 0.25,
+                            'r2r', 0.20,
+                            'convexity', 0.20,
+                            'campaign', 0.15,
+                            'decay', 0.10,
+                            'edge', 0.10
+                        ),
+                        JSON_OBJECT(
+                            'chaos', 32,
+                            'goldilocks_2_lower', 23,
+                            'goldilocks_1_lower', 17,
+                            'zombieland_upper', 17
+                        )
+                    )
+                """)
+
+            self._set_schema_version(conn, 12)
         finally:
             cursor.close()
 
@@ -3016,6 +3157,331 @@ class JournalDBv2:
                 'entries': entries,
                 'retrospectives': retros
             }
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Tracked Ideas CRUD ====================
+
+    def create_tracked_idea(self, idea: TrackedIdea) -> TrackedIdea:
+        """Create a new tracked idea record."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = idea.to_dict()
+            # Convert edge_cases list to JSON if needed
+            if isinstance(data.get('edge_cases'), list):
+                data['edge_cases'] = json.dumps(data['edge_cases'])
+
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO tracked_ideas ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return idea
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_tracked_idea(self, idea_id: str) -> Optional[TrackedIdea]:
+        """Get a tracked idea by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM tracked_ideas WHERE id = %s", (idea_id,))
+            row = cursor.fetchone()
+            if row:
+                return TrackedIdea.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_tracked_ideas(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        regime: Optional[str] = None,
+        strategy: Optional[str] = None,
+        rank: Optional[int] = None,
+        is_winner: Optional[bool] = None,
+        params_version: Optional[int] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[TrackedIdea]:
+        """List tracked ideas with optional filters."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM tracked_ideas WHERE 1=1"
+            params = []
+
+            if regime:
+                query += " AND entry_regime = %s"
+                params.append(regime)
+            if strategy:
+                query += " AND strategy = %s"
+                params.append(strategy)
+            if rank is not None:
+                query += " AND entry_rank = %s"
+                params.append(rank)
+            if is_winner is not None:
+                query += " AND is_winner = %s"
+                params.append(1 if is_winner else 0)
+            if params_version is not None:
+                query += " AND params_version = %s"
+                params.append(params_version)
+            if start_date:
+                query += " AND entry_time >= %s"
+                params.append(start_date)
+            if end_date:
+                query += " AND entry_time <= %s"
+                params.append(end_date)
+
+            query += " ORDER BY entry_ts DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [TrackedIdea.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_tracking_analytics(
+        self,
+        params_version: Optional[int] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Get aggregated analytics for tracked ideas."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            # Base filter
+            where_clause = "WHERE 1=1"
+            params = []
+
+            if params_version is not None:
+                where_clause += " AND params_version = %s"
+                params.append(params_version)
+            if start_date:
+                where_clause += " AND entry_time >= %s"
+                params.append(start_date)
+            if end_date:
+                where_clause += " AND entry_time <= %s"
+                params.append(end_date)
+
+            # Overall stats
+            cursor.execute(f"""
+                SELECT
+                    COUNT(*) as total_ideas,
+                    SUM(is_winner) as win_count,
+                    AVG(is_winner) * 100 as win_rate,
+                    AVG(final_pnl) as avg_pnl,
+                    AVG(max_pnl) as avg_max_pnl,
+                    AVG(pnl_captured_pct) as avg_capture_rate
+                FROM tracked_ideas
+                {where_clause}
+            """, params)
+            overall = cursor.fetchone()
+
+            # Stats by rank
+            cursor.execute(f"""
+                SELECT
+                    entry_rank,
+                    COUNT(*) as count,
+                    SUM(is_winner) as wins,
+                    AVG(is_winner) * 100 as win_rate,
+                    AVG(final_pnl) as avg_pnl,
+                    AVG(max_pnl) as avg_max_pnl,
+                    AVG(pnl_captured_pct) as avg_capture_rate
+                FROM tracked_ideas
+                {where_clause}
+                GROUP BY entry_rank
+                ORDER BY entry_rank
+            """, params)
+            by_rank = cursor.fetchall()
+
+            # Stats by regime
+            cursor.execute(f"""
+                SELECT
+                    entry_regime,
+                    COUNT(*) as count,
+                    SUM(is_winner) as wins,
+                    AVG(is_winner) * 100 as win_rate,
+                    AVG(final_pnl) as avg_pnl,
+                    AVG(pnl_captured_pct) as avg_capture_rate
+                FROM tracked_ideas
+                {where_clause}
+                GROUP BY entry_regime
+                ORDER BY count DESC
+            """, params)
+            by_regime = cursor.fetchall()
+
+            # Stats by strategy
+            cursor.execute(f"""
+                SELECT
+                    strategy,
+                    side,
+                    COUNT(*) as count,
+                    SUM(is_winner) as wins,
+                    AVG(is_winner) * 100 as win_rate,
+                    AVG(final_pnl) as avg_pnl,
+                    AVG(pnl_captured_pct) as avg_capture_rate
+                FROM tracked_ideas
+                {where_clause}
+                GROUP BY strategy, side
+                ORDER BY count DESC
+            """, params)
+            by_strategy = cursor.fetchall()
+
+            # Optimal exit timing (when does max_pnl occur?)
+            cursor.execute(f"""
+                SELECT
+                    entry_rank,
+                    AVG(dte - max_pnl_dte) as avg_days_to_max,
+                    AVG(max_pnl_dte) as avg_dte_at_max
+                FROM tracked_ideas
+                {where_clause} AND max_pnl_dte IS NOT NULL
+                GROUP BY entry_rank
+                ORDER BY entry_rank
+            """, params)
+            exit_timing = cursor.fetchall()
+
+            return {
+                'overall': overall,
+                'byRank': by_rank,
+                'byRegime': by_regime,
+                'byStrategy': by_strategy,
+                'exitTiming': exit_timing,
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Selector Params CRUD ====================
+
+    def get_active_params(self) -> Optional[SelectorParams]:
+        """Get the currently active selector parameters."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM selector_params WHERE status = 'active' ORDER BY version DESC LIMIT 1"
+            )
+            row = cursor.fetchone()
+            if row:
+                return SelectorParams.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_params_by_version(self, version: int) -> Optional[SelectorParams]:
+        """Get selector parameters by version number."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM selector_params WHERE version = %s", (version,))
+            row = cursor.fetchone()
+            if row:
+                return SelectorParams.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_params(self, include_retired: bool = False) -> List[SelectorParams]:
+        """List all selector parameter versions."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if include_retired:
+                cursor.execute("SELECT * FROM selector_params ORDER BY version DESC")
+            else:
+                cursor.execute(
+                    "SELECT * FROM selector_params WHERE status != 'retired' ORDER BY version DESC"
+                )
+            rows = cursor.fetchall()
+            return [SelectorParams.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_params(self, params: SelectorParams) -> SelectorParams:
+        """Create a new parameter version."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Get next version number
+            cursor.execute("SELECT MAX(version) FROM selector_params")
+            max_version = cursor.fetchone()[0] or 0
+            params.version = max_version + 1
+
+            data = params.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO selector_params ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            params.id = cursor.lastrowid
+            conn.commit()
+            return params
+        finally:
+            cursor.close()
+            conn.close()
+
+    def activate_params(self, version: int) -> bool:
+        """Activate a parameter version (deactivates current active)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            now = datetime.utcnow().isoformat()
+
+            # Deactivate current active
+            cursor.execute(
+                "UPDATE selector_params SET status = 'retired', retired_at = %s WHERE status = 'active'",
+                (now,)
+            )
+
+            # Activate the requested version
+            cursor.execute(
+                "UPDATE selector_params SET status = 'active', activated_at = %s WHERE version = %s",
+                (now, version)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_params_performance(
+        self,
+        version: int,
+        total_ideas: int,
+        win_count: int,
+        avg_pnl: float,
+        avg_capture_rate: float,
+    ) -> bool:
+        """Update performance metrics for a parameter version."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            win_rate = (win_count / total_ideas * 100) if total_ideas > 0 else 0
+
+            cursor.execute("""
+                UPDATE selector_params
+                SET total_ideas = %s, win_count = %s, win_rate = %s, avg_pnl = %s, avg_capture_rate = %s
+                WHERE version = %s
+            """, (total_ideas, win_count, win_rate, avg_pnl, avg_capture_rate, version))
+            conn.commit()
+            return cursor.rowcount > 0
         finally:
             cursor.close()
             conn.close()

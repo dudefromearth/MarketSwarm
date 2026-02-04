@@ -70,8 +70,9 @@ export function getLiveUsers() {
 
 /**
  * Admin middleware - require is_admin = true
+ * Exported for use in other route files
  */
-async function requireAdmin(req, res, next) {
+export async function requireAdmin(req, res, next) {
   if (!isDbAvailable()) {
     return res.status(503).json({ error: "Database unavailable" });
   }
@@ -527,6 +528,138 @@ router.get("/diagnostics/redis/:key(*)", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("[admin] Redis key fetch error:", err);
     res.status(500).json({ error: "Failed to fetch key" });
+  }
+});
+
+// ===========================================================================
+// Trade Idea Tracking Analytics (Feedback Optimization Loop)
+// ===========================================================================
+
+const JOURNAL_API_URL = process.env.JOURNAL_API_URL || "http://localhost:3002";
+
+/**
+ * GET /api/admin/tracking/analytics
+ * Get aggregated analytics for tracked ideas
+ */
+router.get("/tracking/analytics", requireAdmin, async (req, res) => {
+  try {
+    const params = new URLSearchParams();
+    if (req.query.params_version) params.append("params_version", req.query.params_version);
+    if (req.query.start_date) params.append("start_date", req.query.start_date);
+    if (req.query.end_date) params.append("end_date", req.query.end_date);
+
+    const url = `${JOURNAL_API_URL}/api/internal/tracked-ideas/analytics?${params}`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    res.json(data);
+  } catch (err) {
+    console.error("[admin] tracking analytics error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/tracking/ideas
+ * List tracked ideas with filters
+ */
+router.get("/tracking/ideas", requireAdmin, async (req, res) => {
+  try {
+    const params = new URLSearchParams();
+    if (req.query.limit) params.append("limit", req.query.limit);
+    if (req.query.offset) params.append("offset", req.query.offset);
+    if (req.query.regime) params.append("regime", req.query.regime);
+    if (req.query.strategy) params.append("strategy", req.query.strategy);
+    if (req.query.rank) params.append("rank", req.query.rank);
+    if (req.query.is_winner) params.append("is_winner", req.query.is_winner);
+    if (req.query.params_version) params.append("params_version", req.query.params_version);
+    if (req.query.start_date) params.append("start_date", req.query.start_date);
+    if (req.query.end_date) params.append("end_date", req.query.end_date);
+
+    const url = `${JOURNAL_API_URL}/api/internal/tracked-ideas?${params}`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    res.json(data);
+  } catch (err) {
+    console.error("[admin] tracking ideas error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/tracking/params
+ * List selector parameter versions
+ */
+router.get("/tracking/params", requireAdmin, async (req, res) => {
+  try {
+    const params = new URLSearchParams();
+    if (req.query.include_retired) params.append("include_retired", req.query.include_retired);
+
+    const url = `${JOURNAL_API_URL}/api/internal/selector-params?${params}`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    res.json(data);
+  } catch (err) {
+    console.error("[admin] tracking params error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/admin/tracking/params/active
+ * Get currently active selector parameters
+ */
+router.get("/tracking/params/active", requireAdmin, async (req, res) => {
+  try {
+    const url = `${JOURNAL_API_URL}/api/internal/selector-params/active`;
+    const response = await fetch(url);
+    const data = await response.json();
+
+    res.json(data);
+  } catch (err) {
+    console.error("[admin] active params error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/tracking/params
+ * Create new parameter version
+ */
+router.post("/tracking/params", requireAdmin, async (req, res) => {
+  try {
+    const url = `${JOURNAL_API_URL}/api/internal/selector-params`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req.body),
+    });
+    const data = await response.json();
+
+    res.json(data);
+  } catch (err) {
+    console.error("[admin] create params error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * POST /api/admin/tracking/params/:version/activate
+ * Activate a parameter version
+ */
+router.post("/tracking/params/:version/activate", requireAdmin, async (req, res) => {
+  try {
+    const { version } = req.params;
+    const url = `${JOURNAL_API_URL}/api/internal/selector-params/${version}/activate`;
+    const response = await fetch(url, { method: "POST" });
+    const data = await response.json();
+
+    res.json(data);
+  } catch (err) {
+    console.error("[admin] activate params error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

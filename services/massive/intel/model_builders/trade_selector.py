@@ -37,6 +37,7 @@ import time
 from datetime import datetime, date, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+import aiohttp
 from redis.asyncio import Redis
 
 
@@ -260,6 +261,13 @@ class TradeSelectorModelBuilder:
         self.TRACKING_ACTIVE_KEY = "massive:selector:tracking:active"
         self.TRACKING_HISTORY_KEY = "massive:selector:tracking:history"
         self.TRACKING_STATS_KEY = "massive:selector:tracking:stats"
+
+        # Journal API for persistent tracking storage
+        self.journal_api_url = config.get("JOURNAL_API_URL", "http://localhost:3002")
+        self._http_session = None  # Lazy init aiohttp session
+
+        # Current active params version (for tracking which params generated the idea)
+        self._active_params_version: Optional[int] = None
 
         self.logger.info(
             f"[TRADE_SELECTOR INIT] symbols={self.symbols} interval={self.interval_sec}s top_n={self.top_n} tracking={self.tracking_enabled}",
@@ -1545,6 +1553,93 @@ class TradeSelectorModelBuilder:
                 emoji="🏁",
             )
 
+            # Persist to journal for long-term analytics
+            await self._persist_to_journal(trade)
+
+    async def _get_http_session(self) -> aiohttp.ClientSession:
+        """Get or create aiohttp session for API calls."""
+        if self._http_session is None or self._http_session.closed:
+            self._http_session = aiohttp.ClientSession()
+        return self._http_session
+
+    async def _persist_to_journal(self, trade: Dict[str, Any]) -> None:
+        """
+        Persist a settled trade to the journal service for long-term analytics.
+        This enables the feedback optimization loop.
+        """
+        try:
+            session = await self._get_http_session()
+            url = f"{self.journal_api_url}/api/internal/tracked-ideas"
+
+            # Build payload for journal API
+            payload = {
+                "id": trade["trade_id"],
+                "symbol": trade["symbol"],
+                "entry_rank": trade["entry_rank"],
+                "entry_time": trade["entry_time"],
+                "entry_ts": int(trade["entry_ts"]),
+                "entry_spot": trade["entry_spot"],
+                "entry_vix": trade["entry_vix"],
+                "entry_regime": trade["entry_regime"],
+                "strategy": trade["strategy"],
+                "side": trade["side"],
+                "strike": trade["strike"],
+                "width": trade["width"],
+                "dte": trade["dte"],
+                "debit": trade["debit"],
+                "max_profit_theoretical": trade["max_profit_theoretical"],
+                "r2r_predicted": trade.get("r2r_predicted"),
+                "campaign": trade.get("campaign"),
+                "max_pnl": trade["max_pnl"],
+                "max_pnl_time": trade.get("max_pnl_time"),
+                "max_pnl_spot": trade.get("max_pnl_spot"),
+                "settlement_time": trade["settlement_time"],
+                "settlement_spot": trade["settlement_spot"],
+                "final_pnl": trade["final_pnl"],
+                "is_winner": trade["is_winner"],
+                "pnl_captured_pct": trade.get("pnl_captured_pct"),
+                "r2r_achieved": trade.get("r2r_achieved"),
+                "edge_cases": trade.get("edge_cases", []),
+                "params_version": self._active_params_version,
+            }
+
+            async with session.post(url, json=payload) as resp:
+                if resp.status == 200:
+                    self.logger.debug(
+                        f"[TRACKING] Persisted to journal: {trade['trade_id']}",
+                        emoji="💾",
+                    )
+                else:
+                    text = await resp.text()
+                    self.logger.warn(
+                        f"[TRACKING] Failed to persist to journal: {resp.status} - {text}",
+                        emoji="⚠️",
+                    )
+        except Exception as e:
+            # Don't fail settlement if journal is unavailable
+            self.logger.warn(
+                f"[TRACKING] Journal persistence error: {e}",
+                emoji="⚠️",
+            )
+
+    async def _load_active_params_version(self) -> None:
+        """Load the currently active params version from journal."""
+        try:
+            session = await self._get_http_session()
+            url = f"{self.journal_api_url}/api/internal/selector-params/active"
+
+            async with session.get(url) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("success") and data.get("data"):
+                        self._active_params_version = data["data"]["version"]
+                        self.logger.info(
+                            f"[TRACKING] Loaded active params version: {self._active_params_version}",
+                            emoji="⚙️",
+                        )
+        except Exception as e:
+            self.logger.warn(f"[TRACKING] Could not load active params: {e}", emoji="⚠️")
+
     async def _load_tracked_trades(self) -> None:
         """Load active tracked trades from Redis on startup."""
         if not self.tracking_enabled:
@@ -2045,6 +2140,9 @@ class TradeSelectorModelBuilder:
         # Load any active tracked trades from Redis (resume tracking after restart)
         await self._load_tracked_trades()
 
+        # Load active params version for tracking attribution
+        await self._load_active_params_version()
+
         try:
             while not stop_event.is_set():
                 t0 = time.monotonic()
@@ -2052,4 +2150,7 @@ class TradeSelectorModelBuilder:
                 dt = time.monotonic() - t0
                 await asyncio.sleep(max(0.0, self.interval_sec - dt))
         finally:
+            # Clean up HTTP session
+            if self._http_session and not self._http_session.closed:
+                await self._http_session.close()
             self.logger.info("[TRADE_SELECTOR STOP] halted", emoji="🛑")

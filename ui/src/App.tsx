@@ -39,6 +39,7 @@ import ObserverPanel from './components/ObserverPanel';
 import GexChartPanel from './components/GexChartPanel';
 import TradeRecommendationsPanel from './components/TradeRecommendationsPanel';
 import TradeTrackingPanel from './components/TradeTrackingPanel';
+import TrackingAnalyticsDashboard from './components/TrackingAnalyticsDashboard';
 import { VolumeProfileSettings, useIndicatorSettings, sigmaToPercentile } from './components/chart-primitives';
 import type { TradeSelectorModel, TradeRecommendation } from './types/tradeSelector';
 
@@ -610,6 +611,7 @@ function App() {
   const [tradeDetailTrade, setTradeDetailTrade] = useState<Trade | null>(null);
   const [reportingLogId, setReportingLogId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [trackingAnalyticsOpen, setTrackingAnalyticsOpen] = useState(false);
   const [journalOpen, setJournalOpen] = useState(false);
   const [journalTradeContext, setJournalTradeContext] = useState<TradeReflectionContext | null>(null);
   const [playbookOpen, setPlaybookOpen] = useState(false);
@@ -2044,13 +2046,22 @@ function App() {
             Settings
           </button>
           {userProfile?.is_admin && (
-            <button
-              className="header-admin-btn"
-              onClick={() => window.location.href = '/admin'}
-              title="Admin Panel"
-            >
-              Admin
-            </button>
+            <>
+              <button
+                className="header-admin-btn"
+                onClick={() => setTrackingAnalyticsOpen(true)}
+                title="Trade Idea Analytics"
+              >
+                Analytics
+              </button>
+              <button
+                className="header-admin-btn"
+                onClick={() => window.location.href = '/admin'}
+                title="Admin Panel"
+              >
+                Admin
+              </button>
+            </>
           )}
         </div>
         <div className="header-center">
@@ -2177,10 +2188,12 @@ function App() {
           />
         </div>
 
-        {/* Trade Tracking Widget */}
-        <div className="widget trade-tracking-widget">
-          <TradeTrackingPanel isOpen={true} />
-        </div>
+        {/* Trade Tracking Widget (Admin Only) */}
+        {userProfile?.is_admin && (
+          <div className="widget trade-tracking-widget">
+            <TradeTrackingPanel isOpen={true} />
+          </div>
+        )}
 
         {/* Vexy / AI Advisor Widget - Tabbed (Far Right) */}
         <div className="widget vexy-advisor-widget">
@@ -2959,6 +2972,14 @@ function App() {
       {/* Settings Modal */}
       {settingsOpen && (
         <SettingsModal onClose={() => setSettingsOpen(false)} />
+      )}
+
+      {/* Tracking Analytics Dashboard (Admin Only) */}
+      {userProfile?.is_admin && (
+        <TrackingAnalyticsDashboard
+          isOpen={trackingAnalyticsOpen}
+          onClose={() => setTrackingAnalyticsOpen(false)}
+        />
       )}
 
       {/* Strategy Popup Modal */}
