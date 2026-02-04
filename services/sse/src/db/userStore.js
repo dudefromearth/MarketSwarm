@@ -107,12 +107,36 @@ export async function getUserProfile(issuer, wpUserId) {
       roles: JSON.parse(user.roles_json || "[]"),
       is_admin: Boolean(user.is_admin),
       subscription_tier: user.subscription_tier || null,
+      timezone: user.timezone || null,
       created_at: user.created_at?.toISOString(),
       last_login_at: user.last_login_at?.toISOString(),
     };
   } catch (e) {
     console.error("[userStore] Failed to get user:", e.message);
     return null;
+  }
+}
+
+/**
+ * Update user timezone preference
+ */
+export async function updateUserTimezone(issuer, wpUserId, timezone) {
+  if (!isDbAvailable()) {
+    return false;
+  }
+
+  const pool = getPool();
+
+  try {
+    await pool.execute(
+      "UPDATE users SET timezone = ? WHERE issuer = ? AND wp_user_id = ?",
+      [timezone, issuer, String(wpUserId)]
+    );
+    console.log(`[userStore] Updated timezone for ${issuer}/${wpUserId}: ${timezone}`);
+    return true;
+  } catch (e) {
+    console.error("[userStore] Failed to update timezone:", e.message);
+    return false;
   }
 }
 
@@ -146,6 +170,7 @@ export async function getUserById(id) {
       roles: JSON.parse(user.roles_json || "[]"),
       is_admin: Boolean(user.is_admin),
       subscription_tier: user.subscription_tier || null,
+      timezone: user.timezone || null,
       created_at: user.created_at?.toISOString(),
       last_login_at: user.last_login_at?.toISOString(),
     };

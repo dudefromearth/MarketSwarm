@@ -102,7 +102,11 @@ export default function TradeTrackingPanel({ isOpen = true }: Props) {
   if (!isOpen) return null;
 
   const formatTime = (isoString: string) => {
-    const date = new Date(isoString);
+    // Ensure UTC parsing: append 'Z' if no timezone indicator present
+    const normalizedIso = isoString.includes('Z') || isoString.includes('+') || isoString.includes('-', 10)
+      ? isoString
+      : isoString + 'Z';
+    const date = new Date(normalizedIso);
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',

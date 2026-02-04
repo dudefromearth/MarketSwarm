@@ -1,6 +1,7 @@
 // src/components/TradeDetailModal.tsx
 import { useState, useEffect, Component, type ReactNode } from 'react';
 import type { Trade, TradeEvent } from './TradeLogPanel';
+import { useTimezone } from '../contexts/TimezoneContext';
 
 const JOURNAL_API = '';
 
@@ -64,6 +65,7 @@ export default function TradeDetailModal({
   onClose,
   onTradeUpdated
 }: TradeDetailModalProps) {
+  const { timezone } = useTimezone();
   const [view, setView] = useState<View>('detail');
   const [events, setEvents] = useState<TradeEvent[]>([]);
   const [loading, setLoading] = useState(false);
@@ -190,9 +192,22 @@ export default function TradeDetailModal({
     }
   };
 
+  // Helper to parse date as UTC (backend stores UTC without 'Z' suffix)
+  const parseAsUTC = (isoString: string): number => {
+    const normalized = isoString.includes('Z') || isoString.includes('+') || isoString.includes('-', 10)
+      ? isoString
+      : isoString + 'Z';
+    return new Date(normalized).getTime();
+  };
+
   const formatDateTime = (isoString: string) => {
-    const date = new Date(isoString);
+    // Ensure UTC parsing: append 'Z' if no timezone indicator present
+    const normalizedIso = isoString.includes('Z') || isoString.includes('+') || isoString.includes('-', 10)
+      ? isoString
+      : isoString + 'Z';
+    const date = new Date(normalizedIso);
     return date.toLocaleString('en-US', {
+      timeZone: timezone,
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -215,8 +230,8 @@ export default function TradeDetailModal({
 
   // Calculate duration between entry and exit (or now if still open)
   const calculateDuration = (entryTime: string, exitTime: string | null): string => {
-    const start = new Date(entryTime).getTime();
-    const end = exitTime ? new Date(exitTime).getTime() : Date.now();
+    const start = parseAsUTC(entryTime);
+    const end = exitTime ? parseAsUTC(exitTime) : Date.now();
     const diffMs = end - start;
 
     const minutes = Math.floor(diffMs / (1000 * 60));

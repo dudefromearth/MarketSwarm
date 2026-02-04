@@ -299,7 +299,11 @@ function formatPnl(pnlCents: number | null): string {
 }
 
 function formatTime(isoTime: string): string {
-  const date = new Date(isoTime);
+  // Ensure UTC parsing: append 'Z' if no timezone indicator present
+  const normalizedIso = isoTime.includes('Z') || isoTime.includes('+') || isoTime.includes('-', 10)
+    ? isoTime
+    : isoTime + 'Z';
+  const date = new Date(normalizedIso);
   return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
@@ -811,7 +815,7 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
         </div>
         {currentData && (
           <span className="entry-meta">
-            Last updated: {new Date(currentData.updated_at).toLocaleString()}
+            Last updated: {new Date(currentData.updated_at.includes('Z') ? currentData.updated_at : currentData.updated_at + 'Z').toLocaleString()}
           </span>
         )}
       </div>

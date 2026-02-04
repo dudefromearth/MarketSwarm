@@ -1,6 +1,7 @@
 // src/components/SettingsModal.tsx
 import { useState, useEffect, useCallback } from 'react';
 import { usePath } from '../contexts/PathContext';
+import { useTimezone } from '../contexts/TimezoneContext';
 
 const JOURNAL_API = '';
 
@@ -40,19 +41,53 @@ interface Profile {
   is_admin: boolean;
   roles: string[];
   subscription_tier: string | null;
+  timezone: string | null;
   last_login_at: string;
   created_at: string;
 }
+
+// Common timezone options grouped by region
+const TIMEZONE_OPTIONS = [
+  { value: '', label: 'Auto-detect (Browser)', group: 'Default' },
+  // Americas
+  { value: 'America/New_York', label: 'Eastern Time (ET) UTC-5', group: 'Americas' },
+  { value: 'America/Chicago', label: 'Central Time (CT) UTC-6', group: 'Americas' },
+  { value: 'America/Denver', label: 'Mountain Time (MT) UTC-7', group: 'Americas' },
+  { value: 'America/Los_Angeles', label: 'Pacific Time (PT) UTC-8', group: 'Americas' },
+  { value: 'America/Anchorage', label: 'Alaska Time UTC-9', group: 'Americas' },
+  { value: 'America/Toronto', label: 'Toronto (ET) UTC-5', group: 'Americas' },
+  { value: 'America/Vancouver', label: 'Vancouver (PT) UTC-8', group: 'Americas' },
+  { value: 'America/Mexico_City', label: 'Mexico City UTC-6', group: 'Americas' },
+  { value: 'America/Sao_Paulo', label: 'Sao Paulo UTC-3', group: 'Americas' },
+  // Europe
+  { value: 'Europe/London', label: 'London (GMT/BST) UTC+0', group: 'Europe' },
+  { value: 'Europe/Paris', label: 'Paris (CET) UTC+1', group: 'Europe' },
+  { value: 'Europe/Berlin', label: 'Berlin (CET) UTC+1', group: 'Europe' },
+  { value: 'Europe/Amsterdam', label: 'Amsterdam (CET) UTC+1', group: 'Europe' },
+  { value: 'Europe/Zurich', label: 'Zurich (CET) UTC+1', group: 'Europe' },
+  // Asia/Pacific
+  { value: 'Asia/Tokyo', label: 'Tokyo (JST) UTC+9', group: 'Asia/Pacific' },
+  { value: 'Asia/Hong_Kong', label: 'Hong Kong UTC+8', group: 'Asia/Pacific' },
+  { value: 'Asia/Singapore', label: 'Singapore UTC+8', group: 'Asia/Pacific' },
+  { value: 'Asia/Dubai', label: 'Dubai (GST) UTC+4', group: 'Asia/Pacific' },
+  { value: 'Australia/Sydney', label: 'Sydney (AEST) UTC+10', group: 'Asia/Pacific' },
+  { value: 'Pacific/Auckland', label: 'Auckland (NZST) UTC+12', group: 'Asia/Pacific' },
+];
 type AssetTypeFilter = 'all' | 'index_option' | 'etf_option' | 'future' | 'stock';
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const { tourCompleted, resetTour } = usePath();
+  const { setTimezone: setGlobalTimezone } = useTimezone();
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [symbols, setSymbols] = useState<Symbol[]>([]);
   const [loading, setLoading] = useState(true);
   const [assetFilter, setAssetFilter] = useState<AssetTypeFilter>('all');
   const [profile, setProfile] = useState<Profile | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
+  const [detectedTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const [timezoneUpdating, setTimezoneUpdating] = useState(false);
+  const [timezoneSaved, setTimezoneSaved] = useState(false);
+  const [timezoneError, setTimezoneError] = useState<string | null>(null);
 
   // New symbol form
   const [showAddSymbol, setShowAddSymbol] = useState(false);
@@ -118,6 +153,35 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       setProfileLoading(false);
     }
   }, []);
+
+  const handleTimezoneChange = async (timezone: string) => {
+    setTimezoneUpdating(true);
+    setTimezoneError(null);
+    setTimezoneSaved(false);
+    try {
+      const res = await fetch('/api/profile/timezone', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ timezone: timezone || null })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setProfile(prev => prev ? { ...prev, timezone: data.timezone } : null);
+        setGlobalTimezone(data.timezone); // Update app-wide timezone immediately
+        setTimezoneSaved(true);
+        setTimeout(() => setTimezoneSaved(false), 2000);
+      } else {
+        setTimezoneError(data.detail || 'Failed to save timezone');
+        console.error('Timezone update failed:', data);
+      }
+    } catch (err) {
+      setTimezoneError('Network error - could not save');
+      console.error('Failed to update timezone:', err);
+    } finally {
+      setTimezoneUpdating(false);
+    }
+  };
 
   const fetchTags = useCallback(async () => {
     setTagsLoading(true);
@@ -502,6 +566,43 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                               hour: '2-digit',
                               minute: '2-digit'
                             })}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="settings-group">
+                        <h4>Preferences</h4>
+                        <div className="setting-item">
+                          <label htmlFor="timezone-select">Timezone</label>
+                          <select
+                            id="timezone-select"
+                            value={profile.timezone || ''}
+                            onChange={e => handleTimezoneChange(e.target.value)}
+                            disabled={timezoneUpdating}
+                            style={{ minWidth: '200px' }}
+                          >
+                            {(() => {
+                              const groups = [...new Set(TIMEZONE_OPTIONS.map(tz => tz.group))];
+                              return groups.map(group => (
+                                <optgroup key={group} label={group}>
+                                  {TIMEZONE_OPTIONS.filter(tz => tz.group === group).map(tz => (
+                                    <option key={tz.value} value={tz.value}>
+                                      {tz.label}
+                                    </option>
+                                  ))}
+                                </optgroup>
+                              ));
+                            })()}
+                          </select>
+                          <span className="setting-hint">
+                            {timezoneUpdating && 'Saving...'}
+                            {timezoneSaved && <span style={{ color: '#22c55e' }}>Saved!</span>}
+                            {timezoneError && <span style={{ color: '#ef4444' }}>{timezoneError}</span>}
+                            {!timezoneUpdating && !timezoneSaved && !timezoneError && (
+                              profile.timezone
+                                ? `Using: ${profile.timezone}`
+                                : `Detected: ${detectedTimezone}`
+                            )}
                           </span>
                         </div>
                       </div>

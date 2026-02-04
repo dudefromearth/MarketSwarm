@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import LogSelector from './LogSelector';
 import type { TradeLog } from './LogSelector';
+import { useTimezone } from '../contexts/TimezoneContext';
 
 const JOURNAL_API = '';
 
@@ -111,6 +112,7 @@ export default function TradeLogPanel({
   onSelectLog,
   refreshTrigger = 0
 }: TradeLogPanelProps) {
+  const { timezone } = useTimezone();
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -211,10 +213,18 @@ export default function TradeLogPanel({
     setCurrentPage(1);
   }, [statusFilter, selectedLogId]);
 
+  // Helper to parse date as UTC
+  const parseAsUTC = (isoString: string) => {
+    const normalized = isoString.includes('Z') || isoString.includes('+') || isoString.includes('-', 10)
+      ? isoString
+      : isoString + 'Z';
+    return new Date(normalized).getTime();
+  };
+
   // Sort and paginate trades
   const sortedTrades = [...trades].sort((a, b) => {
-    const dateA = new Date(a.entry_time).getTime();
-    const dateB = new Date(b.entry_time).getTime();
+    const dateA = parseAsUTC(a.entry_time);
+    const dateB = parseAsUTC(b.entry_time);
     return sortOrder === 'recent' ? dateB - dateA : dateA - dateB;
   });
 
@@ -311,8 +321,13 @@ export default function TradeLogPanel({
   }, [fetchTrades, fetchPendingOrders]);
 
   const formatDateTime = (isoString: string) => {
-    const date = new Date(isoString);
+    // Ensure UTC parsing: append 'Z' if no timezone indicator present
+    const normalizedIso = isoString.includes('Z') || isoString.includes('+') || isoString.includes('-', 10)
+      ? isoString
+      : isoString + 'Z';
+    const date = new Date(normalizedIso);
     return date.toLocaleDateString('en-US', {
+      timeZone: timezone,
       month: 'short',
       day: 'numeric',
       year: '2-digit',
@@ -339,8 +354,8 @@ export default function TradeLogPanel({
   };
 
   const formatDuration = (entryTime: string, exitTime: string | null): string => {
-    const start = new Date(entryTime).getTime();
-    const end = exitTime ? new Date(exitTime).getTime() : Date.now();
+    const start = parseAsUTC(entryTime);
+    const end = exitTime ? parseAsUTC(exitTime) : Date.now();
     const diffMs = end - start;
 
     const minutes = Math.floor(diffMs / (1000 * 60));

@@ -108,9 +108,16 @@ async function createTables() {
       console.log("[db] Added subscription_tier column");
     } catch (alterErr) {
       // Column likely already exists, ignore duplicate column error
-      if (!alterErr.message.includes("Duplicate column")) {
-        // Only log if it's not a duplicate column error
-      }
+    }
+
+    // Add timezone column for user preference (defaults to browser-detected)
+    try {
+      await pool.execute(`
+        ALTER TABLE users ADD COLUMN timezone VARCHAR(64) DEFAULT NULL
+      `);
+      console.log("[db] Added timezone column");
+    } catch (alterErr) {
+      // Column likely already exists, ignore duplicate column error
     }
 
     // Add leaderboard columns (screen_name, show_screen_name) if they don't exist

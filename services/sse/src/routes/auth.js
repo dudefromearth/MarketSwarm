@@ -9,7 +9,7 @@ import {
   setSessionCookie,
   clearSessionCookie,
 } from "../auth.js";
-import { upsertUserFromWpToken, getUserProfile, getLeaderboardSettings, updateLeaderboardSettings } from "../db/userStore.js";
+import { upsertUserFromWpToken, getUserProfile, updateUserTimezone, getLeaderboardSettings, updateLeaderboardSettings } from "../db/userStore.js";
 import { isDbAvailable } from "../db/index.js";
 
 const router = Router();
@@ -100,6 +100,42 @@ router.get("/profile/me", async (req, res) => {
     // Use session's admin status if it says admin (freshest source)
     is_admin: profile.is_admin || sessionIsAdmin,
   });
+});
+
+/**
+ * PUT /api/profile/timezone
+ * Update user's timezone preference
+ */
+router.put("/profile/timezone", async (req, res) => {
+  const session = getCurrentUser(req);
+  if (!session) {
+    return res.status(401).json({ detail: "Not authenticated" });
+  }
+
+  if (!isDbAvailable()) {
+    return res.status(503).json({ detail: "Database not available" });
+  }
+
+  const { timezone } = req.body;
+
+  // Allow null/empty to reset to auto-detect (browser default)
+  const tzValue = timezone || null;
+
+  // Validate timezone string if provided (should be IANA timezone like "America/New_York")
+  if (tzValue) {
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: tzValue });
+    } catch (e) {
+      return res.status(400).json({ detail: "Invalid timezone" });
+    }
+  }
+
+  const success = await updateUserTimezone(session.wp?.issuer, session.wp?.id, tzValue);
+  if (!success) {
+    return res.status(500).json({ detail: "Failed to update timezone" });
+  }
+
+  return res.json({ success: true, timezone: tzValue });
 });
 
 /**

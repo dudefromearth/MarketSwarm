@@ -10,6 +10,7 @@ import WorkbenchPage from './pages/Workbench.tsx'
 import AdminPage from './pages/Admin.tsx'
 import { AlertProvider } from './contexts/AlertContext.tsx'
 import { PathProvider } from './contexts/PathContext.tsx'
+import { TimezoneProvider } from './contexts/TimezoneContext.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -17,12 +18,14 @@ createRoot(document.getElementById('root')!).render(
       <AlertProvider>
         <PathProvider>
           <AuthWrapper>
+            <TimezoneProvider>
             <Routes>
               <Route path="/" element={<AppLayout><App /></AppLayout>} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/workbench" element={<WorkbenchPage />} />
               <Route path="/admin" element={<AdminPage />} />
             </Routes>
+            </TimezoneProvider>
           </AuthWrapper>
         </PathProvider>
       </AlertProvider>
