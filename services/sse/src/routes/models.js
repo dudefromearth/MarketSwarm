@@ -39,18 +39,20 @@ router.get("/spot", async (req, res) => {
 });
 
 // GET /api/models/candles/:symbol - OHLC candles for Dealer Gravity chart
+// Query params: days (default 1, max 7)
 router.get("/candles/:symbol", async (req, res) => {
   const symbol = req.params.symbol.toUpperCase();
+  const days = Math.min(Math.max(parseInt(req.query.days) || 1, 1), 7); // 1-7 days
   try {
     const redis = getMarketRedis();
     const keys = getKeys();
     const trailKey = keys.spotTrailKey(symbol);
 
-    // Get last 24 hours of trail data
+    // Get trail data for requested number of days
     const now = Math.floor(Date.now() / 1000);
-    const dayAgo = now - 86400;
+    const startTime = now - (days * 86400);
 
-    const trailRaw = await redis.zrangebyscore(trailKey, dayAgo, now, 'WITHSCORES');
+    const trailRaw = await redis.zrangebyscore(trailKey, startTime, now, 'WITHSCORES');
 
     if (!trailRaw || trailRaw.length === 0) {
       return res.status(404).json({ success: false, error: `No trail data found for ${symbol}` });
@@ -77,7 +79,7 @@ router.get("/candles/:symbol", async (req, res) => {
     }
 
     // Aggregate into candles
-    const BUCKET_SIZES = { '5m': 5 * 60, '15m': 15 * 60, '1h': 60 * 60 };
+    const BUCKET_SIZES = { '5m': 5 * 60, '10m': 10 * 60, '15m': 15 * 60, '1h': 60 * 60 };
 
     function aggregateCandles(data, bucketSec) {
       const buckets = new Map();
@@ -101,6 +103,7 @@ router.get("/candles/:symbol", async (req, res) => {
     }
 
     const candles_5m = aggregateCandles(trailData, BUCKET_SIZES['5m']);
+    const candles_10m = aggregateCandles(trailData, BUCKET_SIZES['10m']);
     const candles_15m = aggregateCandles(trailData, BUCKET_SIZES['15m']);
     const candles_1h = aggregateCandles(trailData, BUCKET_SIZES['1h']);
 
@@ -112,7 +115,9 @@ router.get("/candles/:symbol", async (req, res) => {
         symbol,
         spot: lastPoint.value,
         ts: lastPoint.ts,
+        days,
         candles_5m,
+        candles_10m,
         candles_15m,
         candles_1h,
       },
@@ -363,6 +368,25 @@ router.get("/bias_lfi", async (req, res) => {
     res.json({ success: true, data: JSON.parse(data), ts: Date.now() });
   } catch (err) {
     console.error("[models] /bias_lfi error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/models/trade_selector/:symbol - Trade selector recommendations
+router.get("/trade_selector/:symbol", async (req, res) => {
+  const symbol = req.params.symbol.toUpperCase();
+  try {
+    const redis = getMarketRedis();
+    const keys = getKeys();
+    const data = await redis.get(keys.tradeSelectorKey(symbol));
+
+    if (!data) {
+      return res.status(404).json({ success: false, error: `No trade selector model found for ${symbol}` });
+    }
+
+    res.json({ success: true, data: JSON.parse(data), ts: Date.now() });
+  } catch (err) {
+    console.error(`[models] /trade_selector/${symbol} error:`, err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

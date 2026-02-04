@@ -33,6 +33,8 @@ export function buildKeyMap(config) {
       keyMap.volume_profile = key;
     } else if (key.startsWith("massive:bias_lfi:model")) {
       keyMap.bias_lfi = key;
+    } else if (key.startsWith("massive:selector:model")) {
+      keyMap.trade_selector = key;
     } else if (key.startsWith("vexy:model:playbyplay")) {
       keyMap.vexy = key;
     } else if (key.startsWith("copilot:alerts:events")) {
@@ -142,6 +144,17 @@ export class KeyResolver {
     return this.keyMap.bias_lfi ? `${this.keyMap.bias_lfi}:latest` : "massive:bias_lfi:model:latest";
   }
 
+  // Trade Selector
+  tradeSelectorKey(symbol) {
+    return this.keyMap.trade_selector
+      ? `${this.keyMap.trade_selector}:${symbol}:latest`
+      : `massive:selector:model:${symbol}:latest`;
+  }
+
+  tradeSelectorPattern() {
+    return "massive:selector:model:*:latest";
+  }
+
   // Alerts - keys from copilot service
   alertsChannel() {
     return this.keyMap.alerts_events || "copilot:alerts:events";
@@ -176,6 +189,7 @@ export class KeyResolver {
     console.log(`  market_mode: ${this.marketModeKey()}`);
     console.log(`  vix_regime: ${this.vixRegimeKey()}`);
     console.log(`  bias_lfi: ${this.biasLfiKey()}`);
+    console.log(`  trade_selector: ${this.tradeSelectorPattern()}`);
     console.log(`  volume_profile: ${this.volumeProfileKey()}`);
     console.log(`  alerts channel: ${this.alertsChannel()}`);
     console.log(`  alerts latest: ${this.alertsLatestKey()}`);

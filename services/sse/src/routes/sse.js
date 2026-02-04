@@ -15,6 +15,7 @@ const clients = {
   gex: new Map(), // symbol -> Set of clients
   heatmap: new Map(), // symbol -> Set of clients
   candles: new Map(), // symbol -> Set of clients
+  trade_selector: new Map(), // symbol -> Set of clients
   vexy: new Set(),
   bias_lfi: new Set(),
   market_mode: new Set(),
@@ -28,6 +29,7 @@ const modelState = {
   gex: new Map(), // symbol -> data
   heatmap: new Map(), // symbol -> data
   candles: new Map(), // symbol -> { candles_5m, candles_15m, candles_1h, spot, ts }
+  trade_selector: new Map(), // symbol -> trade selector model
   vexy: null, // { epoch, event } - combined latest messages
   bias_lfi: null,
   market_mode: null,
@@ -172,6 +174,29 @@ router.get("/candles/:symbol", (req, res) => {
   });
 });
 
+// GET /sse/trade_selector/:symbol - Trade recommendations
+router.get("/trade_selector/:symbol", (req, res) => {
+  const symbol = req.params.symbol.toUpperCase();
+  sseHeaders(res);
+
+  if (!clients.trade_selector.has(symbol)) {
+    clients.trade_selector.set(symbol, new Set());
+  }
+  clients.trade_selector.get(symbol).add(res);
+
+  // Send current state if available
+  const current = modelState.trade_selector.get(symbol);
+  if (current) {
+    sendEvent(res, "trade_selector", { symbol, ...current });
+  }
+
+  sendEvent(res, "connected", { channel: "trade_selector", symbol, ts: Date.now() });
+
+  req.on("close", () => {
+    clients.trade_selector.get(symbol)?.delete(res);
+  });
+});
+
 // GET /sse/all - Combined stream
 router.get("/all", (req, res) => {
   sseHeaders(res);
@@ -196,6 +221,9 @@ router.get("/all", (req, res) => {
   }
   for (const [symbol, data] of modelState.candles) {
     sendEvent(res, "candles", { symbol, ...data });
+  }
+  for (const [symbol, data] of modelState.trade_selector) {
+    sendEvent(res, "trade_selector", { symbol, ...data });
   }
   if (modelState.vexy) {
     sendEvent(res, "vexy", modelState.vexy);
@@ -235,7 +263,7 @@ router.get("/alerts", (req, res) => {
 // Broadcast to specific channel clients
 function broadcastToChannel(channel, event, data, symbol = null) {
   let targetClients;
-  if (symbol && (channel === "gex" || channel === "heatmap" || channel === "candles")) {
+  if (symbol && (channel === "gex" || channel === "heatmap" || channel === "candles" || channel === "trade_selector")) {
     targetClients = clients[channel].get(symbol) || new Set();
   } else {
     targetClients = clients[channel];
@@ -487,6 +515,27 @@ export async function startPolling(config) {
           // Malformed JSON, skip
         }
       }
+
+      // Poll trade_selector models (per symbol)
+      const selectorKeys = await redis.keys(keys.tradeSelectorPattern());
+      for (const key of selectorKeys) {
+        const val = await redis.get(key);
+        if (val) {
+          try {
+            const data = JSON.parse(val);
+            const symbol = data.symbol;
+            if (symbol) {
+              const prev = modelState.trade_selector.get(symbol);
+              if (JSON.stringify(data) !== JSON.stringify(prev)) {
+                modelState.trade_selector.set(symbol, data);
+                broadcastToChannel("trade_selector", "trade_selector", data, symbol);
+              }
+            }
+          } catch {
+            // Malformed JSON, skip
+          }
+        }
+      }
     } catch (err) {
       console.error("[sse] Polling error:", err.message);
     }
@@ -708,6 +757,10 @@ export function getClientStats() {
   for (const set of clients.candles.values()) {
     candlesCount += set.size;
   }
+  let tradeSelectorCount = 0;
+  for (const set of clients.trade_selector.values()) {
+    tradeSelectorCount += set.size;
+  }
 
   return {
     clients: {
@@ -715,11 +768,12 @@ export function getClientStats() {
       gex: gexCount,
       heatmap: heatmapCount,
       candles: candlesCount,
+      trade_selector: tradeSelectorCount,
       vexy: clients.vexy.size,
       bias_lfi: clients.bias_lfi.size,
       alerts: clients.alerts.size,
       all: clients.all.size,
-      total: clients.spot.size + gexCount + heatmapCount + candlesCount + clients.vexy.size + clients.bias_lfi.size + clients.alerts.size + clients.all.size,
+      total: clients.spot.size + gexCount + heatmapCount + candlesCount + tradeSelectorCount + clients.vexy.size + clients.bias_lfi.size + clients.alerts.size + clients.all.size,
     },
   };
 }
