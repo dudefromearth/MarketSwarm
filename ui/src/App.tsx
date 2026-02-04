@@ -38,6 +38,7 @@ import type { AlertType, AlertBehavior } from './types/alerts';
 import ObserverPanel from './components/ObserverPanel';
 import GexChartPanel from './components/GexChartPanel';
 import TradeRecommendationsPanel from './components/TradeRecommendationsPanel';
+import TradeTrackingPanel from './components/TradeTrackingPanel';
 import { VolumeProfileSettings, useIndicatorSettings, sigmaToPercentile } from './components/chart-primitives';
 import type { TradeSelectorModel, TradeRecommendation } from './types/tradeSelector';
 
@@ -2174,6 +2175,11 @@ function App() {
             onSelectTrade={handleTradeRecommendationSelect}
             maxVisible={5}
           />
+        </div>
+
+        {/* Trade Tracking Widget */}
+        <div className="widget trade-tracking-widget">
+          <TradeTrackingPanel isOpen={true} />
         </div>
 
         {/* Vexy / AI Advisor Widget - Tabbed (Far Right) */}

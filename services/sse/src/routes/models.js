@@ -391,4 +391,116 @@ router.get("/trade_selector/:symbol", async (req, res) => {
   }
 });
 
+// ===========================================================================
+// Trade Idea Tracking Endpoints
+// ===========================================================================
+
+// GET /api/models/trade_tracking/stats - Aggregated stats by rank
+router.get("/trade_tracking/stats", async (req, res) => {
+  try {
+    const redis = getMarketRedis();
+    const rawStats = await redis.hgetall("massive:selector:tracking:stats");
+    const activeCount = await redis.hlen("massive:selector:tracking:active");
+    const historyCount = await redis.llen("massive:selector:tracking:history");
+
+    // Parse stats by rank
+    const byRank = {};
+    for (let rank = 1; rank <= 10; rank++) {
+      const count = parseInt(rawStats[`rank${rank}:count`] || "0");
+      if (count === 0) continue;
+
+      const wins = parseInt(rawStats[`rank${rank}:wins`] || "0");
+      const totalPnl = parseFloat(rawStats[`rank${rank}:total_pnl`] || "0");
+      const totalMaxPnl = parseFloat(rawStats[`rank${rank}:total_max_pnl`] || "0");
+
+      byRank[rank] = {
+        count,
+        wins,
+        winRate: count > 0 ? (wins / count * 100).toFixed(1) + "%" : "0%",
+        avgPnl: count > 0 ? (totalPnl / count).toFixed(2) : "0.00",
+        avgMaxPnl: count > 0 ? (totalMaxPnl / count).toFixed(2) : "0.00",
+        captureRate: totalMaxPnl > 0 ? (totalPnl / totalMaxPnl * 100).toFixed(1) + "%" : "0%",
+      };
+    }
+
+    res.json({
+      success: true,
+      data: {
+        activeCount,
+        historyCount,
+        byRank,
+      },
+      ts: Date.now(),
+    });
+  } catch (err) {
+    console.error("[models] /trade_tracking/stats error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/models/trade_tracking/active - List of active tracked trades
+router.get("/trade_tracking/active", async (req, res) => {
+  try {
+    const redis = getMarketRedis();
+    const activeRaw = await redis.hgetall("massive:selector:tracking:active");
+
+    const trades = [];
+    for (const [tradeId, tradeJson] of Object.entries(activeRaw)) {
+      try {
+        const trade = JSON.parse(tradeJson);
+        trades.push(trade);
+      } catch {
+        // Skip malformed entries
+      }
+    }
+
+    // Sort by entry time descending (newest first)
+    trades.sort((a, b) => (b.entry_ts || 0) - (a.entry_ts || 0));
+
+    res.json({
+      success: true,
+      data: {
+        count: trades.length,
+        trades,
+      },
+      ts: Date.now(),
+    });
+  } catch (err) {
+    console.error("[models] /trade_tracking/active error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/models/trade_tracking/history - List of settled trades
+// Query params: limit (default 100, max 500)
+router.get("/trade_tracking/history", async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);
+    const redis = getMarketRedis();
+    const historyRaw = await redis.lrange("massive:selector:tracking:history", 0, limit - 1);
+
+    const trades = [];
+    for (const tradeJson of historyRaw) {
+      try {
+        const trade = JSON.parse(tradeJson);
+        trades.push(trade);
+      } catch {
+        // Skip malformed entries
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        count: trades.length,
+        trades,
+      },
+      ts: Date.now(),
+    });
+  } catch (err) {
+    console.error("[models] /trade_tracking/history error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;

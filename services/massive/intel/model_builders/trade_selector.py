@@ -34,7 +34,7 @@ import asyncio
 import json
 import math
 import time
-from datetime import datetime
+from datetime import datetime, date, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from redis.asyncio import Redis
@@ -243,8 +243,26 @@ class TradeSelectorModelBuilder:
         self.market_redis_url = config["buses"]["market-redis"]["url"]
         self._redis: Redis | None = None
 
+        # ------------------------------------------------------------------
+        # Trade Idea Tracking (P&L instrumentation)
+        # ------------------------------------------------------------------
+        self.tracking_enabled = config.get("MASSIVE_SELECTOR_TRACKING", "true").lower() == "true"
+
+        # In-memory tracking of active trades
+        # Key: unique trade ID (f"{symbol}:{tile_key}:{entry_ts}")
+        # Value: dict with trade details and max profit tracking
+        self._tracked_trades: Dict[str, Dict[str, Any]] = {}
+
+        # Previous top 10 for detecting new entries
+        self._prev_top10: Dict[str, set] = {}  # symbol -> set of tile_keys
+
+        # Redis keys for persistence
+        self.TRACKING_ACTIVE_KEY = "massive:selector:tracking:active"
+        self.TRACKING_HISTORY_KEY = "massive:selector:tracking:history"
+        self.TRACKING_STATS_KEY = "massive:selector:tracking:stats"
+
         self.logger.info(
-            f"[TRADE_SELECTOR INIT] symbols={self.symbols} interval={self.interval_sec}s top_n={self.top_n}",
+            f"[TRADE_SELECTOR INIT] symbols={self.symbols} interval={self.interval_sec}s top_n={self.top_n} tracking={self.tracking_enabled}",
             emoji="🎯",
         )
 
@@ -1301,6 +1319,281 @@ class TradeSelectorModelBuilder:
         return min(1.0, confidence)
 
     # ------------------------------------------------------------------
+    # Trade Idea Tracking (P&L Instrumentation)
+    # ------------------------------------------------------------------
+
+    def _calculate_butterfly_pnl(self, spot: float, strike: float, width: float, debit: float) -> float:
+        """
+        Calculate current P&L for a butterfly spread.
+
+        Butterfly payoff at expiration:
+        - Max profit at center strike = width - debit
+        - Value decreases linearly as spot moves away from strike
+        - Zero value when spot is beyond strike ± width
+
+        For real-time tracking, we use intrinsic value approximation.
+        """
+        distance = abs(spot - strike)
+        if distance >= width:
+            # Spot is outside the butterfly wings - worthless
+            intrinsic_value = 0.0
+        else:
+            # Butterfly has value: width - distance from center
+            intrinsic_value = width - distance
+
+        return intrinsic_value - debit
+
+    def _generate_trade_id(self, symbol: str, tile_key: str, entry_ts: float) -> str:
+        """Generate unique ID for a tracked trade."""
+        return f"{symbol}:{tile_key}:{int(entry_ts)}"
+
+    def _parse_expiration_from_dte(self, dte: int) -> datetime:
+        """Calculate expiration datetime from DTE."""
+        # Expiration is market close (4 PM ET) on the expiration day
+        today = date.today()
+        exp_date = today if dte == 0 else date(today.year, today.month, today.day + dte)
+        # 4 PM ET = 21:00 UTC (during EST) or 20:00 UTC (during EDT)
+        # Use 21:00 UTC as conservative estimate
+        return datetime(exp_date.year, exp_date.month, exp_date.day, 21, 0, 0, tzinfo=timezone.utc)
+
+    async def _track_new_entries(
+        self,
+        symbol: str,
+        recommendations: List[Dict[str, Any]],
+        spot: float,
+        vix: float,
+        regime: str,
+    ) -> None:
+        """
+        Detect new trades entering the top 10 and start tracking them.
+        Only tracks trades that weren't in the previous top 10.
+        """
+        if not self.tracking_enabled:
+            return
+
+        r = await self._redis_conn()
+        current_top10 = {rec["tile_key"] for rec in recommendations}
+        prev_top10 = self._prev_top10.get(symbol, set())
+
+        # Find new entries (in current but not in previous)
+        new_entries = current_top10 - prev_top10
+
+        now = time.time()
+        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        for rec in recommendations:
+            if rec["tile_key"] not in new_entries:
+                continue
+
+            trade_id = self._generate_trade_id(symbol, rec["tile_key"], now)
+
+            # Calculate initial P&L
+            initial_pnl = self._calculate_butterfly_pnl(
+                spot, rec["strike"], rec["width"], rec["debit"]
+            )
+
+            # Build tracked trade record
+            tracked = {
+                "trade_id": trade_id,
+                "symbol": symbol,
+                "tile_key": rec["tile_key"],
+                "entry_rank": rec["rank"],
+                "entry_time": now_iso,
+                "entry_ts": now,
+                "entry_spot": spot,
+                "entry_vix": vix,
+                "entry_regime": regime,
+                # Trade details
+                "strategy": rec["strategy"],
+                "side": rec["side"],
+                "strike": rec["strike"],
+                "width": rec["width"],
+                "dte": rec["dte"],
+                "debit": rec["debit"],
+                "max_profit_theoretical": rec["width"] - rec["debit"],
+                "r2r_predicted": rec["r2r_ratio"],
+                "campaign": rec["campaign"],
+                "edge_cases": rec["edge_cases"],
+                # Expiration
+                "expiration": self._parse_expiration_from_dte(rec["dte"]).isoformat(),
+                # Real-time tracking
+                "current_pnl": initial_pnl,
+                "max_pnl": initial_pnl,
+                "max_pnl_time": now_iso,
+                "max_pnl_spot": spot,
+                # Status
+                "status": "active",
+                "settled": False,
+            }
+
+            # Store in memory
+            self._tracked_trades[trade_id] = tracked
+
+            # Persist to Redis
+            await r.hset(self.TRACKING_ACTIVE_KEY, trade_id, json.dumps(tracked))
+
+            self.logger.info(
+                f"[TRACKING] New entry: {rec['tile_key']} rank={rec['rank']} "
+                f"strike={rec['strike']} width={rec['width']} debit={rec['debit']:.2f}",
+                emoji="📊",
+            )
+
+        # Update previous top 10
+        self._prev_top10[symbol] = current_top10
+
+    async def _update_tracked_pnl(self, symbol: str, spot: float) -> None:
+        """
+        Update P&L for all active tracked trades.
+        Records new max profit if current P&L exceeds previous max.
+        """
+        if not self.tracking_enabled:
+            return
+
+        r = await self._redis_conn()
+        now = time.time()
+        now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        for trade_id, trade in list(self._tracked_trades.items()):
+            if trade["symbol"] != symbol:
+                continue
+            if trade["status"] != "active":
+                continue
+
+            # Calculate current P&L
+            current_pnl = self._calculate_butterfly_pnl(
+                spot, trade["strike"], trade["width"], trade["debit"]
+            )
+
+            trade["current_pnl"] = current_pnl
+
+            # Check for new max profit
+            if current_pnl > trade["max_pnl"]:
+                trade["max_pnl"] = current_pnl
+                trade["max_pnl_time"] = now_iso
+                trade["max_pnl_spot"] = spot
+
+                self.logger.debug(
+                    f"[TRACKING] New max P&L: {trade['tile_key']} "
+                    f"pnl={current_pnl:.2f} spot={spot:.2f}",
+                    emoji="📈",
+                )
+
+            # Update in Redis
+            await r.hset(self.TRACKING_ACTIVE_KEY, trade_id, json.dumps(trade))
+
+    async def _settle_expired_trades(self, symbol: str, spot: float) -> None:
+        """
+        Check for expired trades and record final settlement.
+        """
+        if not self.tracking_enabled:
+            return
+
+        r = await self._redis_conn()
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat(timespec="seconds")
+
+        for trade_id, trade in list(self._tracked_trades.items()):
+            if trade["symbol"] != symbol:
+                continue
+            if trade["status"] != "active":
+                continue
+
+            # Check if expired
+            exp_time = datetime.fromisoformat(trade["expiration"])
+            if now < exp_time:
+                continue
+
+            # Trade has expired - settle it
+            final_pnl = self._calculate_butterfly_pnl(
+                spot, trade["strike"], trade["width"], trade["debit"]
+            )
+
+            trade["status"] = "settled"
+            trade["settled"] = True
+            trade["settlement_time"] = now_iso
+            trade["settlement_spot"] = spot
+            trade["final_pnl"] = final_pnl
+            trade["pnl_captured_pct"] = (
+                (final_pnl / trade["max_pnl"] * 100) if trade["max_pnl"] > 0 else 0
+            )
+
+            # Calculate if trade was winner
+            trade["is_winner"] = final_pnl > 0
+            trade["r2r_achieved"] = (
+                final_pnl / trade["debit"] if trade["debit"] > 0 else 0
+            )
+
+            # Move from active to history
+            await r.hdel(self.TRACKING_ACTIVE_KEY, trade_id)
+            await r.lpush(self.TRACKING_HISTORY_KEY, json.dumps(trade))
+
+            # Update aggregate stats by entry rank
+            rank = trade["entry_rank"]
+            await r.hincrby(self.TRACKING_STATS_KEY, f"rank{rank}:count", 1)
+            await r.hincrbyfloat(self.TRACKING_STATS_KEY, f"rank{rank}:total_pnl", final_pnl)
+            await r.hincrbyfloat(self.TRACKING_STATS_KEY, f"rank{rank}:total_max_pnl", trade["max_pnl"])
+            if trade["is_winner"]:
+                await r.hincrby(self.TRACKING_STATS_KEY, f"rank{rank}:wins", 1)
+
+            # Remove from memory
+            del self._tracked_trades[trade_id]
+
+            self.logger.info(
+                f"[TRACKING] Settled: {trade['tile_key']} rank={rank} "
+                f"final_pnl={final_pnl:.2f} max_pnl={trade['max_pnl']:.2f} "
+                f"captured={trade['pnl_captured_pct']:.1f}%",
+                emoji="🏁",
+            )
+
+    async def _load_tracked_trades(self) -> None:
+        """Load active tracked trades from Redis on startup."""
+        if not self.tracking_enabled:
+            return
+
+        r = await self._redis_conn()
+        active = await r.hgetall(self.TRACKING_ACTIVE_KEY)
+
+        for trade_id, trade_json in active.items():
+            try:
+                trade = json.loads(trade_json)
+                self._tracked_trades[trade_id] = trade
+            except json.JSONDecodeError:
+                continue
+
+        if self._tracked_trades:
+            self.logger.info(
+                f"[TRACKING] Loaded {len(self._tracked_trades)} active trades from Redis",
+                emoji="📊",
+            )
+
+    async def get_tracking_stats(self) -> Dict[str, Any]:
+        """Get aggregate tracking statistics by rank."""
+        r = await self._redis_conn()
+        raw_stats = await r.hgetall(self.TRACKING_STATS_KEY)
+
+        stats = {"by_rank": {}, "active_count": len(self._tracked_trades)}
+
+        for rank in range(1, 11):
+            count = int(raw_stats.get(f"rank{rank}:count", 0))
+            if count == 0:
+                continue
+
+            wins = int(raw_stats.get(f"rank{rank}:wins", 0))
+            total_pnl = float(raw_stats.get(f"rank{rank}:total_pnl", 0))
+            total_max_pnl = float(raw_stats.get(f"rank{rank}:total_max_pnl", 0))
+
+            stats["by_rank"][rank] = {
+                "count": count,
+                "wins": wins,
+                "win_rate": wins / count if count > 0 else 0,
+                "avg_pnl": total_pnl / count if count > 0 else 0,
+                "avg_max_pnl": total_max_pnl / count if count > 0 else 0,
+                "capture_rate": total_pnl / total_max_pnl if total_max_pnl > 0 else 0,
+            }
+
+        return stats
+
+    # ------------------------------------------------------------------
     # Main Build Logic
     # ------------------------------------------------------------------
 
@@ -1717,6 +2010,19 @@ class TradeSelectorModelBuilder:
                     emoji="🎯",
                 )
 
+                # ----------------------------------------------------------
+                # Trade Idea Tracking
+                # ----------------------------------------------------------
+                if self.tracking_enabled and recommendations:
+                    # Track new entries into top 10
+                    await self._track_new_entries(symbol, recommendations, spot, vix, regime)
+
+                    # Update P&L for all active tracked trades
+                    await self._update_tracked_pnl(symbol, spot)
+
+                    # Settle any expired trades
+                    await self._settle_expired_trades(symbol, spot)
+
             # Record analytics
             latency_ms = int((time.monotonic() - t_start) * 1000)
             await r.hincrby(self.ANALYTICS_KEY, f"{self.BUILDER_NAME}:runs", 1)
@@ -1735,6 +2041,10 @@ class TradeSelectorModelBuilder:
     async def run(self, stop_event: asyncio.Event) -> None:
         """Main run loop."""
         self.logger.info("[TRADE_SELECTOR START] running", emoji="🎯")
+
+        # Load any active tracked trades from Redis (resume tracking after restart)
+        await self._load_tracked_trades()
+
         try:
             while not stop_event.is_set():
                 t0 = time.monotonic()
