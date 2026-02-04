@@ -1086,7 +1086,23 @@ class TradeSelectorModelBuilder:
                 # Load common data
                 spot = await self._load_spot(symbol)
                 if spot is None:
-                    self.logger.debug(f"[TRADE_SELECTOR] No spot for {symbol}, skipping")
+                    # Publish empty model so UI doesn't spin forever
+                    ts_empty = time.time()
+                    empty_model = {
+                        "ts": ts_empty,
+                        "ts_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts_empty)),
+                        "symbol": symbol,
+                        "spot": None,
+                        "error": "No spot data available",
+                        "recommendations": {},
+                        "total_scored": 0,
+                    }
+                    await r.set(
+                        f"massive:selector:model:{symbol}:latest",
+                        json.dumps(empty_model),
+                        ex=self.model_ttl_sec,
+                    )
+                    self.logger.debug(f"[TRADE_SELECTOR] No spot for {symbol}, published empty model")
                     continue
 
                 vix = await self._load_vix() or 15.0
