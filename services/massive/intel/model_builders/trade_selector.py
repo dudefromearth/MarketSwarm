@@ -3,16 +3,27 @@
 """
 Trade Selector Model Builder
 
-Evaluates heatmap tiles to find optimal butterfly entries based on:
-1. R:R Score (25%) - Risk/Reward ratio with realistic constraints
-2. Convexity Score (25%) - Gamma exposure relative to premium paid
-3. Width Fit Score (25%) - VIX playbook regime alignment
-4. Gamma Alignment Score (25%) - Proximity to GEX levels
+Finds CONVEX pricing anomalies - trades significantly cheaper than nearby
+alternatives without sacrificing optionality. VIX determines environment,
+but convexity is always the target.
 
-Hard Rules (from Big Ass Fly Playbook):
-- Debit must be ≤ 5% of width (extreme asymmetry requirement)
-- Width ranges defined by VIX regime
-- DTE constraints by regime
+Campaigns:
+- 0-2 DTE Tactical: 3-7 trades/week, R2R 9-18, debit 7-10% of width
+- Convex Stack (3-5 DTE): 2 trades/week overlapping, R2R 15-30, debit 5-7%
+- Sigma Drift (5-10 DTE): 6/month, R2R 20-50, debit 3-5%
+
+Edge Cases (part of 0-2 DTE):
+- TimeWarp: VIX ≤17, 1-2 DTE, captures overnight moves + slower decay
+- Batman: VIX 24+, dual fly (put below + call above spot), 30-50+ wide
+- Gamma Scalp: Late day 0DTE, 15-25 wide, near ATM, structural squeeze
+
+Scoring Components:
+1. Convexity Score (40%) - PRIMARY: cheaper than nearby alternatives
+2. R:R Score (25%) - Relative to DTE expectations
+3. Width Fit Score (20%) - VIX regime alignment
+4. Gamma Alignment Score (15%) - GEX structure
+
+Hard Filter: Debit ≤ 10% of width (minimum 1:9 R2R)
 
 Publishes to: massive:selector:model:{symbol}:latest
 """
@@ -37,19 +48,20 @@ class TradeSelectorModelBuilder:
     ANALYTICS_KEY = "massive:model:analytics"
     BUILDER_NAME = "trade_selector"
 
-    # Score weights
-    WEIGHT_R2R = 0.25
-    WEIGHT_CONVEXITY = 0.25
-    WEIGHT_WIDTH_FIT = 0.25
-    WEIGHT_GAMMA_ALIGNMENT = 0.25
+    # Score weights - Convexity is PRIMARY
+    WEIGHT_CONVEXITY = 0.40      # PRIMARY: cheaper than nearby alternatives
+    WEIGHT_R2R = 0.25            # R2R relative to DTE expectations
+    WEIGHT_WIDTH_FIT = 0.20      # VIX regime alignment
+    WEIGHT_GAMMA_ALIGNMENT = 0.15  # GEX structure
 
     # ==========================================================================
     # Big Ass Fly Playbook Constants
     # ==========================================================================
 
     # Hard filter: debit must be ≤ this percentage of width
-    # 5% = extreme asymmetry (e.g., 30-wide max debit $1.50)
-    MAX_DEBIT_PCT = 0.05
+    # 10% = 1:9 R2R (e.g., 30-wide max debit $3.00)
+    # Best trades often at 5% (1:19 R2R) but 10% is the hard cutoff
+    MAX_DEBIT_PCT = 0.10
 
     # VIX regime thresholds
     VIX_CHAOS_CUT = 32      # Chaos: VIX ≥ 32
@@ -73,10 +85,24 @@ class TradeSelectorModelBuilder:
     # ==========================================================================
     # Edge Case Strategies (not regimes)
     # ==========================================================================
-    # TimeWarp: Low VIX strategy with accelerated decay, use 1-2 DTE to capture
-    # premium before too much decays. Narrower flies work here.
+
+    # TimeWarp: Low VIX strategy triggered by TWO converging factors:
+    # 1. Accelerated premium decay (0DTE premium evaporates too fast)
+    # 2. Compressed intraday movement / overnight gap dominance
+    # Solution: Go out 1-2 DTE to capture slower decay + overnight Globex moves
+    TIMEWARP_VIX_THRESHOLD = 17   # VIX ≤ 17 for TimeWarp consideration
     TIMEWARP_WIDTH = (10, 20)     # Narrower flies for TimeWarp strategy
-    TIMEWARP_DTE = (1, 2)         # 1-2 DTE to capture premium before rapid decay
+    TIMEWARP_DTE = (1, 2)         # 1-2 DTE to capture overnight moves
+
+    # ==========================================================================
+    # Batman: Dual fly structure (put below + call above spot)
+    # ==========================================================================
+    # Becomes more attractive as VIX rises from Goldilocks 2 (24+) into Chaos
+    # Structure: Put fly BELOW spot + Call fly ABOVE spot
+    # Can be equal widths or skewed based on gamma/Volume Profile structure
+    BATMAN_VIX_THRESHOLD = 24     # VIX 24+ for Batman consideration
+    BATMAN_WIDTH = (30, 100)      # 30-50+ wide, wider usually better
+    BATMAN_DTE = (0, 2)           # 0-2 DTE
 
     # ==========================================================================
     # Gamma Scalp Mode
@@ -90,12 +116,13 @@ class TradeSelectorModelBuilder:
     GAMMA_SCALP_MAX_DISTANCE_PCT = 0.5  # Max 0.5% from ATM (near ATM, not OTM)
 
     # Gamma scalp timing windows by regime (hour ranges in ET, fractional)
-    # Lower VIX = earlier window, Higher VIX = later (closer to expiration)
+    # Lower VIX = wider window (gamma already elevated, premium decayed)
+    # Higher VIX = narrower window (gamma doesn't spike until very late)
     GAMMA_SCALP_WINDOWS = {
-        "zombieland": (13.5, 15.5),   # 1:30 PM - 3:30 PM (wide window in low vol)
-        "goldilocks_1": (14.5, 15.5), # 2:30 PM - 3:30 PM
-        "goldilocks_2": (15.0, 15.75), # 3:00 PM - 3:45 PM (tighter)
-        "chaos": (15.25, 15.75),      # 3:15 PM - 3:45 PM (very tight window)
+        "zombieland": (12.5, 16.0),   # 12:30 PM - 4:00 PM (widest window in low vol)
+        "goldilocks_1": (14.0, 16.0), # 2:00 PM - 4:00 PM
+        "goldilocks_2": (15.0, 16.0), # 3:00 PM - 4:00 PM (tighter)
+        "chaos": (15.0, 16.0),        # 3:00 PM - 4:00 PM (tight window, gamma late)
     }
 
     # Gamma scalp profit style by regime
@@ -140,13 +167,44 @@ class TradeSelectorModelBuilder:
         "zone_3": {"probability": 0.025, "return_range": (8.0, 19.0), "label": "Pin Trade"},
     }
 
-    # R:R expectations by DTE
+    # R:R expectations by DTE (campaign-based)
+    # 0-2 DTE Tactical: R2R 9-18, debit 7-10% of width
+    # Convex Stack (3-5 DTE): R2R 15-30, debit 5-7% of width
+    # Sigma Drift (5-10 DTE): R2R 20-50, debit 3-5% of width
     R2R_EXPECTATIONS = {
-        0: {"typical": (10, 12), "max": (15, 18)},     # 0DTE: 10-12 typical, up to 15-18
-        1: {"typical": (12, 15), "max": (18, 22)},     # 1DTE
-        2: {"typical": (15, 20), "max": (22, 28)},     # 2DTE
-        3: {"typical": (18, 25), "max": (28, 35)},     # 3-5DTE range
-        5: {"typical": (25, 35), "max": (35, 50)},     # 5-10DTE range
+        0: {"typical": (9, 12), "max": (15, 18), "campaign": "0dte_tactical"},
+        1: {"typical": (10, 14), "max": (16, 20), "campaign": "0dte_tactical"},
+        2: {"typical": (12, 16), "max": (18, 24), "campaign": "0dte_tactical"},
+        3: {"typical": (15, 22), "max": (25, 30), "campaign": "convex_stack"},
+        4: {"typical": (18, 25), "max": (28, 35), "campaign": "convex_stack"},
+        5: {"typical": (20, 30), "max": (30, 40), "campaign": "convex_stack"},
+        6: {"typical": (22, 35), "max": (35, 45), "campaign": "sigma_drift"},
+        7: {"typical": (25, 38), "max": (38, 48), "campaign": "sigma_drift"},
+        8: {"typical": (28, 42), "max": (42, 52), "campaign": "sigma_drift"},
+        9: {"typical": (30, 45), "max": (45, 55), "campaign": "sigma_drift"},
+        10: {"typical": (35, 50), "max": (50, 60), "campaign": "sigma_drift"},
+    }
+
+    # Campaign definitions
+    CAMPAIGNS = {
+        "0dte_tactical": {
+            "dte_range": (0, 2),
+            "r2r_typical": (9, 18),
+            "debit_pct_range": (0.07, 0.10),  # 7-10% of width
+            "frequency": "3-7/week",
+        },
+        "convex_stack": {
+            "dte_range": (3, 5),
+            "r2r_typical": (15, 30),
+            "debit_pct_range": (0.05, 0.07),  # 5-7% of width
+            "frequency": "2/week overlapping",
+        },
+        "sigma_drift": {
+            "dte_range": (5, 10),
+            "r2r_typical": (20, 50),
+            "debit_pct_range": (0.03, 0.05),  # 3-5% of width
+            "frequency": "6/month",
+        },
     }
 
     # ==========================================================================
@@ -293,7 +351,7 @@ class TradeSelectorModelBuilder:
     # VIX Regime Logic (Big Ass Fly Playbook)
     # ------------------------------------------------------------------
 
-    def _get_vix_regime(self, vix: float, current_hour: int) -> Tuple[str, Optional[str]]:
+    def _get_vix_regime(self, vix: float, current_hour: float) -> Tuple[str, Optional[str]]:
         """
         Get VIX regime and special condition/strategy based on playbook.
         Returns (regime, special_condition).
@@ -305,33 +363,85 @@ class TradeSelectorModelBuilder:
         - zombieland: VIX < 17 (low vol, fast decay)
 
         Special conditions/strategies (edge cases, not regimes):
-        - batman: VIX ≥ 40 (extreme chaos)
-        - timewarp: Low VIX with accelerated decay opportunity
-        - gamma_scalp: Late session low-vol scalping opportunity
+        - batman: VIX ≥ 24 (Goldilocks 2 into Chaos) - frequency increases with VIX
+        - timewarp: VIX ≤ 17 - accelerated decay + overnight gap dominance
+        - gamma_scalp: Late session opportunity - window depends on VIX regime
         """
-        is_afternoon = current_hour >= self.AFTERNOON_HOUR
-
+        # Determine regime first
         if vix >= self.VIX_CHAOS_CUT:
             regime = "chaos"
-            special = "batman" if vix >= 40 else None
         elif vix >= self.VIX_GOLD2_CUT:
             regime = "goldilocks_2"
-            special = None
         elif vix >= self.VIX_GOLD1_CUT:
             regime = "goldilocks_1"
-            special = None
         else:
-            # Zombieland regime
             regime = "zombieland"
-            # TimeWarp is a strategy opportunity in low VIX
-            if vix <= 15:
-                special = "timewarp"
-            elif is_afternoon:
-                special = "gamma_scalp"
-            else:
-                special = None
+
+        # Determine special condition/edge case
+        # Note: Multiple edge cases can be relevant, we return the most relevant one
+        special = None
+
+        # Batman: VIX 24+ (becomes more attractive as VIX rises)
+        if vix >= self.BATMAN_VIX_THRESHOLD:
+            special = "batman"
+
+        # TimeWarp: Low VIX (≤17) with accelerated decay
+        elif vix <= self.TIMEWARP_VIX_THRESHOLD:
+            special = "timewarp"
+
+        # Gamma Scalp: Check if in time window for this regime
+        if special != "batman":  # Batman takes priority over gamma scalp
+            gamma_window = self.GAMMA_SCALP_WINDOWS.get(regime)
+            if gamma_window:
+                start_hour, end_hour = gamma_window
+                if start_hour <= current_hour <= end_hour:
+                    # Gamma scalp is available, but don't override timewarp
+                    # Both can be considered - timewarp for 1-2 DTE, gamma scalp for 0DTE
+                    if special != "timewarp":
+                        special = "gamma_scalp"
 
         return regime, special
+
+    def _get_campaign(self, dte: int) -> str:
+        """
+        Determine which campaign a trade belongs to based on DTE.
+
+        Campaigns:
+        - 0dte_tactical: 0-2 DTE (includes TimeWarp, Batman, Gamma Scalp)
+        - convex_stack: 3-5 DTE
+        - sigma_drift: 5-10 DTE (overlaps with convex_stack at 5)
+        """
+        if dte <= 2:
+            return "0dte_tactical"
+        elif dte <= 5:
+            return "convex_stack"
+        else:
+            return "sigma_drift"
+
+    def _get_edge_cases(self, vix: float, current_hour: float, dte: int, regime: str) -> List[str]:
+        """
+        Get all applicable edge case strategies for current conditions.
+        A trade might qualify for multiple edge cases.
+        """
+        edge_cases = []
+
+        # Batman: VIX 24+ and 0-2 DTE
+        if vix >= self.BATMAN_VIX_THRESHOLD and dte <= 2:
+            edge_cases.append("batman")
+
+        # TimeWarp: VIX ≤ 17 and 1-2 DTE
+        if vix <= self.TIMEWARP_VIX_THRESHOLD and 1 <= dte <= 2:
+            edge_cases.append("timewarp")
+
+        # Gamma Scalp: 0DTE and in time window
+        if dte == 0:
+            gamma_window = self.GAMMA_SCALP_WINDOWS.get(regime)
+            if gamma_window:
+                start_hour, end_hour = gamma_window
+                if start_hour <= current_hour <= end_hour:
+                    edge_cases.append("gamma_scalp")
+
+        return edge_cases
 
     def _get_ideal_width_range(self, regime: str, special: Optional[str] = None) -> Tuple[int, int]:
         """
@@ -374,8 +484,9 @@ class TradeSelectorModelBuilder:
 
     def _passes_debit_filter(self, width: int, debit: float) -> bool:
         """
-        Hard filter: debit must be ≤ 5% of width for extreme asymmetry.
-        E.g., 30-wide fly max debit = $1.50
+        Hard filter: debit must be ≤ 10% of width for minimum 1:9 R2R.
+        E.g., 30-wide fly max debit = $3.00, 20-wide max = $2.00
+        Best trades often at 5% (1:19 R2R) but this is the hard cutoff.
         """
         max_debit = width * self.MAX_DEBIT_PCT
         return debit <= max_debit
@@ -790,11 +901,17 @@ class TradeSelectorModelBuilder:
     # Scoring Functions
     # ------------------------------------------------------------------
 
-    def _score_r2r(self, width: int, debit: float) -> float:
+    def _score_r2r(self, width: int, debit: float, dte: int = 0) -> float:
         """
-        Calculate R:R score (0-100).
-        R:R = (width - debit) / debit
-        Score = min(95, 30 * log2(r2r + 1))
+        Calculate R:R score (0-100) RELATIVE to DTE expectations.
+
+        R2R expectations by campaign:
+        - 0-2 DTE Tactical: R2R 9-18, debit 7-10% of width
+        - Convex Stack (3-5 DTE): R2R 15-30, debit 5-7% of width
+        - Sigma Drift (5-10 DTE): R2R 20-50, debit 3-5% of width
+
+        Score is based on how the trade compares to typical/max expectations
+        for its DTE, not absolute R2R values.
         """
         if debit <= 0.10:
             return 0.0  # Won't fill
@@ -803,13 +920,36 @@ class TradeSelectorModelBuilder:
         if r2r <= 0:
             return 0.0
 
-        score = min(95, 30 * math.log2(r2r + 1))
+        # Get expectations for this DTE
+        expectations = self._get_r2r_expectations(dte)
+        typical_low, typical_high = expectations["typical"]
+        max_low, max_high = expectations["max"]
+
+        # Score relative to expectations
+        if r2r >= max_high:
+            # Exceptional - above max expectations
+            score = 95.0
+        elif r2r >= max_low:
+            # Excellent - in the max range
+            score = 85.0 + ((r2r - max_low) / (max_high - max_low)) * 10
+        elif r2r >= typical_high:
+            # Good - above typical
+            score = 75.0 + ((r2r - typical_high) / (max_low - typical_high)) * 10
+        elif r2r >= typical_low:
+            # Acceptable - in typical range
+            score = 60.0 + ((r2r - typical_low) / (typical_high - typical_low)) * 15
+        elif r2r >= typical_low * 0.8:
+            # Below typical but close
+            score = 45.0 + ((r2r - typical_low * 0.8) / (typical_low * 0.2)) * 15
+        else:
+            # Well below expectations for this DTE
+            score = max(20.0, 45.0 * (r2r / (typical_low * 0.8)))
 
         # Penalty for likely illiquid
         if debit < 0.50:
             score *= (debit / 0.50)
 
-        return max(0, score)
+        return max(0, min(95, score))
 
     def _score_convexity(
         self,
@@ -818,59 +958,138 @@ class TradeSelectorModelBuilder:
         debit: float,
         all_debits: Dict[str, float],
         gex_by_strike: Dict[float, Dict[str, float]],
+        all_tiles_debits: Optional[Dict[str, float]] = None,
     ) -> float:
         """
         Calculate convexity score (0-100).
+
+        CONVEXITY is the core metric: finding trades that are significantly
+        cheaper than nearby alternatives without sacrificing optionality.
+        This is the whole point of the heatmap - to find pricing anomalies.
+
         Three sub-components:
-        - Debit Gradient (40%): % price change vs adjacent strikes
-        - Gamma Alignment (35%): Wings near positive GEX = support
-        - Debit Efficiency (25%): Value per dollar paid
+        - Local Price Advantage (50%): How much cheaper vs same-width flies at nearby strikes
+        - Neighborhood Cheapness (30%): Is this a local minimum in the debit surface?
+        - Width Efficiency (20%): R2R quality relative to width
         """
-        # Debit gradient - compare to adjacent strikes
-        gradient_score = 50.0  # Default
-        adjacent_debits = []
+        # Local Price Advantage (50%) - compare same-width flies at nearby strikes
+        # This is the PRIMARY convexity signal
+        local_advantage_score = 50.0
+        same_width_debits = []
 
-        for adj in [-5, 5, -10, 10]:  # Check nearby strikes
-            adj_strike = strike + adj
-            adj_key = str(int(adj_strike))
-            if adj_key in all_debits:
-                adjacent_debits.append(all_debits[adj_key])
+        # Check same-width butterflies at adjacent strikes (+/- 5, 10, 15, 20)
+        if all_tiles_debits:
+            for adj in [-20, -15, -10, -5, 5, 10, 15, 20]:
+                adj_strike = strike + adj
+                # Key format: width_side (e.g., "30_call")
+                for side_key in [f"{width}_call", f"{width}_put"]:
+                    lookup_key = f"{adj_strike}:{side_key}"
+                    if lookup_key in all_tiles_debits:
+                        same_width_debits.append(all_tiles_debits[lookup_key])
 
-        if adjacent_debits and debit > 0:
-            avg_adjacent = sum(adjacent_debits) / len(adjacent_debits)
-            if avg_adjacent > 0:
-                # How much cheaper are we than neighbors?
-                gradient = (avg_adjacent - debit) / avg_adjacent * 100
-                gradient_score = min(95, max(0, 50 + gradient * 2))
+        # Fallback to old method if no same-width data
+        if not same_width_debits:
+            for adj in [-5, 5, -10, 10]:
+                adj_strike = strike + adj
+                adj_key = str(int(adj_strike))
+                if adj_key in all_debits:
+                    same_width_debits.append(all_debits[adj_key])
 
-        # Gamma support - are wings near positive GEX?
-        gamma_support_score = 50.0
-        low_wing = strike - width
-        high_wing = strike + width
+        if same_width_debits and debit > 0:
+            avg_neighbors = sum(same_width_debits) / len(same_width_debits)
+            min_neighbor = min(same_width_debits)
+            max_neighbor = max(same_width_debits)
 
-        wing_gex_support = 0
-        for wing in [low_wing, high_wing]:
-            for offset in range(-5, 6, 5):  # Check 5 pts around wing
-                check_strike = wing + offset
-                if check_strike in gex_by_strike:
-                    net_gex = gex_by_strike[check_strike]["net"]
-                    if net_gex > 0:
-                        wing_gex_support += 15  # Positive GEX = support
+            if avg_neighbors > 0:
+                # How much cheaper are we than the average neighbor?
+                pct_cheaper = ((avg_neighbors - debit) / avg_neighbors) * 100
 
-        gamma_support_score = min(95, 50 + wing_gex_support)
+                # Are we cheaper than ALL neighbors? (local minimum)
+                is_local_min = debit < min_neighbor
 
-        # Debit efficiency - max profit per dollar at risk
+                # Scoring:
+                # - 10%+ cheaper than avg = excellent (85-95)
+                # - 5-10% cheaper = good (70-85)
+                # - 0-5% cheaper = okay (50-70)
+                # - More expensive = penalty (30-50)
+                # - Local minimum bonus: +10
+
+                if pct_cheaper >= 15:
+                    local_advantage_score = 95.0
+                elif pct_cheaper >= 10:
+                    local_advantage_score = 85.0 + (pct_cheaper - 10)
+                elif pct_cheaper >= 5:
+                    local_advantage_score = 70.0 + (pct_cheaper - 5) * 3
+                elif pct_cheaper >= 0:
+                    local_advantage_score = 50.0 + pct_cheaper * 4
+                else:
+                    # More expensive than neighbors - significant penalty
+                    local_advantage_score = max(20.0, 50.0 + pct_cheaper * 2)
+
+                # Bonus for being the local minimum
+                if is_local_min:
+                    local_advantage_score = min(98.0, local_advantage_score + 10)
+
+        # Neighborhood Cheapness (30%) - statistical anomaly detection
+        # Is this fly priced significantly below what nearby similar trades suggest?
+        neighborhood_score = 50.0
+
+        if same_width_debits and len(same_width_debits) >= 3 and debit > 0:
+            avg = sum(same_width_debits) / len(same_width_debits)
+            # Calculate standard deviation
+            variance = sum((x - avg) ** 2 for x in same_width_debits) / len(same_width_debits)
+            std_dev = math.sqrt(variance) if variance > 0 else 0.01
+
+            # Z-score: how many std devs below average are we?
+            z_score = (avg - debit) / std_dev if std_dev > 0.01 else 0
+
+            # z >= 2 = significantly cheap (anomaly)
+            # z >= 1 = noticeably cheap
+            # z >= 0 = at or below average
+            # z < 0 = more expensive than average
+
+            if z_score >= 2.0:
+                neighborhood_score = 95.0
+            elif z_score >= 1.5:
+                neighborhood_score = 85.0
+            elif z_score >= 1.0:
+                neighborhood_score = 75.0
+            elif z_score >= 0.5:
+                neighborhood_score = 65.0
+            elif z_score >= 0:
+                neighborhood_score = 55.0
+            else:
+                # More expensive than neighbors
+                neighborhood_score = max(25.0, 50.0 + z_score * 15)
+
+        # Width Efficiency (20%) - R2R scaled by debit percentage
+        # Rewards trades that achieve high R2R at reasonable debit levels
         efficiency_score = 50.0
         if debit > 0:
-            max_profit = width - debit
-            efficiency = max_profit / debit
-            efficiency_score = min(95, 30 * math.log2(efficiency + 1))
+            r2r = (width - debit) / debit
+            debit_pct = (debit / width) * 100
 
-        # Combine sub-components
+            # Score R2R on log scale
+            base_r2r_score = min(95, 30 * math.log2(r2r + 1))
+
+            # Bonus for very low debit percentage (high asymmetry)
+            # 3% debit = exceptional, 5% = great, 7% = good, 10% = acceptable
+            if debit_pct <= 3:
+                asymmetry_mult = 1.15
+            elif debit_pct <= 5:
+                asymmetry_mult = 1.10
+            elif debit_pct <= 7:
+                asymmetry_mult = 1.05
+            else:
+                asymmetry_mult = 1.0
+
+            efficiency_score = min(95, base_r2r_score * asymmetry_mult)
+
+        # Combine sub-components with convexity-focused weighting
         convexity = (
-            gradient_score * 0.40 +
-            gamma_support_score * 0.35 +
-            efficiency_score * 0.25
+            local_advantage_score * 0.50 +  # Primary: cheaper than neighbors
+            neighborhood_score * 0.30 +     # Statistical anomaly
+            efficiency_score * 0.20         # R2R efficiency
         )
 
         return convexity
@@ -1205,8 +1424,8 @@ class TradeSelectorModelBuilder:
                             continue
 
                         # ==============================================
-                        # HARD FILTER: 5% debit/width rule
-                        # Ensures extreme asymmetry (e.g., 30-wide max $1.50)
+                        # HARD FILTER: 10% debit/width rule (minimum 1:9 R2R)
+                        # E.g., 30-wide max $3.00, 20-wide max $2.00
                         # ==============================================
                         if not self._passes_debit_filter(width, debit):
                             filtered_count += 1
@@ -1215,8 +1434,12 @@ class TradeSelectorModelBuilder:
                         # Get all debits at this strike for convexity calculation
                         all_debits_for_strike = debits_by_strike.get(strike, {})
 
-                        # Calculate scores
-                        r2r_score = self._score_r2r(width, debit)
+                        # Determine campaign and edge cases for this trade
+                        campaign = self._get_campaign(dte)
+                        edge_cases = self._get_edge_cases(vix, current_hour, dte, regime)
+
+                        # Calculate scores (Convexity is PRIMARY at 40%)
+                        r2r_score = self._score_r2r(width, debit, dte)  # DTE-relative scoring
                         convexity_score = self._score_convexity(
                             strike, width, debit, all_debits_for_strike, gex_by_strike
                         )
@@ -1252,6 +1475,9 @@ class TradeSelectorModelBuilder:
                             strike - gamma_magnet if gamma_magnet is not None else None
                         )
 
+                        # Get R2R expectations for this DTE
+                        r2r_expectations = self._get_r2r_expectations(dte)
+
                         all_scores.append({
                             "tile_key": scored_tile_key,
                             "composite": round(composite, 1),
@@ -1262,6 +1488,9 @@ class TradeSelectorModelBuilder:
                                 "width_fit": round(width_fit_score, 1),
                                 "gamma_alignment": round(gamma_alignment_score, 1),
                             },
+                            # Campaign info
+                            "campaign": campaign,
+                            "edge_cases": edge_cases,
                             # Tile details
                             "strategy": "butterfly",
                             "side": side,
@@ -1269,17 +1498,20 @@ class TradeSelectorModelBuilder:
                             "width": width,
                             "dte": dte,
                             "debit": round(debit, 2),
-                            "debit_pct": round(debit_pct, 1),  # New: shows asymmetry
+                            "debit_pct": round(debit_pct, 1),
                             # Computed
                             "max_profit": round(max_profit, 2),
                             "max_loss": round(max_loss, 2),
                             "r2r_ratio": round(r2r_ratio, 2),
+                            "r2r_vs_typical": f"{r2r_ratio:.1f} vs {r2r_expectations['typical'][0]}-{r2r_expectations['typical'][1]}",
                             "distance_to_spot": round(distance_to_spot, 1),
                             "distance_to_gamma_magnet": round(distance_to_gamma_magnet, 1) if distance_to_gamma_magnet is not None else None,
                         })
 
                         # ==============================================
                         # GAMMA SCALP MODE: Score 0DTE near-ATM flies
+                        # Late-day, high-gamma, structural squeeze play
+                        # Works best in low VIX (wider time window)
                         # ==============================================
                         if gamma_scalp_active and dte == 0:
                             gs_score, gs_details = self._score_gamma_scalp(
@@ -1290,6 +1522,8 @@ class TradeSelectorModelBuilder:
                                     "tile_key": scored_tile_key,
                                     "gamma_scalp_score": gs_score,
                                     "gamma_scalp_details": gs_details,
+                                    "campaign": "0dte_tactical",
+                                    "edge_case": "gamma_scalp",
                                     "strategy": "gamma_scalp",
                                     "side": side,
                                     "strike": strike,
@@ -1336,13 +1570,18 @@ class TradeSelectorModelBuilder:
                             "confidence": score["confidence"],
                             "components": score["components"],
                         },
+                        # Campaign info
+                        "campaign": score["campaign"],
+                        "edge_cases": score["edge_cases"],
+                        "r2r_vs_typical": score["r2r_vs_typical"],
+                        # Trade details
                         "strategy": score["strategy"],
                         "side": score["side"],
                         "strike": score["strike"],
                         "width": score["width"],
                         "dte": score["dte"],
                         "debit": score["debit"],
-                        "debit_pct": score["debit_pct"],  # Debit as % of width
+                        "debit_pct": score["debit_pct"],
                         "max_profit": score["max_profit"],
                         "max_loss": score["max_loss"],
                         "r2r_ratio": score["r2r_ratio"],
@@ -1376,7 +1615,7 @@ class TradeSelectorModelBuilder:
                     "ideal_dte_min": ideal_dte[0],
                     "ideal_dte_max": ideal_dte[1],
                     "decay_factor": round(decay_factor, 2),
-                    "max_debit_pct": self.MAX_DEBIT_PCT * 100,  # 5%
+                    "max_debit_pct": self.MAX_DEBIT_PCT * 100,  # 10%
                     # GEX data
                     "gamma_magnet": bias_lfi.get("max_net_gex_strike") if bias_lfi else None,
                     "zero_gamma": bias_lfi.get("gex_flip_level") if bias_lfi else None,
@@ -1400,6 +1639,18 @@ class TradeSelectorModelBuilder:
                     "vix": vix,
                     "vix_regime": regime,
                     "vix_special": special,
+                    # Scoring methodology
+                    "scoring": {
+                        "weights": {
+                            "convexity": self.WEIGHT_CONVEXITY,  # PRIMARY: 40%
+                            "r2r": self.WEIGHT_R2R,              # 25%
+                            "width_fit": self.WEIGHT_WIDTH_FIT,  # 20%
+                            "gamma_alignment": self.WEIGHT_GAMMA_ALIGNMENT,  # 15%
+                        },
+                        "hard_filter": f"debit <= {self.MAX_DEBIT_PCT * 100}% of width",
+                    },
+                    # Campaign definitions
+                    "campaigns": self.CAMPAIGNS,
                     # Playbook context
                     "playbook": {
                         "regime": regime,
@@ -1411,6 +1662,12 @@ class TradeSelectorModelBuilder:
                         "entry_optimal": session_info.get("is_entry_optimal", False),
                         "exercise_window": session_info.get("is_exercise_window", False),
                         "outlier_zone": session_info.get("is_outlier_zone", False),
+                    },
+                    # Edge case availability
+                    "edge_cases": {
+                        "batman_available": vix >= self.BATMAN_VIX_THRESHOLD,
+                        "timewarp_available": vix <= self.TIMEWARP_VIX_THRESHOLD,
+                        "gamma_scalp_active": gamma_scalp_active,
                     },
                     # Expected Move analysis
                     "expected_move": {
@@ -1425,7 +1682,7 @@ class TradeSelectorModelBuilder:
                     "gamma_scalp": {
                         "active": gamma_scalp_active,
                         "window": gamma_scalp_window,
-                        "candidates": gamma_scalp_candidates[:5],  # Top 5 gamma scalp candidates
+                        "candidates": gamma_scalp_candidates[:5],
                         "total_candidates": len(gamma_scalp_candidates),
                     },
                     "gamma_magnet": bias_lfi.get("max_net_gex_strike") if bias_lfi else None,

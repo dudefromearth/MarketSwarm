@@ -159,7 +159,8 @@ export default memo(function TradeRecommendationsPanel({
   const getRegimeBadgeClass = (regime: VixRegime): string => {
     switch (regime) {
       case 'chaos': return 'regime-badge regime-chaos';
-      case 'goldilocks': return 'regime-badge regime-goldilocks';
+      case 'goldilocks_1': return 'regime-badge regime-goldilocks';
+      case 'goldilocks_2': return 'regime-badge regime-goldilocks regime-goldilocks-2';
       case 'zombieland': return 'regime-badge regime-zombieland';
       default: return 'regime-badge';
     }
@@ -168,7 +169,8 @@ export default memo(function TradeRecommendationsPanel({
   const getRegimeLabel = (regime: VixRegime): string => {
     switch (regime) {
       case 'chaos': return 'Chaos';
-      case 'goldilocks': return 'Goldilocks';
+      case 'goldilocks_1': return 'Goldilocks';
+      case 'goldilocks_2': return 'Goldilocks 2';
       case 'zombieland': return 'ZombieLand';
       default: return regime;
     }
