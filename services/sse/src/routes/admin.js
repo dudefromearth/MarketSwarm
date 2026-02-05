@@ -1088,4 +1088,134 @@ router.get("/users/:id/activity", requireAdmin, async (req, res) => {
   }
 });
 
+// =============================================================================
+// ML Lab API Proxy Routes
+// =============================================================================
+
+// Helper to proxy requests to Journal service ML endpoints
+async function proxyToJournalML(req, res, path, method = "GET", body = null) {
+  try {
+    const url = `${JOURNAL_API_URL}/api/internal/ml${path}`;
+    const options = {
+      method,
+      headers: { "Content-Type": "application/json" },
+    };
+    if (body) {
+      options.body = JSON.stringify(body);
+    }
+    const response = await fetch(url, options);
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (err) {
+    console.error(`[admin] ML proxy error (${path}):`, err);
+    res.status(500).json({ error: "Failed to connect to ML service" });
+  }
+}
+
+// Circuit Breakers
+router.get("/ml/circuit-breakers", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, "/circuit-breakers");
+});
+
+router.post("/ml/circuit-breakers/check", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, "/circuit-breakers/check", "POST");
+});
+
+router.post("/ml/circuit-breakers/disable-ml", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, "/circuit-breakers/disable-ml", "POST");
+});
+
+router.post("/ml/circuit-breakers/enable-ml", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, "/circuit-breakers/enable-ml", "POST");
+});
+
+// Models
+router.get("/ml/models", requireAdmin, async (req, res) => {
+  const params = new URLSearchParams(req.query).toString();
+  await proxyToJournalML(req, res, `/models${params ? `?${params}` : ""}`);
+});
+
+router.get("/ml/models/champion", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, "/models/champion");
+});
+
+router.get("/ml/models/:id", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, `/models/${req.params.id}`);
+});
+
+router.post("/ml/models", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, "/models", "POST", req.body);
+});
+
+router.post("/ml/models/:id/deploy", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, `/models/${req.params.id}/deploy`, "POST", req.body);
+});
+
+router.post("/ml/models/:id/retire", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, `/models/${req.params.id}/retire`, "POST");
+});
+
+// Experiments
+router.get("/ml/experiments", requireAdmin, async (req, res) => {
+  const params = new URLSearchParams(req.query).toString();
+  await proxyToJournalML(req, res, `/experiments${params ? `?${params}` : ""}`);
+});
+
+router.get("/ml/experiments/:id", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, `/experiments/${req.params.id}`);
+});
+
+router.post("/ml/experiments", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, "/experiments", "POST", req.body);
+});
+
+router.post("/ml/experiments/:id/evaluate", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, `/experiments/${req.params.id}/evaluate`, "POST");
+});
+
+router.post("/ml/experiments/:id/conclude", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, `/experiments/${req.params.id}/conclude`, "POST", req.body);
+});
+
+router.post("/ml/experiments/:id/abort", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, `/experiments/${req.params.id}/abort`, "POST");
+});
+
+// Decisions
+router.get("/ml/decisions", requireAdmin, async (req, res) => {
+  const params = new URLSearchParams(req.query).toString();
+  await proxyToJournalML(req, res, `/decisions${params ? `?${params}` : ""}`);
+});
+
+router.get("/ml/decisions/:id", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, `/decisions/${req.params.id}`);
+});
+
+// P&L Events
+router.get("/ml/pnl-events", requireAdmin, async (req, res) => {
+  const params = new URLSearchParams(req.query).toString();
+  await proxyToJournalML(req, res, `/pnl-events${params ? `?${params}` : ""}`);
+});
+
+// Equity Curve
+router.get("/ml/equity-curve", requireAdmin, async (req, res) => {
+  const params = new URLSearchParams(req.query).toString();
+  await proxyToJournalML(req, res, `/equity-curve${params ? `?${params}` : ""}`);
+});
+
+// Daily Performance
+router.get("/ml/daily-performance", requireAdmin, async (req, res) => {
+  const params = new URLSearchParams(req.query).toString();
+  await proxyToJournalML(req, res, `/daily-performance${params ? `?${params}` : ""}`);
+});
+
+router.post("/ml/daily-performance/materialize", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, "/daily-performance/materialize", "POST");
+});
+
+// Feature Snapshots
+router.get("/ml/feature-snapshots/:id", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, `/feature-snapshots/${req.params.id}`);
+});
+
 export default router;

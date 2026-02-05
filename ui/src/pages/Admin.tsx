@@ -327,13 +327,25 @@ export default function AdminPage() {
       <div className="admin-container">
         {/* Header */}
         <div className="admin-header">
-          <button className="back-btn" onClick={() => navigate("/")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M19 12H5M12 19l-7-7 7-7" />
-            </svg>
-            Dashboard
-          </button>
-          <h1>Admin Panel</h1>
+          <div className="header-left">
+            <button className="back-btn" onClick={() => navigate("/")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+              Dashboard
+            </button>
+            <h1>Admin Panel</h1>
+          </div>
+          <div className="header-nav">
+            <button className="nav-btn" onClick={() => navigate("/admin/ml-lab")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
+              </svg>
+              ML Lab
+            </button>
+          </div>
         </div>
 
         {/* Stats Widgets */}
@@ -809,8 +821,46 @@ const styles = `
   .admin-header {
     display: flex;
     align-items: center;
+    justify-content: space-between;
     gap: 1rem;
     margin-bottom: 1.5rem;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .header-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: rgba(124, 58, 237, 0.15);
+    border: 1px solid rgba(124, 58, 237, 0.3);
+    border-radius: 0.5rem;
+    color: #a78bfa;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .nav-btn:hover {
+    background: rgba(124, 58, 237, 0.25);
+    color: #c4b5fd;
+  }
+
+  .nav-btn svg {
+    width: 1rem;
+    height: 1rem;
   }
 
   .admin-header h1 {
