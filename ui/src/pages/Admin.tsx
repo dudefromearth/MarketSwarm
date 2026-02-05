@@ -79,33 +79,6 @@ interface PerformanceStats {
   }[];
 }
 
-interface DataStatus {
-  exists: boolean;
-  ts?: number;
-  age_sec?: number;
-  value?: number;
-  tileCount?: number;
-  recommendationCount?: number;
-  vix_regime?: string;
-  mode?: string;
-  error?: string;
-}
-
-interface SymbolData {
-  spot: DataStatus;
-  heatmap: DataStatus;
-  gex: DataStatus;
-  trade_selector: DataStatus;
-}
-
-interface DiagnosticsData {
-  ts: number;
-  redis: { connected: boolean; error?: string };
-  data: {
-    [symbol: string]: SymbolData | { vix?: DataStatus; market_mode?: DataStatus; vexy?: DataStatus };
-  };
-}
-
 interface UserDetail {
   user: User;
   tradeLogs: TradeLog[];
@@ -119,10 +92,12 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Search and pagination
+  // Search, pagination, and sorting
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize] = useState(15);
+  const [sortColumn, setSortColumn] = useState<keyof User | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   // User performance
   const [performance, setPerformance] = useState<PerformanceStats | null>(null);
@@ -134,23 +109,66 @@ export default function AdminPage() {
   const [tradesPage, setTradesPage] = useState(1);
   const [tradesTotalPages, setTradesTotalPages] = useState(1);
 
-  // Diagnostics state
-  const [diagnostics, setDiagnostics] = useState<DiagnosticsData | null>(null);
-  const [diagLoading, setDiagLoading] = useState(false);
-  const [redisPattern, setRedisPattern] = useState("massive:*");
-  const [redisKeys, setRedisKeys] = useState<any[] | null>(null);
-  const [selectedKey, setSelectedKey] = useState<{ key: string; value: any } | null>(null);
 
-  // Filtered and paginated users
+  // Handle column sort
+  const handleSort = (column: keyof User) => {
+    if (sortColumn === column) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
+
+  // Filtered and sorted users
   const filteredUsers = useMemo(() => {
-    if (!searchQuery.trim()) return users;
-    const q = searchQuery.toLowerCase();
-    return users.filter(u =>
-      u.display_name?.toLowerCase().includes(q) ||
-      u.email?.toLowerCase().includes(q) ||
-      u.subscription_tier?.toLowerCase().includes(q)
-    );
-  }, [users, searchQuery]);
+    let result = users;
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      result = result.filter(u =>
+        u.display_name?.toLowerCase().includes(q) ||
+        u.email?.toLowerCase().includes(q) ||
+        u.subscription_tier?.toLowerCase().includes(q)
+      );
+    }
+
+    // Apply sorting
+    if (sortColumn) {
+      result = [...result].sort((a, b) => {
+        let aVal = a[sortColumn];
+        let bVal = b[sortColumn];
+
+        // Handle null/undefined
+        if (aVal === null || aVal === undefined) aVal = '';
+        if (bVal === null || bVal === undefined) bVal = '';
+
+        // Handle booleans
+        if (typeof aVal === 'boolean') aVal = aVal ? 1 : 0;
+        if (typeof bVal === 'boolean') bVal = bVal ? 1 : 0;
+
+        // Handle dates
+        if (sortColumn === 'last_login_at' || sortColumn === 'created_at') {
+          aVal = aVal ? new Date(aVal as string).getTime() : 0;
+          bVal = bVal ? new Date(bVal as string).getTime() : 0;
+        }
+
+        // Compare
+        if (typeof aVal === 'string' && typeof bVal === 'string') {
+          return sortDirection === 'asc'
+            ? aVal.localeCompare(bVal)
+            : bVal.localeCompare(aVal);
+        }
+
+        if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+
+    return result;
+  }, [users, searchQuery, sortColumn, sortDirection]);
 
   const totalPages = Math.ceil(filteredUsers.length / pageSize);
   const paginatedUsers = useMemo(() => {
@@ -180,49 +198,6 @@ export default function AdminPage() {
       .catch((e) => setError(typeof e === "string" ? e : e.message))
       .finally(() => setLoading(false));
   }, []);
-
-  // Fetch diagnostics
-  const fetchDiagnostics = async () => {
-    setDiagLoading(true);
-    try {
-      const res = await fetch("/api/admin/diagnostics", { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load diagnostics");
-      const data = await res.json();
-      setDiagnostics(data);
-    } catch (e) {
-      console.error("Error loading diagnostics:", e);
-    } finally {
-      setDiagLoading(false);
-    }
-  };
-
-  // Search Redis keys
-  const searchRedisKeys = async () => {
-    try {
-      const res = await fetch(`/api/admin/diagnostics/redis?pattern=${encodeURIComponent(redisPattern)}&limit=50`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to search Redis");
-      const data = await res.json();
-      setRedisKeys(data.keys);
-    } catch (e) {
-      console.error("Error searching Redis:", e);
-    }
-  };
-
-  // Get Redis key value
-  const getKeyValue = async (key: string) => {
-    try {
-      const res = await fetch(`/api/admin/diagnostics/redis/${encodeURIComponent(key)}`, {
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error("Failed to fetch key");
-      const data = await res.json();
-      setSelectedKey({ key, value: data.value });
-    } catch (e) {
-      console.error("Error fetching key:", e);
-    }
-  };
 
   // Fetch user detail when clicking on a user
   const handleUserClick = async (userId: number) => {
@@ -431,13 +406,27 @@ export default function AdminPage() {
             <table className="users-table">
               <thead>
                 <tr>
-                  <th>Online</th>
-                  <th>Name</th>
-                  <th>Email</th>
-                  <th>Platform</th>
-                  <th>Subscription</th>
-                  <th>Admin</th>
-                  <th>Last Login</th>
+                  <th className="sortable" onClick={() => handleSort('is_online')}>
+                    Online {sortColumn === 'is_online' && <span className="sort-arrow">{sortDirection === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
+                  <th className="sortable" onClick={() => handleSort('display_name')}>
+                    Name {sortColumn === 'display_name' && <span className="sort-arrow">{sortDirection === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
+                  <th className="sortable" onClick={() => handleSort('email')}>
+                    Email {sortColumn === 'email' && <span className="sort-arrow">{sortDirection === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
+                  <th className="sortable" onClick={() => handleSort('issuer')}>
+                    Platform {sortColumn === 'issuer' && <span className="sort-arrow">{sortDirection === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
+                  <th className="sortable" onClick={() => handleSort('subscription_tier')}>
+                    Subscription {sortColumn === 'subscription_tier' && <span className="sort-arrow">{sortDirection === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
+                  <th className="sortable" onClick={() => handleSort('is_admin')}>
+                    Admin {sortColumn === 'is_admin' && <span className="sort-arrow">{sortDirection === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
+                  <th className="sortable" onClick={() => handleSort('last_login_at')}>
+                    Last Login {sortColumn === 'last_login_at' && <span className="sort-arrow">{sortDirection === 'asc' ? '▲' : '▼'}</span>}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -727,147 +716,6 @@ export default function AdminPage() {
           </div>
         )}
 
-        {/* Diagnostics Section */}
-        <div className="diagnostics-section">
-          <div className="section-header-row">
-            <h2>System Diagnostics</h2>
-            <button className="refresh-btn" onClick={fetchDiagnostics} disabled={diagLoading}>
-              {diagLoading ? "Loading..." : "Run Diagnostics"}
-            </button>
-          </div>
-
-          {diagnostics && (
-            <div className="diagnostics-content">
-              <div className="diag-card">
-                <div className="diag-header">
-                  <span className={`status-dot ${diagnostics.redis.connected ? "ok" : "error"}`} />
-                  <span>Redis Connection</span>
-                </div>
-                <div className="diag-value">
-                  {diagnostics.redis.connected ? "Connected" : diagnostics.redis.error || "Disconnected"}
-                </div>
-              </div>
-
-              <div className="data-availability">
-                <h3>Data Availability</h3>
-                <table className="diag-table">
-                  <thead>
-                    <tr>
-                      <th>Symbol</th>
-                      <th>Spot</th>
-                      <th>Heatmap</th>
-                      <th>GEX</th>
-                      <th>Trade Selector</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {Object.entries(diagnostics.data)
-                      .filter(([key]) => key !== "global")
-                      .map(([symbol, data]) => {
-                        const d = data as SymbolData;
-                        return (
-                          <tr key={symbol}>
-                            <td className="symbol-cell">{symbol}</td>
-                            <td>
-                              <div className={`data-status ${d.spot?.exists ? "ok" : "missing"}`}>
-                                {d.spot?.exists ? (
-                                  <>
-                                    <span className="status-icon">✓</span>
-                                    <span className="status-detail">
-                                      {d.spot.value?.toFixed(2)} ({d.spot.age_sec}s)
-                                    </span>
-                                  </>
-                                ) : (
-                                  <span className="status-icon">✗</span>
-                                )}
-                              </div>
-                            </td>
-                            <td>
-                              <div className={`data-status ${d.heatmap?.exists ? "ok" : "missing"}`}>
-                                {d.heatmap?.exists ? (
-                                  <>
-                                    <span className="status-icon">✓</span>
-                                    <span className="status-detail">{d.heatmap.tileCount} tiles</span>
-                                  </>
-                                ) : (
-                                  <span className="status-icon">✗</span>
-                                )}
-                              </div>
-                            </td>
-                            <td>
-                              <div className={`data-status ${d.gex?.exists ? "ok" : "missing"}`}>
-                                {d.gex?.exists ? <span className="status-icon">✓</span> : <span className="status-icon">✗</span>}
-                              </div>
-                            </td>
-                            <td>
-                              <div className={`data-status ${d.trade_selector?.exists ? "ok" : "missing"}`}>
-                                {d.trade_selector?.exists ? (
-                                  <>
-                                    <span className="status-icon">✓</span>
-                                    <span className="status-detail">{d.trade_selector.vix_regime}</span>
-                                  </>
-                                ) : (
-                                  <span className="status-icon">✗</span>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Redis Explorer */}
-          <div className="redis-explorer">
-            <h3>Redis Key Explorer</h3>
-            <div className="redis-search">
-              <input
-                type="text"
-                value={redisPattern}
-                onChange={(e) => setRedisPattern(e.target.value)}
-                placeholder="Pattern (e.g., massive:*)"
-                onKeyDown={(e) => e.key === "Enter" && searchRedisKeys()}
-              />
-              <button onClick={searchRedisKeys}>Search</button>
-            </div>
-
-            {redisKeys && (
-              <div className="redis-results">
-                <div className="redis-keys-list">
-                  {redisKeys.map((k) => (
-                    <div
-                      key={k.key}
-                      className={`redis-key-item ${selectedKey?.key === k.key ? "selected" : ""}`}
-                      onClick={() => getKeyValue(k.key)}
-                    >
-                      <span className="key-name">{k.key}</span>
-                      <span className="key-meta">
-                        {k.type} | {k.size} {k.age_sec !== undefined && `| ${k.age_sec}s ago`}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                {selectedKey && (
-                  <div className="redis-value-panel">
-                    <div className="value-header">
-                      <span>{selectedKey.key}</span>
-                      <button onClick={() => setSelectedKey(null)}>×</button>
-                    </div>
-                    <pre className="value-content">
-                      {typeof selectedKey.value === "object"
-                        ? JSON.stringify(selectedKey.value, null, 2)
-                        : String(selectedKey.value)}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
       </div>
 
       <style>{styles}</style>
@@ -1092,6 +940,23 @@ const styles = `
     color: #71717a;
     font-weight: 500;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .users-table th.sortable {
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.15s;
+  }
+
+  .users-table th.sortable:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #a1a1aa;
+  }
+
+  .sort-arrow {
+    margin-left: 0.375rem;
+    font-size: 0.625rem;
+    color: #60a5fa;
   }
 
   .users-table td { padding: 0.75rem 1rem; border-bottom: 1px solid rgba(255, 255, 255, 0.04); }
