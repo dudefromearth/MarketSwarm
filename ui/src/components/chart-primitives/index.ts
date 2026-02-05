@@ -15,7 +15,7 @@ export type { GexConfig } from './GexSettings';
 
 export { default as VolumeProfileSettings } from './VolumeProfileSettings';
 export { defaultVolumeProfileConfig, sigmaToPercentile } from './VolumeProfileSettings';
-export type { VolumeProfileConfig } from './VolumeProfileSettings';
+export type { VolumeProfileConfig, VolumeProfileMode } from './VolumeProfileSettings';
 
 // Settings persistence hook
 export { useIndicatorSettings } from './useIndicatorSettings';

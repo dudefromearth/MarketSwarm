@@ -4,8 +4,11 @@
 
 import { useState, useEffect } from 'react';
 
+export type VolumeProfileMode = 'raw' | 'tv';
+
 export interface VolumeProfileConfig {
   enabled: boolean;
+  mode: VolumeProfileMode;   // 'raw' (VWAP) or 'tv' (TradingView distributed)
   widthPercent: number;      // % of chart width for profile scaling (0-100)
   numBins: number;           // Number of price bins/rows (20-200)
   cappingSigma: number;      // Outlier capping threshold in sigma (1-5)
@@ -15,6 +18,7 @@ export interface VolumeProfileConfig {
 
 export const defaultVolumeProfileConfig: VolumeProfileConfig = {
   enabled: true,
+  mode: 'tv',                // TV mode is smoother, better default
   widthPercent: 15,
   numBins: 50,               // 50 bins is a good default balance
   cappingSigma: 2,           // 2σ = 95.45th percentile
@@ -82,6 +86,27 @@ export default function VolumeProfileSettings({ config, onConfigChange, onSaveDe
             />
             <span>Enabled</span>
           </label>
+        </div>
+
+        {/* Mode Selector */}
+        <div className="setting-row">
+          <label>Data Mode</label>
+          <div className="setting-control mode-toggle">
+            <button
+              className={`mode-btn ${localConfig.mode === 'raw' ? 'active' : ''}`}
+              onClick={() => handleChange('mode', 'raw')}
+              title="RAW: Volume at VWAP price (spiky, discrete levels)"
+            >
+              RAW
+            </button>
+            <button
+              className={`mode-btn ${localConfig.mode === 'tv' ? 'active' : ''}`}
+              onClick={() => handleChange('mode', 'tv')}
+              title="TV: Volume distributed across bar range (smooth, TradingView style)"
+            >
+              TV
+            </button>
+          </div>
         </div>
 
         {/* Width Percent - Profile Scaling */}

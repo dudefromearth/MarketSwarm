@@ -1372,6 +1372,7 @@ function App() {
   }, [underlying]);
 
   // Fetch volume profile based on spot price (±300 points) - SPX only for now
+  // Mode: 'raw' (VWAP-based) or 'tv' (TradingView distributed smoothing)
   useEffect(() => {
     if (underlying !== 'I:SPX') {
       setVolumeProfile(null);
@@ -1383,8 +1384,9 @@ function App() {
 
     const minPrice = Math.floor(spotPrice - 300);
     const maxPrice = Math.ceil(spotPrice + 300);
+    const mode = vpConfig.mode || 'raw';
 
-    fetch(`${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}`, { credentials: 'include' })
+    fetch(`${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}&mode=${mode}`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
         if (d.success && d.data) {
@@ -1396,7 +1398,7 @@ function App() {
     // Refresh every 5 seconds (only when tab is visible)
     const interval = setInterval(() => {
       if (document.hidden) return;
-      fetch(`${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}`, { credentials: 'include' })
+      fetch(`${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}&mode=${mode}`, { credentials: 'include' })
         .then(r => r.json())
         .then(d => {
           if (d.success && d.data) {
@@ -1407,7 +1409,7 @@ function App() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [underlying, spot?.[underlying]?.value]);
+  }, [underlying, spot?.[underlying]?.value, vpConfig.mode]);
 
   const currentSpot = spot?.[underlying]?.value || null;
 

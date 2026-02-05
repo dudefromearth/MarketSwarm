@@ -3,12 +3,16 @@
 VP Quick Load - Fast Volume Profile Builder
 
 Downloads SPY minute bars from Polygon and streams to Redis progressively.
-Use this for quick VP population during development.
+Supports two accumulation modes:
+
+  RAW: Volume placed at VWAP price (single point per bar)
+  TV:  Volume distributed across bar's high-low range (TradingView style)
 
 Usage:
-    python vp_quick_load.py --days 30      # Last 30 days
-    python vp_quick_load.py --years 1      # Last year
-    python vp_quick_load.py --years 15     # Full history (slow)
+    python vp_quick_load.py --days 30              # Last 30 days, both modes
+    python vp_quick_load.py --days 30 --mode raw   # RAW only
+    python vp_quick_load.py --days 30 --mode tv    # TV only
+    python vp_quick_load.py --years 1              # Last year
 """
 
 import argparse
@@ -20,21 +24,33 @@ import urllib.request
 import urllib.error
 import time
 from datetime import datetime, timedelta, date
-from pathlib import Path
 
 from redis.asyncio import Redis
 
 POLYGON_BASE = "https://api.polygon.io"
-REDIS_KEY = "massive:volume_profile:spx"
-REDIS_META_KEY = "massive:volume_profile:spx:meta"
 REDIS_URL = os.environ.get("MARKET_REDIS_URL", "redis://127.0.0.1:6380")
+
+# Redis keys for each mode
+REDIS_KEYS = {
+    "raw": "massive:volume_profile:spx",
+    "tv": "massive:volume_profile:spx:tv",
+}
+REDIS_META_KEY = "massive:volume_profile:spx:meta"
+
+# TV smoothing: number of microbins to distribute volume across bar range
+TV_MICROBINS = 30
 
 
 class VPQuickLoader:
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, mode: str = "both"):
         self.api_key = api_key
+        self.mode = mode  # "raw", "tv", or "both"
         self.redis: Redis | None = None
-        self.profile: dict[int, int] = {}  # bucket -> volume
+
+        # Separate profiles for each mode
+        self.profile_raw: dict[int, int] = {}
+        self.profile_tv: dict[int, int] = {}
+
         self.days_processed = 0
         self.total_volume = 0
 
@@ -70,46 +86,89 @@ class VPQuickLoader:
                 time.sleep(60)
                 return self.fetch_day(ticker, date_str)
             return []
-        except Exception as e:
+        except Exception:
             return []
 
+    def accumulate_raw(self, bar: dict):
+        """RAW mode: Volume at VWAP price (or mid if no VWAP)."""
+        price = bar.get("vw") or ((bar.get("h", 0) + bar.get("l", 0)) / 2)
+        volume = bar.get("v", 0)
+        if volume <= 0 or price <= 0:
+            return
+
+        bucket = self.spy_to_spx_bucket(price)
+        self.profile_raw[bucket] = self.profile_raw.get(bucket, 0) + int(volume)
+
+    def accumulate_tv(self, bar: dict):
+        """TV mode: Volume distributed across bar's high-low range."""
+        low = bar.get("l")
+        high = bar.get("h")
+        volume = bar.get("v", 0)
+
+        if low is None or high is None or volume <= 0:
+            return
+        if high <= low:
+            # Single price bar - treat like raw
+            bucket = self.spy_to_spx_bucket((high + low) / 2)
+            self.profile_tv[bucket] = self.profile_tv.get(bucket, 0) + int(volume)
+            return
+
+        # Distribute volume across microbins within the bar's range
+        step = (high - low) / TV_MICROBINS
+        vol_per_bin = volume / TV_MICROBINS
+
+        for i in range(TV_MICROBINS):
+            price = low + i * step
+            bucket = self.spy_to_spx_bucket(price)
+            self.profile_tv[bucket] = self.profile_tv.get(bucket, 0) + int(vol_per_bin)
+
     def process_bars(self, bars: list[dict]):
-        """Process bars and accumulate volume."""
+        """Process bars and accumulate volume based on mode."""
         for bar in bars:
-            price = bar.get("vw") or ((bar.get("h", 0) + bar.get("l", 0)) / 2)
             volume = bar.get("v", 0)
             if volume <= 0:
                 continue
 
-            bucket = self.spy_to_spx_bucket(price)
-            if bucket not in self.profile:
-                self.profile[bucket] = 0
-            self.profile[bucket] += int(volume)
+            if self.mode in ("raw", "both"):
+                self.accumulate_raw(bar)
+
+            if self.mode in ("tv", "both"):
+                self.accumulate_tv(bar)
+
             self.total_volume += int(volume)
 
     async def flush_to_redis(self, clear_first: bool = False):
-        """Save accumulated profile to Redis."""
-        if not self.profile:
-            return
-
+        """Save accumulated profiles to Redis."""
         pipe = self.redis.pipeline()
 
-        if clear_first:
-            pipe.delete(REDIS_KEY)
+        # Flush RAW profile
+        if self.mode in ("raw", "both") and self.profile_raw:
+            if clear_first:
+                pipe.delete(REDIS_KEYS["raw"])
+            for bucket, volume in self.profile_raw.items():
+                pipe.hincrby(REDIS_KEYS["raw"], str(bucket), volume)
 
-        for bucket, volume in self.profile.items():
-            pipe.hincrby(REDIS_KEY, str(bucket), volume)
+        # Flush TV profile
+        if self.mode in ("tv", "both") and self.profile_tv:
+            if clear_first:
+                pipe.delete(REDIS_KEYS["tv"])
+            for bucket, volume in self.profile_tv.items():
+                pipe.hincrby(REDIS_KEYS["tv"], str(bucket), volume)
 
         # Update metadata
-        all_buckets = list(self.profile.keys())
-        pipe.hset(REDIS_META_KEY, mapping={
-            "last_updated": datetime.now().isoformat(),
-            "levels": len(all_buckets),
-            "total_volume": self.total_volume,
-            "min_price": min(all_buckets) / 100 if all_buckets else 0,
-            "max_price": max(all_buckets) / 100 if all_buckets else 0,
-            "days_processed": self.days_processed,
-        })
+        all_buckets = list(self.profile_raw.keys()) or list(self.profile_tv.keys())
+        if all_buckets:
+            pipe.hset(REDIS_META_KEY, mapping={
+                "last_updated": datetime.now().isoformat(),
+                "mode": self.mode,
+                "levels_raw": len(self.profile_raw),
+                "levels_tv": len(self.profile_tv),
+                "total_volume": self.total_volume,
+                "min_price": min(all_buckets) / 100 if all_buckets else 0,
+                "max_price": max(all_buckets) / 100 if all_buckets else 0,
+                "days_processed": self.days_processed,
+                "tv_microbins": TV_MICROBINS,
+            })
 
         await pipe.execute()
 
@@ -125,9 +184,13 @@ class VPQuickLoader:
             start_date = end_date - timedelta(days=30)
 
         print(f"Loading SPY data from {start_date} to {end_date}")
+        print(f"Mode: {self.mode.upper()}")
 
         if clear:
-            await self.redis.delete(REDIS_KEY)
+            if self.mode in ("raw", "both"):
+                await self.redis.delete(REDIS_KEYS["raw"])
+            if self.mode in ("tv", "both"):
+                await self.redis.delete(REDIS_KEYS["tv"])
             await self.redis.delete(REDIS_META_KEY)
             print("Cleared existing VP data")
 
@@ -148,13 +211,15 @@ class VPQuickLoader:
                 self.days_processed += 1
 
                 if self.days_processed % 10 == 0:
-                    print(f"  {self.days_processed} days ({current}): {len(self.profile):,} levels, {self.total_volume:,.0f} volume")
+                    levels = len(self.profile_raw) if self.mode in ("raw", "both") else len(self.profile_tv)
+                    print(f"  {self.days_processed} days ({current}): {levels:,} levels, {self.total_volume:,.0f} volume")
 
                 # Periodic flush to Redis
                 if self.days_processed % flush_interval == 0:
                     await self.flush_to_redis(clear_first=False)
                     print(f"  -> Flushed to Redis")
-                    self.profile.clear()
+                    self.profile_raw.clear()
+                    self.profile_tv.clear()
 
             # Rate limit: ~4 requests/second
             time.sleep(0.25)
@@ -162,7 +227,14 @@ class VPQuickLoader:
 
         # Final flush
         await self.flush_to_redis(clear_first=False)
+
         print(f"\nDone: {self.days_processed} days, {self.total_volume:,.0f} total volume")
+        if self.mode in ("raw", "both"):
+            count = await self.redis.hlen(REDIS_KEYS["raw"])
+            print(f"  RAW levels: {count:,}")
+        if self.mode in ("tv", "both"):
+            count = await self.redis.hlen(REDIS_KEYS["tv"])
+            print(f"  TV levels: {count:,}")
 
 
 async def main():
@@ -170,6 +242,12 @@ async def main():
     parser.add_argument("--days", type=int, help="Number of days to load")
     parser.add_argument("--years", type=int, help="Number of years to load")
     parser.add_argument("--no-clear", action="store_true", help="Don't clear existing data")
+    parser.add_argument(
+        "--mode",
+        choices=["raw", "tv", "both"],
+        default="both",
+        help="Accumulation mode: raw (VWAP), tv (distributed), or both (default)"
+    )
     args = parser.parse_args()
 
     api_key = os.environ.get("POLYGON_API_KEY") or os.environ.get("MASSIVE_API_KEY")
@@ -177,7 +255,7 @@ async def main():
         print("Error: POLYGON_API_KEY or MASSIVE_API_KEY required")
         sys.exit(1)
 
-    loader = VPQuickLoader(api_key)
+    loader = VPQuickLoader(api_key, mode=args.mode)
     await loader.connect()
 
     try:

@@ -130,13 +130,15 @@ export class KeyResolver {
   }
 
   // Volume profile
-  volumeProfileKey(symbol = "spx") {
+  volumeProfileKey(symbol = "spx", mode = "raw") {
     // Volume profile uses hash keys
-    return `massive:volume_profile:${symbol}`;
+    // mode: "raw" (VWAP-based) or "tv" (TradingView distributed)
+    const base = `massive:volume_profile:${symbol}`;
+    return mode === "tv" ? `${base}:tv` : base;
   }
 
   volumeProfileMetaKey(symbol = "spx") {
-    return `${this.volumeProfileKey(symbol)}:meta`;
+    return `massive:volume_profile:${symbol}:meta`;
   }
 
   // Bias/LFI

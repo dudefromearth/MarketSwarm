@@ -301,59 +301,80 @@ router.get("/vix_regime", async (req, res) => {
 });
 
 // GET /api/models/volume_profile - Volume profile (SPX price levels)
-// Query params: min, max (optional price range in dollars)
+// Query params:
+//   min, max: optional price range in dollars
+//   mode: "raw" (default, VWAP-based) or "tv" (TradingView distributed smoothing)
 router.get("/volume_profile", async (req, res) => {
   try {
     const redis = getMarketRedis();
     const keys = getKeys();
 
+    // Mode selection: raw (default) or tv (TradingView smoothed)
+    const mode = req.query.mode === "tv" ? "tv" : "raw";
+
     // Get all price levels from hash
-    const profileData = await redis.hgetall(keys.volumeProfileKey());
+    const profileData = await redis.hgetall(keys.volumeProfileKey("spx", mode));
     const metaData = await redis.hgetall(keys.volumeProfileMetaKey());
 
     if (!profileData || Object.keys(profileData).length === 0) {
-      return res.status(404).json({ success: false, error: "No volume profile data found" });
+      // Try fallback to the other mode if requested mode has no data
+      const fallbackMode = mode === "tv" ? "raw" : "tv";
+      const fallbackData = await redis.hgetall(keys.volumeProfileKey("spx", fallbackMode));
+
+      if (!fallbackData || Object.keys(fallbackData).length === 0) {
+        return res.status(404).json({ success: false, error: "No volume profile data found" });
+      }
+
+      // Use fallback data
+      console.log(`[models] /volume_profile: ${mode} not found, using ${fallbackMode}`);
+      return processVolumeProfile(res, fallbackData, metaData, req.query, fallbackMode);
     }
 
-    // Optional price range filter (in dollars)
-    const minPrice = req.query.min ? parseFloat(req.query.min) : null;
-    const maxPrice = req.query.max ? parseFloat(req.query.max) : null;
-
-    // Convert to array format: [{price, volume}, ...]
-    // Price is stored as cents, convert to dollars
-    const levels = [];
-    let maxVolume = 0;
-
-    for (const [priceCents, volume] of Object.entries(profileData)) {
-      const priceDollars = parseInt(priceCents) / 100;
-      const vol = parseInt(volume);
-
-      // Apply optional filter
-      if (minPrice !== null && priceDollars < minPrice) continue;
-      if (maxPrice !== null && priceDollars > maxPrice) continue;
-
-      levels.push({ price: priceDollars, volume: vol });
-      maxVolume = Math.max(maxVolume, vol);
-    }
-
-    // Sort by price descending
-    levels.sort((a, b) => b.price - a.price);
-
-    res.json({
-      success: true,
-      data: {
-        levels,
-        maxVolume,
-        meta: metaData || {},
-        count: levels.length,
-      },
-      ts: Date.now(),
-    });
+    return processVolumeProfile(res, profileData, metaData, req.query, mode);
   } catch (err) {
     console.error("[models] /volume_profile error:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+// Helper function to process and return volume profile data
+function processVolumeProfile(res, profileData, metaData, query, mode) {
+  // Optional price range filter (in dollars)
+  const minPrice = query.min ? parseFloat(query.min) : null;
+  const maxPrice = query.max ? parseFloat(query.max) : null;
+
+  // Convert to array format: [{price, volume}, ...]
+  // Price is stored as cents, convert to dollars
+  const levels = [];
+  let maxVolume = 0;
+
+  for (const [priceCents, volume] of Object.entries(profileData)) {
+    const priceDollars = parseInt(priceCents) / 100;
+    const vol = parseInt(volume);
+
+    // Apply optional filter
+    if (minPrice !== null && priceDollars < minPrice) continue;
+    if (maxPrice !== null && priceDollars > maxPrice) continue;
+
+    levels.push({ price: priceDollars, volume: vol });
+    maxVolume = Math.max(maxVolume, vol);
+  }
+
+  // Sort by price descending
+  levels.sort((a, b) => b.price - a.price);
+
+  res.json({
+    success: true,
+    data: {
+      levels,
+      maxVolume,
+      meta: metaData || {},
+      count: levels.length,
+      mode,
+    },
+    ts: Date.now(),
+  });
+}
 
 // GET /api/models/bias_lfi - Bias/LFI model
 router.get("/bias_lfi", async (req, res) => {
