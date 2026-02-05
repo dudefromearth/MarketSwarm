@@ -34,11 +34,35 @@ import asyncio
 import json
 import math
 import time
+import uuid
 from datetime import datetime, date, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import aiohttp
 from redis.asyncio import Redis
+
+# ML Feedback Loop integration
+try:
+    import sys
+    import os
+    # Add services directory to path for ml_feedback import
+    _services_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    if _services_dir not in sys.path:
+        sys.path.insert(0, _services_dir)
+
+    from ml_feedback import (
+        InferenceEngine,
+        FeatureExtractor,
+        DecisionLogger,
+        CircuitBreaker,
+        MLConfig,
+    )
+    from ml_feedback.feature_extractor import MarketSnapshot, TradeIdea
+    ML_FEEDBACK_AVAILABLE = True
+except ImportError as e:
+    ML_FEEDBACK_AVAILABLE = False
+    # Store the import error for debugging
+    _ML_IMPORT_ERROR = str(e)
 
 
 class TradeSelectorModelBuilder:
@@ -269,8 +293,25 @@ class TradeSelectorModelBuilder:
         # Current active params version (for tracking which params generated the idea)
         self._active_params_version: Optional[int] = None
 
+        # ------------------------------------------------------------------
+        # ML Feedback Loop Integration
+        # ------------------------------------------------------------------
+        self.ml_enabled = config.get("MASSIVE_SELECTOR_ML_ENABLED", "false").lower() == "true"
+        self.ml_weight = float(config.get("MASSIVE_SELECTOR_ML_WEIGHT", "0.0"))  # 0 = shadow mode
+        self._ml_engine = None
+        self._feature_extractor = None
+        self._decision_logger = None
+        self._circuit_breaker = None
+        self._ml_context_id = None  # Cached market context ID
+
+        if self.ml_enabled and ML_FEEDBACK_AVAILABLE:
+            self.logger.info("[TRADE_SELECTOR] ML Feedback Loop enabled", emoji="🤖")
+        elif self.ml_enabled and not ML_FEEDBACK_AVAILABLE:
+            self.logger.warn("[TRADE_SELECTOR] ML Feedback requested but module not available", emoji="⚠️")
+            self.ml_enabled = False
+
         self.logger.info(
-            f"[TRADE_SELECTOR INIT] symbols={self.symbols} interval={self.interval_sec}s top_n={self.top_n} tracking={self.tracking_enabled}",
+            f"[TRADE_SELECTOR INIT] symbols={self.symbols} interval={self.interval_sec}s top_n={self.top_n} tracking={self.tracking_enabled} ml={self.ml_enabled}",
             emoji="🎯",
         )
 
@@ -278,6 +319,161 @@ class TradeSelectorModelBuilder:
         if not self._redis:
             self._redis = Redis.from_url(self.market_redis_url, decode_responses=True)
         return self._redis
+
+    # ------------------------------------------------------------------
+    # ML Feedback Loop
+    # ------------------------------------------------------------------
+
+    async def _init_ml_engine(self) -> None:
+        """Initialize ML components if enabled."""
+        if not self.ml_enabled or not ML_FEEDBACK_AVAILABLE:
+            return
+
+        if self._ml_engine is not None:
+            return  # Already initialized
+
+        try:
+            self._feature_extractor = FeatureExtractor()
+            self._ml_engine = InferenceEngine()
+            self._circuit_breaker = CircuitBreaker()
+
+            # Load models
+            await self._ml_engine.load_models()
+            self.logger.info("[TRADE_SELECTOR] ML Engine initialized", emoji="🤖")
+        except Exception as e:
+            self.logger.error(f"[TRADE_SELECTOR] ML Engine init failed: {e}", emoji="💥")
+            self.ml_enabled = False
+
+    def _cache_ml_context(
+        self,
+        spot: float,
+        vix: float,
+        vix3m: Optional[float],
+        day_high: Optional[float],
+        day_low: Optional[float],
+        gex_context: Optional[Dict[str, Any]],
+        bias_lfi: Optional[Dict[str, Any]],
+    ) -> str:
+        """Cache market context for ML scoring (call once per build cycle)."""
+        if not self.ml_enabled or not self._ml_engine:
+            return ""
+
+        # Create market snapshot
+        snapshot = MarketSnapshot(
+            spot=spot,
+            vix=vix,
+            vix3m=vix3m or 0.0,
+            day_high=day_high,
+            day_low=day_low,
+            gex_total=gex_context.get("total_net_gex") if gex_context else None,
+            gex_call_wall=gex_context.get("call_wall") if gex_context else None,
+            gex_put_wall=gex_context.get("put_wall") if gex_context else None,
+            gex_gamma_flip=gex_context.get("gamma_flip") if gex_context else None,
+            market_mode=bias_lfi.get("market_mode") if bias_lfi else None,
+            bias_lfi=bias_lfi.get("lfi_score") if bias_lfi else None,
+            bias_direction=bias_lfi.get("direction") if bias_lfi else None,
+        )
+
+        # Generate unique context ID for this snapshot
+        context_id = f"ctx_{int(time.time() * 1000)}"
+
+        # Cache the context
+        self._ml_engine.cache_market_context(context_id, snapshot)
+        self._ml_context_id = context_id
+
+        return context_id
+
+    async def _get_ml_score(
+        self,
+        idea_id: str,
+        strategy: str,
+        side: str,
+        strike: float,
+        width: int,
+        dte: int,
+        debit: float,
+        original_score: float,
+    ) -> Tuple[Optional[float], Optional[float]]:
+        """Get ML score for a trade idea.
+
+        Returns (ml_score, final_blended_score).
+        Returns (None, original_score) if ML unavailable.
+        """
+        if not self.ml_enabled or not self._ml_engine or not self._ml_context_id:
+            return None, original_score
+
+        try:
+            # Check circuit breakers first
+            breaker_status = await self._circuit_breaker.check_all_breakers()
+            if not breaker_status.allow_trade or breaker_status.action == 'rules_only':
+                return None, original_score
+
+            # Create trade idea
+            idea = TradeIdea(
+                id=idea_id,
+                symbol="SPX",  # TODO: pass actual symbol
+                strategy=strategy,
+                side=side,
+                strike=strike,
+                width=width,
+                dte=dte,
+                debit=debit,
+                score=original_score,
+            )
+
+            # Get fast path ML score
+            result = await self._ml_engine.score_idea_fast(
+                idea=idea,
+                market_context_id=self._ml_context_id,
+            )
+
+            if result.ml_score is None:
+                return None, original_score
+
+            # Blend scores based on configured weight
+            final_score = original_score * (1 - self.ml_weight) + result.ml_score * self.ml_weight
+
+            return result.ml_score, final_score
+
+        except Exception as e:
+            self.logger.debug(f"[TRADE_SELECTOR] ML scoring error: {e}")
+            return None, original_score
+
+    async def _log_ml_decision(
+        self,
+        idea_id: str,
+        original_score: float,
+        ml_score: Optional[float],
+        final_score: float,
+        feature_snapshot_id: int = 0,
+        experiment_id: Optional[int] = None,
+        experiment_arm: Optional[str] = None,
+    ) -> None:
+        """Log an ML decision for feedback loop."""
+        if not self.tracking_enabled:
+            return
+
+        try:
+            # Log to Journal API
+            async with self._get_http_session() as session:
+                async with session.post(
+                    f"{self.journal_api_url}/api/internal/ml/decisions",
+                    json={
+                        "idea_id": idea_id,
+                        "selector_params_version": self._active_params_version or 1,
+                        "feature_snapshot_id": feature_snapshot_id,
+                        "original_score": original_score,
+                        "ml_score": ml_score,
+                        "final_score": final_score,
+                        "experiment_id": experiment_id,
+                        "experiment_arm": experiment_arm,
+                        "action_taken": "ranked",
+                    },
+                ) as resp:
+                    if resp.status != 201:
+                        self.logger.debug(f"[TRADE_SELECTOR] ML decision log failed: {resp.status}")
+        except Exception as e:
+            self.logger.debug(f"[TRADE_SELECTOR] ML decision log error: {e}")
 
     # ------------------------------------------------------------------
     # Data Loading
@@ -1776,9 +1972,22 @@ class TradeSelectorModelBuilder:
                 # Gamma scalp window detection
                 gamma_scalp_active, gamma_scalp_window = self._is_gamma_scalp_window(current_hour, regime)
 
+                # ML Feedback Loop: Cache market context once per build cycle
+                if self.ml_enabled:
+                    self._cache_ml_context(
+                        spot=spot,
+                        vix=vix,
+                        vix3m=None,  # TODO: Load VIX3M
+                        day_high=None,  # TODO: Load from spot model
+                        day_low=None,
+                        gex_context=bias_lfi,
+                        bias_lfi=bias_lfi,
+                    )
+
                 all_scores: List[Dict[str, Any]] = []
                 gamma_scalp_candidates: List[Dict[str, Any]] = []  # Separate list for gamma scalp
                 filtered_count = 0  # Track tiles rejected by 5% filter
+                ml_scored_count = 0  # Track ML-scored tiles
 
                 # Load unified heatmap
                 heatmap = await self._load_heatmap(symbol)
@@ -1881,6 +2090,24 @@ class TradeSelectorModelBuilder:
                             r2r_score, convexity_score, width_fit_score, gamma_alignment_score
                         )
 
+                        # ML Feedback Loop: Get ML score if enabled
+                        ml_score = None
+                        final_composite = composite
+                        if self.ml_enabled:
+                            idea_id = f"{symbol}:{tile_key}:{side}:{int(time.time())}"
+                            ml_score, final_composite = await self._get_ml_score(
+                                idea_id=idea_id,
+                                strategy="butterfly",
+                                side=side,
+                                strike=strike,
+                                width=width,
+                                dte=dte,
+                                debit=debit,
+                                original_score=composite,
+                            )
+                            if ml_score is not None:
+                                ml_scored_count += 1
+
                         confidence = self._calculate_confidence(
                             has_gex=bool(gex_by_strike),
                             has_bias_lfi=bool(bias_lfi),
@@ -1907,7 +2134,9 @@ class TradeSelectorModelBuilder:
 
                         all_scores.append({
                             "tile_key": scored_tile_key,
-                            "composite": round(composite, 1),
+                            "composite": round(final_composite, 1),  # Use ML-blended score for sorting
+                            "original_composite": round(composite, 1),  # Rule-based score
+                            "ml_score": round(ml_score, 1) if ml_score is not None else None,
                             "confidence": round(confidence, 2),
                             "components": {
                                 "r2r": round(r2r_score, 1),
@@ -2075,6 +2304,10 @@ class TradeSelectorModelBuilder:
                             "gamma_alignment": self.WEIGHT_GAMMA_ALIGNMENT,  # 15%
                         },
                         "hard_filter": f"debit <= {self.MAX_DEBIT_PCT * 100}% of width",
+                        # ML Feedback Loop info
+                        "ml_enabled": self.ml_enabled,
+                        "ml_weight": self.ml_weight,
+                        "ml_scored_count": ml_scored_count,
                     },
                     # Campaign definitions
                     "campaigns": self.CAMPAIGNS,
@@ -2172,6 +2405,10 @@ class TradeSelectorModelBuilder:
 
         # Load active params version for tracking attribution
         await self._load_active_params_version()
+
+        # Initialize ML engine if enabled
+        if self.ml_enabled:
+            await self._init_ml_engine()
 
         try:
             while not stop_event.is_set():

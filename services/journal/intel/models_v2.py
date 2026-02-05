@@ -1764,3 +1764,638 @@ class PositionEvent:
             'occurred_at': self.occurred_at,
             'payload': self.payload,
         }
+
+
+# =============================================================================
+# ML Feedback Loop Models
+# =============================================================================
+
+@dataclass
+class MLDecision:
+    """An immutable decision record for ML scoring reproducibility.
+
+    Every scoring decision is logged here to enable full reproducibility later.
+    Given an ml_decisions.id, you can reconstruct exact feature values and model used.
+    """
+    id: Optional[int] = None  # Auto-increment
+    idea_id: str = ''
+    decision_time: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    # Model identification (for exact reproducibility)
+    model_id: Optional[int] = None
+    model_version: Optional[int] = None
+    selector_params_version: int = 1
+    feature_snapshot_id: Optional[int] = None
+
+    # Scores
+    original_score: float = 0.0  # rule-based
+    ml_score: Optional[float] = None  # ML contribution
+    final_score: float = 0.0  # blended
+
+    # Experiment tracking
+    experiment_id: Optional[int] = None
+    experiment_arm: Optional[str] = None  # 'champion' or 'challenger'
+
+    # Action taken
+    action_taken: str = 'ranked'  # ranked, presented, traded, dismissed
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        if d.get('id') is None:
+            del d['id']
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'MLDecision':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if isinstance(d.get('decision_time'), datetime):
+            d['decision_time'] = d['decision_time'].isoformat()
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'ideaId': self.idea_id,
+            'decisionTime': self.decision_time,
+            'modelId': self.model_id,
+            'modelVersion': self.model_version,
+            'selectorParamsVersion': self.selector_params_version,
+            'featureSnapshotId': self.feature_snapshot_id,
+            'originalScore': self.original_score,
+            'mlScore': self.ml_score,
+            'finalScore': self.final_score,
+            'experimentId': self.experiment_id,
+            'experimentArm': self.experiment_arm,
+            'actionTaken': self.action_taken,
+        }
+
+
+@dataclass
+class PnLEvent:
+    """An append-only P&L event for accurate path reconstruction.
+
+    P&L deltas, not cumulative values, for precise equity curve computation.
+    """
+    id: Optional[int] = None  # Auto-increment
+    event_time: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    idea_id: str = ''
+    trade_id: Optional[str] = None
+    strategy_id: Optional[str] = None
+
+    # P&L delta (not cumulative)
+    pnl_delta: float = 0.0
+    fees: float = 0.0
+    slippage: float = 0.0
+
+    # Context
+    underlying_price: float = 0.0
+    event_type: str = 'mark'  # mark, fill, settlement, adjustment
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        if d.get('id') is None:
+            del d['id']
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'PnLEvent':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if isinstance(d.get('event_time'), datetime):
+            d['event_time'] = d['event_time'].isoformat()
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'eventTime': self.event_time,
+            'ideaId': self.idea_id,
+            'tradeId': self.trade_id,
+            'strategyId': self.strategy_id,
+            'pnlDelta': self.pnl_delta,
+            'fees': self.fees,
+            'slippage': self.slippage,
+            'underlyingPrice': self.underlying_price,
+            'eventType': self.event_type,
+        }
+
+
+@dataclass
+class DailyPerformance:
+    """Materialized daily performance aggregation from pnl_events."""
+    id: Optional[int] = None  # Auto-increment
+    date: str = ''  # YYYY-MM-DD
+
+    # P&L metrics
+    net_pnl: float = 0.0
+    gross_pnl: float = 0.0
+    total_fees: float = 0.0
+
+    # High water / drawdown
+    high_water_pnl: float = 0.0
+    max_drawdown: float = 0.0
+    drawdown_pct: Optional[float] = None
+
+    # Volume metrics
+    trade_count: int = 0
+    win_count: int = 0
+    loss_count: int = 0
+
+    # Model attribution
+    primary_model_id: Optional[int] = None
+    ml_contribution_pct: Optional[float] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        if d.get('id') is None:
+            del d['id']
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'DailyPerformance':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if hasattr(d.get('date'), 'isoformat'):
+            d['date'] = d['date'].isoformat()
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'date': self.date,
+            'netPnl': self.net_pnl,
+            'grossPnl': self.gross_pnl,
+            'totalFees': self.total_fees,
+            'highWaterPnl': self.high_water_pnl,
+            'maxDrawdown': self.max_drawdown,
+            'drawdownPct': self.drawdown_pct,
+            'tradeCount': self.trade_count,
+            'winCount': self.win_count,
+            'lossCount': self.loss_count,
+            'primaryModelId': self.primary_model_id,
+            'mlContributionPct': self.ml_contribution_pct,
+        }
+
+
+@dataclass
+class MLFeatureSnapshot:
+    """Feature snapshot at idea generation time for point-in-time correctness.
+
+    Includes version tracking for all feature extractors to ensure reproducibility.
+    """
+    id: Optional[int] = None  # Auto-increment
+    tracked_idea_id: int = 0
+    snapshot_time: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    # VERSIONING (critical for reproducibility)
+    feature_set_version: str = 'v1.0'
+    feature_extractor_version: str = 'v1.0'
+    gex_calc_version: Optional[str] = None
+    vix_regime_classifier_version: Optional[str] = None
+
+    # Price Action Features
+    spot_price: float = 0.0
+    spot_5m_return: Optional[float] = None
+    spot_15m_return: Optional[float] = None
+    spot_1h_return: Optional[float] = None
+    spot_1d_return: Optional[float] = None
+    intraday_high: Optional[float] = None
+    intraday_low: Optional[float] = None
+    range_position: Optional[float] = None
+
+    # Volatility Features
+    vix_level: Optional[float] = None
+    vix_regime: Optional[str] = None  # chaos, goldilocks_1, goldilocks_2, zombieland
+    vix_term_slope: Optional[float] = None
+    iv_rank_30d: Optional[float] = None
+    iv_percentile_30d: Optional[float] = None
+
+    # GEX Structure Features
+    gex_total: Optional[float] = None
+    gex_call_wall: Optional[float] = None
+    gex_put_wall: Optional[float] = None
+    gex_gamma_flip: Optional[float] = None
+    spot_vs_call_wall: Optional[float] = None
+    spot_vs_put_wall: Optional[float] = None
+    spot_vs_gamma_flip: Optional[float] = None
+
+    # Market Mode Features
+    market_mode: Optional[str] = None
+    bias_lfi: Optional[float] = None
+    bias_direction: Optional[str] = None  # bullish, bearish, neutral
+
+    # Time Features
+    minutes_since_open: Optional[int] = None
+    day_of_week: Optional[int] = None
+    is_opex_week: bool = False
+    days_to_monthly_opex: Optional[int] = None
+
+    # Cross-Asset Signals
+    es_futures_premium: Optional[float] = None
+    tnx_level: Optional[float] = None
+    dxy_level: Optional[float] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        if d.get('id') is None:
+            del d['id']
+        d['is_opex_week'] = 1 if d['is_opex_week'] else 0
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'MLFeatureSnapshot':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if isinstance(d.get('snapshot_time'), datetime):
+            d['snapshot_time'] = d['snapshot_time'].isoformat()
+        if 'is_opex_week' in d:
+            d['is_opex_week'] = bool(d['is_opex_week'])
+        return cls(**d)
+
+    def to_feature_dict(self) -> dict:
+        """Convert to feature dictionary for ML inference."""
+        return {
+            'spot_price': self.spot_price,
+            'spot_5m_return': self.spot_5m_return,
+            'spot_15m_return': self.spot_15m_return,
+            'spot_1h_return': self.spot_1h_return,
+            'spot_1d_return': self.spot_1d_return,
+            'range_position': self.range_position,
+            'vix_level': self.vix_level,
+            'vix_regime': self.vix_regime,
+            'vix_term_slope': self.vix_term_slope,
+            'iv_rank_30d': self.iv_rank_30d,
+            'gex_total': self.gex_total,
+            'spot_vs_call_wall': self.spot_vs_call_wall,
+            'spot_vs_put_wall': self.spot_vs_put_wall,
+            'spot_vs_gamma_flip': self.spot_vs_gamma_flip,
+            'market_mode': self.market_mode,
+            'bias_lfi': self.bias_lfi,
+            'bias_direction': self.bias_direction,
+            'minutes_since_open': self.minutes_since_open,
+            'day_of_week': self.day_of_week,
+            'is_opex_week': self.is_opex_week,
+            'days_to_monthly_opex': self.days_to_monthly_opex,
+        }
+
+
+@dataclass
+class TrackedIdeaSnapshot:
+    """Event-based snapshot for tracked ideas.
+
+    Snapshots are triggered by events (not time-based) to control volume.
+    """
+    id: Optional[int] = None  # Auto-increment
+    tracked_idea_id: int = 0
+    snapshot_time: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    # Trigger reason
+    trigger_type: str = 'periodic'  # fill, tier_boundary, stop_touch, target_touch, significant_move, periodic
+
+    # Position state
+    mark_price: float = 0.0
+    underlying_price: float = 0.0
+    unrealized_pnl: float = 0.0
+    pnl_percent: float = 0.0
+
+    # Greeks snapshot
+    delta: Optional[float] = None
+    gamma: Optional[float] = None
+    theta: Optional[float] = None
+    vega: Optional[float] = None
+
+    # Market context at snapshot
+    vix_level: Optional[float] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        if d.get('id') is None:
+            del d['id']
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'TrackedIdeaSnapshot':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if isinstance(d.get('snapshot_time'), datetime):
+            d['snapshot_time'] = d['snapshot_time'].isoformat()
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'trackedIdeaId': self.tracked_idea_id,
+            'snapshotTime': self.snapshot_time,
+            'triggerType': self.trigger_type,
+            'markPrice': self.mark_price,
+            'underlyingPrice': self.underlying_price,
+            'unrealizedPnl': self.unrealized_pnl,
+            'pnlPercent': self.pnl_percent,
+            'delta': self.delta,
+            'gamma': self.gamma,
+            'theta': self.theta,
+            'vega': self.vega,
+            'vixLevel': self.vix_level,
+        }
+
+
+@dataclass
+class UserTradeAction:
+    """User behavior tracking for trade ideas."""
+    id: Optional[int] = None  # Auto-increment
+    tracked_idea_id: int = 0
+    user_id: int = 0
+    action: str = 'viewed'  # viewed, dismissed, starred, traded, trade_closed
+    action_time: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    # Trade details if action = 'traded'
+    fill_price: Optional[float] = None
+    fill_quantity: Optional[int] = None
+    trade_id: Optional[str] = None
+
+    # Exit details if action = 'trade_closed'
+    exit_price: Optional[float] = None
+    realized_pnl: Optional[float] = None
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        if d.get('id') is None:
+            del d['id']
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'UserTradeAction':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if isinstance(d.get('action_time'), datetime):
+            d['action_time'] = d['action_time'].isoformat()
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'trackedIdeaId': self.tracked_idea_id,
+            'userId': self.user_id,
+            'action': self.action,
+            'actionTime': self.action_time,
+            'fillPrice': self.fill_price,
+            'fillQuantity': self.fill_quantity,
+            'tradeId': self.trade_id,
+            'exitPrice': self.exit_price,
+            'realizedPnl': self.realized_pnl,
+        }
+
+
+@dataclass
+class MLModel:
+    """A registered ML model with versioning and performance tracking."""
+    id: Optional[int] = None  # Auto-increment
+    model_name: str = ''
+    model_version: int = 1
+    model_type: str = ''  # gradient_boost, ensemble, etc.
+
+    # Feature set version this model was trained on
+    feature_set_version: str = 'v1.0'
+
+    # Model artifacts (stored as bytes in DB, not in dataclass)
+    feature_list: Optional[List[str]] = None
+    hyperparameters: Optional[dict] = None
+
+    # Performance metrics
+    train_auc: Optional[float] = None
+    val_auc: Optional[float] = None
+    train_samples: Optional[int] = None
+    val_samples: Optional[int] = None
+
+    # Calibration metrics
+    brier_tier_0: Optional[float] = None
+    brier_tier_1: Optional[float] = None
+    brier_tier_2: Optional[float] = None
+    brier_tier_3: Optional[float] = None
+
+    # Top-k utility
+    top_10_avg_pnl: Optional[float] = None
+    top_20_avg_pnl: Optional[float] = None
+
+    # Regime (optional - for regime-specific models)
+    regime: Optional[str] = None
+
+    # Deployment state
+    status: str = 'training'  # training, validating, champion, challenger, retired
+    deployed_at: Optional[str] = None
+    retired_at: Optional[str] = None
+
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = {
+            'model_name': self.model_name,
+            'model_version': self.model_version,
+            'model_type': self.model_type,
+            'feature_set_version': self.feature_set_version,
+            'feature_list': json.dumps(self.feature_list) if self.feature_list else '[]',
+            'hyperparameters': json.dumps(self.hyperparameters) if self.hyperparameters else '{}',
+            'train_auc': self.train_auc,
+            'val_auc': self.val_auc,
+            'train_samples': self.train_samples,
+            'val_samples': self.val_samples,
+            'brier_tier_0': self.brier_tier_0,
+            'brier_tier_1': self.brier_tier_1,
+            'brier_tier_2': self.brier_tier_2,
+            'brier_tier_3': self.brier_tier_3,
+            'top_10_avg_pnl': self.top_10_avg_pnl,
+            'top_20_avg_pnl': self.top_20_avg_pnl,
+            'regime': self.regime,
+            'status': self.status,
+            'deployed_at': self.deployed_at,
+            'retired_at': self.retired_at,
+            'created_at': self.created_at,
+        }
+        if self.id is not None:
+            d['id'] = self.id
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'MLModel':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if isinstance(d.get('feature_list'), str):
+            d['feature_list'] = json.loads(d['feature_list']) if d['feature_list'] else []
+        if isinstance(d.get('hyperparameters'), str):
+            d['hyperparameters'] = json.loads(d['hyperparameters']) if d['hyperparameters'] else {}
+        if isinstance(d.get('deployed_at'), datetime):
+            d['deployed_at'] = d['deployed_at'].isoformat()
+        if isinstance(d.get('retired_at'), datetime):
+            d['retired_at'] = d['retired_at'].isoformat()
+        if isinstance(d.get('created_at'), datetime):
+            d['created_at'] = d['created_at'].isoformat()
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'modelName': self.model_name,
+            'modelVersion': self.model_version,
+            'modelType': self.model_type,
+            'featureSetVersion': self.feature_set_version,
+            'featureList': self.feature_list,
+            'hyperparameters': self.hyperparameters,
+            'metrics': {
+                'trainAuc': self.train_auc,
+                'valAuc': self.val_auc,
+                'trainSamples': self.train_samples,
+                'valSamples': self.val_samples,
+            },
+            'calibration': {
+                'brierTier0': self.brier_tier_0,
+                'brierTier1': self.brier_tier_1,
+                'brierTier2': self.brier_tier_2,
+                'brierTier3': self.brier_tier_3,
+            },
+            'topKUtility': {
+                'top10AvgPnl': self.top_10_avg_pnl,
+                'top20AvgPnl': self.top_20_avg_pnl,
+            },
+            'regime': self.regime,
+            'status': self.status,
+            'deployedAt': self.deployed_at,
+            'retiredAt': self.retired_at,
+            'createdAt': self.created_at,
+        }
+
+
+@dataclass
+class MLExperiment:
+    """An A/B experiment comparing champion vs challenger models."""
+    id: Optional[int] = None  # Auto-increment
+    experiment_name: str = ''
+    description: Optional[str] = None
+
+    champion_model_id: int = 0
+    challenger_model_id: int = 0
+    traffic_split: float = 0.10  # % to challenger
+
+    # Stopping rules
+    max_duration_days: int = 14
+    min_samples_per_arm: int = 100
+    early_stop_threshold: float = 0.01  # p-value for early stop
+
+    # Experiment state
+    status: str = 'running'  # running, concluded, aborted
+    started_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    ended_at: Optional[str] = None
+
+    # Results
+    champion_samples: int = 0
+    challenger_samples: int = 0
+    champion_win_rate: Optional[float] = None
+    challenger_win_rate: Optional[float] = None
+    champion_avg_rar: Optional[float] = None  # Risk-adjusted return
+    challenger_avg_rar: Optional[float] = None
+    p_value: Optional[float] = None
+    winner: Optional[str] = None  # champion, challenger, no_difference
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        if d.get('id') is None:
+            del d['id']
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'MLExperiment':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if isinstance(d.get('started_at'), datetime):
+            d['started_at'] = d['started_at'].isoformat()
+        if isinstance(d.get('ended_at'), datetime):
+            d['ended_at'] = d['ended_at'].isoformat()
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'experimentName': self.experiment_name,
+            'description': self.description,
+            'championModelId': self.champion_model_id,
+            'challengerModelId': self.challenger_model_id,
+            'trafficSplit': self.traffic_split,
+            'stoppingRules': {
+                'maxDurationDays': self.max_duration_days,
+                'minSamplesPerArm': self.min_samples_per_arm,
+                'earlyStopThreshold': self.early_stop_threshold,
+            },
+            'status': self.status,
+            'startedAt': self.started_at,
+            'endedAt': self.ended_at,
+            'results': {
+                'championSamples': self.champion_samples,
+                'challengerSamples': self.challenger_samples,
+                'championWinRate': self.champion_win_rate,
+                'challengerWinRate': self.challenger_win_rate,
+                'championAvgRar': self.champion_avg_rar,
+                'challengerAvgRar': self.challenger_avg_rar,
+                'pValue': self.p_value,
+                'winner': self.winner,
+            },
+        }
+
+
+@dataclass
+class PositionJournalEntry:
+    """A journal entry tied to a position (TradeLog service layer)."""
+    id: str
+    position_id: str
+    object_of_reflection: str  # required - what is being reflected upon
+    bias_flags: Optional[List[str]] = None  # e.g., ['recency', 'confirmation']
+    notes: Optional[str] = None
+    phase: str = 'entry'  # setup, entry, management, exit, review
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new journal entry ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        d['bias_flags'] = json.dumps(d['bias_flags']) if d['bias_flags'] else None
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'PositionJournalEntry':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if isinstance(d.get('bias_flags'), str):
+            d['bias_flags'] = json.loads(d['bias_flags']) if d['bias_flags'] else None
+        if isinstance(d.get('created_at'), datetime):
+            d['created_at'] = d['created_at'].isoformat()
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'positionId': self.position_id,
+            'objectOfReflection': self.object_of_reflection,
+            'biasFlags': self.bias_flags,
+            'notes': self.notes,
+            'phase': self.phase,
+            'createdAt': self.created_at,
+        }

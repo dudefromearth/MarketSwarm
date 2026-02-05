@@ -24,7 +24,10 @@ from .models_v2 import (
     PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger,
     TrackedIdea, SelectorParams,
     RiskGraphStrategy, RiskGraphStrategyVersion, RiskGraphTemplate,
-    Position, Leg, Fill, PositionEvent
+    Position, Leg, Fill, PositionEvent,
+    MLDecision, PnLEvent, DailyPerformance, MLFeatureSnapshot,
+    TrackedIdeaSnapshot, UserTradeAction, MLModel, MLExperiment,
+    PositionJournalEntry,
 )
 from .analytics_v2 import AnalyticsV2
 from .auth import JournalAuth, require_auth, optional_auth
@@ -5013,6 +5016,759 @@ class JournalOrchestrator:
             self.logger.error(f"create_journal_entry_for_position error: {e}")
             return self._error_response(str(e), 500, request)
 
+    # ==================== ML Feedback Loop API ====================
+
+    async def log_ml_decision(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/decisions - Log an ML scoring decision."""
+        try:
+            # Internal endpoint - basic localhost check
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            body = await request.json()
+
+            # Validate required fields
+            required = ['idea_id', 'original_score', 'final_score', 'selector_params_version', 'feature_snapshot_id']
+            for field in required:
+                if field not in body:
+                    return self._error_response(f'{field} is required', 400, request)
+
+            decision = MLDecision(
+                idea_id=body['idea_id'],
+                decision_time=datetime.utcnow(),
+                model_id=body.get('model_id'),
+                model_version=body.get('model_version'),
+                selector_params_version=body['selector_params_version'],
+                feature_snapshot_id=body['feature_snapshot_id'],
+                original_score=float(body['original_score']),
+                ml_score=float(body['ml_score']) if body.get('ml_score') is not None else None,
+                final_score=float(body['final_score']),
+                experiment_id=body.get('experiment_id'),
+                experiment_arm=body.get('experiment_arm'),
+                action_taken=body.get('action_taken', 'ranked'),
+            )
+
+            created = self.db.create_ml_decision(decision)
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, status=201, request=request)
+
+        except Exception as e:
+            self.logger.error(f"log_ml_decision error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def list_ml_decisions(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/decisions - List ML decisions."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            params = request.query
+            idea_id = params.get('idea_id')
+            model_id = params.get('model_id')
+            experiment_id = params.get('experiment_id')
+            limit = int(params.get('limit', 100))
+
+            decisions = self.db.list_ml_decisions(
+                idea_id=idea_id,
+                model_id=int(model_id) if model_id else None,
+                experiment_id=int(experiment_id) if experiment_id else None,
+                limit=limit
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': [d.to_api_dict() for d in decisions],
+                'count': len(decisions)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"list_ml_decisions error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_ml_decision(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/decisions/:id - Get a single ML decision."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            decision_id = int(request.match_info['id'])
+            decision = self.db.get_ml_decision(decision_id)
+
+            if not decision:
+                return self._error_response('Decision not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': decision.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_ml_decision error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def update_ml_decision_action(self, request: web.Request) -> web.Response:
+        """PATCH /api/internal/ml/decisions/:id/action - Update action taken."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            decision_id = int(request.match_info['id'])
+            body = await request.json()
+
+            action = body.get('action_taken')
+            if action not in ('ranked', 'presented', 'traded', 'dismissed'):
+                return self._error_response('Invalid action_taken value', 400, request)
+
+            updated = self.db.update_ml_decision_action(decision_id, action)
+            if not updated:
+                return self._error_response('Decision not found or invalid state transition', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': updated.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"update_ml_decision_action error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def record_pnl_event(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/pnl-events - Record a P&L event."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            body = await request.json()
+
+            required = ['idea_id', 'pnl_delta', 'underlying_price', 'event_type']
+            for field in required:
+                if field not in body:
+                    return self._error_response(f'{field} is required', 400, request)
+
+            event = PnLEvent(
+                event_time=datetime.utcnow(),
+                idea_id=body['idea_id'],
+                trade_id=body.get('trade_id'),
+                strategy_id=body.get('strategy_id'),
+                pnl_delta=float(body['pnl_delta']),
+                fees=float(body.get('fees', 0)),
+                slippage=float(body.get('slippage', 0)),
+                underlying_price=float(body['underlying_price']),
+                event_type=body['event_type'],
+            )
+
+            created = self.db.create_pnl_event(event)
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, status=201, request=request)
+
+        except Exception as e:
+            self.logger.error(f"record_pnl_event error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def list_pnl_events(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/pnl-events - List P&L events."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            params = request.query
+            idea_id = params.get('idea_id')
+            from_date = params.get('from')
+            to_date = params.get('to')
+            limit = int(params.get('limit', 100))
+
+            events = self.db.list_pnl_events(
+                idea_id=idea_id,
+                from_date=from_date,
+                to_date=to_date,
+                limit=limit
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': [e.to_api_dict() for e in events],
+                'count': len(events)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"list_pnl_events error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_equity_curve(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/equity-curve - Get equity curve from P&L events."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            params = request.query
+            from_date = params.get('from')
+            to_date = params.get('to')
+
+            curve = self.db.compute_equity_curve(from_date, to_date)
+
+            return self._json_response({
+                'success': True,
+                'data': curve
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_equity_curve error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def list_daily_performance(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/daily-performance - List daily performance records."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            params = request.query
+            from_date = params.get('from')
+            to_date = params.get('to')
+            limit = int(params.get('limit', 30))
+
+            records = self.db.list_daily_performance(from_date, to_date, limit)
+
+            return self._json_response({
+                'success': True,
+                'data': [r.to_api_dict() for r in records],
+                'count': len(records)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"list_daily_performance error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def materialize_daily_performance(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/daily-performance/materialize - Materialize daily performance."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            body = await request.json()
+            target_date = body.get('date')  # ISO format date string
+
+            if not target_date:
+                from datetime import date
+                target_date = date.today().isoformat()
+
+            result = self.db.materialize_daily_performance(target_date)
+
+            return self._json_response({
+                'success': True,
+                'data': result.to_api_dict() if result else None
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"materialize_daily_performance error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def create_feature_snapshot(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/feature-snapshots - Create a feature snapshot."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            body = await request.json()
+
+            required = ['tracked_idea_id', 'feature_set_version', 'feature_extractor_version', 'spot_price']
+            for field in required:
+                if field not in body:
+                    return self._error_response(f'{field} is required', 400, request)
+
+            snapshot = MLFeatureSnapshot(
+                tracked_idea_id=body['tracked_idea_id'],
+                snapshot_time=datetime.utcnow(),
+                feature_set_version=body['feature_set_version'],
+                feature_extractor_version=body['feature_extractor_version'],
+                gex_calc_version=body.get('gex_calc_version'),
+                vix_regime_classifier_version=body.get('vix_regime_classifier_version'),
+                spot_price=float(body['spot_price']),
+                spot_5m_return=body.get('spot_5m_return'),
+                spot_15m_return=body.get('spot_15m_return'),
+                spot_1h_return=body.get('spot_1h_return'),
+                spot_1d_return=body.get('spot_1d_return'),
+                intraday_high=body.get('intraday_high'),
+                intraday_low=body.get('intraday_low'),
+                range_position=body.get('range_position'),
+                vix_level=body.get('vix_level'),
+                vix_regime=body.get('vix_regime'),
+                vix_term_slope=body.get('vix_term_slope'),
+                iv_rank_30d=body.get('iv_rank_30d'),
+                iv_percentile_30d=body.get('iv_percentile_30d'),
+                gex_total=body.get('gex_total'),
+                gex_call_wall=body.get('gex_call_wall'),
+                gex_put_wall=body.get('gex_put_wall'),
+                gex_gamma_flip=body.get('gex_gamma_flip'),
+                spot_vs_call_wall=body.get('spot_vs_call_wall'),
+                spot_vs_put_wall=body.get('spot_vs_put_wall'),
+                spot_vs_gamma_flip=body.get('spot_vs_gamma_flip'),
+                market_mode=body.get('market_mode'),
+                bias_lfi=body.get('bias_lfi'),
+                bias_direction=body.get('bias_direction'),
+                minutes_since_open=body.get('minutes_since_open'),
+                day_of_week=body.get('day_of_week'),
+                is_opex_week=body.get('is_opex_week', False),
+                days_to_monthly_opex=body.get('days_to_monthly_opex'),
+                es_futures_premium=body.get('es_futures_premium'),
+                tnx_level=body.get('tnx_level'),
+                dxy_level=body.get('dxy_level'),
+            )
+
+            created = self.db.create_feature_snapshot(snapshot)
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, status=201, request=request)
+
+        except Exception as e:
+            self.logger.error(f"create_feature_snapshot error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_feature_snapshot(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/feature-snapshots/:id - Get a feature snapshot."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            snapshot_id = int(request.match_info['id'])
+            snapshot = self.db.get_feature_snapshot(snapshot_id)
+
+            if not snapshot:
+                return self._error_response('Snapshot not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': snapshot.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_feature_snapshot error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def list_ml_models(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/models - List ML models."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            params = request.query
+            status = params.get('status')
+            limit = int(params.get('limit', 20))
+
+            models = self.db.list_ml_models(status=status, limit=limit)
+
+            # Don't include model_blob in list response
+            return self._json_response({
+                'success': True,
+                'data': [m.to_api_dict(include_blob=False) for m in models],
+                'count': len(models)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"list_ml_models error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_ml_model(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/models/:id - Get a single ML model."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            model_id = int(request.match_info['id'])
+            include_blob = request.query.get('include_blob', '').lower() == 'true'
+
+            model = self.db.get_ml_model(model_id)
+
+            if not model:
+                return self._error_response('Model not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': model.to_api_dict(include_blob=include_blob)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_ml_model error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def register_ml_model(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/models - Register a new ML model."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            body = await request.json()
+
+            required = ['model_name', 'model_type', 'model_blob', 'feature_list', 'hyperparameters']
+            for field in required:
+                if field not in body:
+                    return self._error_response(f'{field} is required', 400, request)
+
+            # Get next version for this model name
+            next_version = self.db.get_next_model_version(body['model_name'])
+
+            model = MLModel(
+                model_name=body['model_name'],
+                model_version=next_version,
+                model_type=body['model_type'],
+                model_blob=body['model_blob'],  # Base64 encoded
+                feature_list=body['feature_list'],
+                hyperparameters=body['hyperparameters'],
+                train_auc=body.get('train_auc'),
+                val_auc=body.get('val_auc'),
+                train_samples=body.get('train_samples'),
+                val_samples=body.get('val_samples'),
+                status='validating',
+            )
+
+            created = self.db.create_ml_model(model)
+
+            self.logger.info(f"Registered ML model {created.model_name} v{created.model_version}", emoji="🤖")
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict(include_blob=False)
+            }, status=201, request=request)
+
+        except Exception as e:
+            self.logger.error(f"register_ml_model error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def deploy_ml_model(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/models/:id/deploy - Deploy model as champion."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            model_id = int(request.match_info['id'])
+            deployed = self.db.deploy_ml_model(model_id)
+
+            if not deployed:
+                return self._error_response('Model not found or invalid state', 404, request)
+
+            self.logger.info(f"Deployed ML model {deployed.model_name} v{deployed.model_version} as champion", emoji="🚀")
+
+            return self._json_response({
+                'success': True,
+                'data': deployed.to_api_dict(include_blob=False)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"deploy_ml_model error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def retire_ml_model(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/models/:id/retire - Retire a model."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            model_id = int(request.match_info['id'])
+            retired = self.db.retire_ml_model(model_id)
+
+            if not retired:
+                return self._error_response('Model not found', 404, request)
+
+            self.logger.info(f"Retired ML model {retired.model_name} v{retired.model_version}", emoji="📦")
+
+            return self._json_response({
+                'success': True,
+                'data': retired.to_api_dict(include_blob=False)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"retire_ml_model error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_champion_model(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/models/champion - Get current champion model."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            include_blob = request.query.get('include_blob', '').lower() == 'true'
+            regime = request.query.get('regime')
+
+            champion = self.db.get_champion_model(regime=regime)
+
+            if not champion:
+                return self._json_response({
+                    'success': True,
+                    'data': None
+                }, request=request)
+
+            return self._json_response({
+                'success': True,
+                'data': champion.to_api_dict(include_blob=include_blob)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_champion_model error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def list_experiments(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/experiments - List ML experiments."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            params = request.query
+            status = params.get('status')
+            limit = int(params.get('limit', 20))
+
+            experiments = self.db.list_experiments(status=status, limit=limit)
+
+            return self._json_response({
+                'success': True,
+                'data': [e.to_api_dict() for e in experiments],
+                'count': len(experiments)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"list_experiments error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_experiment(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/experiments/:id - Get a single experiment."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            experiment_id = int(request.match_info['id'])
+            experiment = self.db.get_experiment(experiment_id)
+
+            if not experiment:
+                return self._error_response('Experiment not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': experiment.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_experiment error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def create_experiment(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/experiments - Create a new A/B experiment."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            body = await request.json()
+
+            required = ['experiment_name', 'challenger_model_id']
+            for field in required:
+                if field not in body:
+                    return self._error_response(f'{field} is required', 400, request)
+
+            # Get champion model for the experiment
+            champion = self.db.get_champion_model()
+            if not champion and not body.get('champion_model_id'):
+                return self._error_response('No champion model available', 400, request)
+
+            experiment = MLExperiment(
+                experiment_name=body['experiment_name'],
+                description=body.get('description'),
+                champion_model_id=body.get('champion_model_id', champion.id if champion else None),
+                challenger_model_id=body['challenger_model_id'],
+                traffic_split=float(body.get('traffic_split', 0.10)),
+                status='running',
+                started_at=datetime.utcnow(),
+            )
+
+            created = self.db.create_experiment(experiment)
+
+            self.logger.info(f"Created ML experiment '{created.experiment_name}'", emoji="🧪")
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, status=201, request=request)
+
+        except Exception as e:
+            self.logger.error(f"create_experiment error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def evaluate_experiment(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/experiments/:id/evaluate - Evaluate experiment results."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            experiment_id = int(request.match_info['id'])
+            result = self.db.evaluate_experiment(experiment_id)
+
+            if not result:
+                return self._error_response('Experiment not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': result
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"evaluate_experiment error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def conclude_experiment(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/experiments/:id/conclude - Conclude experiment."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            experiment_id = int(request.match_info['id'])
+            body = await request.json()
+
+            winner = body.get('winner')
+            promote_challenger = body.get('promote_challenger', False)
+
+            concluded = self.db.conclude_experiment(experiment_id, winner, promote_challenger)
+
+            if not concluded:
+                return self._error_response('Experiment not found or already concluded', 404, request)
+
+            self.logger.info(f"Concluded ML experiment {experiment_id}, winner: {winner}", emoji="🏆")
+
+            return self._json_response({
+                'success': True,
+                'data': concluded.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"conclude_experiment error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def abort_experiment(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/experiments/:id/abort - Abort experiment."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            experiment_id = int(request.match_info['id'])
+            body = await request.json()
+            reason = body.get('reason')
+
+            aborted = self.db.abort_experiment(experiment_id, reason)
+
+            if not aborted:
+                return self._error_response('Experiment not found or not running', 404, request)
+
+            self.logger.info(f"Aborted ML experiment {experiment_id}: {reason}", emoji="🛑")
+
+            return self._json_response({
+                'success': True,
+                'data': aborted.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"abort_experiment error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_circuit_breaker_status(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/circuit-breakers - Get circuit breaker status."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            status = self.db.get_circuit_breaker_status()
+
+            return self._json_response({
+                'success': True,
+                'data': status
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_circuit_breaker_status error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def check_circuit_breakers(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/circuit-breakers/check - Check all circuit breakers."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            result = self.db.check_circuit_breakers()
+
+            return self._json_response({
+                'success': True,
+                'data': result
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"check_circuit_breakers error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def disable_ml(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/circuit-breakers/disable-ml - Disable ML scoring."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            self.db.set_ml_enabled(False)
+            self.logger.warn("ML scoring disabled via kill switch", emoji="🛑")
+
+            return self._json_response({
+                'success': True,
+                'message': 'ML scoring disabled'
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"disable_ml error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def enable_ml(self, request: web.Request) -> web.Response:
+        """POST /api/internal/ml/circuit-breakers/enable-ml - Enable ML scoring."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            self.db.set_ml_enabled(True)
+            self.logger.info("ML scoring enabled", emoji="✅")
+
+            return self._json_response({
+                'success': True,
+                'message': 'ML scoring enabled'
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"enable_ml error: {e}")
+            return self._error_response(str(e), 500, request)
+
     # ==================== Health & App Setup ====================
 
     async def health_check(self, request: web.Request) -> web.Response:
@@ -5236,6 +5992,50 @@ class JournalOrchestrator:
         # Journal entries for positions
         app.router.add_get('/api/journal_entries', self.list_journal_entries_for_position)
         app.router.add_post('/api/journal_entries', self.create_journal_entry_for_position)
+
+        # =================================================================
+        # ML Feedback Loop API
+        # =================================================================
+        # ML Decisions (logging)
+        app.router.add_post('/api/internal/ml/decisions', self.log_ml_decision)
+        app.router.add_get('/api/internal/ml/decisions', self.list_ml_decisions)
+        app.router.add_get('/api/internal/ml/decisions/{id}', self.get_ml_decision)
+        app.router.add_patch('/api/internal/ml/decisions/{id}/action', self.update_ml_decision_action)
+
+        # P&L Events
+        app.router.add_post('/api/internal/ml/pnl-events', self.record_pnl_event)
+        app.router.add_get('/api/internal/ml/pnl-events', self.list_pnl_events)
+        app.router.add_get('/api/internal/ml/equity-curve', self.get_equity_curve)
+
+        # Daily Performance
+        app.router.add_get('/api/internal/ml/daily-performance', self.list_daily_performance)
+        app.router.add_post('/api/internal/ml/daily-performance/materialize', self.materialize_daily_performance)
+
+        # Feature Snapshots
+        app.router.add_post('/api/internal/ml/feature-snapshots', self.create_feature_snapshot)
+        app.router.add_get('/api/internal/ml/feature-snapshots/{id}', self.get_feature_snapshot)
+
+        # ML Models
+        app.router.add_get('/api/internal/ml/models', self.list_ml_models)
+        app.router.add_get('/api/internal/ml/models/{id}', self.get_ml_model)
+        app.router.add_post('/api/internal/ml/models', self.register_ml_model)
+        app.router.add_post('/api/internal/ml/models/{id}/deploy', self.deploy_ml_model)
+        app.router.add_post('/api/internal/ml/models/{id}/retire', self.retire_ml_model)
+        app.router.add_get('/api/internal/ml/models/champion', self.get_champion_model)
+
+        # Experiments
+        app.router.add_get('/api/internal/ml/experiments', self.list_experiments)
+        app.router.add_get('/api/internal/ml/experiments/{id}', self.get_experiment)
+        app.router.add_post('/api/internal/ml/experiments', self.create_experiment)
+        app.router.add_post('/api/internal/ml/experiments/{id}/evaluate', self.evaluate_experiment)
+        app.router.add_post('/api/internal/ml/experiments/{id}/conclude', self.conclude_experiment)
+        app.router.add_post('/api/internal/ml/experiments/{id}/abort', self.abort_experiment)
+
+        # Circuit Breakers
+        app.router.add_get('/api/internal/ml/circuit-breakers', self.get_circuit_breaker_status)
+        app.router.add_post('/api/internal/ml/circuit-breakers/check', self.check_circuit_breakers)
+        app.router.add_post('/api/internal/ml/circuit-breakers/disable-ml', self.disable_ml)
+        app.router.add_post('/api/internal/ml/circuit-breakers/enable-ml', self.enable_ml)
 
         return app
 

@@ -14,14 +14,17 @@ from .models_v2 import (
     PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger,
     TrackedIdea, SelectorParams,
     RiskGraphStrategy, RiskGraphStrategyVersion, RiskGraphTemplate,
-    Position, Leg, Fill, PositionEvent
+    Position, Leg, Fill, PositionEvent, PositionJournalEntry,
+    # ML Feedback Loop models
+    MLDecision, PnLEvent, DailyPerformance, MLFeatureSnapshot,
+    TrackedIdeaSnapshot, UserTradeAction, MLModel, MLExperiment
 )
 
 
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 17
+    SCHEMA_VERSION = 18
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -221,6 +224,9 @@ class JournalDBv2:
 
             if current_version < 17:
                 self._migrate_to_v17(conn)
+
+            if current_version < 18:
+                self._migrate_to_v18(conn)
 
             conn.commit()
         finally:
@@ -1344,6 +1350,355 @@ class JournalDBv2:
                 """)
 
             self._set_schema_version(conn, 17)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v18(self, conn):
+        """Migrate to v18: Add ML Feedback Loop tables and position journal entries."""
+        cursor = conn.cursor()
+        try:
+            # Create ml_decisions table - immutable decision records for reproducibility
+            if not self._table_exists(conn, 'ml_decisions'):
+                cursor.execute("""
+                    CREATE TABLE ml_decisions (
+                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                        idea_id VARCHAR(36) NOT NULL,
+                        decision_time DATETIME(3) NOT NULL,
+
+                        -- Model identification (for exact reproducibility)
+                        model_id INT DEFAULT NULL,
+                        model_version INT DEFAULT NULL,
+                        selector_params_version INT NOT NULL,
+                        feature_snapshot_id BIGINT DEFAULT NULL,
+
+                        -- Scores
+                        original_score DECIMAL(6,2) NOT NULL,
+                        ml_score DECIMAL(6,2) DEFAULT NULL,
+                        final_score DECIMAL(6,2) NOT NULL,
+
+                        -- Experiment tracking
+                        experiment_id INT DEFAULT NULL,
+                        experiment_arm ENUM('champion', 'challenger') DEFAULT NULL,
+
+                        -- Action taken
+                        action_taken ENUM('ranked', 'presented', 'traded', 'dismissed') DEFAULT 'ranked',
+
+                        INDEX idx_idea (idea_id),
+                        INDEX idx_decision_time (decision_time),
+                        INDEX idx_model (model_id, model_version),
+                        INDEX idx_experiment (experiment_id, experiment_arm)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create pnl_events table - append-only P&L tracking
+            if not self._table_exists(conn, 'pnl_events'):
+                cursor.execute("""
+                    CREATE TABLE pnl_events (
+                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                        event_time DATETIME(3) NOT NULL,
+                        idea_id VARCHAR(36) NOT NULL,
+                        trade_id VARCHAR(36) DEFAULT NULL,
+                        strategy_id VARCHAR(36) DEFAULT NULL,
+
+                        -- P&L delta (not cumulative)
+                        pnl_delta DECIMAL(12,2) NOT NULL,
+                        fees DECIMAL(8,2) DEFAULT 0,
+                        slippage DECIMAL(8,2) DEFAULT 0,
+
+                        -- Context
+                        underlying_price DECIMAL(10,2) NOT NULL,
+                        event_type ENUM('mark', 'fill', 'settlement', 'adjustment') NOT NULL,
+
+                        INDEX idx_idea_time (idea_id, event_time),
+                        INDEX idx_trade (trade_id),
+                        INDEX idx_event_time (event_time)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create daily_performance table - materialized from pnl_events
+            if not self._table_exists(conn, 'daily_performance'):
+                cursor.execute("""
+                    CREATE TABLE daily_performance (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        date DATE NOT NULL UNIQUE,
+
+                        -- P&L metrics
+                        net_pnl DECIMAL(12,2) NOT NULL,
+                        gross_pnl DECIMAL(12,2) NOT NULL,
+                        total_fees DECIMAL(10,2) NOT NULL,
+
+                        -- High water / drawdown
+                        high_water_pnl DECIMAL(12,2) NOT NULL,
+                        max_drawdown DECIMAL(12,2) NOT NULL,
+                        drawdown_pct DECIMAL(6,4) DEFAULT NULL,
+
+                        -- Volume metrics
+                        trade_count INT NOT NULL,
+                        win_count INT NOT NULL,
+                        loss_count INT NOT NULL,
+
+                        -- Model attribution
+                        primary_model_id INT DEFAULT NULL,
+                        ml_contribution_pct DECIMAL(6,4) DEFAULT NULL,
+
+                        INDEX idx_date (date)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create ml_feature_snapshots table - feature versioning for point-in-time correctness
+            if not self._table_exists(conn, 'ml_feature_snapshots'):
+                cursor.execute("""
+                    CREATE TABLE ml_feature_snapshots (
+                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                        tracked_idea_id INT NOT NULL,
+                        snapshot_time DATETIME(3) NOT NULL,
+
+                        -- VERSIONING (critical for reproducibility)
+                        feature_set_version VARCHAR(20) NOT NULL,
+                        feature_extractor_version VARCHAR(20) NOT NULL,
+                        gex_calc_version VARCHAR(20) DEFAULT NULL,
+                        vix_regime_classifier_version VARCHAR(20) DEFAULT NULL,
+
+                        -- Price Action Features
+                        spot_price DECIMAL(10,2) NOT NULL,
+                        spot_5m_return DECIMAL(8,6) DEFAULT NULL,
+                        spot_15m_return DECIMAL(8,6) DEFAULT NULL,
+                        spot_1h_return DECIMAL(8,6) DEFAULT NULL,
+                        spot_1d_return DECIMAL(8,6) DEFAULT NULL,
+                        intraday_high DECIMAL(10,2) DEFAULT NULL,
+                        intraday_low DECIMAL(10,2) DEFAULT NULL,
+                        range_position DECIMAL(6,4) DEFAULT NULL,
+
+                        -- Volatility Features
+                        vix_level DECIMAL(6,2) DEFAULT NULL,
+                        vix_regime ENUM('chaos', 'goldilocks_1', 'goldilocks_2', 'zombieland') DEFAULT NULL,
+                        vix_term_slope DECIMAL(8,4) DEFAULT NULL,
+                        iv_rank_30d DECIMAL(6,4) DEFAULT NULL,
+                        iv_percentile_30d DECIMAL(6,4) DEFAULT NULL,
+
+                        -- GEX Structure Features
+                        gex_total DECIMAL(15,2) DEFAULT NULL,
+                        gex_call_wall DECIMAL(10,2) DEFAULT NULL,
+                        gex_put_wall DECIMAL(10,2) DEFAULT NULL,
+                        gex_gamma_flip DECIMAL(10,2) DEFAULT NULL,
+                        spot_vs_call_wall DECIMAL(8,4) DEFAULT NULL,
+                        spot_vs_put_wall DECIMAL(8,4) DEFAULT NULL,
+                        spot_vs_gamma_flip DECIMAL(8,4) DEFAULT NULL,
+
+                        -- Market Mode Features
+                        market_mode VARCHAR(20) DEFAULT NULL,
+                        bias_lfi DECIMAL(6,4) DEFAULT NULL,
+                        bias_direction ENUM('bullish', 'bearish', 'neutral') DEFAULT NULL,
+
+                        -- Time Features
+                        minutes_since_open INT DEFAULT NULL,
+                        day_of_week TINYINT DEFAULT NULL,
+                        is_opex_week BOOLEAN DEFAULT FALSE,
+                        days_to_monthly_opex INT DEFAULT NULL,
+
+                        -- Cross-Asset Signals
+                        es_futures_premium DECIMAL(6,4) DEFAULT NULL,
+                        tnx_level DECIMAL(6,3) DEFAULT NULL,
+                        dxy_level DECIMAL(6,2) DEFAULT NULL,
+
+                        INDEX idx_idea_time (tracked_idea_id, snapshot_time),
+                        INDEX idx_feature_version (feature_set_version)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create tracked_idea_snapshots table - event-based snapshots
+            if not self._table_exists(conn, 'tracked_idea_snapshots'):
+                cursor.execute("""
+                    CREATE TABLE tracked_idea_snapshots (
+                        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                        tracked_idea_id INT NOT NULL,
+                        snapshot_time DATETIME(3) NOT NULL,
+
+                        -- Trigger reason (controls when we snapshot)
+                        trigger_type ENUM(
+                            'fill',
+                            'tier_boundary',
+                            'stop_touch',
+                            'target_touch',
+                            'significant_move',
+                            'periodic'
+                        ) NOT NULL,
+
+                        -- Position state
+                        mark_price DECIMAL(10,4) NOT NULL,
+                        underlying_price DECIMAL(10,2) NOT NULL,
+                        unrealized_pnl DECIMAL(10,2) NOT NULL,
+                        pnl_percent DECIMAL(8,4) NOT NULL,
+
+                        -- Greeks snapshot
+                        delta DECIMAL(8,4) DEFAULT NULL,
+                        gamma DECIMAL(10,6) DEFAULT NULL,
+                        theta DECIMAL(8,4) DEFAULT NULL,
+                        vega DECIMAL(8,4) DEFAULT NULL,
+
+                        -- Market context at snapshot
+                        vix_level DECIMAL(6,2) DEFAULT NULL,
+
+                        INDEX idx_idea_time (tracked_idea_id, snapshot_time),
+                        INDEX idx_trigger (trigger_type)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create user_trade_actions table - behavior tracking
+            if not self._table_exists(conn, 'user_trade_actions'):
+                cursor.execute("""
+                    CREATE TABLE user_trade_actions (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        tracked_idea_id INT NOT NULL,
+                        user_id INT NOT NULL,
+                        action ENUM('viewed', 'dismissed', 'starred', 'traded', 'trade_closed') NOT NULL,
+                        action_time DATETIME NOT NULL,
+
+                        -- Trade details if action = 'traded'
+                        fill_price DECIMAL(10,4) DEFAULT NULL,
+                        fill_quantity INT DEFAULT NULL,
+                        trade_id VARCHAR(36) DEFAULT NULL,
+
+                        -- Exit details if action = 'trade_closed'
+                        exit_price DECIMAL(10,4) DEFAULT NULL,
+                        realized_pnl DECIMAL(10,2) DEFAULT NULL,
+
+                        INDEX idx_idea_user (tracked_idea_id, user_id),
+                        INDEX idx_user_time (user_id, action_time)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create ml_models table - model registry
+            if not self._table_exists(conn, 'ml_models'):
+                cursor.execute("""
+                    CREATE TABLE ml_models (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        model_name VARCHAR(100) NOT NULL,
+                        model_version INT NOT NULL,
+                        model_type VARCHAR(50) NOT NULL,
+
+                        -- Feature set version this model was trained on
+                        feature_set_version VARCHAR(20) NOT NULL,
+
+                        -- Model artifacts
+                        model_blob LONGBLOB DEFAULT NULL,
+                        feature_list JSON NOT NULL,
+                        hyperparameters JSON NOT NULL,
+
+                        -- Performance metrics
+                        train_auc DECIMAL(6,4) DEFAULT NULL,
+                        val_auc DECIMAL(6,4) DEFAULT NULL,
+                        train_samples INT DEFAULT NULL,
+                        val_samples INT DEFAULT NULL,
+
+                        -- Calibration metrics
+                        brier_tier_0 DECIMAL(6,4) DEFAULT NULL,
+                        brier_tier_1 DECIMAL(6,4) DEFAULT NULL,
+                        brier_tier_2 DECIMAL(6,4) DEFAULT NULL,
+                        brier_tier_3 DECIMAL(6,4) DEFAULT NULL,
+
+                        -- Top-k utility
+                        top_10_avg_pnl DECIMAL(10,2) DEFAULT NULL,
+                        top_20_avg_pnl DECIMAL(10,2) DEFAULT NULL,
+
+                        -- Regime (optional - for regime-specific models)
+                        regime VARCHAR(20) DEFAULT NULL,
+
+                        -- Deployment state
+                        status ENUM('training', 'validating', 'champion', 'challenger', 'retired') NOT NULL,
+                        deployed_at DATETIME DEFAULT NULL,
+                        retired_at DATETIME DEFAULT NULL,
+
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+                        UNIQUE KEY uk_name_version (model_name, model_version),
+                        INDEX idx_status (status),
+                        INDEX idx_regime (regime, status)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create ml_experiments table - A/B experiment tracking
+            if not self._table_exists(conn, 'ml_experiments'):
+                cursor.execute("""
+                    CREATE TABLE ml_experiments (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        experiment_name VARCHAR(100) NOT NULL,
+                        description TEXT DEFAULT NULL,
+
+                        champion_model_id INT NOT NULL,
+                        challenger_model_id INT NOT NULL,
+                        traffic_split DECIMAL(4,2) NOT NULL DEFAULT 0.10,
+
+                        -- Stopping rules
+                        max_duration_days INT DEFAULT 14,
+                        min_samples_per_arm INT DEFAULT 100,
+                        early_stop_threshold DECIMAL(8,6) DEFAULT 0.01,
+
+                        -- Experiment state
+                        status ENUM('running', 'concluded', 'aborted') NOT NULL,
+                        started_at DATETIME NOT NULL,
+                        ended_at DATETIME DEFAULT NULL,
+
+                        -- Results
+                        champion_samples INT DEFAULT 0,
+                        challenger_samples INT DEFAULT 0,
+                        champion_win_rate DECIMAL(6,4) DEFAULT NULL,
+                        challenger_win_rate DECIMAL(6,4) DEFAULT NULL,
+                        champion_avg_rar DECIMAL(8,4) DEFAULT NULL,
+                        challenger_avg_rar DECIMAL(8,4) DEFAULT NULL,
+                        p_value DECIMAL(8,6) DEFAULT NULL,
+                        winner ENUM('champion', 'challenger', 'no_difference') DEFAULT NULL,
+
+                        INDEX idx_status (status)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create position_journal_entries table - TradeLog journaling tied to positions
+            if not self._table_exists(conn, 'position_journal_entries'):
+                cursor.execute("""
+                    CREATE TABLE position_journal_entries (
+                        id VARCHAR(36) PRIMARY KEY,
+                        position_id VARCHAR(36) NOT NULL,
+                        object_of_reflection TEXT NOT NULL,
+                        bias_flags JSON DEFAULT NULL,
+                        notes TEXT DEFAULT NULL,
+                        phase ENUM('setup', 'entry', 'management', 'exit', 'review') NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (position_id) REFERENCES positions(id) ON DELETE CASCADE,
+                        INDEX idx_position (position_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Add foreign keys after all tables exist (for ml_experiments)
+            try:
+                cursor.execute("""
+                    ALTER TABLE ml_experiments
+                    ADD CONSTRAINT fk_experiments_champion FOREIGN KEY (champion_model_id) REFERENCES ml_models(id),
+                    ADD CONSTRAINT fk_experiments_challenger FOREIGN KEY (challenger_model_id) REFERENCES ml_models(id)
+                """)
+            except Exception:
+                pass  # Foreign keys may already exist
+
+            # Add outcome labels to tracked_ideas table
+            try:
+                cursor.execute("""
+                    ALTER TABLE tracked_ideas
+                    ADD COLUMN profit_tier TINYINT DEFAULT NULL AFTER is_winner,
+                    ADD COLUMN risk_unit DECIMAL(10,2) DEFAULT NULL AFTER profit_tier,
+                    ADD COLUMN max_favorable_excursion DECIMAL(8,4) DEFAULT NULL AFTER risk_unit,
+                    ADD COLUMN max_adverse_excursion DECIMAL(8,4) DEFAULT NULL AFTER max_favorable_excursion,
+                    ADD COLUMN time_to_max_pnl_pct DECIMAL(6,4) DEFAULT NULL AFTER max_adverse_excursion,
+                    ADD COLUMN time_in_drawdown_pct DECIMAL(6,4) DEFAULT NULL AFTER time_to_max_pnl_pct,
+                    ADD COLUMN hit_stop TINYINT DEFAULT NULL AFTER time_in_drawdown_pct,
+                    ADD COLUMN hit_target TINYINT DEFAULT NULL AFTER hit_stop,
+                    ADD COLUMN outperformed_median TINYINT DEFAULT NULL AFTER hit_target,
+                    ADD COLUMN cohort_percentile DECIMAL(6,4) DEFAULT NULL AFTER outperformed_median
+                """)
+            except Exception:
+                pass  # Columns may already exist
+
+            self._set_schema_version(conn, 18)
         finally:
             cursor.close()
 
@@ -5306,6 +5661,729 @@ class JournalDBv2:
         finally:
             cursor.close()
             conn.close()
+
+    # ==================== ML Feedback Loop CRUD ====================
+
+    def create_ml_decision(self, decision: MLDecision) -> MLDecision:
+        """Create an ML decision record."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = decision.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO ml_decisions ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            decision.id = cursor.lastrowid
+            conn.commit()
+            return decision
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_ml_decision(self, decision_id: int) -> Optional[MLDecision]:
+        """Get an ML decision by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM ml_decisions WHERE id = %s", (decision_id,))
+            row = cursor.fetchone()
+            if row:
+                return MLDecision.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_ml_decisions(
+        self,
+        idea_id: Optional[str] = None,
+        model_id: Optional[int] = None,
+        experiment_id: Optional[int] = None,
+        limit: int = 100
+    ) -> List[MLDecision]:
+        """List ML decisions with optional filters."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM ml_decisions WHERE 1=1"
+            params = []
+
+            if idea_id:
+                query += " AND idea_id = %s"
+                params.append(idea_id)
+            if model_id:
+                query += " AND model_id = %s"
+                params.append(model_id)
+            if experiment_id:
+                query += " AND experiment_id = %s"
+                params.append(experiment_id)
+
+            query += " ORDER BY decision_time DESC LIMIT %s"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            return [MLDecision.from_dict(self._row_to_dict(cursor, r)) for r in cursor.fetchall()]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_ml_decision_action(self, decision_id: int, action: str) -> Optional[MLDecision]:
+        """Update the action_taken for a decision (only valid progressions)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Validate progression
+            valid_progressions = {
+                'ranked': ('presented', 'dismissed'),
+                'presented': ('traded', 'dismissed'),
+            }
+
+            cursor.execute("SELECT action_taken FROM ml_decisions WHERE id = %s", (decision_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            current = row[0]
+            if action not in valid_progressions.get(current, ()):
+                return None
+
+            cursor.execute(
+                "UPDATE ml_decisions SET action_taken = %s WHERE id = %s",
+                (action, decision_id)
+            )
+            conn.commit()
+            return self.get_ml_decision(decision_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_pnl_event(self, event: PnLEvent) -> PnLEvent:
+        """Record a P&L event."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = event.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO pnl_events ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            event.id = cursor.lastrowid
+            conn.commit()
+            return event
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_pnl_events(
+        self,
+        idea_id: Optional[str] = None,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        limit: int = 100
+    ) -> List[PnLEvent]:
+        """List P&L events with optional filters."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM pnl_events WHERE 1=1"
+            params = []
+
+            if idea_id:
+                query += " AND idea_id = %s"
+                params.append(idea_id)
+            if from_date:
+                query += " AND DATE(event_time) >= %s"
+                params.append(from_date)
+            if to_date:
+                query += " AND DATE(event_time) <= %s"
+                params.append(to_date)
+
+            query += " ORDER BY event_time DESC LIMIT %s"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            return [PnLEvent.from_dict(self._row_to_dict(cursor, r)) for r in cursor.fetchall()]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def compute_equity_curve(
+        self,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None
+    ) -> List[dict]:
+        """Compute equity curve from P&L events."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            query = "SELECT event_time, pnl_delta FROM pnl_events WHERE 1=1"
+            params = []
+
+            if from_date:
+                query += " AND DATE(event_time) >= %s"
+                params.append(from_date)
+            if to_date:
+                query += " AND DATE(event_time) <= %s"
+                params.append(to_date)
+
+            query += " ORDER BY event_time ASC"
+
+            cursor.execute(query, params)
+            events = cursor.fetchall()
+
+            curve = []
+            cumulative_pnl = 0.0
+            high_water = 0.0
+
+            for e in events:
+                cumulative_pnl += float(e['pnl_delta'])
+                high_water = max(high_water, cumulative_pnl)
+                drawdown = high_water - cumulative_pnl
+                drawdown_pct = drawdown / high_water if high_water > 0 else 0
+
+                curve.append({
+                    'timestamp': e['event_time'].isoformat() if hasattr(e['event_time'], 'isoformat') else str(e['event_time']),
+                    'cumulativePnl': cumulative_pnl,
+                    'highWater': high_water,
+                    'drawdown': drawdown,
+                    'drawdownPct': drawdown_pct,
+                })
+
+            return curve
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_daily_performance(
+        self,
+        from_date: Optional[str] = None,
+        to_date: Optional[str] = None,
+        limit: int = 30
+    ) -> List[DailyPerformance]:
+        """List daily performance records."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM daily_performance WHERE 1=1"
+            params = []
+
+            if from_date:
+                query += " AND date >= %s"
+                params.append(from_date)
+            if to_date:
+                query += " AND date <= %s"
+                params.append(to_date)
+
+            query += " ORDER BY date DESC LIMIT %s"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            return [DailyPerformance.from_dict(self._row_to_dict(cursor, r)) for r in cursor.fetchall()]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def materialize_daily_performance(self, target_date: str) -> Optional[DailyPerformance]:
+        """Materialize daily performance from P&L events."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            # Get daily metrics
+            cursor.execute("""
+                SELECT
+                    SUM(pnl_delta) as net_pnl,
+                    SUM(pnl_delta + fees + slippage) as gross_pnl,
+                    SUM(fees) as total_fees,
+                    COUNT(DISTINCT idea_id) as trade_count
+                FROM pnl_events
+                WHERE DATE(event_time) = %s
+            """, (target_date,))
+            daily = cursor.fetchone()
+
+            if not daily or daily['net_pnl'] is None:
+                return None
+
+            # Get win/loss counts
+            cursor.execute("""
+                SELECT
+                    COUNT(CASE WHEN total_pnl > 0 THEN 1 END) as win_count,
+                    COUNT(CASE WHEN total_pnl <= 0 THEN 1 END) as loss_count
+                FROM (
+                    SELECT idea_id, SUM(pnl_delta) as total_pnl
+                    FROM pnl_events
+                    WHERE DATE(event_time) = %s
+                    GROUP BY idea_id
+                ) sub
+            """, (target_date,))
+            wl = cursor.fetchone()
+
+            # Get high water and drawdown
+            curve = self.compute_equity_curve(to_date=target_date)
+            high_water = curve[-1]['highWater'] if curve else 0
+            max_dd = max((c['drawdown'] for c in curve), default=0)
+            max_dd_pct = max((c['drawdownPct'] for c in curve), default=0)
+
+            # Get primary model used this day
+            cursor.execute("""
+                SELECT model_id, COUNT(*) as cnt
+                FROM ml_decisions
+                WHERE DATE(decision_time) = %s AND model_id IS NOT NULL
+                GROUP BY model_id
+                ORDER BY cnt DESC
+                LIMIT 1
+            """, (target_date,))
+            model_row = cursor.fetchone()
+
+            # Calculate ML contribution percentage
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN ml_score IS NOT NULL THEN 1 ELSE 0 END) as ml_count
+                FROM ml_decisions
+                WHERE DATE(decision_time) = %s
+            """, (target_date,))
+            ml_stats = cursor.fetchone()
+            ml_contribution = (ml_stats['ml_count'] / ml_stats['total']) if ml_stats and ml_stats['total'] > 0 else 0
+
+            # Upsert record
+            cursor.execute("""
+                INSERT INTO daily_performance
+                    (date, net_pnl, gross_pnl, total_fees, high_water_pnl, max_drawdown, drawdown_pct,
+                     trade_count, win_count, loss_count, primary_model_id, ml_contribution_pct)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    net_pnl = VALUES(net_pnl),
+                    gross_pnl = VALUES(gross_pnl),
+                    total_fees = VALUES(total_fees),
+                    high_water_pnl = VALUES(high_water_pnl),
+                    max_drawdown = VALUES(max_drawdown),
+                    drawdown_pct = VALUES(drawdown_pct),
+                    trade_count = VALUES(trade_count),
+                    win_count = VALUES(win_count),
+                    loss_count = VALUES(loss_count),
+                    primary_model_id = VALUES(primary_model_id),
+                    ml_contribution_pct = VALUES(ml_contribution_pct)
+            """, (
+                target_date,
+                daily['net_pnl'],
+                daily['gross_pnl'],
+                daily['total_fees'],
+                high_water,
+                max_dd,
+                max_dd_pct,
+                daily['trade_count'],
+                wl['win_count'] if wl else 0,
+                wl['loss_count'] if wl else 0,
+                model_row['model_id'] if model_row else None,
+                ml_contribution
+            ))
+            conn.commit()
+
+            # Return the record
+            cursor.execute("SELECT * FROM daily_performance WHERE date = %s", (target_date,))
+            row = cursor.fetchone()
+            return DailyPerformance.from_dict(row) if row else None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_feature_snapshot(self, snapshot: MLFeatureSnapshot) -> MLFeatureSnapshot:
+        """Create a feature snapshot."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = snapshot.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO ml_feature_snapshots ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            snapshot.id = cursor.lastrowid
+            conn.commit()
+            return snapshot
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_feature_snapshot(self, snapshot_id: int) -> Optional[MLFeatureSnapshot]:
+        """Get a feature snapshot by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM ml_feature_snapshots WHERE id = %s", (snapshot_id,))
+            row = cursor.fetchone()
+            if row:
+                return MLFeatureSnapshot.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_ml_models(self, status: Optional[str] = None, limit: int = 20) -> List[MLModel]:
+        """List ML models."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM ml_models WHERE 1=1"
+            params = []
+
+            if status:
+                query += " AND status = %s"
+                params.append(status)
+
+            query += " ORDER BY created_at DESC LIMIT %s"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            return [MLModel.from_dict(self._row_to_dict(cursor, r)) for r in cursor.fetchall()]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_ml_model(self, model_id: int) -> Optional[MLModel]:
+        """Get an ML model by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM ml_models WHERE id = %s", (model_id,))
+            row = cursor.fetchone()
+            if row:
+                return MLModel.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_champion_model(self, regime: Optional[str] = None) -> Optional[MLModel]:
+        """Get the current champion model, optionally for a specific regime."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM ml_models WHERE status = 'champion'"
+            params = []
+
+            if regime:
+                query += " AND JSON_EXTRACT(hyperparameters, '$.regime') = %s"
+                params.append(regime)
+            else:
+                query += " AND (JSON_EXTRACT(hyperparameters, '$.regime') IS NULL OR JSON_EXTRACT(hyperparameters, '$.regime') = 'all')"
+
+            query += " ORDER BY deployed_at DESC LIMIT 1"
+
+            cursor.execute(query, params)
+            row = cursor.fetchone()
+            if row:
+                return MLModel.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_next_model_version(self, model_name: str) -> int:
+        """Get the next version number for a model name."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT COALESCE(MAX(model_version), 0) + 1 FROM ml_models WHERE model_name = %s",
+                (model_name,)
+            )
+            return cursor.fetchone()[0]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_ml_model(self, model: MLModel) -> MLModel:
+        """Register a new ML model."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = model.to_dict()
+            # Encode binary blob
+            if isinstance(data.get('model_blob'), str):
+                import base64
+                data['model_blob'] = base64.b64decode(data['model_blob'])
+
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO ml_models ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            model.id = cursor.lastrowid
+            conn.commit()
+            return model
+        finally:
+            cursor.close()
+            conn.close()
+
+    def deploy_ml_model(self, model_id: int) -> Optional[MLModel]:
+        """Deploy a model as champion (retires current champion)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Retire current champion(s)
+            cursor.execute(
+                "UPDATE ml_models SET status = 'retired', retired_at = NOW() WHERE status = 'champion'"
+            )
+
+            # Promote new champion
+            cursor.execute(
+                "UPDATE ml_models SET status = 'champion', deployed_at = NOW() WHERE id = %s",
+                (model_id,)
+            )
+            conn.commit()
+            return self.get_ml_model(model_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def retire_ml_model(self, model_id: int) -> Optional[MLModel]:
+        """Retire a model."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE ml_models SET status = 'retired', retired_at = NOW() WHERE id = %s",
+                (model_id,)
+            )
+            conn.commit()
+            return self.get_ml_model(model_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_experiments(self, status: Optional[str] = None, limit: int = 20) -> List[MLExperiment]:
+        """List ML experiments."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM ml_experiments WHERE 1=1"
+            params = []
+
+            if status:
+                query += " AND status = %s"
+                params.append(status)
+
+            query += " ORDER BY started_at DESC LIMIT %s"
+            params.append(limit)
+
+            cursor.execute(query, params)
+            return [MLExperiment.from_dict(self._row_to_dict(cursor, r)) for r in cursor.fetchall()]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_experiment(self, experiment_id: int) -> Optional[MLExperiment]:
+        """Get an ML experiment by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT * FROM ml_experiments WHERE id = %s", (experiment_id,))
+            row = cursor.fetchone()
+            if row:
+                return MLExperiment.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_experiment(self, experiment: MLExperiment) -> MLExperiment:
+        """Create a new A/B experiment."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = experiment.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO ml_experiments ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            experiment.id = cursor.lastrowid
+            conn.commit()
+            return experiment
+        finally:
+            cursor.close()
+            conn.close()
+
+    def evaluate_experiment(self, experiment_id: int) -> Optional[dict]:
+        """Evaluate experiment results."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            experiment = self.get_experiment(experiment_id)
+            if not experiment:
+                return None
+
+            # Get outcomes by arm
+            def get_outcomes(arm: str):
+                cursor.execute("""
+                    SELECT
+                        d.idea_id,
+                        d.original_score,
+                        d.ml_score,
+                        d.final_score,
+                        t.settlement_pnl
+                    FROM ml_decisions d
+                    LEFT JOIN tracked_ideas t ON d.idea_id = t.id
+                    WHERE d.experiment_id = %s
+                      AND d.experiment_arm = %s
+                      AND d.action_taken = 'traded'
+                      AND t.settlement_status = 'settled'
+                """, (experiment_id, arm))
+                return cursor.fetchall()
+
+            champion_outcomes = get_outcomes('champion')
+            challenger_outcomes = get_outcomes('challenger')
+
+            if not champion_outcomes or not challenger_outcomes:
+                return {
+                    'championMetrics': {'sampleCount': len(champion_outcomes)},
+                    'challengerMetrics': {'sampleCount': len(challenger_outcomes)},
+                    'pValue': 1.0,
+                    'significant': False,
+                    'winner': 'no_difference',
+                }
+
+            # Calculate metrics
+            def calc_metrics(outcomes):
+                wins = sum(1 for o in outcomes if (o.get('settlement_pnl') or 0) > 0)
+                pnls = [float(o.get('settlement_pnl') or 0) for o in outcomes]
+                return {
+                    'winRate': wins / len(outcomes) if outcomes else 0,
+                    'avgPnl': sum(pnls) / len(pnls) if pnls else 0,
+                    'sampleCount': len(outcomes),
+                }
+
+            ch_metrics = calc_metrics(champion_outcomes)
+            cl_metrics = calc_metrics(challenger_outcomes)
+
+            # Simple p-value estimate (would use scipy in production)
+            # For now, use a basic approximation
+            p_value = 0.5  # Placeholder - real implementation would use statistical test
+
+            return {
+                'championMetrics': ch_metrics,
+                'challengerMetrics': cl_metrics,
+                'pValue': p_value,
+                'significant': p_value < 0.05,
+                'winner': 'challenger' if cl_metrics['avgPnl'] > ch_metrics['avgPnl'] and p_value < 0.05 else 'champion',
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def conclude_experiment(
+        self,
+        experiment_id: int,
+        winner: str,
+        promote_challenger: bool = False
+    ) -> Optional[MLExperiment]:
+        """Conclude an experiment."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            experiment = self.get_experiment(experiment_id)
+            if not experiment or experiment.status != 'running':
+                return None
+
+            cursor.execute(
+                "UPDATE ml_experiments SET status = 'concluded', ended_at = NOW(), winner = %s WHERE id = %s",
+                (winner, experiment_id)
+            )
+
+            if promote_challenger and winner == 'challenger':
+                self.deploy_ml_model(experiment.challenger_model_id)
+
+            conn.commit()
+            return self.get_experiment(experiment_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def abort_experiment(self, experiment_id: int, reason: Optional[str] = None) -> Optional[MLExperiment]:
+        """Abort an experiment."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE ml_experiments SET status = 'aborted', ended_at = NOW() WHERE id = %s AND status = 'running'",
+                (experiment_id,)
+            )
+            conn.commit()
+            if cursor.rowcount > 0:
+                return self.get_experiment(experiment_id)
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_circuit_breaker_status(self) -> dict:
+        """Get circuit breaker status from settings/metrics."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            # Get daily P&L
+            cursor.execute("""
+                SELECT SUM(pnl_delta) as daily_pnl
+                FROM pnl_events
+                WHERE DATE(event_time) = CURDATE()
+            """)
+            daily = cursor.fetchone()
+
+            # Get ML enabled setting
+            ml_enabled = self.get_setting('ml_enabled')
+            is_enabled = ml_enabled.value != 'false' if ml_enabled else True
+
+            return {
+                'dailyPnl': float(daily['daily_pnl'] or 0) if daily else 0,
+                'mlEnabled': is_enabled,
+                'breakers': {
+                    'dailyLossLimit': {'triggered': False, 'threshold': 5000},
+                    'maxDrawdown': {'triggered': False, 'threshold': 0.20},
+                    'orderRate': {'triggered': False, 'threshold': 10},
+                },
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def check_circuit_breakers(self) -> dict:
+        """Check all circuit breakers and return status."""
+        status = self.get_circuit_breaker_status()
+
+        triggered = []
+        allow_trade = True
+        action = 'allow'
+
+        # Check daily loss limit
+        if status['dailyPnl'] < -5000:
+            triggered.append({'name': 'dailyLossLimit', 'severity': 'critical'})
+            allow_trade = False
+            action = 'block_all'
+
+        # Check ML enabled
+        if not status['mlEnabled']:
+            triggered.append({'name': 'mlKillSwitch', 'severity': 'warning'})
+            action = 'rules_only'
+
+        return {
+            'allowTrade': allow_trade,
+            'triggeredBreakers': triggered,
+            'action': action,
+        }
+
+    def set_ml_enabled(self, enabled: bool) -> None:
+        """Set ML enabled/disabled setting."""
+        setting = Setting(key='ml_enabled', value='true' if enabled else 'false')
+        self.set_setting(setting)
 
 
 class VersionConflictError(Exception):
