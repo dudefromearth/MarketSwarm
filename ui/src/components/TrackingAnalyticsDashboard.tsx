@@ -132,6 +132,7 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
   const [params, setParams] = useState<SelectorParams[]>([]);
   const [activeParams, setActiveParams] = useState<SelectorParams | null>(null);
   const [activeTrades, setActiveTrades] = useState<ActiveTrade[]>([]);
+  const [totalActiveCount, setTotalActiveCount] = useState<number>(0);
   const [trackingStats, setTrackingStats] = useState<TrackingStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -141,13 +142,16 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
   const fetchCurrentData = useCallback(async () => {
     try {
       const [activeRes, statsRes] = await Promise.all([
-        fetch('/api/models/trade_tracking/active', { credentials: 'include' }),
+        fetch('/api/models/trade_tracking/active?limit=100', { credentials: 'include' }),
         fetch('/api/models/trade_tracking/stats', { credentials: 'include' }),
       ]);
 
       if (activeRes.ok) {
         const data = await activeRes.json();
-        if (data.success) setActiveTrades(data.data.trades || []);
+        if (data.success) {
+          setActiveTrades(data.data.trades || []);
+          setTotalActiveCount(data.data.total || data.data.count || 0);
+        }
       }
 
       if (statsRes.ok) {
@@ -161,15 +165,112 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
 
   const fetchHistoricalData = useCallback(async () => {
     try {
-      const [analyticsRes, paramsRes, activeParamsRes] = await Promise.all([
-        fetch('/api/admin/tracking/analytics', { credentials: 'include' }),
+      // Fetch from Redis history (same source as Current mode) for consistency
+      const [historyRes, paramsRes, activeParamsRes] = await Promise.all([
+        fetch('/api/models/trade_tracking/history?limit=500', { credentials: 'include' }),
         fetch('/api/admin/tracking/params', { credentials: 'include' }),
         fetch('/api/admin/tracking/params/active', { credentials: 'include' }),
       ]);
 
-      if (analyticsRes.ok) {
-        const data = await analyticsRes.json();
-        if (data.success) setAnalytics(data.data);
+      // Check for auth/permission errors
+      if (historyRes.status === 401 || historyRes.status === 403) {
+        throw new Error('Admin access required to view historical analytics');
+      }
+
+      if (historyRes.ok) {
+        const data = await historyRes.json();
+        if (data.success && data.data?.trades) {
+          const trades = data.data.trades;
+
+          // Compute analytics from Redis history
+          const total = trades.length;
+          const winners = trades.filter((t: any) => t.is_winner).length;
+          const totalPnl = trades.reduce((sum: number, t: any) => sum + (Number(t.final_pnl) || 0), 0);
+          const totalMaxPnl = trades.reduce((sum: number, t: any) => sum + (Number(t.max_pnl) || 0), 0);
+          const totalCapture = trades.reduce((sum: number, t: any) => sum + (Number(t.pnl_captured_pct) || 0), 0);
+
+          // By Rank
+          const byRankMap: Record<number, { count: number; wins: number; totalPnl: number; totalMaxPnl: number; totalCapture: number }> = {};
+          trades.forEach((t: any) => {
+            const rank = t.entry_rank || 0;
+            if (!byRankMap[rank]) byRankMap[rank] = { count: 0, wins: 0, totalPnl: 0, totalMaxPnl: 0, totalCapture: 0 };
+            byRankMap[rank].count++;
+            if (t.is_winner) byRankMap[rank].wins++;
+            byRankMap[rank].totalPnl += Number(t.final_pnl) || 0;
+            byRankMap[rank].totalMaxPnl += Number(t.max_pnl) || 0;
+            byRankMap[rank].totalCapture += Number(t.pnl_captured_pct) || 0;
+          });
+
+          // By Regime
+          const byRegimeMap: Record<string, { count: number; wins: number; totalPnl: number; totalCapture: number }> = {};
+          trades.forEach((t: any) => {
+            const regime = t.entry_regime || 'unknown';
+            if (!byRegimeMap[regime]) byRegimeMap[regime] = { count: 0, wins: 0, totalPnl: 0, totalCapture: 0 };
+            byRegimeMap[regime].count++;
+            if (t.is_winner) byRegimeMap[regime].wins++;
+            byRegimeMap[regime].totalPnl += Number(t.final_pnl) || 0;
+            byRegimeMap[regime].totalCapture += Number(t.pnl_captured_pct) || 0;
+          });
+
+          // By Strategy
+          const byStrategyMap: Record<string, { strategy: string; side: string; count: number; wins: number; totalPnl: number; totalCapture: number }> = {};
+          trades.forEach((t: any) => {
+            const key = `${t.strategy}|${t.side}`;
+            if (!byStrategyMap[key]) byStrategyMap[key] = { strategy: t.strategy, side: t.side, count: 0, wins: 0, totalPnl: 0, totalCapture: 0 };
+            byStrategyMap[key].count++;
+            if (t.is_winner) byStrategyMap[key].wins++;
+            byStrategyMap[key].totalPnl += Number(t.final_pnl) || 0;
+            byStrategyMap[key].totalCapture += Number(t.pnl_captured_pct) || 0;
+          });
+
+          setAnalytics({
+            overall: {
+              total_ideas: total,
+              win_count: winners,
+              win_rate: total > 0 ? (winners / total) * 100 : 0,
+              avg_pnl: total > 0 ? totalPnl / total : 0,
+              avg_max_pnl: total > 0 ? totalMaxPnl / total : 0,
+              avg_capture_rate: total > 0 ? totalCapture / total : 0,
+            },
+            byRank: Object.entries(byRankMap)
+              .map(([rank, d]) => ({
+                entry_rank: Number(rank),
+                count: d.count,
+                wins: d.wins,
+                win_rate: d.count > 0 ? (d.wins / d.count) * 100 : 0,
+                avg_pnl: d.count > 0 ? d.totalPnl / d.count : 0,
+                avg_max_pnl: d.count > 0 ? d.totalMaxPnl / d.count : 0,
+                avg_capture_rate: d.count > 0 ? d.totalCapture / d.count : 0,
+              }))
+              .sort((a, b) => a.entry_rank - b.entry_rank),
+            byRegime: Object.entries(byRegimeMap)
+              .map(([regime, d]) => ({
+                entry_regime: regime,
+                count: d.count,
+                wins: d.wins,
+                win_rate: d.count > 0 ? (d.wins / d.count) * 100 : 0,
+                avg_pnl: d.count > 0 ? d.totalPnl / d.count : 0,
+                avg_capture_rate: d.count > 0 ? d.totalCapture / d.count : 0,
+              }))
+              .sort((a, b) => b.count - a.count),
+            byStrategy: Object.values(byStrategyMap)
+              .map((d) => ({
+                strategy: d.strategy,
+                side: d.side,
+                count: d.count,
+                wins: d.wins,
+                win_rate: d.count > 0 ? (d.wins / d.count) * 100 : 0,
+                avg_pnl: d.count > 0 ? d.totalPnl / d.count : 0,
+                avg_capture_rate: d.count > 0 ? d.totalCapture / d.count : 0,
+              }))
+              .sort((a, b) => b.count - a.count),
+            exitTiming: [], // Not available from Redis history
+          });
+        } else {
+          throw new Error(data.error || 'Failed to load history data');
+        }
+      } else {
+        throw new Error(`History request failed: ${historyRes.status}`);
       }
 
       if (paramsRes.ok) {
@@ -183,6 +284,7 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
       }
     } catch (err) {
       console.error('[TrackingAnalytics] Historical data error:', err);
+      throw err; // Re-throw so fetchData can catch and set error state
     }
   }, []);
 
@@ -249,11 +351,17 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
 
   if (!isOpen) return null;
 
-  const formatPct = (val: number | null) => val != null ? `${val.toFixed(1)}%` : '-';
-  const formatPnl = (val: number | null) => {
+  const formatPct = (val: number | string | null) => {
     if (val == null) return '-';
-    const color = val > 0 ? '#22c55e' : val < 0 ? '#ef4444' : '#94a3b8';
-    return <span style={{ color }}>${val.toFixed(2)}</span>;
+    const num = typeof val === 'string' ? parseFloat(val) : val;
+    return isNaN(num) ? '-' : `${num.toFixed(1)}%`;
+  };
+  const formatPnl = (val: number | string | null) => {
+    if (val == null) return '-';
+    const num = typeof val === 'string' ? parseFloat(val) : val;
+    if (isNaN(num)) return '-';
+    const color = num > 0 ? '#22c55e' : num < 0 ? '#ef4444' : '#94a3b8';
+    return <span style={{ color }}>${num.toFixed(2)}</span>;
   };
 
   const getRegimeColor = (regime: string) => {
@@ -353,7 +461,7 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
                 <div className="current-summary">
                   <div className="summary-stats-grid">
                     <div className="summary-stat">
-                      <div className="summary-value">{activeTrades.length}</div>
+                      <div className="summary-value">{totalActiveCount}</div>
                       <div className="summary-label">Active Ideas</div>
                     </div>
                     <div className="summary-stat">
@@ -434,7 +542,7 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
                             <td className={`side-${trade.side}`}>{trade.side}</td>
                             <td>{trade.width}w</td>
                             <td>{trade.dte}</td>
-                            <td>${trade.debit.toFixed(2)}</td>
+                            <td>${Number(trade.debit).toFixed(2)}</td>
                             <td>{formatPnl(trade.current_pnl)}</td>
                             <td>{formatPnl(trade.max_pnl)}</td>
                             <td style={{ color: getRegimeColor(trade.entry_regime) }}>
@@ -442,9 +550,9 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
                             </td>
                             <td style={{ fontSize: '0.85em', color: '#94a3b8' }}>
                               {trade.entry_gex_flip ? (
-                                <span title={`Strike ${trade.entry_gex_flip > trade.strike ? 'below' : 'above'} GEX flip`}>
-                                  {trade.entry_gex_flip.toFixed(0)}
-                                  {trade.entry_gex_flip > trade.strike ? ' ↑' : ' ↓'}
+                                <span title={`Strike ${Number(trade.entry_gex_flip) > Number(trade.strike) ? 'below' : 'above'} GEX flip`}>
+                                  {Number(trade.entry_gex_flip).toFixed(0)}
+                                  {Number(trade.entry_gex_flip) > Number(trade.strike) ? ' ↑' : ' ↓'}
                                 </span>
                               ) : '-'}
                             </td>
@@ -657,6 +765,10 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
               {loading && <div className="loading">Loading analytics...</div>}
               {error && <div className="error">{error}</div>}
 
+              {!loading && !error && !analytics && (
+                <div className="no-data">No historical analytics data available</div>
+              )}
+
               {!loading && !error && activeTab === 'overview' && analytics?.overall && (
                 <div className="overview-tab">
                   <div className="stats-grid">
@@ -699,7 +811,7 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
                         {Object.entries(activeParams.weights || {}).map(([key, val]) => (
                           <div key={key} className="weight-item">
                             <span className="weight-label">{key}</span>
-                            <span className="weight-value">{((val as number) * 100).toFixed(0)}%</span>
+                            <span className="weight-value">{(Number(val) * 100).toFixed(0)}%</span>
                           </div>
                         ))}
                       </div>
@@ -754,8 +866,8 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
                           {analytics.exitTiming.map((row) => (
                             <tr key={row.entry_rank}>
                               <td>#{row.entry_rank}</td>
-                              <td>{row.avg_days_to_max?.toFixed(1) || '-'}</td>
-                              <td>{row.avg_dte_at_max?.toFixed(1) || '-'}</td>
+                              <td>{row.avg_days_to_max != null ? Number(row.avg_days_to_max).toFixed(1) : '-'}</td>
+                              <td>{row.avg_dte_at_max != null ? Number(row.avg_dte_at_max).toFixed(1) : '-'}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -848,15 +960,15 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
                           <div className="params-weights">
                             {Object.entries(p.weights || {}).map(([key, val]) => (
                               <span key={key} className="weight-badge">
-                                {key}: {((val as number) * 100).toFixed(0)}%
+                                {key}: {(Number(val) * 100).toFixed(0)}%
                               </span>
                             ))}
                           </div>
                           {p.performance && p.performance.totalIdeas > 0 && (
                             <div className="params-performance">
                               <span>Ideas: {p.performance.totalIdeas}</span>
-                              <span>Win Rate: {p.performance.winRate?.toFixed(1) || 0}%</span>
-                              <span>Avg P&L: ${p.performance.avgPnl?.toFixed(2) || '0.00'}</span>
+                              <span>Win Rate: {Number(p.performance.winRate || 0).toFixed(1)}%</span>
+                              <span>Avg P&L: ${Number(p.performance.avgPnl || 0).toFixed(2)}</span>
                             </div>
                           )}
                         </div>

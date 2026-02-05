@@ -106,7 +106,7 @@ export default function VolumeProfileSettings({ config, onConfigChange, onSaveDe
             <input
               type="range"
               min="20"
-              max="1000"
+              max="200"
               step="10"
               value={localConfig.numBins}
               onChange={(e) => handleChange('numBins', parseInt(e.target.value))}

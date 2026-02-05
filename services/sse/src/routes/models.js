@@ -440,8 +440,10 @@ router.get("/trade_tracking/stats", requireAdmin, async (req, res) => {
 });
 
 // GET /api/models/trade_tracking/active - List of active tracked trades
+// Query params: limit (default 100, max 500)
 router.get("/trade_tracking/active", requireAdmin, async (req, res) => {
   try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);
     const redis = getMarketRedis();
     const activeRaw = await redis.hgetall("massive:selector:tracking:active");
 
@@ -458,11 +460,15 @@ router.get("/trade_tracking/active", requireAdmin, async (req, res) => {
     // Sort by entry time descending (newest first)
     trades.sort((a, b) => (b.entry_ts || 0) - (a.entry_ts || 0));
 
+    // Apply limit after sorting
+    const limitedTrades = trades.slice(0, limit);
+
     res.json({
       success: true,
       data: {
-        count: trades.length,
-        trades,
+        count: limitedTrades.length,
+        total: trades.length,
+        trades: limitedTrades,
       },
       ts: Date.now(),
     });

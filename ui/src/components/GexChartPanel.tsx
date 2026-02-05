@@ -97,19 +97,11 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 /**
- * Calculate Volume Profile using TradingView's VRVP algorithm
- *
- * TradingView's approach:
- * 1. Divide price range into N rows (bins)
- * 2. For each data point, calculate which bin(s) it overlaps
- * 3. Distribute volume proportionally based on overlap
- *
- * Since our data is pre-aggregated at specific price levels (not OHLCV candles),
- * each point contributes to the bin containing its price.
+ * Calculate Volume Profile with binning
  *
  * @param levels - Volume data at specific price levels
- * @param numBins - Number of rows/bins to create (20-1000)
- * @returns Rebinned volume profile data
+ * @param numBins - Number of rows/bins to create (20-200)
+ * @returns Binned volume profile data
  */
 function calculateVolumeProfile(
   levels: VolumeProfileLevel[],
@@ -126,41 +118,33 @@ function calculateVolumeProfile(
   if (priceRange <= 0) return { levels, maxVolume: Math.max(...levels.map(l => l.volume)) };
 
   // Clamp numBins to valid range
-  const effectiveBins = Math.max(20, Math.min(1000, numBins));
-
-  // TradingView formula: Ticks Per Row = (High - Low) / Number of Rows
+  const effectiveBins = Math.max(20, Math.min(200, numBins));
   const binSize = priceRange / effectiveBins;
 
-  // Initialize bins
+  // Bin the raw data
   const bins: number[] = new Array(effectiveBins).fill(0);
 
-  // TradingView algorithm: assign each data point's volume to overlapping bins
-  // Since our data points are at specific prices (not ranges), each point
-  // goes into the bin containing that price
   for (const level of levels) {
-    // Calculate which bin this price falls into
     let binIndex = Math.floor((level.price - minPrice) / binSize);
-
-    // Handle edge case where price equals maxPrice
     if (binIndex >= effectiveBins) binIndex = effectiveBins - 1;
     if (binIndex < 0) binIndex = 0;
-
     bins[binIndex] += level.volume;
   }
 
-  // Convert bins back to levels with price at bin center
-  const rebinnedLevels: VolumeProfileLevel[] = [];
+  // Convert back to levels
+  const binnedLevels: VolumeProfileLevel[] = [];
   let maxVolume = 0;
 
   for (let i = 0; i < effectiveBins; i++) {
-    if (bins[i] > 0) {
-      const price = minPrice + (i + 0.5) * binSize; // Center of bin
-      rebinnedLevels.push({ price, volume: bins[i] });
-      maxVolume = Math.max(maxVolume, bins[i]);
+    const volume = bins[i];
+    if (volume > 0) {
+      const price = minPrice + (i + 0.5) * binSize;
+      binnedLevels.push({ price, volume });
+      maxVolume = Math.max(maxVolume, volume);
     }
   }
 
-  return { levels: rebinnedLevels, maxVolume };
+  return { levels: binnedLevels, maxVolume };
 }
 
 export default function GexChartPanel({
@@ -221,7 +205,7 @@ export default function GexChartPanel({
       try {
         const apiSymbol = symbol.startsWith('I:') ? symbol : `I:${symbol}`;
         const encodedSymbol = encodeURIComponent(apiSymbol);
-        const response = await fetch(`/api/models/candles/${encodedSymbol}?days=5`, {
+        const response = await fetch(`/api/models/candles/${encodedSymbol}?days=20`, {
           credentials: 'include',
         });
         const data = await response.json();
@@ -277,7 +261,7 @@ export default function GexChartPanel({
       },
       rightPriceScale: {
         borderColor: 'rgba(30, 41, 59, 1)',
-        scaleMargins: { top: 0.05, bottom: 0.05 },
+        scaleMargins: { top: 0.08, bottom: 0.08 },  // More margin for broader view
       },
       timeScale: {
         borderColor: 'rgba(30, 41, 59, 1)',
@@ -452,6 +436,10 @@ export default function GexChartPanel({
     }
   }, [candles, chartReady]);
 
+  // VP Structural Levels - will be derived from actual VP data in the future
+  // For now, let the chart auto-scale based on candle data
+  // TODO: Implement VP structural analysis to dynamically identify nodes/wells/edges
+
   // Calculate GEX bars for the separate panel with pixel-accurate positioning
   const gexBars = useMemo(() => {
     if (!gexConfig.enabled || !priceRange || gexPanelHeight === 0) return [];
@@ -520,8 +508,7 @@ export default function GexChartPanel({
       volume: Math.min(level.volume, volumeCap),
     }));
 
-    // Step 2: Calculate volume profile using TradingView VRVP algorithm
-    // numBins controls resolution: fewer bins = smoother, more bins = detailed
+    // Step 2: Calculate volume profile - bin the data into rows
     const { levels: rebinnedLevels, maxVolume: rebinnedMax } = calculateVolumeProfile(
       cappedLevels,
       vpConfig.numBins
