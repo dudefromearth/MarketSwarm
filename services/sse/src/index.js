@@ -12,7 +12,7 @@ import { setConfig as setKeyConfig } from "./keys.js";
 import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, subscribeAlertsPubSub, stopPolling, getClientStats } from "./routes/sse.js";
 import modelsRoutes from "./routes/models.js";
 import authRoutes from "./routes/auth.js";
-import adminRoutes from "./routes/admin.js";
+import adminRoutes, { startActivityTracking, stopActivityTracking } from "./routes/admin.js";
 import { authMiddleware, logAuthConfig } from "./auth.js";
 import { initDb, closeDb } from "./db/index.js";
 
@@ -103,6 +103,7 @@ async function shutdown(signal) {
   console.log(`\n[sse] Received ${signal}, shutting down...`);
   stopPolling();
   stopHeartbeat();
+  stopActivityTracking();
   await closeRedis();
   await closeDb();
   process.exit(0);
@@ -132,6 +133,11 @@ async function main() {
 
   // Initialize database (now that config is loaded with DATABASE_URL)
   await initDb();
+
+  // Start activity tracking (after db is ready)
+  console.log("[sse] About to call startActivityTracking...");
+  startActivityTracking();
+  console.log("[sse] startActivityTracking returned");
 
   // Initialize key resolver from config
   setKeyConfig(config);

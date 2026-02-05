@@ -12,6 +12,14 @@ const router = Router();
 // Track connected clients with user info
 const connectedUsers = new Map(); // sessionId -> { displayName, email, connectedAt }
 
+// Activity tracking interval
+const SNAPSHOT_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const SNAPSHOT_RETENTION_DAYS = 90;
+
+let activitySnapshotInterval = null;
+let cleanupInterval = null;
+
 /**
  * Register a connected user (called from SSE routes)
  */
@@ -374,6 +382,13 @@ router.get("/users/:id/trades", requireAdmin, async (req, res) => {
       },
     });
   } catch (err) {
+    // If table doesn't exist, return empty data
+    if (err.code === "ER_NO_SUCH_TABLE") {
+      return res.json({
+        trades: [],
+        pagination: { page, limit, total: 0, totalPages: 0 },
+      });
+    }
     console.error("[admin] Error fetching user trades:", err);
     res.status(500).json({ error: "Failed to fetch trades" });
   }
@@ -789,6 +804,287 @@ router.post("/tracking/params/:version/activate", requireAdmin, async (req, res)
   } catch (err) {
     console.error("[admin] activate params error:", err.message);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// =============================================================================
+// Activity Tracking
+// =============================================================================
+
+/**
+ * Record a snapshot of currently online users
+ */
+async function recordActivitySnapshot() {
+  if (!isDbAvailable()) {
+    console.log("[admin] Activity snapshot skipped: database unavailable");
+    return;
+  }
+
+  const pool = getPool();
+  const onlineEmails = getOnlineEmails();
+
+  console.log(`[admin] Activity snapshot: ${onlineEmails.size} online emails detected`);
+
+  if (onlineEmails.size === 0) return;
+
+  const now = new Date();
+  const snapshotTime = now.toISOString().slice(0, 19).replace("T", " ");
+
+  try {
+    // Get user IDs for online emails
+    const emailList = Array.from(onlineEmails);
+    const placeholders = emailList.map(() => "?").join(",");
+    const [users] = await pool.execute(
+      `SELECT id FROM users WHERE email IN (${placeholders})`,
+      emailList
+    );
+
+    if (users.length === 0) return;
+
+    // Insert snapshot records
+    const values = users.map((u) => [snapshotTime, u.id]);
+    const insertPlaceholders = values.map(() => "(?, ?)").join(",");
+    const flatValues = values.flat();
+
+    await pool.execute(
+      `INSERT INTO user_activity_snapshots (snapshot_time, user_id) VALUES ${insertPlaceholders}`,
+      flatValues
+    );
+
+    // Update hourly aggregate
+    const hourStart = new Date(now);
+    hourStart.setMinutes(0, 0, 0);
+    const hourStartStr = hourStart.toISOString().slice(0, 19).replace("T", " ");
+
+    await pool.execute(
+      `INSERT INTO hourly_activity_aggregates (hour_start, user_count)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE user_count = GREATEST(user_count, ?)`,
+      [hourStartStr, users.length, users.length]
+    );
+
+    console.log(`[admin] Activity snapshot recorded: ${users.length} users at ${snapshotTime}`);
+  } catch (err) {
+    console.error("[admin] Error recording activity snapshot:", err.message);
+    console.error("[admin] Full error:", err);
+  }
+}
+
+/**
+ * Clean up old activity snapshots
+ */
+async function cleanupOldSnapshots() {
+  if (!isDbAvailable()) return;
+
+  const pool = getPool();
+
+  try {
+    const [result] = await pool.execute(
+      `DELETE FROM user_activity_snapshots
+       WHERE snapshot_time < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+      [SNAPSHOT_RETENTION_DAYS]
+    );
+
+    if (result.affectedRows > 0) {
+      console.log(`[admin] Cleaned up ${result.affectedRows} old activity snapshots`);
+    }
+
+    // Also clean up old hourly aggregates
+    const [aggResult] = await pool.execute(
+      `DELETE FROM hourly_activity_aggregates
+       WHERE hour_start < DATE_SUB(NOW(), INTERVAL ? DAY)`,
+      [SNAPSHOT_RETENTION_DAYS]
+    );
+
+    if (aggResult.affectedRows > 0) {
+      console.log(`[admin] Cleaned up ${aggResult.affectedRows} old hourly aggregates`);
+    }
+  } catch (err) {
+    console.error("[admin] Error cleaning up old snapshots:", err.message);
+  }
+}
+
+/**
+ * Start activity tracking (called from index.js after initDb)
+ */
+export function startActivityTracking() {
+  console.log("[admin] startActivityTracking() called");
+  if (activitySnapshotInterval) {
+    console.log("[admin] Activity tracking already running, skipping");
+    return;
+  }
+
+  // Delay initial snapshot by 30 seconds to let users reconnect after restart
+  setTimeout(() => {
+    recordActivitySnapshot();
+    console.log("[admin] Initial activity snapshot taken");
+  }, 30 * 1000);
+
+  // Schedule regular snapshots
+  activitySnapshotInterval = setInterval(recordActivitySnapshot, SNAPSHOT_INTERVAL_MS);
+  console.log(`[admin] Activity tracking started (every ${SNAPSHOT_INTERVAL_MS / 60000} min, first snapshot in 30s)`);
+
+  // Schedule daily cleanup
+  cleanupInterval = setInterval(cleanupOldSnapshots, CLEANUP_INTERVAL_MS);
+
+  // Run initial cleanup
+  cleanupOldSnapshots();
+}
+
+/**
+ * Stop activity tracking (called from index.js on shutdown)
+ */
+export function stopActivityTracking() {
+  if (activitySnapshotInterval) {
+    clearInterval(activitySnapshotInterval);
+    activitySnapshotInterval = null;
+  }
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
+  }
+  console.log("[admin] Activity tracking stopped");
+}
+
+/**
+ * GET /api/admin/activity/hourly
+ * Returns peak usage data over the specified number of days
+ */
+router.get("/activity/hourly", requireAdmin, async (req, res) => {
+  if (!isDbAvailable()) {
+    return res.status(503).json({ error: "Database unavailable" });
+  }
+
+  const pool = getPool();
+  const days = parseInt(req.query.days) || 7;
+
+  try {
+    const [rows] = await pool.execute(
+      `SELECT hour_start, user_count
+       FROM hourly_activity_aggregates
+       WHERE hour_start >= DATE_SUB(NOW(), INTERVAL ? DAY)
+       ORDER BY hour_start ASC`,
+      [days]
+    );
+
+    // Calculate busiest hours
+    const hourlyTotals = {};
+    for (let i = 0; i < 24; i++) {
+      hourlyTotals[i] = { count: 0, total: 0 };
+    }
+
+    rows.forEach((row) => {
+      const hour = new Date(row.hour_start).getHours();
+      hourlyTotals[hour].count++;
+      hourlyTotals[hour].total += row.user_count;
+    });
+
+    const busiestHours = Object.entries(hourlyTotals)
+      .map(([hour, data]) => ({
+        hour: parseInt(hour),
+        avgUsers: data.count > 0 ? data.total / data.count : 0,
+      }))
+      .sort((a, b) => b.avgUsers - a.avgUsers)
+      .slice(0, 3);
+
+    res.json({
+      data: rows.map((r) => ({
+        hour_start: r.hour_start,
+        user_count: r.user_count,
+      })),
+      busiestHours,
+      days,
+    });
+  } catch (err) {
+    // If table doesn't exist, return empty data instead of error
+    if (err.code === "ER_NO_SUCH_TABLE") {
+      return res.json({ data: [], busiestHours: [], days });
+    }
+    console.error("[admin] Error fetching hourly activity:", err);
+    res.status(500).json({ error: "Failed to fetch activity data" });
+  }
+});
+
+/**
+ * GET /api/admin/users/:id/activity
+ * Returns activity heatmap data for a specific user
+ */
+router.get("/users/:id/activity", requireAdmin, async (req, res) => {
+  if (!isDbAvailable()) {
+    return res.status(503).json({ error: "Database unavailable" });
+  }
+
+  const pool = getPool();
+  const userId = req.params.id;
+  const days = parseInt(req.query.days) || 30;
+
+  try {
+    // Get activity counts by day of week and hour
+    const [rows] = await pool.execute(
+      `SELECT
+         DAYOFWEEK(snapshot_time) as day_of_week,
+         HOUR(snapshot_time) as hour_of_day,
+         COUNT(*) as session_count
+       FROM user_activity_snapshots
+       WHERE user_id = ?
+         AND snapshot_time >= DATE_SUB(NOW(), INTERVAL ? DAY)
+       GROUP BY DAYOFWEEK(snapshot_time), HOUR(snapshot_time)`,
+      [userId, days]
+    );
+
+    // Build heatmap data (7 days x 24 hours)
+    // Initialize with zeros
+    const heatmapData = [];
+    for (let day = 0; day < 7; day++) {
+      for (let hour = 0; hour < 24; hour++) {
+        heatmapData.push([hour, day, 0]);
+      }
+    }
+
+    // Fill in actual values
+    // MySQL DAYOFWEEK: 1=Sunday, 2=Monday, ..., 7=Saturday
+    // We want: 0=Sunday, 1=Monday, ..., 6=Saturday
+    rows.forEach((row) => {
+      const dayIndex = row.day_of_week - 1; // Convert to 0-indexed
+      const hourIndex = row.hour_of_day;
+      const index = dayIndex * 24 + hourIndex;
+      if (index >= 0 && index < heatmapData.length) {
+        heatmapData[index][2] = row.session_count;
+      }
+    });
+
+    // Calculate total active time (each snapshot = 15 min)
+    const totalSnapshots = rows.reduce((sum, r) => sum + r.session_count, 0);
+    const totalMinutes = totalSnapshots * 15;
+    const totalHours = Math.floor(totalMinutes / 60);
+    const remainingMinutes = totalMinutes % 60;
+
+    res.json({
+      heatmapData,
+      totalActiveTime: {
+        hours: totalHours,
+        minutes: remainingMinutes,
+        formatted: `${totalHours}h ${remainingMinutes}m`,
+      },
+      days,
+    });
+  } catch (err) {
+    // If table doesn't exist, return empty data instead of error
+    if (err.code === "ER_NO_SUCH_TABLE") {
+      const emptyHeatmap = [];
+      for (let day = 0; day < 7; day++) {
+        for (let hour = 0; hour < 24; hour++) {
+          emptyHeatmap.push([hour, day, 0]);
+        }
+      }
+      return res.json({
+        heatmapData: emptyHeatmap,
+        totalActiveTime: { hours: 0, minutes: 0, formatted: "0h 0m" },
+        days,
+      });
+    }
+    console.error("[admin] Error fetching user activity:", err);
+    res.status(500).json({ error: "Failed to fetch user activity" });
   }
 });
 

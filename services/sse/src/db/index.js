@@ -97,8 +97,38 @@ async function createTables() {
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   `;
 
+  // Activity tracking tables
+  const createActivitySnapshotsTable = `
+    CREATE TABLE IF NOT EXISTS user_activity_snapshots (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      snapshot_time DATETIME NOT NULL,
+      user_id INT NOT NULL,
+      INDEX idx_user_snapshot (user_id, snapshot_time),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+
+  const createHourlyAggregatesTable = `
+    CREATE TABLE IF NOT EXISTS hourly_activity_aggregates (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      hour_start DATETIME NOT NULL,
+      user_count INT NOT NULL DEFAULT 0,
+      UNIQUE KEY uq_hour (hour_start)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+
   try {
     await pool.execute(createUsersTable);
+
+    // Create activity tracking tables (separate try-catch so users table still works if these fail)
+    try {
+      await pool.execute(createActivitySnapshotsTable);
+      await pool.execute(createHourlyAggregatesTable);
+      console.log("[db] Activity tracking tables ready");
+    } catch (activityErr) {
+      console.error("[db] Failed to create activity tracking tables:", activityErr.message);
+      console.log("[db] Activity tracking will be disabled");
+    }
 
     // Add subscription_tier column if table already exists without it
     try {

@@ -1,6 +1,8 @@
 // ui/src/pages/Admin.tsx
 import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import PeakUsageChart from "../components/PeakUsageChart";
+import ActivityHeatmap from "../components/ActivityHeatmap";
 
 interface AdminStats {
   loginsLast24h: number;
@@ -109,6 +111,13 @@ export default function AdminPage() {
   const [tradesPage, setTradesPage] = useState(1);
   const [tradesTotalPages, setTradesTotalPages] = useState(1);
 
+  // User activity heatmap
+  const [userActivity, setUserActivity] = useState<{
+    heatmapData: [number, number, number][];
+    totalActiveTime: { hours: number; minutes: number; formatted: string };
+  } | null>(null);
+  const [activityLoading, setActivityLoading] = useState(false);
+
 
   // Handle column sort
   const handleSort = (column: keyof User) => {
@@ -211,10 +220,12 @@ export default function AdminPage() {
       setPerformance(null);
       setUserTrades([]);
       setTradesPage(1);
+      setUserActivity(null);
 
-      // Fetch performance stats
+      // Fetch performance stats, trades, and activity
       fetchUserPerformance(userId);
       fetchUserTrades(userId, 1);
+      fetchUserActivity(userId);
     } catch (e) {
       console.error("Error loading user detail:", e);
     }
@@ -253,6 +264,26 @@ export default function AdminPage() {
       console.error("Error loading trades:", e);
     } finally {
       setTradesLoading(false);
+    }
+  };
+
+  const fetchUserActivity = async (userId: number) => {
+    setActivityLoading(true);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}/activity?days=30`, {
+        credentials: "include",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUserActivity({
+          heatmapData: data.heatmapData,
+          totalActiveTime: data.totalActiveTime,
+        });
+      }
+    } catch (e) {
+      console.error("Error loading user activity:", e);
+    } finally {
+      setActivityLoading(false);
     }
   };
 
@@ -365,6 +396,9 @@ export default function AdminPage() {
             </div>
           </div>
         </div>
+
+        {/* Peak Usage Chart */}
+        <PeakUsageChart days={7} />
 
         {/* Live Users List */}
         {stats?.liveUsers && stats.liveUsers.length > 0 && (
@@ -593,6 +627,21 @@ export default function AdminPage() {
             ) : (
               <div className="no-performance">No trading data available</div>
             )}
+
+            {/* Activity Heatmap */}
+            <div className="detail-section">
+              <h3>Activity Pattern (30 Days)</h3>
+              {activityLoading ? (
+                <div className="activity-loading">Loading activity data...</div>
+              ) : userActivity && userActivity.heatmapData.some(d => d[2] > 0) ? (
+                <ActivityHeatmap
+                  data={userActivity.heatmapData}
+                  totalActiveTime={userActivity.totalActiveTime}
+                />
+              ) : (
+                <div className="no-activity">No activity data recorded yet</div>
+              )}
+            </div>
 
             {/* Profile Info */}
             <div className="detail-section">
@@ -1187,6 +1236,15 @@ const styles = `
     text-align: center;
     color: #71717a;
     font-size: 0.875rem;
+  }
+
+  .activity-loading, .no-activity {
+    padding: 1.5rem;
+    text-align: center;
+    color: #71717a;
+    font-size: 0.875rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0.5rem;
   }
 
   /* Detail Section */
