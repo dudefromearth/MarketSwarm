@@ -822,6 +822,176 @@ def create_web_app():
         """Get Redis bus status."""
         return check_redis()
 
+    @app.get("/api/redis/status")
+    def api_redis_status():
+        """Get detailed Redis bus status using ms-busses.sh."""
+        script_path = ROOT / "scripts" / "ms-busses.sh"
+        if not script_path.exists():
+            return check_redis()  # Fallback to simple check
+
+        try:
+            result = subprocess.run(
+                [str(script_path), "status"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                cwd=str(ROOT)
+            )
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "buses": check_redis()
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e), "buses": check_redis()}
+
+    @app.post("/api/redis/start")
+    def api_redis_start_all():
+        """Start all Redis buses using ms-busses.sh."""
+        script_path = ROOT / "scripts" / "ms-busses.sh"
+        if not script_path.exists():
+            raise HTTPException(status_code=404, detail="ms-busses.sh not found")
+
+        try:
+            result = subprocess.run(
+                [str(script_path), "up"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=str(ROOT)
+            )
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr if result.returncode != 0 else None,
+                "buses": check_redis()
+            }
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Timeout starting Redis buses"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.post("/api/redis/stop")
+    def api_redis_stop_all():
+        """Stop all Redis buses using ms-busses.sh."""
+        script_path = ROOT / "scripts" / "ms-busses.sh"
+        if not script_path.exists():
+            raise HTTPException(status_code=404, detail="ms-busses.sh not found")
+
+        try:
+            result = subprocess.run(
+                [str(script_path), "down"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(ROOT)
+            )
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr if result.returncode != 0 else None,
+                "buses": check_redis()
+            }
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Timeout stopping Redis buses"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.post("/api/truth/update")
+    def api_truth_update():
+        """Run full truth update: build → clear → load."""
+        script_path = ROOT / "scripts" / "ms-update-truth.sh"
+        if not script_path.exists():
+            raise HTTPException(status_code=404, detail="ms-update-truth.sh not found")
+
+        try:
+            result = subprocess.run(
+                [str(script_path), "update", "-y"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=str(ROOT / "scripts")
+            )
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr if result.returncode != 0 else None
+            }
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Truth update timed out"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.post("/api/truth/build")
+    def api_truth_build():
+        """Build truth.json from component JSONs."""
+        script_path = ROOT / "scripts" / "ms-update-truth.sh"
+        if not script_path.exists():
+            raise HTTPException(status_code=404, detail="ms-update-truth.sh not found")
+
+        try:
+            result = subprocess.run(
+                [str(script_path), "build"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(ROOT / "scripts")
+            )
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr if result.returncode != 0 else None
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.post("/api/truth/load")
+    def api_truth_load():
+        """Load truth.json into system-redis."""
+        script_path = ROOT / "scripts" / "ms-update-truth.sh"
+        if not script_path.exists():
+            raise HTTPException(status_code=404, detail="ms-update-truth.sh not found")
+
+        try:
+            result = subprocess.run(
+                [str(script_path), "load"],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=str(ROOT / "scripts")
+            )
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr if result.returncode != 0 else None
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.get("/api/truth/status")
+    def api_truth_status():
+        """Get truth status: file exists, loaded in redis, summary."""
+        truth_file = ROOT / "scripts" / "truth.json"
+        result = {
+            "file_exists": truth_file.exists(),
+            "loaded_in_redis": check_truth(),
+            "summary": None
+        }
+
+        if truth_file.exists():
+            try:
+                truth = json.loads(truth_file.read_text())
+                result["summary"] = {
+                    "version": truth.get("version"),
+                    "description": truth.get("description"),
+                    "buses": list(truth.get("buses", {}).keys()),
+                    "components": list(truth.get("components", {}).keys())
+                }
+            except Exception:
+                pass
+
+        return result
+
     @app.post("/api/services/start-all")
     def api_start_all(body: Optional[dict] = Body(default=None)):
         """Start all services with optional env overrides."""

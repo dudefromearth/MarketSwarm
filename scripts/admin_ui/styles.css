@@ -343,6 +343,12 @@ header h1 {
     font-size: 12px;
 }
 
+.btn-xs {
+    padding: 2px 8px;
+    font-size: 11px;
+    line-height: 1.4;
+}
+
 .btn-success {
     background: var(--accent-green);
     border-color: var(--accent-green);
@@ -435,6 +441,22 @@ header h1 {
     text-transform: uppercase;
     color: var(--text-secondary);
     margin-bottom: 12px;
+}
+
+.status-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.status-card-header h3 {
+    margin-bottom: 0;
+}
+
+.status-card-actions {
+    display: flex;
+    gap: 4px;
 }
 
 .status-list {

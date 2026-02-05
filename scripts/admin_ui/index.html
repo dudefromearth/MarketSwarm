@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MarketSwarm Node Admin</title>
-    <link rel="stylesheet" href="/styles.css?v=17">
+    <link rel="stylesheet" href="/styles.css?v=18">
 </head>
 <body>
     <div class="container">
@@ -33,13 +33,25 @@
         <div class="status-bar">
             <div class="status-cards">
                 <div class="status-card" id="redis-card">
-                    <h3>Redis Buses</h3>
+                    <div class="status-card-header">
+                        <h3>Redis Buses</h3>
+                        <div class="status-card-actions">
+                            <button class="btn btn-xs btn-success" onclick="startRedis()" title="Start all Redis buses">▶</button>
+                            <button class="btn btn-xs btn-danger" onclick="stopRedis()" title="Stop all Redis buses">■</button>
+                        </div>
+                    </div>
                     <div id="redis-status" class="status-list">
                         <div class="loading">Loading...</div>
                     </div>
                 </div>
                 <div class="status-card" id="truth-card">
-                    <h3>Truth</h3>
+                    <div class="status-card-header">
+                        <h3>Truth</h3>
+                        <div class="status-card-actions">
+                            <button class="btn btn-xs btn-primary" onclick="loadTruth()" title="Load truth into Redis">Load</button>
+                            <button class="btn btn-xs btn-secondary" onclick="updateTruth()" title="Build and load truth">Update</button>
+                        </div>
+                    </div>
                     <div id="truth-status" class="status-value">
                         <div class="loading">Loading...</div>
                     </div>
@@ -279,6 +291,6 @@
         </div>
     </div>
 
-    <script src="/app.js?v=17"></script>
+    <script src="/app.js?v=18"></script>
 </body>
 </html>

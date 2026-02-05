@@ -351,6 +351,103 @@ function updateTruthStatus(truth) {
     }
 }
 
+// ============================================================
+// Redis Control Functions
+// ============================================================
+
+async function startRedis() {
+    const statusEl = document.getElementById('redis-status');
+    statusEl.innerHTML = '<div class="loading">Starting Redis buses...</div>';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/redis/start`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            updateRedisStatus(data.buses);
+            removeAlert('redis:system-redis');
+            removeAlert('redis:market-redis');
+            removeAlert('redis:intel-redis');
+        } else {
+            statusEl.innerHTML = `<div class="status-value error">Failed: ${data.error || 'Unknown error'}</div>`;
+            addAlert('error', 'Redis Start Failed', data.error || 'Unknown error', 'redis-control');
+        }
+    } catch (error) {
+        statusEl.innerHTML = `<div class="status-value error">Error: ${error.message}</div>`;
+        addAlert('error', 'Redis Start Failed', error.message, 'redis-control');
+    }
+}
+
+async function stopRedis() {
+    if (!confirm('Stop all Redis buses? This will affect running services.')) {
+        return;
+    }
+
+    const statusEl = document.getElementById('redis-status');
+    statusEl.innerHTML = '<div class="loading">Stopping Redis buses...</div>';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/redis/stop`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            updateRedisStatus(data.buses);
+        } else {
+            statusEl.innerHTML = `<div class="status-value error">Failed: ${data.error || 'Unknown error'}</div>`;
+            addAlert('error', 'Redis Stop Failed', data.error || 'Unknown error', 'redis-control');
+        }
+    } catch (error) {
+        statusEl.innerHTML = `<div class="status-value error">Error: ${error.message}</div>`;
+        addAlert('error', 'Redis Stop Failed', error.message, 'redis-control');
+    }
+}
+
+// ============================================================
+// Truth Control Functions
+// ============================================================
+
+async function loadTruth() {
+    const statusEl = document.getElementById('truth-status');
+    statusEl.innerHTML = '<span class="status-value">Loading truth...</span>';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/truth/load`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            statusEl.innerHTML = '<span class="status-value ok">Loaded in Redis</span>';
+            removeAlert('truth');
+        } else {
+            statusEl.innerHTML = `<span class="status-value error">Failed</span>`;
+            addAlert('error', 'Truth Load Failed', data.error || 'Unknown error', 'truth-control');
+        }
+    } catch (error) {
+        statusEl.innerHTML = `<span class="status-value error">Error</span>`;
+        addAlert('error', 'Truth Load Failed', error.message, 'truth-control');
+    }
+}
+
+async function updateTruth() {
+    const statusEl = document.getElementById('truth-status');
+    statusEl.innerHTML = '<span class="status-value">Updating truth...</span>';
+
+    try {
+        const response = await fetch(`${API_BASE}/api/truth/update`, { method: 'POST' });
+        const data = await response.json();
+
+        if (data.success) {
+            statusEl.innerHTML = '<span class="status-value ok">Loaded in Redis</span>';
+            removeAlert('truth');
+        } else {
+            statusEl.innerHTML = `<span class="status-value error">Failed</span>`;
+            addAlert('error', 'Truth Update Failed', data.error || 'Unknown error', 'truth-control');
+        }
+    } catch (error) {
+        statusEl.innerHTML = `<span class="status-value error">Error</span>`;
+        addAlert('error', 'Truth Update Failed', error.message, 'truth-control');
+    }
+}
+
 // Update service summary
 function updateServiceSummary(services) {
     const container = document.getElementById('service-summary');
