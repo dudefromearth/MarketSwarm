@@ -140,15 +140,26 @@ export function issueAppSession(user) {
 export function readAppSession(req) {
   const env = getAuthConfig();
   const token = req.cookies?.[SESSION_COOKIE];
+
+  // Debug: log all /api/orders and /api/trades requests
+  if (req.path?.includes('orders') || req.path?.includes('trades')) {
+    console.log(`[auth] ${req.path}: hasCookie=${!!token} cookieKeys=${Object.keys(req.cookies || {}).join(',')}`);
+  }
+
   if (!token) {
     return null;
   }
 
   try {
-    return jwt.verify(token, env.APP_SESSION_SECRET, {
+    const result = jwt.verify(token, env.APP_SESSION_SECRET, {
       algorithms: ["HS256"],
     });
+    if (req.path?.includes('orders') || req.path?.includes('trades')) {
+      console.log(`[auth] verify SUCCESS for ${req.path}: user=${result?.wp?.email}`);
+    }
+    return result;
   } catch (e) {
+    console.log(`[auth] Session verify failed for ${req.path}: ${e.message}`);
     return null;
   }
 }
@@ -214,6 +225,7 @@ export function authMiddleware(options = {}) {
     if (needsAuth && !allowUnauth) {
       const user = getCurrentUser(req);
       if (!user) {
+        console.log(`[auth] 401 for ${req.method} ${req.path} - no valid session`);
         return res.status(401).json({ detail: "Not authenticated" });
       }
       req.user = user;

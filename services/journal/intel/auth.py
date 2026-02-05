@@ -221,9 +221,12 @@ class JournalAuth:
 
         return None
 
-    async def get_request_user(self, request: web.Request) -> Optional[Dict[str, Any]]:
+    def get_user_from_proxy_headers(self, request: web.Request) -> Optional[Dict[str, Any]]:
         """
-        Get user from request (async wrapper).
+        Get user from X-User-* headers (set by SSE gateway proxy).
+
+        When SSE gateway proxies requests, it sets these headers after validating
+        the session cookie. This allows the journal service to trust the identity.
 
         Args:
             request: aiohttp request object
@@ -231,6 +234,43 @@ class JournalAuth:
         Returns:
             User dict or None
         """
+        # Check for X-User headers from SSE gateway proxy
+        x_user_id = request.headers.get('X-User-Id', '').strip()
+        x_user_email = request.headers.get('X-User-Email', '').strip()
+        x_user_issuer = request.headers.get('X-User-Issuer', '').strip()
+
+        if not x_user_id or not x_user_issuer:
+            return None
+
+        # Look up user in database by WP credentials
+        user = self.get_user_by_wp_id(x_user_issuer, x_user_id)
+        if user:
+            return user
+
+        # User not found in DB yet - return basic info from headers
+        # (user will be created on first full auth via SSE)
+        return None
+
+    async def get_request_user(self, request: web.Request) -> Optional[Dict[str, Any]]:
+        """
+        Get user from request (async wrapper).
+
+        Checks in order:
+        1. X-User-* headers (from SSE gateway proxy)
+        2. JWT token (direct requests)
+
+        Args:
+            request: aiohttp request object
+
+        Returns:
+            User dict or None
+        """
+        # First try X-User headers from SSE gateway proxy
+        user = self.get_user_from_proxy_headers(request)
+        if user and user.get('id'):
+            return user
+
+        # Fall back to JWT token extraction
         token = self.extract_token(request)
         if not token:
             return None

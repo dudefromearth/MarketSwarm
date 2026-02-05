@@ -123,6 +123,11 @@ export interface RiskGraphPanelProps {
 
   // Log trade - opens TradeEntryModal with strategy data
   onLogTrade?: (strategy: RiskGraphStrategy) => void;
+
+  // Monitor - opens position monitor panel
+  onOpenMonitor?: () => void;
+  pendingOrderCount?: number;
+  openTradeCount?: number;
 }
 
 export interface RiskGraphPanelHandle {
@@ -156,6 +161,9 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   onImportToS,
   onEditStrategy,
   onLogTrade,
+  onOpenMonitor,
+  pendingOrderCount = 0,
+  openTradeCount = 0,
 }, ref) {
   // Get alerts from shared context
   const {
@@ -407,14 +415,32 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     <div className="panel echarts-risk-graph-panel">
       <div className="panel-header">
         <h3>Risk Graph {strategies.length > 0 && `(${strategies.length})`}</h3>
-        {strategies.length > 0 && (
-          <button
-            className="btn-auto-fit-header"
-            onClick={() => pnlChartRef.current?.autoFit()}
-          >
-            Auto-Fit
-          </button>
-        )}
+        <div className="panel-header-actions">
+          {onOpenMonitor && (
+            <button
+              className="btn-monitor"
+              onClick={onOpenMonitor}
+              title="Open Position Monitor"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                <line x1="8" y1="21" x2="16" y2="21"/>
+                <line x1="12" y1="17" x2="12" y2="21"/>
+              </svg>
+              {(pendingOrderCount > 0 || openTradeCount > 0) && (
+                <span className="monitor-badge">{pendingOrderCount + openTradeCount}</span>
+              )}
+            </button>
+          )}
+          {strategies.length > 0 && (
+            <button
+              className="btn-auto-fit-header"
+              onClick={() => pnlChartRef.current?.autoFit()}
+            >
+              Auto-Fit
+            </button>
+          )}
+        </div>
       </div>
       <div className={`panel-content risk-graph-consolidated${strategies.length === 0 ? ' empty-state' : ''}`}>
           {/* Main content: Chart + Sidebar */}
@@ -695,7 +721,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
               <div className={`time-machine-panel ${timeMachineEnabled ? 'active' : ''}`}>
                 <div className="time-machine-header">
                   <div className="time-machine-switch">
-                    <label className="toggle-switch live-sim-toggle">
+                    <label className="toggle-switch live-whatif-toggle">
                       <span className={`toggle-label-live ${!timeMachineEnabled ? 'active' : ''}`}>
                         <span className="live-dot" />
                         Live
@@ -703,7 +729,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                       <div className="toggle-track" onClick={onTimeMachineToggle}>
                         <div className={`toggle-thumb ${timeMachineEnabled ? 'on' : ''}`} />
                       </div>
-                      <span className={`toggle-label-sim ${timeMachineEnabled ? 'active' : ''}`}>Sim</span>
+                      <span className={`toggle-label-whatif ${timeMachineEnabled ? 'active' : ''}`}>What-If</span>
                     </label>
                     {!timeMachineEnabled && (
                       <span className="live-price">{spotPrice.toFixed(2)}</span>

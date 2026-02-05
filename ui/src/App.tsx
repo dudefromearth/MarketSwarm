@@ -41,6 +41,7 @@ import TradeRecommendationsPanel from './components/TradeRecommendationsPanel';
 import TradeTrackingPanel from './components/TradeTrackingPanel';
 import TrackingAnalyticsDashboard from './components/TrackingAnalyticsDashboard';
 import LeaderboardView from './components/LeaderboardView';
+import MonitorPanel from './components/MonitorPanel';
 import { VolumeProfileSettings, useIndicatorSettings, sigmaToPercentile } from './components/chart-primitives';
 import type { TradeSelectorModel, TradeRecommendation } from './types/tradeSelector';
 
@@ -619,6 +620,9 @@ function App() {
   const [journalTradeContext, setJournalTradeContext] = useState<TradeReflectionContext | null>(null);
   const [playbookOpen, setPlaybookOpen] = useState(false);
   const [playbookSource, setPlaybookSource] = useState<'journal' | 'tradelog' | null>(null);
+  const [monitorOpen, setMonitorOpen] = useState(false);
+  const [pendingOrderCount, setPendingOrderCount] = useState(0);
+  const [openTradeCount, setOpenTradeCount] = useState(0);
 
   // Commentary panel state
   const [commentaryCollapsed, setCommentaryCollapsed] = useState(true);
@@ -973,6 +977,42 @@ function App() {
   const handleLogCreated = useCallback(() => {
     setTradeRefreshTrigger(prev => prev + 1);
   }, []);
+
+  // Fetch monitor counts (pending orders + open trades)
+  const fetchMonitorCounts = useCallback(async () => {
+    try {
+      const ordersRes = await fetch('/api/orders/active', { credentials: 'include' });
+      if (!ordersRes.ok) {
+        console.warn('[Monitor] Orders fetch failed:', ordersRes.status);
+      } else {
+        const ordersData = await ordersRes.json();
+        if (ordersData.success) {
+          const pendingCount = (ordersData.data.pending_entries?.length || 0) +
+                              (ordersData.data.pending_exits?.length || 0);
+          setPendingOrderCount(pendingCount);
+        }
+      }
+
+      const tradesRes = await fetch('/api/trades?status=open', { credentials: 'include' });
+      if (!tradesRes.ok) {
+        console.warn('[Monitor] Trades fetch failed:', tradesRes.status);
+      } else {
+        const tradesData = await tradesRes.json();
+        if (tradesData.success) {
+          setOpenTradeCount(tradesData.data?.length || 0);
+        }
+      }
+    } catch (err) {
+      console.error('[Monitor] Failed to fetch counts:', err);
+    }
+  }, []);
+
+  // Fetch monitor counts on mount and periodically
+  useEffect(() => {
+    fetchMonitorCounts();
+    const interval = setInterval(fetchMonitorCounts, 30000); // Every 30 seconds
+    return () => clearInterval(interval);
+  }, [fetchMonitorCounts]);
 
   // Scroll sync handler for GEX panel
   const handleGexScroll = useCallback(() => {
@@ -2859,6 +2899,9 @@ function App() {
             });
             setTradeEntryOpen(true);
           }}
+          onOpenMonitor={() => setMonitorOpen(true)}
+          pendingOrderCount={pendingOrderCount}
+          openTradeCount={openTradeCount}
         />
 
       </div>
@@ -3016,6 +3059,21 @@ function App() {
       {/* Leaderboard Modal */}
       {leaderboardOpen && (
         <LeaderboardView onClose={() => setLeaderboardOpen(false)} />
+      )}
+
+      {/* Position Monitor Panel */}
+      {monitorOpen && (
+        <MonitorPanel
+          onClose={() => setMonitorOpen(false)}
+          onCloseTrade={() => {
+            // Refresh counts after closing a trade
+            fetchMonitorCounts();
+          }}
+          onCancelOrder={() => {
+            // Refresh counts after cancelling an order
+            fetchMonitorCounts();
+          }}
+        />
       )}
 
       {/* Strategy Popup Modal */}
