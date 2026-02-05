@@ -440,55 +440,184 @@ class BiasLfiModelBuilder:
 
     def _calculate_market_mode(
         self,
-        bias: float,
-        lfi: float,
-        total_net_gex: float,
         spot: float,
+        flip_level: float | None,
+        total_net_gex: float,
+        lfi: float,
+        gex_by_strike: Dict[float, Dict[str, float]],
     ) -> float:
         """
-        Calculate Market Mode Score (0-100).
+        Calculate Market Mode Score (0-100) - REGIME focused, not direction.
 
-        The score represents the current market regime:
-        - Compression (0-33): Negative gamma, hostile bias, low LFI
-          - Dealers short gamma, moves amplified, squeeze potential
-        - Transition (34-66): Mixed conditions, caution advised
-          - Near gamma flip, moderate LFI
-        - Expansion (67-100): Positive gamma, supportive bias, high LFI
-          - Dealers long gamma, moves absorbed, range-bound
+        The score represents the current market regime based on gamma positioning:
+        - Compression (0-33): Below GEX flip, negative gamma, moves amplified
+          - Dealers short gamma, breakout/squeeze potential
+        - Transition (34-66): Near gamma flip, uncertain regime
+          - Mixed conditions, regime change possible
+        - Expansion (67-100): Above GEX flip, positive gamma, moves absorbed
+          - Dealers long gamma, mean-reversion favored
 
-        Interpretation:
-        - Low score = compressed/coiled, breakout imminent
-        - High score = expanded/stable, mean reversion favored
+        Key insight: Direction (bullish/bearish) is NOT the same as regime.
+        A bearish market can be in expansion (orderly decline) or compression (crash risk).
         """
-        # Factor 1: LFI directly (high LFI = high score = stable)
-        # LFI 0-100 maps directly to contribution
-        lfi_factor = lfi
+        import math
 
-        # Factor 2: Bias shifted to 0-100
-        # Bias -100 to +100 maps to 0 to 100
-        # Hostile (negative) = low score, Supportive (positive) = high score
-        bias_factor = (bias + 100) / 2  # -100→0, 0→50, +100→100
+        # Factor 1: Position relative to GEX flip level (40% weight)
+        # This is THE key regime indicator - above flip = expansion, below = compression
+        flip_score = self._calculate_flip_position_score(spot, flip_level, total_net_gex)
 
-        # Factor 3: Net GEX sign
-        # Positive net GEX = stable/absorbed = high score
-        # Negative net GEX = compressed/amplified = low score
-        # Normalize by spot^2 * 0.0001 for typical GEX magnitude
-        gex_normalized = total_net_gex / (spot * spot * 0.0001) if spot > 0 else 0
-        # Typical range might be -50 to +50, map to 0-100
-        gex_factor = 50 + gex_normalized  # Positive GEX → higher score
-        gex_factor = max(0, min(100, gex_factor))
+        # Factor 2: Net GEX sign and magnitude (25% weight)
+        # Positive = stabilizing (expansion), Negative = destabilizing (compression)
+        gex_score = self._calculate_net_gex_score(total_net_gex, spot)
 
-        # Combine factors with weights
-        # LFI is most direct indicator (50%)
-        # Bias indicates direction (30%)
-        # Net GEX confirms regime (20%)
+        # Factor 3: LFI - absorption vs acceleration (25% weight)
+        # High LFI = absorbing moves = expansion behavior
+        # Low LFI = accelerating moves = compression behavior
+        lfi_score = lfi  # Already 0-100
+
+        # Factor 4: Gamma concentration near spot (10% weight)
+        # Strong gamma walls nearby = clearer regime signal
+        concentration_score = self._calculate_gamma_concentration_score(gex_by_strike, spot)
+
+        # Weighted combination - emphasizes flip position as primary driver
         raw_score = (
-            lfi_factor * 0.50 +
-            bias_factor * 0.30 +
-            gex_factor * 0.20
+            flip_score * 0.40 +
+            gex_score * 0.25 +
+            lfi_score * 0.25 +
+            concentration_score * 0.10
         )
 
         return max(0, min(100, raw_score))
+
+    def _calculate_flip_position_score(
+        self,
+        spot: float,
+        flip_level: float | None,
+        total_net_gex: float = 0,
+    ) -> float:
+        """
+        Score based on spot position relative to GEX flip level.
+
+        Above flip = positive gamma territory = EXPANSION (high score)
+        Below flip = negative gamma territory = COMPRESSION (low score)
+        At flip = TRANSITION (mid score)
+
+        If no flip level exists (all GEX same sign), infer from net GEX:
+        - All negative GEX = deep compression (low score)
+        - All positive GEX = strong expansion (high score)
+
+        Uses sigmoid for smooth transition around the flip level.
+        """
+        import math
+
+        if flip_level is None or flip_level <= 0:
+            # No flip level detected - all GEX is same sign
+            # Use net GEX to determine regime
+            if total_net_gex < -10000:
+                # Strongly negative = deep compression
+                return 15.0
+            elif total_net_gex < 0:
+                # Mildly negative = compression
+                return 30.0
+            elif total_net_gex > 10000:
+                # Strongly positive = strong expansion
+                return 85.0
+            elif total_net_gex > 0:
+                # Mildly positive = expansion
+                return 70.0
+            else:
+                return 50.0  # Near zero = transition
+
+        # Distance as percentage of spot
+        distance = spot - flip_level
+        distance_pct = distance / spot
+
+        # Normalize: ~2% above flip approaches 100, ~2% below approaches 0
+        # At flip = 50
+        normalized = distance_pct / 0.02  # Scale so ±2% maps to ±1
+
+        # Sigmoid mapping for smooth S-curve transition
+        # steepness of 3 gives nice curve: -1 → ~5, 0 → 50, +1 → ~95
+        score = 100 / (1 + math.exp(-3 * normalized))
+
+        return max(0, min(100, score))
+
+    def _calculate_net_gex_score(self, total_net_gex: float, spot: float) -> float:
+        """
+        Score based on net GEX magnitude and sign.
+
+        Strongly positive = EXPANSION (high score)
+        Strongly negative = COMPRESSION (low score)
+        Near zero = TRANSITION (mid score)
+        """
+        import math
+
+        if spot <= 0:
+            return 50.0
+
+        # Normalize by spot^2 (GEX scales with price squared)
+        # For SPX ~6800, spot^2 * 0.00001 ≈ 462
+        # Typical significant GEX range is roughly -100k to +100k
+        # So normalized range is roughly -200 to +200
+        normalizer = (spot ** 2) * 0.00001
+        normalized = total_net_gex / normalizer if normalizer > 0 else 0
+
+        # Sigmoid mapping: normalized ±100 → score ~5 to ~95
+        # Steepness of 0.03 gives good spread
+        score = 100 / (1 + math.exp(-0.03 * normalized))
+
+        return max(0, min(100, score))
+
+    def _calculate_gamma_concentration_score(
+        self,
+        gex_by_strike: Dict[float, Dict[str, float]],
+        spot: float,
+        near_pct: float = 0.01,
+    ) -> float:
+        """
+        Score based on gamma concentration and sign near spot.
+
+        High concentration of POSITIVE gamma near spot = EXPANSION
+        High concentration of NEGATIVE gamma near spot = COMPRESSION
+        Low concentration = TRANSITION (less clear signal)
+        """
+        if not gex_by_strike or spot <= 0:
+            return 50.0
+
+        total_abs_gex = sum(abs(g["net"]) for g in gex_by_strike.values())
+        if total_abs_gex == 0:
+            return 50.0
+
+        # Calculate gamma near spot (within near_pct, default 1%)
+        near_net = 0.0
+        near_abs = 0.0
+
+        for strike, gex_data in gex_by_strike.items():
+            distance_pct = abs(strike - spot) / spot
+            if distance_pct <= near_pct:
+                near_net += gex_data["net"]
+                near_abs += abs(gex_data["net"])
+
+        if near_abs == 0:
+            return 50.0
+
+        # Concentration: what fraction of total GEX is near spot
+        concentration = near_abs / total_abs_gex
+
+        # Net sign ratio: -1 (all negative) to +1 (all positive)
+        net_ratio = near_net / near_abs
+
+        # Convert net_ratio to 0-100 scale
+        # -1 → 0 (compression), 0 → 50 (transition), +1 → 100 (expansion)
+        base_score = (net_ratio + 1) / 2 * 100
+
+        # Weight by concentration - higher concentration = stronger signal
+        # Low concentration pulls toward 50 (transition)
+        # concentration of 0.3+ gives full signal
+        concentration_weight = min(1.0, concentration / 0.3)
+        final_score = 50 + (base_score - 50) * concentration_weight
+
+        return max(0, min(100, final_score))
 
     def _calculate_additional_metrics(
         self,
@@ -588,12 +717,16 @@ class BiasLfiModelBuilder:
             additional["proximity_lfi_adj"] = round(lfi_adj, 1)
             additional["distance_to_flip"] = round(abs(spot - flip_info["nearest_flip"]), 1) if flip_info.get("nearest_flip") else None
 
-            # Calculate Market Mode Score (0-100)
-            # Compression (0-33): Positive gamma, high LFI, supportive bias
-            # Transition (34-66): Mixed conditions
-            # Expansion (67-100): Negative gamma, low LFI, hostile bias
+            # Calculate Market Mode Score (0-100) - REGIME focused, not direction
+            # Compression (0-33): Below GEX flip, negative gamma, moves amplified
+            # Transition (34-66): Near gamma flip, uncertain regime
+            # Expansion (67-100): Above GEX flip, positive gamma, moves absorbed
             market_mode_score = self._calculate_market_mode(
-                directional_strength, lfi_score, additional.get("total_net_gex", 0), spot
+                spot=spot,
+                flip_level=additional.get("gex_flip_level"),
+                total_net_gex=additional.get("total_net_gex", 0),
+                lfi=lfi_score,
+                gex_by_strike=gex_by_strike,
             )
 
             # Build model
