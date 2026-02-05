@@ -285,6 +285,7 @@ class TradeSelectorModelBuilder:
         self.TRACKING_ACTIVE_KEY = "massive:selector:tracking:active"
         self.TRACKING_HISTORY_KEY = "massive:selector:tracking:history"
         self.TRACKING_STATS_KEY = "massive:selector:tracking:stats"
+        self.TRACKING_TOTALS_KEY = "massive:selector:tracking:totals"
 
         # Journal API for persistent tracking storage
         self.journal_api_url = config.get("JOURNAL_API_URL", "http://localhost:3002")
@@ -1774,6 +1775,33 @@ class TradeSelectorModelBuilder:
             # Persist to journal for long-term analytics
             await self._persist_to_journal(trade)
 
+    async def _update_tracking_totals(self) -> None:
+        """
+        Update cached totals for active trades.
+        Sums from in-memory _tracked_trades (fast, no Redis read needed).
+        SSE service reads these totals instead of fetching all trades.
+        """
+        if not self.tracking_enabled:
+            return
+
+        total_current_pnl = 0.0
+        total_max_pnl = 0.0
+        active_count = 0
+
+        for trade in self._tracked_trades.values():
+            if trade.get("status") == "active":
+                total_current_pnl += trade.get("current_pnl", 0) or 0
+                total_max_pnl += trade.get("max_pnl", 0) or 0
+                active_count += 1
+
+        r = await self._redis_conn()
+        await r.hset(self.TRACKING_TOTALS_KEY, mapping={
+            "total_current_pnl": str(round(total_current_pnl, 2)),
+            "total_max_pnl": str(round(total_max_pnl, 2)),
+            "active_count": str(active_count),
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        })
+
     async def _get_http_session(self) -> aiohttp.ClientSession:
         """Get or create aiohttp session for API calls."""
         if self._http_session is None or self._http_session.closed:
@@ -2380,6 +2408,10 @@ class TradeSelectorModelBuilder:
 
                     # Settle any expired trades
                     await self._settle_expired_trades(symbol, spot)
+
+            # Update cached totals for SSE (after all symbols processed)
+            if self.tracking_enabled:
+                await self._update_tracking_totals()
 
             # Record analytics
             latency_ms = int((time.monotonic() - t_start) * 1000)

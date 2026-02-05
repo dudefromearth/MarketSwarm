@@ -111,9 +111,16 @@ interface TrackingStats {
   historyCount: number;
   totalCurrentPnl: number;
   totalMaxPnl: number;
+  // Historical/settled totals (pre-aggregated)
+  historicalTotalPnl: number;
+  historicalTotalMaxPnl: number;
+  historicalTotalWins: number;
+  historicalTotalCount: number;
   byRank: Record<string, {
     count: number;
     wins: number;
+    totalPnl: number;
+    totalMaxPnl: number;
     winRate: string;
     avgPnl: string;
     avgMaxPnl: string;
@@ -142,137 +149,139 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
   const [currentPage, setCurrentPage] = useState(0);
 
   const fetchCurrentData = useCallback(async () => {
-    try {
-      const [activeRes, statsRes] = await Promise.all([
-        fetch('/api/models/trade_tracking/active?limit=100', { credentials: 'include' }),
-        fetch('/api/models/trade_tracking/stats', { credentials: 'include' }),
-      ]);
+    const [activeRes, statsRes] = await Promise.all([
+      fetch('/api/models/trade_tracking/active?limit=100', { credentials: 'include' }),
+      fetch('/api/models/trade_tracking/stats', { credentials: 'include' }),
+    ]);
 
-      if (activeRes.ok) {
-        const data = await activeRes.json();
-        if (data.success) {
-          setActiveTrades(data.data.trades || []);
-          setTotalActiveCount(data.data.total || data.data.count || 0);
-        }
-      }
+    if (!activeRes.ok || !statsRes.ok) {
+      throw new Error('Failed to fetch current tracking data');
+    }
 
-      if (statsRes.ok) {
-        const data = await statsRes.json();
-        if (data.success) setTrackingStats(data.data);
-      }
-    } catch (err) {
-      console.error('[TrackingAnalytics] Current data error:', err);
+    const activeData = await activeRes.json();
+    const statsData = await statsRes.json();
+
+    if (activeData.success) {
+      setActiveTrades(activeData.data.trades || []);
+      setTotalActiveCount(activeData.data.total || activeData.data.count || 0);
+    }
+
+    if (statsData.success) {
+      setTrackingStats(statsData.data);
     }
   }, []);
 
   const fetchHistoricalData = useCallback(async () => {
     try {
-      // Fetch from Redis history (same source as Current mode) for consistency
-      const [historyRes, paramsRes, activeParamsRes] = await Promise.all([
+      // Fetch stats (pre-aggregated) and raw history (for regime/strategy breakdown)
+      const [statsRes, historyRes, paramsRes, activeParamsRes] = await Promise.all([
+        fetch('/api/models/trade_tracking/stats', { credentials: 'include' }),
         fetch('/api/models/trade_tracking/history?limit=500', { credentials: 'include' }),
         fetch('/api/admin/tracking/params', { credentials: 'include' }),
         fetch('/api/admin/tracking/params/active', { credentials: 'include' }),
       ]);
 
       // Check for auth/permission errors
-      if (historyRes.status === 401 || historyRes.status === 403) {
+      if (statsRes.status === 401 || statsRes.status === 403) {
         throw new Error('Admin access required to view historical analytics');
       }
 
+      // Use pre-aggregated stats for overall and byRank (accurate for all trades)
+      let statsData: TrackingStats | null = null;
+      if (statsRes.ok) {
+        const data = await statsRes.json();
+        if (data.success) {
+          statsData = data.data;
+          setTrackingStats(data.data);
+        }
+      }
+
+      // Get raw trades for regime/strategy breakdown (sample only - 500 of total)
+      let trades: any[] = [];
       if (historyRes.ok) {
         const data = await historyRes.json();
         if (data.success && data.data?.trades) {
-          const trades = data.data.trades;
+          trades = data.data.trades;
+        }
+      }
 
-          // Compute analytics from Redis history
-          const total = trades.length;
-          const winners = trades.filter((t: any) => t.is_winner).length;
-          const totalPnl = trades.reduce((sum: number, t: any) => sum + (Number(t.final_pnl) || 0), 0);
-          const totalMaxPnl = trades.reduce((sum: number, t: any) => sum + (Number(t.max_pnl) || 0), 0);
-          const totalCapture = trades.reduce((sum: number, t: any) => sum + (Number(t.pnl_captured_pct) || 0), 0);
+      if (statsData) {
+        // Use pre-aggregated overall stats (accurate for ALL settled trades)
+        const total = statsData.historicalTotalCount || 0;
+        const winners = statsData.historicalTotalWins || 0;
+        const totalPnl = statsData.historicalTotalPnl || 0;
+        const totalMaxPnl = statsData.historicalTotalMaxPnl || 0;
 
-          // By Rank
-          const byRankMap: Record<number, { count: number; wins: number; totalPnl: number; totalMaxPnl: number; totalCapture: number }> = {};
-          trades.forEach((t: any) => {
-            const rank = t.entry_rank || 0;
-            if (!byRankMap[rank]) byRankMap[rank] = { count: 0, wins: 0, totalPnl: 0, totalMaxPnl: 0, totalCapture: 0 };
-            byRankMap[rank].count++;
-            if (t.is_winner) byRankMap[rank].wins++;
-            byRankMap[rank].totalPnl += Number(t.final_pnl) || 0;
-            byRankMap[rank].totalMaxPnl += Number(t.max_pnl) || 0;
-            byRankMap[rank].totalCapture += Number(t.pnl_captured_pct) || 0;
-          });
+        // Use pre-aggregated byRank stats (accurate for ALL settled trades)
+        const byRankFromStats = Object.entries(statsData.byRank || {})
+          .map(([rank, d]) => ({
+            entry_rank: Number(rank),
+            count: d.count,
+            wins: d.wins,
+            win_rate: d.count > 0 ? (d.wins / d.count) * 100 : 0,
+            avg_pnl: d.count > 0 ? d.totalPnl / d.count : 0,
+            avg_max_pnl: d.count > 0 ? d.totalMaxPnl / d.count : 0,
+            avg_capture_rate: d.totalMaxPnl > 0 ? (d.totalPnl / d.totalMaxPnl) * 100 : 0,
+          }))
+          .sort((a, b) => a.entry_rank - b.entry_rank);
 
+        // Calculate regime/strategy from sample trades (not fully accurate but better than nothing)
+        const byRegimeMap: Record<string, { count: number; wins: number; totalPnl: number; totalCapture: number }> = {};
+        const byStrategyMap: Record<string, { strategy: string; side: string; count: number; wins: number; totalPnl: number; totalCapture: number }> = {};
+
+        trades.forEach((t: any) => {
           // By Regime
-          const byRegimeMap: Record<string, { count: number; wins: number; totalPnl: number; totalCapture: number }> = {};
-          trades.forEach((t: any) => {
-            const regime = t.entry_regime || 'unknown';
-            if (!byRegimeMap[regime]) byRegimeMap[regime] = { count: 0, wins: 0, totalPnl: 0, totalCapture: 0 };
-            byRegimeMap[regime].count++;
-            if (t.is_winner) byRegimeMap[regime].wins++;
-            byRegimeMap[regime].totalPnl += Number(t.final_pnl) || 0;
-            byRegimeMap[regime].totalCapture += Number(t.pnl_captured_pct) || 0;
-          });
+          const regime = t.entry_regime || 'unknown';
+          if (!byRegimeMap[regime]) byRegimeMap[regime] = { count: 0, wins: 0, totalPnl: 0, totalCapture: 0 };
+          byRegimeMap[regime].count++;
+          if (t.is_winner) byRegimeMap[regime].wins++;
+          byRegimeMap[regime].totalPnl += Number(t.final_pnl) || 0;
+          byRegimeMap[regime].totalCapture += Number(t.pnl_captured_pct) || 0;
 
           // By Strategy
-          const byStrategyMap: Record<string, { strategy: string; side: string; count: number; wins: number; totalPnl: number; totalCapture: number }> = {};
-          trades.forEach((t: any) => {
-            const key = `${t.strategy}|${t.side}`;
-            if (!byStrategyMap[key]) byStrategyMap[key] = { strategy: t.strategy, side: t.side, count: 0, wins: 0, totalPnl: 0, totalCapture: 0 };
-            byStrategyMap[key].count++;
-            if (t.is_winner) byStrategyMap[key].wins++;
-            byStrategyMap[key].totalPnl += Number(t.final_pnl) || 0;
-            byStrategyMap[key].totalCapture += Number(t.pnl_captured_pct) || 0;
-          });
+          const key = `${t.strategy}|${t.side}`;
+          if (!byStrategyMap[key]) byStrategyMap[key] = { strategy: t.strategy, side: t.side, count: 0, wins: 0, totalPnl: 0, totalCapture: 0 };
+          byStrategyMap[key].count++;
+          if (t.is_winner) byStrategyMap[key].wins++;
+          byStrategyMap[key].totalPnl += Number(t.final_pnl) || 0;
+          byStrategyMap[key].totalCapture += Number(t.pnl_captured_pct) || 0;
+        });
 
-          setAnalytics({
-            overall: {
-              total_ideas: total,
-              win_count: winners,
-              win_rate: total > 0 ? (winners / total) * 100 : 0,
-              avg_pnl: total > 0 ? totalPnl / total : 0,
-              avg_max_pnl: total > 0 ? totalMaxPnl / total : 0,
-              avg_capture_rate: total > 0 ? totalCapture / total : 0,
-            },
-            byRank: Object.entries(byRankMap)
-              .map(([rank, d]) => ({
-                entry_rank: Number(rank),
-                count: d.count,
-                wins: d.wins,
-                win_rate: d.count > 0 ? (d.wins / d.count) * 100 : 0,
-                avg_pnl: d.count > 0 ? d.totalPnl / d.count : 0,
-                avg_max_pnl: d.count > 0 ? d.totalMaxPnl / d.count : 0,
-                avg_capture_rate: d.count > 0 ? d.totalCapture / d.count : 0,
-              }))
-              .sort((a, b) => a.entry_rank - b.entry_rank),
-            byRegime: Object.entries(byRegimeMap)
-              .map(([regime, d]) => ({
-                entry_regime: regime,
-                count: d.count,
-                wins: d.wins,
-                win_rate: d.count > 0 ? (d.wins / d.count) * 100 : 0,
-                avg_pnl: d.count > 0 ? d.totalPnl / d.count : 0,
-                avg_capture_rate: d.count > 0 ? d.totalCapture / d.count : 0,
-              }))
-              .sort((a, b) => b.count - a.count),
-            byStrategy: Object.values(byStrategyMap)
-              .map((d) => ({
-                strategy: d.strategy,
-                side: d.side,
-                count: d.count,
-                wins: d.wins,
-                win_rate: d.count > 0 ? (d.wins / d.count) * 100 : 0,
-                avg_pnl: d.count > 0 ? d.totalPnl / d.count : 0,
-                avg_capture_rate: d.count > 0 ? d.totalCapture / d.count : 0,
-              }))
-              .sort((a, b) => b.count - a.count),
-            exitTiming: [], // Not available from Redis history
-          });
-        } else {
-          throw new Error(data.error || 'Failed to load history data');
-        }
+        setAnalytics({
+          overall: {
+            total_ideas: total,
+            win_count: winners,
+            win_rate: total > 0 ? (winners / total) * 100 : 0,
+            avg_pnl: total > 0 ? totalPnl / total : 0,
+            avg_max_pnl: total > 0 ? totalMaxPnl / total : 0,
+            avg_capture_rate: totalMaxPnl > 0 ? (totalPnl / totalMaxPnl) * 100 : 0,
+          },
+          byRank: byRankFromStats,
+          byRegime: Object.entries(byRegimeMap)
+            .map(([regime, d]) => ({
+              entry_regime: regime,
+              count: d.count,
+              wins: d.wins,
+              win_rate: d.count > 0 ? (d.wins / d.count) * 100 : 0,
+              avg_pnl: d.count > 0 ? d.totalPnl / d.count : 0,
+              avg_capture_rate: d.count > 0 ? d.totalCapture / d.count : 0,
+            }))
+            .sort((a, b) => b.count - a.count),
+          byStrategy: Object.values(byStrategyMap)
+            .map((d) => ({
+              strategy: d.strategy,
+              side: d.side,
+              count: d.count,
+              wins: d.wins,
+              win_rate: d.count > 0 ? (d.wins / d.count) * 100 : 0,
+              avg_pnl: d.count > 0 ? d.totalPnl / d.count : 0,
+              avg_capture_rate: d.count > 0 ? d.totalCapture / d.count : 0,
+            }))
+            .sort((a, b) => b.count - a.count),
+          exitTiming: [], // Not available from Redis history
+        });
       } else {
-        throw new Error(`History request failed: ${historyRes.status}`);
+        throw new Error('Failed to load stats data');
       }
 
       if (paramsRes.ok) {
@@ -316,7 +325,13 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
   useEffect(() => {
     if (!isOpen || mode !== 'current') return;
 
-    const interval = setInterval(fetchCurrentData, 5000);
+    const interval = setInterval(async () => {
+      try {
+        await fetchCurrentData();
+      } catch (err) {
+        console.error('[TrackingAnalytics] Auto-refresh error:', err);
+      }
+    }, 5000);
     return () => clearInterval(interval);
   }, [isOpen, mode, fetchCurrentData]);
 
@@ -454,7 +469,7 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
         {mode === 'current' ? (
           /* ===== CURRENT MODE ===== */
           <div className="analytics-content">
-            {loading && <div className="loading">Loading current data...</div>}
+            {loading && <div className="loading">Loading data...</div>}
             {error && <div className="error">{error}</div>}
 
             {!loading && !error && (

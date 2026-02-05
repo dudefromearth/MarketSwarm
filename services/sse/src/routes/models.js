@@ -425,22 +425,36 @@ router.get("/trade_tracking/stats", requireAdmin, async (req, res) => {
     const activeCount = await redis.hlen("massive:selector:tracking:active");
     const historyCount = await redis.llen("massive:selector:tracking:history");
 
-    // Calculate total P&L from all active trades (not limited like /active endpoint)
-    const activeRaw = await redis.hgetall("massive:selector:tracking:active");
+    // Try to get cached totals from massive (fast path)
     let totalCurrentPnl = 0;
     let totalMaxPnl = 0;
-    for (const tradeJson of Object.values(activeRaw)) {
-      try {
-        const trade = JSON.parse(tradeJson);
-        totalCurrentPnl += parseFloat(trade.current_pnl) || 0;
-        totalMaxPnl += parseFloat(trade.max_pnl) || 0;
-      } catch {
-        // Skip malformed entries
+    const cachedTotals = await redis.hgetall("massive:selector:tracking:totals");
+
+    if (cachedTotals && cachedTotals.total_current_pnl) {
+      // Use cached totals from massive (fast - no parsing needed)
+      totalCurrentPnl = parseFloat(cachedTotals.total_current_pnl) || 0;
+      totalMaxPnl = parseFloat(cachedTotals.total_max_pnl) || 0;
+    } else {
+      // Fallback: Calculate from all active trades (slower but works before massive restart)
+      const activeRaw = await redis.hgetall("massive:selector:tracking:active");
+      for (const tradeJson of Object.values(activeRaw)) {
+        try {
+          const trade = JSON.parse(tradeJson);
+          totalCurrentPnl += parseFloat(trade.current_pnl) || 0;
+          totalMaxPnl += parseFloat(trade.max_pnl) || 0;
+        } catch {
+          // Skip malformed entries
+        }
       }
     }
 
-    // Parse stats by rank
+    // Parse stats by rank and calculate historical totals
     const byRank = {};
+    let historicalTotalPnl = 0;
+    let historicalTotalMaxPnl = 0;
+    let historicalTotalWins = 0;
+    let historicalTotalCount = 0;
+
     for (let rank = 1; rank <= 10; rank++) {
       const count = parseInt(rawStats[`rank${rank}:count`] || "0");
       if (count === 0) continue;
@@ -449,9 +463,17 @@ router.get("/trade_tracking/stats", requireAdmin, async (req, res) => {
       const totalPnl = parseFloat(rawStats[`rank${rank}:total_pnl`] || "0");
       const totalMaxPnlRank = parseFloat(rawStats[`rank${rank}:total_max_pnl`] || "0");
 
+      // Accumulate historical totals
+      historicalTotalCount += count;
+      historicalTotalWins += wins;
+      historicalTotalPnl += totalPnl;
+      historicalTotalMaxPnl += totalMaxPnlRank;
+
       byRank[rank] = {
         count,
         wins,
+        totalPnl,
+        totalMaxPnl: totalMaxPnlRank,
         winRate: count > 0 ? (wins / count * 100).toFixed(1) + "%" : "0%",
         avgPnl: count > 0 ? (totalPnl / count).toFixed(2) : "0.00",
         avgMaxPnl: count > 0 ? (totalMaxPnlRank / count).toFixed(2) : "0.00",
@@ -464,8 +486,14 @@ router.get("/trade_tracking/stats", requireAdmin, async (req, res) => {
       data: {
         activeCount,
         historyCount,
+        // Current/active totals
         totalCurrentPnl,
         totalMaxPnl,
+        // Historical/settled totals (from pre-aggregated stats)
+        historicalTotalPnl,
+        historicalTotalMaxPnl,
+        historicalTotalWins,
+        historicalTotalCount,
         byRank,
       },
       ts: Date.now(),
