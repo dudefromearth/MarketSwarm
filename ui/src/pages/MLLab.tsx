@@ -1,5 +1,5 @@
 // ui/src/pages/MLLab.tsx
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import ReactECharts from "echarts-for-react";
 
@@ -143,7 +143,6 @@ export default function MLLabPage() {
 
   // UI state
   const [activeTab, setActiveTab] = useState<"overview" | "models" | "experiments" | "decisions" | "performance">("overview");
-  const [decisionsPage, setDecisionsPage] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
 
   // Fetch all data
