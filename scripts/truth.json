@@ -2,8 +2,8 @@
   "version": "3.1",
   "description": "Truth: Host-based Redis topology for MarketSwarm stack. Canonical configuration for all services.",
   "node": {
-    "name": "marketswarm-local",
-    "env": "dev"
+    "name": "DudeOne.local",
+    "env": "production"
   },
   "buses": {
     "system-redis": {
