@@ -109,6 +109,8 @@ interface ActiveTrade {
 interface TrackingStats {
   activeCount: number;
   historyCount: number;
+  totalCurrentPnl: number;
+  totalMaxPnl: number;
   byRank: Record<string, {
     count: number;
     wins: number;
@@ -381,10 +383,10 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
     return '#64748b';
   };
 
-  // Calculate current mode summary stats
-  const totalInterimPnl = activeTrades.reduce((sum, t) => sum + (t.current_pnl || 0), 0);
-  const totalMaxPnl = activeTrades.reduce((sum, t) => sum + (t.max_pnl || 0), 0);
-  const avgInterimPnl = activeTrades.length > 0 ? totalInterimPnl / activeTrades.length : 0;
+  // Use server-calculated totals from stats (includes ALL active trades, not just limited fetch)
+  const totalInterimPnl = trackingStats?.totalCurrentPnl ?? 0;
+  const totalMaxPnl = trackingStats?.totalMaxPnl ?? 0;
+  const avgInterimPnl = totalActiveCount > 0 ? totalInterimPnl / totalActiveCount : 0;
 
   // Aggregate P&L by dimensions
   const pnlByRank = activeTrades.reduce((acc, t) => {

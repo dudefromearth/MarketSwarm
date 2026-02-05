@@ -425,6 +425,20 @@ router.get("/trade_tracking/stats", requireAdmin, async (req, res) => {
     const activeCount = await redis.hlen("massive:selector:tracking:active");
     const historyCount = await redis.llen("massive:selector:tracking:history");
 
+    // Calculate total P&L from all active trades (not limited like /active endpoint)
+    const activeRaw = await redis.hgetall("massive:selector:tracking:active");
+    let totalCurrentPnl = 0;
+    let totalMaxPnl = 0;
+    for (const tradeJson of Object.values(activeRaw)) {
+      try {
+        const trade = JSON.parse(tradeJson);
+        totalCurrentPnl += parseFloat(trade.current_pnl) || 0;
+        totalMaxPnl += parseFloat(trade.max_pnl) || 0;
+      } catch {
+        // Skip malformed entries
+      }
+    }
+
     // Parse stats by rank
     const byRank = {};
     for (let rank = 1; rank <= 10; rank++) {
@@ -433,15 +447,15 @@ router.get("/trade_tracking/stats", requireAdmin, async (req, res) => {
 
       const wins = parseInt(rawStats[`rank${rank}:wins`] || "0");
       const totalPnl = parseFloat(rawStats[`rank${rank}:total_pnl`] || "0");
-      const totalMaxPnl = parseFloat(rawStats[`rank${rank}:total_max_pnl`] || "0");
+      const totalMaxPnlRank = parseFloat(rawStats[`rank${rank}:total_max_pnl`] || "0");
 
       byRank[rank] = {
         count,
         wins,
         winRate: count > 0 ? (wins / count * 100).toFixed(1) + "%" : "0%",
         avgPnl: count > 0 ? (totalPnl / count).toFixed(2) : "0.00",
-        avgMaxPnl: count > 0 ? (totalMaxPnl / count).toFixed(2) : "0.00",
-        captureRate: totalMaxPnl > 0 ? (totalPnl / totalMaxPnl * 100).toFixed(1) + "%" : "0%",
+        avgMaxPnl: count > 0 ? (totalMaxPnlRank / count).toFixed(2) : "0.00",
+        captureRate: totalMaxPnlRank > 0 ? (totalPnl / totalMaxPnlRank * 100).toFixed(1) + "%" : "0%",
       };
     }
 
@@ -450,6 +464,8 @@ router.get("/trade_tracking/stats", requireAdmin, async (req, res) => {
       data: {
         activeCount,
         historyCount,
+        totalCurrentPnl,
+        totalMaxPnl,
         byRank,
       },
       ts: Date.now(),
