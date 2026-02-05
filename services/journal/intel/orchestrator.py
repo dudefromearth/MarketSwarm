@@ -16,13 +16,15 @@ from openpyxl.utils import get_column_letter
 
 import redis.asyncio as redis
 
-from .db_v2 import JournalDBv2
+from .db_v2 import JournalDBv2, VersionConflictError
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, Symbol, Setting, Tag, Order,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
     PlaybookEntry, PlaybookSourceRef, Alert,
     PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger,
-    TrackedIdea, SelectorParams
+    TrackedIdea, SelectorParams,
+    RiskGraphStrategy, RiskGraphStrategyVersion, RiskGraphTemplate,
+    Position, Leg, Fill, PositionEvent
 )
 from .analytics_v2 import AnalyticsV2
 from .auth import JournalAuth, require_auth, optional_auth
@@ -4005,6 +4007,1012 @@ class JournalOrchestrator:
             self.logger.error(f"trigger_leaderboard_calculation error: {e}")
             return self._error_response(str(e), 500, request)
 
+    # ==================== Risk Graph Service ====================
+
+    async def _publish_risk_graph_event(self, user_id: int, event_type: str, data: dict):
+        """Publish a risk graph event to Redis for SSE broadcast."""
+        try:
+            if not self._redis:
+                self._redis = redis.from_url(self._redis_url)
+            channel = f"risk_graph_updates:{user_id}"
+            event = json.dumps({
+                'type': event_type,
+                'data': data,
+                'ts': datetime.utcnow().isoformat()
+            })
+            await self._redis.publish(channel, event)
+        except Exception as e:
+            self.logger.error(f"Failed to publish risk graph event: {e}")
+
+    async def list_risk_graph_strategies(self, request: web.Request) -> web.Response:
+        """GET /api/risk-graph/strategies - List risk graph strategies for user."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            include_inactive = request.query.get('include_inactive', 'false') == 'true'
+            strategies = self.db.list_risk_graph_strategies(user['id'], include_inactive)
+
+            return self._json_response({
+                'success': True,
+                'data': [s.to_api_dict() for s in strategies],
+                'count': len(strategies)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"list_risk_graph_strategies error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_risk_graph_strategy(self, request: web.Request) -> web.Response:
+        """GET /api/risk-graph/strategies/:id - Get a single strategy."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            strategy_id = request.match_info['id']
+            strategy = self.db.get_risk_graph_strategy(strategy_id, user['id'])
+
+            if not strategy:
+                return self._error_response('Strategy not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': strategy.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_risk_graph_strategy error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def create_risk_graph_strategy(self, request: web.Request) -> web.Response:
+        """POST /api/risk-graph/strategies - Create a new strategy."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            body = await request.json()
+
+            from .models_v2 import RiskGraphStrategy
+
+            strategy = RiskGraphStrategy(
+                id=RiskGraphStrategy.new_id(),
+                user_id=user['id'],
+                symbol=body.get('symbol', 'SPX'),
+                underlying=body.get('underlying', 'I:SPX'),
+                strategy=body['strategy'],
+                side=body['side'],
+                strike=float(body['strike']),
+                width=body.get('width'),
+                dte=int(body['dte']),
+                expiration=body['expiration'],
+                debit=float(body['debit']) if body.get('debit') is not None else None,
+                visible=body.get('visible', True),
+                sort_order=body.get('sortOrder', 0),
+                color=body.get('color'),
+                label=body.get('label'),
+                added_at=body.get('addedAt', int(datetime.utcnow().timestamp() * 1000)),
+            )
+
+            created = self.db.create_risk_graph_strategy(strategy)
+            self.logger.info(f"Created risk graph strategy: {created.strategy} {created.strike}", emoji="📊")
+
+            # Publish event for real-time sync
+            await self._publish_risk_graph_event(user['id'], 'strategy_added', created.to_api_dict())
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201, request)
+
+        except KeyError as e:
+            return self._error_response(f'Missing required field: {e}', 400, request)
+        except Exception as e:
+            self.logger.error(f"create_risk_graph_strategy error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def update_risk_graph_strategy(self, request: web.Request) -> web.Response:
+        """PATCH /api/risk-graph/strategies/:id - Update a strategy."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            strategy_id = request.match_info['id']
+            body = await request.json()
+
+            # Convert camelCase to snake_case for updates
+            updates = {}
+            field_map = {
+                'debit': 'debit',
+                'visible': 'visible',
+                'sortOrder': 'sort_order',
+                'color': 'color',
+                'label': 'label',
+            }
+            for api_key, db_key in field_map.items():
+                if api_key in body:
+                    updates[db_key] = body[api_key]
+
+            change_reason = body.get('changeReason')
+
+            updated = self.db.update_risk_graph_strategy(
+                strategy_id, updates, user['id'], change_reason
+            )
+
+            if not updated:
+                return self._error_response('Strategy not found', 404, request)
+
+            # Publish event for real-time sync
+            await self._publish_risk_graph_event(user['id'], 'strategy_updated', updated.to_api_dict())
+
+            return self._json_response({
+                'success': True,
+                'data': updated.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"update_risk_graph_strategy error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def delete_risk_graph_strategy(self, request: web.Request) -> web.Response:
+        """DELETE /api/risk-graph/strategies/:id - Delete (soft) a strategy."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            strategy_id = request.match_info['id']
+            hard_delete = request.query.get('hard', 'false') == 'true'
+
+            deleted = self.db.delete_risk_graph_strategy(strategy_id, user['id'], hard_delete)
+
+            if not deleted:
+                return self._error_response('Strategy not found', 404, request)
+
+            # Publish event for real-time sync
+            await self._publish_risk_graph_event(user['id'], 'strategy_removed', {'id': strategy_id})
+
+            return self._json_response({
+                'success': True,
+                'message': 'Strategy deleted'
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"delete_risk_graph_strategy error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_risk_graph_strategy_versions(self, request: web.Request) -> web.Response:
+        """GET /api/risk-graph/strategies/:id/versions - Get version history."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            strategy_id = request.match_info['id']
+
+            # Verify ownership
+            strategy = self.db.get_risk_graph_strategy(strategy_id, user['id'])
+            if not strategy:
+                return self._error_response('Strategy not found', 404, request)
+
+            versions = self.db.get_risk_graph_strategy_versions(strategy_id)
+
+            return self._json_response({
+                'success': True,
+                'data': [v.to_api_dict() for v in versions],
+                'count': len(versions)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_risk_graph_strategy_versions error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def import_risk_graph_strategies(self, request: web.Request) -> web.Response:
+        """POST /api/risk-graph/strategies/import - Bulk import strategies."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            body = await request.json()
+            strategies_data = body.get('strategies', [])
+
+            from .models_v2 import RiskGraphStrategy
+
+            imported = []
+            for data in strategies_data:
+                strategy = RiskGraphStrategy(
+                    id=RiskGraphStrategy.new_id(),
+                    user_id=user['id'],
+                    symbol=data.get('symbol', 'SPX'),
+                    underlying=data.get('underlying', 'I:SPX'),
+                    strategy=data['strategy'],
+                    side=data['side'],
+                    strike=float(data['strike']),
+                    width=data.get('width'),
+                    dte=int(data['dte']),
+                    expiration=data['expiration'],
+                    debit=float(data['debit']) if data.get('debit') is not None else None,
+                    visible=data.get('visible', True),
+                    sort_order=len(imported),
+                    color=data.get('color'),
+                    label=data.get('label'),
+                    added_at=data.get('addedAt', int(datetime.utcnow().timestamp() * 1000)),
+                )
+                created = self.db.create_risk_graph_strategy(strategy)
+                imported.append(created)
+
+            self.logger.info(f"Imported {len(imported)} risk graph strategies", emoji="📊")
+
+            return self._json_response({
+                'success': True,
+                'data': [s.to_api_dict() for s in imported],
+                'count': len(imported)
+            }, 201, request)
+
+        except Exception as e:
+            self.logger.error(f"import_risk_graph_strategies error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def export_risk_graph_strategies(self, request: web.Request) -> web.Response:
+        """GET /api/risk-graph/strategies/export - Export all strategies."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            strategies = self.db.list_risk_graph_strategies(user['id'], include_inactive=False)
+
+            return self._json_response({
+                'success': True,
+                'data': {
+                    'strategies': [s.to_api_dict() for s in strategies],
+                    'exportedAt': datetime.utcnow().isoformat(),
+                    'count': len(strategies)
+                }
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"export_risk_graph_strategies error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def reorder_risk_graph_strategies(self, request: web.Request) -> web.Response:
+        """POST /api/risk-graph/strategies/reorder - Update sort order."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            body = await request.json()
+            strategy_order = body.get('order', [])
+
+            if not strategy_order:
+                return self._error_response('order array required', 400, request)
+
+            self.db.reorder_risk_graph_strategies(user['id'], strategy_order)
+
+            return self._json_response({
+                'success': True,
+                'message': 'Order updated'
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"reorder_risk_graph_strategies error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    # ==================== Risk Graph Templates ====================
+
+    async def list_risk_graph_templates(self, request: web.Request) -> web.Response:
+        """GET /api/risk-graph/templates - List templates for user."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            include_public = request.query.get('include_public', 'false') == 'true'
+            templates = self.db.list_risk_graph_templates(user['id'], include_public)
+
+            return self._json_response({
+                'success': True,
+                'data': [t.to_api_dict() for t in templates],
+                'count': len(templates)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"list_risk_graph_templates error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_risk_graph_template(self, request: web.Request) -> web.Response:
+        """GET /api/risk-graph/templates/:id - Get a single template."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            template_id = request.match_info['id']
+            template = self.db.get_risk_graph_template(template_id, user['id'])
+
+            if not template:
+                return self._error_response('Template not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': template.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_risk_graph_template error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def create_risk_graph_template(self, request: web.Request) -> web.Response:
+        """POST /api/risk-graph/templates - Create a new template."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            body = await request.json()
+
+            from .models_v2 import RiskGraphTemplate
+
+            template = RiskGraphTemplate(
+                id=RiskGraphTemplate.new_id(),
+                user_id=user['id'],
+                name=body['name'],
+                description=body.get('description'),
+                symbol=body.get('symbol', 'SPX'),
+                strategy=body['strategy'],
+                side=body['side'],
+                strike_offset=int(body.get('strikeOffset', 0)),
+                width=body.get('width'),
+                dte_target=int(body['dteTarget']),
+                debit_estimate=float(body['debitEstimate']) if body.get('debitEstimate') else None,
+                is_public=body.get('isPublic', False),
+            )
+
+            created = self.db.create_risk_graph_template(template)
+            self.logger.info(f"Created risk graph template: {created.name}", emoji="📋")
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201, request)
+
+        except KeyError as e:
+            return self._error_response(f'Missing required field: {e}', 400, request)
+        except Exception as e:
+            self.logger.error(f"create_risk_graph_template error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def update_risk_graph_template(self, request: web.Request) -> web.Response:
+        """PATCH /api/risk-graph/templates/:id - Update a template."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            template_id = request.match_info['id']
+            body = await request.json()
+
+            # Convert camelCase to snake_case
+            updates = {}
+            field_map = {
+                'name': 'name',
+                'description': 'description',
+                'symbol': 'symbol',
+                'strategy': 'strategy',
+                'side': 'side',
+                'strikeOffset': 'strike_offset',
+                'width': 'width',
+                'dteTarget': 'dte_target',
+                'debitEstimate': 'debit_estimate',
+                'isPublic': 'is_public',
+            }
+            for api_key, db_key in field_map.items():
+                if api_key in body:
+                    updates[db_key] = body[api_key]
+
+            updated = self.db.update_risk_graph_template(template_id, updates, user['id'])
+
+            if not updated:
+                return self._error_response('Template not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': updated.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"update_risk_graph_template error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def delete_risk_graph_template(self, request: web.Request) -> web.Response:
+        """DELETE /api/risk-graph/templates/:id - Delete a template."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            template_id = request.match_info['id']
+            deleted = self.db.delete_risk_graph_template(template_id, user['id'])
+
+            if not deleted:
+                return self._error_response('Template not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'message': 'Template deleted'
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"delete_risk_graph_template error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def use_risk_graph_template(self, request: web.Request) -> web.Response:
+        """POST /api/risk-graph/templates/:id/use - Create strategy from template."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            template_id = request.match_info['id']
+            body = await request.json()
+
+            template = self.db.get_risk_graph_template(template_id, user['id'])
+            if not template:
+                return self._error_response('Template not found', 404, request)
+
+            # Get current spot price to calculate actual strike
+            spot_price = float(body.get('spotPrice', 0))
+            if not spot_price:
+                return self._error_response('spotPrice required', 400, request)
+
+            # Round to nearest strike increment (5 for SPX, 50 for NDX)
+            increment = 50 if template.symbol == 'NDX' else 5
+            strike = round((spot_price + template.strike_offset) / increment) * increment
+
+            # Calculate expiration date
+            from datetime import timedelta
+            expiration = (datetime.utcnow() + timedelta(days=template.dte_target)).strftime('%Y-%m-%d')
+
+            from .models_v2 import RiskGraphStrategy
+
+            strategy = RiskGraphStrategy(
+                id=RiskGraphStrategy.new_id(),
+                user_id=user['id'],
+                symbol=template.symbol,
+                underlying=body.get('underlying', f'I:{template.symbol}'),
+                strategy=template.strategy,
+                side=template.side,
+                strike=strike,
+                width=template.width,
+                dte=template.dte_target,
+                expiration=expiration,
+                debit=body.get('debit') or template.debit_estimate,
+                visible=True,
+                added_at=int(datetime.utcnow().timestamp() * 1000),
+            )
+
+            created = self.db.create_risk_graph_strategy(strategy)
+
+            # Increment template use count
+            self.db.increment_template_use_count(template_id)
+
+            # Publish event for real-time sync
+            await self._publish_risk_graph_event(user['id'], 'strategy_added', created.to_api_dict())
+
+            return self._json_response({
+                'success': True,
+                'data': created.to_api_dict()
+            }, 201, request)
+
+        except Exception as e:
+            self.logger.error(f"use_risk_graph_template error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def share_risk_graph_template(self, request: web.Request) -> web.Response:
+        """POST /api/risk-graph/templates/:id/share - Generate share code."""
+        try:
+            user = await self.auth.get_request_user(request)
+            if not user:
+                return self._error_response('Authentication required', 401, request)
+
+            template_id = request.match_info['id']
+            share_code = self.db.generate_template_share_code(template_id, user['id'])
+
+            if not share_code:
+                return self._error_response('Template not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': {'shareCode': share_code}
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"share_risk_graph_template error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_shared_risk_graph_template(self, request: web.Request) -> web.Response:
+        """GET /api/risk-graph/templates/shared/:code - Get template by share code."""
+        try:
+            share_code = request.match_info['code']
+            template = self.db.get_risk_graph_template_by_share_code(share_code)
+
+            if not template:
+                return self._error_response('Template not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': template.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_shared_risk_graph_template error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    # ==================== Position API (TradeLog Service Layer) ====================
+
+    async def _publish_trade_log_event(
+        self,
+        user_id: int,
+        event_type: str,
+        aggregate_id: str,
+        aggregate_version: int,
+        payload: dict,
+        aggregate_type: str = 'position'
+    ):
+        """Publish a trade log event to Redis pub/sub for SSE broadcasting."""
+        try:
+            redis_conn = await self._get_redis()
+            channel = f"trade_log_updates:{user_id}"
+
+            # Create and store event for replay
+            event = PositionEvent(
+                event_id=PositionEvent.new_event_id(),
+                event_type=event_type,
+                aggregate_type=aggregate_type,
+                aggregate_id=aggregate_id,
+                aggregate_version=aggregate_version,
+                user_id=user_id,
+                payload=payload,
+                occurred_at=datetime.utcnow().isoformat(),
+            )
+            stored_event = self.db.record_position_event(event)
+
+            # Publish to Redis
+            message = {
+                'event_id': stored_event.event_id,
+                'event_seq': stored_event.event_seq,
+                'type': event_type,
+                'aggregate_type': aggregate_type,
+                'aggregate_id': aggregate_id,
+                'aggregate_version': aggregate_version,
+                'occurred_at': stored_event.occurred_at,
+                'payload': payload,
+            }
+            await redis_conn.publish(channel, json.dumps(message))
+
+        except Exception as e:
+            self.logger.error(f"Failed to publish trade log event: {e}")
+
+    def _check_idempotency(self, request: web.Request, user_id: int):
+        """Check idempotency key and return cached response if exists."""
+        key = request.headers.get('Idempotency-Key')
+        if not key:
+            return None, None
+
+        cached = self.db.check_idempotency_key(key, user_id)
+        if cached:
+            return key, cached
+        return key, None
+
+    def _store_idempotency(self, key: str, user_id: int, status: int, body: dict):
+        """Store idempotency key with response."""
+        if key:
+            self.db.store_idempotency_key(key, user_id, status, body)
+
+    @require_auth
+    async def list_positions(self, request: web.Request) -> web.Response:
+        """GET /api/positions - List positions for user."""
+        try:
+            user_id = request['user_id']
+            status = request.query.get('status')  # 'planned', 'open', 'closed'
+            limit = int(request.query.get('limit', 100))
+            offset = int(request.query.get('offset', 0))
+
+            positions = self.db.list_positions(user_id, status=status, limit=limit, offset=offset)
+
+            return self._json_response({
+                'success': True,
+                'data': [p.to_api_dict() for p in positions],
+                'count': len(positions)
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"list_positions error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def get_position(self, request: web.Request) -> web.Response:
+        """GET /api/positions/:id - Get a single position with legs."""
+        try:
+            user_id = request['user_id']
+            position_id = request.match_info['id']
+
+            position = self.db.get_position(position_id, user_id, include_legs=True, include_fills=True)
+
+            if not position:
+                return self._error_response('Position not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': position.to_api_dict()
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_position error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def get_position_snapshot(self, request: web.Request) -> web.Response:
+        """GET /api/positions/:id/snapshot - Get complete position snapshot for RiskGraph."""
+        try:
+            user_id = request['user_id']
+            position_id = request.match_info['id']
+
+            snapshot = self.db.get_position_snapshot(position_id, user_id)
+
+            if not snapshot:
+                return self._error_response('Position not found', 404, request)
+
+            return self._json_response({
+                'success': True,
+                'data': snapshot
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_position_snapshot error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def create_position(self, request: web.Request) -> web.Response:
+        """POST /api/positions - Create a new position with legs."""
+        try:
+            user_id = request['user_id']
+
+            # Check idempotency
+            idem_key, cached = self._check_idempotency(request, user_id)
+            if cached:
+                return self._json_response(cached['body'], request=request, status=cached['status'])
+
+            body = await request.json()
+
+            # Validate required fields
+            if not body.get('symbol'):
+                return self._error_response('symbol is required', 400, request)
+            if not body.get('legs') or not isinstance(body['legs'], list):
+                return self._error_response('legs array is required', 400, request)
+
+            # Create position
+            position = Position(
+                id=Position.new_id(),
+                user_id=user_id,
+                status=body.get('status', 'planned'),
+                symbol=body['symbol'],
+                underlying=body.get('underlying', f"I:{body['symbol']}"),
+                tags=body.get('tags'),
+                campaign_id=body.get('campaignId'),
+            )
+
+            # Create legs
+            legs = []
+            for leg_data in body['legs']:
+                leg = Leg(
+                    id=Leg.new_id(),
+                    position_id=position.id,
+                    instrument_type=leg_data.get('instrumentType', 'option'),
+                    expiry=leg_data.get('expiry'),
+                    strike=leg_data.get('strike'),
+                    right=leg_data.get('right'),
+                    quantity=leg_data.get('quantity', 0),
+                )
+                legs.append(leg)
+
+            created = self.db.create_position(position, legs)
+
+            response_body = {
+                'success': True,
+                'data': created.to_api_dict()
+            }
+
+            # Store idempotency
+            self._store_idempotency(idem_key, user_id, 201, response_body)
+
+            # Publish event
+            await self._publish_trade_log_event(
+                user_id=user_id,
+                event_type='PositionCreated',
+                aggregate_id=created.id,
+                aggregate_version=created.version,
+                payload=created.to_api_dict()
+            )
+
+            return self._json_response(response_body, request=request, status=201)
+
+        except Exception as e:
+            self.logger.error(f"create_position error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def update_position(self, request: web.Request) -> web.Response:
+        """PATCH /api/positions/:id - Update position (requires If-Match version)."""
+        try:
+            user_id = request['user_id']
+            position_id = request.match_info['id']
+
+            # Get version from If-Match header
+            version_header = request.headers.get('If-Match')
+            if not version_header:
+                return self._error_response('If-Match header required for updates', 428, request)
+
+            try:
+                version = int(version_header)
+            except ValueError:
+                return self._error_response('Invalid If-Match header', 400, request)
+
+            body = await request.json()
+
+            # Convert camelCase to snake_case for updates
+            updates = {}
+            if 'status' in body:
+                updates['status'] = body['status']
+            if 'tags' in body:
+                updates['tags'] = body['tags']
+            if 'campaignId' in body:
+                updates['campaign_id'] = body['campaignId']
+            if 'openedAt' in body:
+                updates['opened_at'] = body['openedAt']
+            if 'closedAt' in body:
+                updates['closed_at'] = body['closedAt']
+
+            updated = self.db.update_position(position_id, user_id, version, updates)
+
+            if not updated:
+                return self._error_response('Position not found', 404, request)
+
+            # Publish event
+            await self._publish_trade_log_event(
+                user_id=user_id,
+                event_type='PositionAdjusted',
+                aggregate_id=updated.id,
+                aggregate_version=updated.version,
+                payload=updated.to_api_dict()
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': updated.to_api_dict()
+            }, request=request)
+
+        except VersionConflictError as e:
+            return self._json_response({
+                'success': False,
+                'error': 'Version conflict',
+                'currentVersion': e.current_version
+            }, request=request, status=409)
+
+        except Exception as e:
+            self.logger.error(f"update_position error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def record_fill(self, request: web.Request) -> web.Response:
+        """POST /api/positions/:id/fills - Record a fill for a position leg."""
+        try:
+            user_id = request['user_id']
+            position_id = request.match_info['id']
+
+            # Check idempotency
+            idem_key, cached = self._check_idempotency(request, user_id)
+            if cached:
+                return self._json_response(cached['body'], request=request, status=cached['status'])
+
+            body = await request.json()
+
+            # Validate
+            if not body.get('legId'):
+                return self._error_response('legId is required', 400, request)
+            if body.get('price') is None:
+                return self._error_response('price is required', 400, request)
+            if body.get('quantity') is None:
+                return self._error_response('quantity is required', 400, request)
+
+            # Verify position belongs to user
+            position = self.db.get_position(position_id, user_id)
+            if not position:
+                return self._error_response('Position not found', 404, request)
+
+            # Create fill
+            fill = Fill(
+                id=Fill.new_id(),
+                leg_id=body['legId'],
+                price=float(body['price']),
+                quantity=int(body['quantity']),
+                occurred_at=body.get('occurredAt', datetime.utcnow().isoformat()),
+            )
+
+            self.db.record_fill(fill)
+
+            # Update position to 'open' if it was 'planned'
+            if position.status == 'planned':
+                try:
+                    self.db.update_position(position_id, user_id, position.version, {
+                        'status': 'open',
+                        'opened_at': fill.occurred_at
+                    })
+                except VersionConflictError:
+                    pass  # Another fill may have updated it, that's fine
+
+            # Refresh position
+            updated_position = self.db.get_position(position_id, user_id, include_legs=True, include_fills=True)
+
+            response_body = {
+                'success': True,
+                'data': updated_position.to_api_dict() if updated_position else None
+            }
+
+            # Store idempotency
+            self._store_idempotency(idem_key, user_id, 201, response_body)
+
+            # Publish event
+            await self._publish_trade_log_event(
+                user_id=user_id,
+                event_type='FillRecorded',
+                aggregate_id=position_id,
+                aggregate_version=updated_position.version if updated_position else position.version + 1,
+                payload={
+                    'fill': fill.to_api_dict(),
+                    'position': updated_position.to_api_dict() if updated_position else None
+                }
+            )
+
+            return self._json_response(response_body, request=request, status=201)
+
+        except Exception as e:
+            self.logger.error(f"record_fill error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def close_position(self, request: web.Request) -> web.Response:
+        """POST /api/positions/:id/close - Close a position (requires If-Match version)."""
+        try:
+            user_id = request['user_id']
+            position_id = request.match_info['id']
+
+            # Get version from If-Match header
+            version_header = request.headers.get('If-Match')
+            if not version_header:
+                return self._error_response('If-Match header required for close', 428, request)
+
+            try:
+                version = int(version_header)
+            except ValueError:
+                return self._error_response('Invalid If-Match header', 400, request)
+
+            closed = self.db.close_position(position_id, user_id, version)
+
+            if not closed:
+                return self._error_response('Position not found', 404, request)
+
+            # Publish event
+            await self._publish_trade_log_event(
+                user_id=user_id,
+                event_type='PositionClosed',
+                aggregate_id=closed.id,
+                aggregate_version=closed.version,
+                payload=closed.to_api_dict()
+            )
+
+            return self._json_response({
+                'success': True,
+                'data': closed.to_api_dict()
+            }, request=request)
+
+        except VersionConflictError as e:
+            return self._json_response({
+                'success': False,
+                'error': 'Version conflict',
+                'currentVersion': e.current_version
+            }, request=request, status=409)
+
+        except Exception as e:
+            self.logger.error(f"close_position error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def list_journal_entries_for_position(self, request: web.Request) -> web.Response:
+        """GET /api/journal_entries?position_id=... - Get journal entries for a position."""
+        try:
+            user_id = request['user_id']
+            position_id = request.query.get('position_id')
+
+            if not position_id:
+                return self._error_response('position_id query parameter required', 400, request)
+
+            # Verify position belongs to user
+            position = self.db.get_position(position_id, user_id, include_legs=False)
+            if not position:
+                return self._error_response('Position not found', 404, request)
+
+            # Get journal entries - reuse existing journal entry infrastructure
+            # For now, filter journal entries by trade_refs that match position_id
+            # This integrates with the existing journaling system
+
+            # Note: The existing journal system uses JournalTradeRef for linking
+            # For the new Position model, we'll store position_id in notes or a new field
+            # For MVP, return empty array until full journal integration is done
+
+            return self._json_response({
+                'success': True,
+                'data': [],
+                'count': 0
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"list_journal_entries_for_position error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def create_journal_entry_for_position(self, request: web.Request) -> web.Response:
+        """POST /api/journal_entries - Create a journal entry for a position."""
+        try:
+            user_id = request['user_id']
+            body = await request.json()
+
+            position_id = body.get('positionId') or body.get('position_id')
+            if not position_id:
+                return self._error_response('positionId is required', 400, request)
+
+            object_of_reflection = body.get('objectOfReflection') or body.get('object_of_reflection')
+            if not object_of_reflection:
+                return self._error_response('objectOfReflection is required', 400, request)
+
+            phase = body.get('phase', 'setup')
+
+            # Verify position belongs to user
+            position = self.db.get_position(position_id, user_id, include_legs=False)
+            if not position:
+                return self._error_response('Position not found', 404, request)
+
+            # Create journal entry using existing infrastructure
+            # For MVP, store as a journal entry with position reference in notes
+
+            entry_id = str(__import__('uuid').uuid4())
+            entry_data = {
+                'id': entry_id,
+                'positionId': position_id,
+                'objectOfReflection': object_of_reflection,
+                'biasFlags': body.get('biasFlags') or body.get('bias_flags'),
+                'notes': body.get('notes'),
+                'phase': phase,
+                'createdAt': datetime.utcnow().isoformat(),
+            }
+
+            # Note: Full integration with JournalEntry model would go here
+            # For MVP, return the created entry structure
+
+            return self._json_response({
+                'success': True,
+                'data': entry_data
+            }, request=request, status=201)
+
+        except Exception as e:
+            self.logger.error(f"create_journal_entry_for_position error: {e}")
+            return self._error_response(str(e), 500, request)
+
     # ==================== Health & App Setup ====================
 
     async def health_check(self, request: web.Request) -> web.Response:
@@ -4189,6 +5197,45 @@ class JournalOrchestrator:
         app.router.add_get('/api/leaderboard', self.get_leaderboard)
         app.router.add_get('/api/leaderboard/me', self.get_my_leaderboard)
         app.router.add_post('/api/internal/leaderboard/calculate', self.trigger_leaderboard_calculation)
+
+        # =================================================================
+        # Risk Graph Service API
+        # =================================================================
+        # Strategies
+        app.router.add_get('/api/risk-graph/strategies', self.list_risk_graph_strategies)
+        app.router.add_get('/api/risk-graph/strategies/{id}', self.get_risk_graph_strategy)
+        app.router.add_post('/api/risk-graph/strategies', self.create_risk_graph_strategy)
+        app.router.add_patch('/api/risk-graph/strategies/{id}', self.update_risk_graph_strategy)
+        app.router.add_delete('/api/risk-graph/strategies/{id}', self.delete_risk_graph_strategy)
+        app.router.add_get('/api/risk-graph/strategies/{id}/versions', self.get_risk_graph_strategy_versions)
+
+        # Bulk operations
+        app.router.add_post('/api/risk-graph/strategies/import', self.import_risk_graph_strategies)
+        app.router.add_get('/api/risk-graph/strategies/export', self.export_risk_graph_strategies)
+        app.router.add_post('/api/risk-graph/strategies/reorder', self.reorder_risk_graph_strategies)
+
+        # Templates
+        app.router.add_get('/api/risk-graph/templates', self.list_risk_graph_templates)
+        app.router.add_get('/api/risk-graph/templates/{id}', self.get_risk_graph_template)
+        app.router.add_post('/api/risk-graph/templates', self.create_risk_graph_template)
+        app.router.add_patch('/api/risk-graph/templates/{id}', self.update_risk_graph_template)
+        app.router.add_delete('/api/risk-graph/templates/{id}', self.delete_risk_graph_template)
+        app.router.add_post('/api/risk-graph/templates/{id}/use', self.use_risk_graph_template)
+        app.router.add_post('/api/risk-graph/templates/{id}/share', self.share_risk_graph_template)
+        app.router.add_get('/api/risk-graph/templates/shared/{code}', self.get_shared_risk_graph_template)
+
+        # ==================== Position API (TradeLog Service Layer) ====================
+        app.router.add_get('/api/positions', self.list_positions)
+        app.router.add_get('/api/positions/{id}', self.get_position)
+        app.router.add_get('/api/positions/{id}/snapshot', self.get_position_snapshot)
+        app.router.add_post('/api/positions', self.create_position)
+        app.router.add_patch('/api/positions/{id}', self.update_position)
+        app.router.add_post('/api/positions/{id}/fills', self.record_fill)
+        app.router.add_post('/api/positions/{id}/close', self.close_position)
+
+        # Journal entries for positions
+        app.router.add_get('/api/journal_entries', self.list_journal_entries_for_position)
+        app.router.add_post('/api/journal_entries', self.create_journal_entry_for_position)
 
         return app
 

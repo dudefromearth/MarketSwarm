@@ -12,14 +12,16 @@ from .models_v2 import (
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
     PlaybookEntry, PlaybookSourceRef, Tag, Alert, Order, TradeCorrection,
     PromptAlert, PromptAlertVersion, ReferenceStateSnapshot, PromptAlertTrigger,
-    TrackedIdea, SelectorParams
+    TrackedIdea, SelectorParams,
+    RiskGraphStrategy, RiskGraphStrategyVersion, RiskGraphTemplate,
+    Position, Leg, Fill, PositionEvent
 )
 
 
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 15
+    SCHEMA_VERSION = 17
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -213,6 +215,12 @@ class JournalDBv2:
 
             if current_version < 15:
                 self._migrate_to_v15(conn)
+
+            if current_version < 16:
+                self._migrate_to_v16(conn)
+
+            if current_version < 17:
+                self._migrate_to_v17(conn)
 
             conn.commit()
         finally:
@@ -1144,6 +1152,198 @@ class JournalDBv2:
                 """)
 
             self._set_schema_version(conn, 15)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v16(self, conn):
+        """Migrate to v16: Add risk graph service tables for server-side strategy persistence."""
+        cursor = conn.cursor()
+        try:
+            # Create risk_graph_strategies table - active strategies per user
+            if not self._table_exists(conn, 'risk_graph_strategies'):
+                cursor.execute("""
+                    CREATE TABLE risk_graph_strategies (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+
+                        -- Strategy geometry
+                        symbol VARCHAR(20) NOT NULL DEFAULT 'SPX',
+                        underlying VARCHAR(20) NOT NULL DEFAULT 'I:SPX',
+                        strategy ENUM('single', 'vertical', 'butterfly') NOT NULL,
+                        side ENUM('call', 'put') NOT NULL,
+                        strike DECIMAL(10,2) NOT NULL,
+                        width INT DEFAULT NULL,
+                        dte INT NOT NULL,
+                        expiration DATE NOT NULL,
+                        debit DECIMAL(10,4) DEFAULT NULL,
+
+                        -- Display state
+                        visible BOOLEAN DEFAULT TRUE,
+                        sort_order INT DEFAULT 0,
+                        color VARCHAR(20) DEFAULT NULL,
+                        label VARCHAR(100) DEFAULT NULL,
+
+                        -- State
+                        added_at BIGINT NOT NULL,
+                        is_active BOOLEAN DEFAULT TRUE,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+                        INDEX idx_user_active (user_id, is_active)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create risk_graph_strategy_versions table - audit trail
+            if not self._table_exists(conn, 'risk_graph_strategy_versions'):
+                cursor.execute("""
+                    CREATE TABLE risk_graph_strategy_versions (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        strategy_id VARCHAR(36) NOT NULL,
+                        version INT NOT NULL,
+                        debit DECIMAL(10,4) DEFAULT NULL,
+                        visible BOOLEAN DEFAULT TRUE,
+                        label VARCHAR(100) DEFAULT NULL,
+                        change_type ENUM('created', 'debit_updated', 'visibility_toggled', 'edited', 'deleted') NOT NULL,
+                        change_reason VARCHAR(255) DEFAULT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (strategy_id) REFERENCES risk_graph_strategies(id) ON DELETE CASCADE,
+                        INDEX idx_strategy_version (strategy_id, version)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create risk_graph_templates table - saved/shareable templates
+            if not self._table_exists(conn, 'risk_graph_templates'):
+                cursor.execute("""
+                    CREATE TABLE risk_graph_templates (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+                        name VARCHAR(100) NOT NULL,
+                        description TEXT DEFAULT NULL,
+
+                        -- Template geometry (strike is relative to ATM)
+                        symbol VARCHAR(20) NOT NULL DEFAULT 'SPX',
+                        strategy ENUM('single', 'vertical', 'butterfly') NOT NULL,
+                        side ENUM('call', 'put') NOT NULL,
+                        strike_offset INT DEFAULT 0,
+                        width INT DEFAULT NULL,
+                        dte_target INT NOT NULL,
+                        debit_estimate DECIMAL(10,4) DEFAULT NULL,
+
+                        -- Sharing
+                        is_public BOOLEAN DEFAULT FALSE,
+                        share_code VARCHAR(20) DEFAULT NULL UNIQUE,
+                        use_count INT DEFAULT 0,
+
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        INDEX idx_user_templates (user_id),
+                        INDEX idx_share_code (share_code)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 16)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v17(self, conn):
+        """Migrate to v17: Add normalized position/leg/fill tables for TradeLog service layer."""
+        cursor = conn.cursor()
+        try:
+            # Create positions table - core aggregate for tracking trades
+            if not self._table_exists(conn, 'positions'):
+                cursor.execute("""
+                    CREATE TABLE positions (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+                        status ENUM('planned', 'open', 'closed') NOT NULL DEFAULT 'planned',
+                        symbol VARCHAR(20) NOT NULL,
+                        underlying VARCHAR(20) NOT NULL,
+                        version INT NOT NULL DEFAULT 1,
+                        opened_at DATETIME DEFAULT NULL,
+                        closed_at DATETIME DEFAULT NULL,
+                        tags JSON DEFAULT NULL,
+                        campaign_id VARCHAR(36) DEFAULT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+                        INDEX idx_user_status (user_id, status),
+                        INDEX idx_campaign (campaign_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create legs table - individual option/stock/future legs
+            if not self._table_exists(conn, 'legs'):
+                cursor.execute("""
+                    CREATE TABLE legs (
+                        id VARCHAR(36) PRIMARY KEY,
+                        position_id VARCHAR(36) NOT NULL,
+                        instrument_type ENUM('option', 'stock', 'future') NOT NULL,
+                        expiry DATE DEFAULT NULL,
+                        strike DECIMAL(10,2) DEFAULT NULL,
+                        `right` ENUM('call', 'put') DEFAULT NULL,
+                        quantity INT NOT NULL,
+
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (position_id) REFERENCES positions(id) ON DELETE CASCADE,
+                        INDEX idx_position (position_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create fills table - price/quantity execution records
+            if not self._table_exists(conn, 'fills'):
+                cursor.execute("""
+                    CREATE TABLE fills (
+                        id VARCHAR(36) PRIMARY KEY,
+                        leg_id VARCHAR(36) NOT NULL,
+                        price DECIMAL(10,4) NOT NULL,
+                        quantity INT NOT NULL,
+                        occurred_at DATETIME NOT NULL,
+                        recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+                        FOREIGN KEY (leg_id) REFERENCES legs(id) ON DELETE CASCADE,
+                        INDEX idx_leg (leg_id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create idempotency_keys table - for mutation deduplication
+            if not self._table_exists(conn, 'idempotency_keys'):
+                cursor.execute("""
+                    CREATE TABLE idempotency_keys (
+                        id VARCHAR(100) PRIMARY KEY,
+                        user_id INT NOT NULL,
+                        response_status INT NOT NULL,
+                        response_body JSON NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        expires_at DATETIME NOT NULL,
+
+                        INDEX idx_user_key (user_id, id),
+                        INDEX idx_expires (expires_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Create position_events table - SSE event log for replay
+            if not self._table_exists(conn, 'position_events'):
+                cursor.execute("""
+                    CREATE TABLE position_events (
+                        id INT AUTO_INCREMENT PRIMARY KEY,
+                        event_id VARCHAR(36) NOT NULL UNIQUE,
+                        event_seq BIGINT NOT NULL,
+                        event_type VARCHAR(50) NOT NULL,
+                        aggregate_type ENUM('position', 'order') NOT NULL,
+                        aggregate_id VARCHAR(36) NOT NULL,
+                        aggregate_version INT NOT NULL,
+                        user_id INT NOT NULL,
+                        payload JSON NOT NULL,
+                        occurred_at DATETIME NOT NULL,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+                        INDEX idx_user_seq (user_id, event_seq),
+                        INDEX idx_aggregate (aggregate_id, aggregate_version)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 17)
         finally:
             cursor.close()
 
@@ -4236,3 +4436,880 @@ class JournalDBv2:
         finally:
             cursor.close()
             conn.close()
+
+    # ==================== Risk Graph Strategies ====================
+
+    def list_risk_graph_strategies(
+        self,
+        user_id: int,
+        include_inactive: bool = False
+    ) -> List[RiskGraphStrategy]:
+        """List risk graph strategies for a user."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM risk_graph_strategies WHERE user_id = %s"
+            params: List[Any] = [user_id]
+
+            if not include_inactive:
+                query += " AND is_active = 1"
+
+            query += " ORDER BY sort_order ASC, added_at DESC"
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [RiskGraphStrategy.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_risk_graph_strategy(self, strategy_id: str, user_id: Optional[int] = None) -> Optional[RiskGraphStrategy]:
+        """Get a single risk graph strategy by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if user_id is not None:
+                cursor.execute(
+                    "SELECT * FROM risk_graph_strategies WHERE id = %s AND user_id = %s",
+                    (strategy_id, user_id)
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM risk_graph_strategies WHERE id = %s",
+                    (strategy_id,)
+                )
+            row = cursor.fetchone()
+            if row:
+                return RiskGraphStrategy.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_risk_graph_strategy(self, strategy: RiskGraphStrategy) -> RiskGraphStrategy:
+        """Create a new risk graph strategy."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = strategy.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO risk_graph_strategies ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+
+            # Create initial version record
+            version = RiskGraphStrategyVersion(
+                strategy_id=strategy.id,
+                version=1,
+                debit=strategy.debit,
+                visible=strategy.visible,
+                label=strategy.label,
+                change_type='created'
+            )
+            version_data = version.to_dict()
+            v_columns = ', '.join(version_data.keys())
+            v_placeholders = ', '.join(['%s'] * len(version_data))
+            cursor.execute(
+                f"INSERT INTO risk_graph_strategy_versions ({v_columns}) VALUES ({v_placeholders})",
+                list(version_data.values())
+            )
+
+            conn.commit()
+            return strategy
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_risk_graph_strategy(
+        self,
+        strategy_id: str,
+        updates: Dict[str, Any],
+        user_id: Optional[int] = None,
+        change_reason: Optional[str] = None
+    ) -> Optional[RiskGraphStrategy]:
+        """Update a risk graph strategy with version tracking."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Get current version
+            if user_id is not None:
+                cursor.execute(
+                    "SELECT MAX(version) FROM risk_graph_strategy_versions WHERE strategy_id = %s",
+                    (strategy_id,)
+                )
+            else:
+                cursor.execute(
+                    "SELECT MAX(version) FROM risk_graph_strategy_versions WHERE strategy_id = %s",
+                    (strategy_id,)
+                )
+            row = cursor.fetchone()
+            current_version = row[0] if row and row[0] else 0
+
+            # Determine change type
+            change_type = 'edited'
+            if 'debit' in updates and len(updates) == 1:
+                change_type = 'debit_updated'
+            elif 'visible' in updates and len(updates) == 1:
+                change_type = 'visibility_toggled'
+
+            # Prevent updating immutable fields
+            immutable = {'id', 'user_id', 'created_at', 'added_at'}
+            updates = {k: v for k, v in updates.items() if k not in immutable}
+
+            if not updates:
+                return self.get_risk_graph_strategy(strategy_id, user_id)
+
+            updates['updated_at'] = datetime.utcnow().isoformat()
+
+            # Handle boolean conversions
+            if 'visible' in updates:
+                updates['visible'] = 1 if updates['visible'] else 0
+            if 'is_active' in updates:
+                updates['is_active'] = 1 if updates['is_active'] else 0
+
+            set_clause = ', '.join(f'{k} = %s' for k in updates.keys())
+            if user_id is not None:
+                params = list(updates.values()) + [strategy_id, user_id]
+                cursor.execute(
+                    f"UPDATE risk_graph_strategies SET {set_clause} WHERE id = %s AND user_id = %s",
+                    params
+                )
+            else:
+                params = list(updates.values()) + [strategy_id]
+                cursor.execute(
+                    f"UPDATE risk_graph_strategies SET {set_clause} WHERE id = %s",
+                    params
+                )
+
+            # Create version record
+            updated_strategy = self.get_risk_graph_strategy(strategy_id, user_id)
+            if updated_strategy:
+                version = RiskGraphStrategyVersion(
+                    strategy_id=strategy_id,
+                    version=current_version + 1,
+                    debit=updated_strategy.debit,
+                    visible=updated_strategy.visible,
+                    label=updated_strategy.label,
+                    change_type=change_type,
+                    change_reason=change_reason
+                )
+                version_data = version.to_dict()
+                v_columns = ', '.join(version_data.keys())
+                v_placeholders = ', '.join(['%s'] * len(version_data))
+                cursor.execute(
+                    f"INSERT INTO risk_graph_strategy_versions ({v_columns}) VALUES ({v_placeholders})",
+                    list(version_data.values())
+                )
+
+            conn.commit()
+            return updated_strategy
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_risk_graph_strategy(
+        self,
+        strategy_id: str,
+        user_id: Optional[int] = None,
+        hard_delete: bool = False
+    ) -> bool:
+        """Delete (soft or hard) a risk graph strategy."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if hard_delete:
+                # Hard delete - cascade will remove versions
+                if user_id is not None:
+                    cursor.execute(
+                        "DELETE FROM risk_graph_strategies WHERE id = %s AND user_id = %s",
+                        (strategy_id, user_id)
+                    )
+                else:
+                    cursor.execute(
+                        "DELETE FROM risk_graph_strategies WHERE id = %s",
+                        (strategy_id,)
+                    )
+            else:
+                # Soft delete
+                now = datetime.utcnow().isoformat()
+                if user_id is not None:
+                    cursor.execute(
+                        "UPDATE risk_graph_strategies SET is_active = 0, updated_at = %s WHERE id = %s AND user_id = %s",
+                        (now, strategy_id, user_id)
+                    )
+                else:
+                    cursor.execute(
+                        "UPDATE risk_graph_strategies SET is_active = 0, updated_at = %s WHERE id = %s",
+                        (now, strategy_id)
+                    )
+
+                # Record deletion in version history
+                cursor.execute(
+                    "SELECT MAX(version) FROM risk_graph_strategy_versions WHERE strategy_id = %s",
+                    (strategy_id,)
+                )
+                row = cursor.fetchone()
+                current_version = row[0] if row and row[0] else 0
+
+                version = RiskGraphStrategyVersion(
+                    strategy_id=strategy_id,
+                    version=current_version + 1,
+                    change_type='deleted'
+                )
+                version_data = version.to_dict()
+                v_columns = ', '.join(version_data.keys())
+                v_placeholders = ', '.join(['%s'] * len(version_data))
+                cursor.execute(
+                    f"INSERT INTO risk_graph_strategy_versions ({v_columns}) VALUES ({v_placeholders})",
+                    list(version_data.values())
+                )
+
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_risk_graph_strategy_versions(
+        self,
+        strategy_id: str
+    ) -> List[RiskGraphStrategyVersion]:
+        """Get version history for a strategy."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM risk_graph_strategy_versions WHERE strategy_id = %s ORDER BY version DESC",
+                (strategy_id,)
+            )
+            rows = cursor.fetchall()
+            return [RiskGraphStrategyVersion.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def reorder_risk_graph_strategies(
+        self,
+        user_id: int,
+        strategy_order: List[str]
+    ) -> bool:
+        """Update sort order for multiple strategies."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            for idx, strategy_id in enumerate(strategy_order):
+                cursor.execute(
+                    "UPDATE risk_graph_strategies SET sort_order = %s WHERE id = %s AND user_id = %s",
+                    (idx, strategy_id, user_id)
+                )
+            conn.commit()
+            return True
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Risk Graph Templates ====================
+
+    def list_risk_graph_templates(
+        self,
+        user_id: int,
+        include_public: bool = False
+    ) -> List[RiskGraphTemplate]:
+        """List risk graph templates for a user."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if include_public:
+                cursor.execute(
+                    "SELECT * FROM risk_graph_templates WHERE user_id = %s OR is_public = 1 ORDER BY created_at DESC",
+                    (user_id,)
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM risk_graph_templates WHERE user_id = %s ORDER BY created_at DESC",
+                    (user_id,)
+                )
+            rows = cursor.fetchall()
+            return [RiskGraphTemplate.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_risk_graph_template(
+        self,
+        template_id: str,
+        user_id: Optional[int] = None
+    ) -> Optional[RiskGraphTemplate]:
+        """Get a single template by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if user_id is not None:
+                cursor.execute(
+                    "SELECT * FROM risk_graph_templates WHERE id = %s AND (user_id = %s OR is_public = 1)",
+                    (template_id, user_id)
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM risk_graph_templates WHERE id = %s",
+                    (template_id,)
+                )
+            row = cursor.fetchone()
+            if row:
+                return RiskGraphTemplate.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_risk_graph_template_by_share_code(
+        self,
+        share_code: str
+    ) -> Optional[RiskGraphTemplate]:
+        """Get a template by its share code."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM risk_graph_templates WHERE share_code = %s",
+                (share_code,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return RiskGraphTemplate.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def create_risk_graph_template(self, template: RiskGraphTemplate) -> RiskGraphTemplate:
+        """Create a new risk graph template."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = template.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+
+            cursor.execute(
+                f"INSERT INTO risk_graph_templates ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return template
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_risk_graph_template(
+        self,
+        template_id: str,
+        updates: Dict[str, Any],
+        user_id: int
+    ) -> Optional[RiskGraphTemplate]:
+        """Update a template (only owner can update)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Prevent updating immutable fields
+            immutable = {'id', 'user_id', 'created_at', 'use_count'}
+            updates = {k: v for k, v in updates.items() if k not in immutable}
+
+            if not updates:
+                return self.get_risk_graph_template(template_id, user_id)
+
+            # Handle boolean conversions
+            if 'is_public' in updates:
+                updates['is_public'] = 1 if updates['is_public'] else 0
+
+            set_clause = ', '.join(f'{k} = %s' for k in updates.keys())
+            params = list(updates.values()) + [template_id, user_id]
+
+            cursor.execute(
+                f"UPDATE risk_graph_templates SET {set_clause} WHERE id = %s AND user_id = %s",
+                params
+            )
+            conn.commit()
+            return self.get_risk_graph_template(template_id, user_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_risk_graph_template(
+        self,
+        template_id: str,
+        user_id: int
+    ) -> bool:
+        """Delete a template (only owner can delete)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "DELETE FROM risk_graph_templates WHERE id = %s AND user_id = %s",
+                (template_id, user_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def generate_template_share_code(
+        self,
+        template_id: str,
+        user_id: int
+    ) -> Optional[str]:
+        """Generate a unique share code for a template."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Generate unique code
+            share_code = RiskGraphTemplate.generate_share_code()
+
+            cursor.execute(
+                "UPDATE risk_graph_templates SET share_code = %s WHERE id = %s AND user_id = %s",
+                (share_code, template_id, user_id)
+            )
+            conn.commit()
+
+            if cursor.rowcount > 0:
+                return share_code
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def increment_template_use_count(self, template_id: str) -> bool:
+        """Increment the use count for a template."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE risk_graph_templates SET use_count = use_count + 1 WHERE id = %s",
+                (template_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Position CRUD (TradeLog Service Layer) ====================
+
+    def create_position(self, position: Position, legs: List[Leg]) -> Position:
+        """Create a new position with legs."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Insert position
+            pos_data = position.to_dict()
+            columns = ', '.join(pos_data.keys())
+            placeholders = ', '.join(['%s'] * len(pos_data))
+            cursor.execute(
+                f"INSERT INTO positions ({columns}) VALUES ({placeholders})",
+                list(pos_data.values())
+            )
+
+            # Insert legs
+            for leg in legs:
+                leg_data = leg.to_dict()
+                leg_cols = ', '.join(leg_data.keys())
+                leg_ph = ', '.join(['%s'] * len(leg_data))
+                cursor.execute(
+                    f"INSERT INTO legs ({leg_cols}) VALUES ({leg_ph})",
+                    list(leg_data.values())
+                )
+
+            conn.commit()
+
+            # Return position with legs attached
+            position.legs = legs
+            return position
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_position(
+        self,
+        position_id: str,
+        user_id: int,
+        include_legs: bool = True,
+        include_fills: bool = False
+    ) -> Optional[Position]:
+        """Get a position by ID with optional legs and fills."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM positions WHERE id = %s AND user_id = %s",
+                (position_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            position = Position.from_dict(self._row_to_dict(cursor, row))
+
+            if include_legs:
+                cursor.execute(
+                    "SELECT * FROM legs WHERE position_id = %s ORDER BY created_at",
+                    (position_id,)
+                )
+                legs = [Leg.from_dict(self._row_to_dict(cursor, r)) for r in cursor.fetchall()]
+                position.legs = legs
+
+                if include_fills and legs:
+                    leg_ids = [l.id for l in legs]
+                    placeholders = ', '.join(['%s'] * len(leg_ids))
+                    cursor.execute(
+                        f"SELECT * FROM fills WHERE leg_id IN ({placeholders}) ORDER BY occurred_at",
+                        leg_ids
+                    )
+                    fills = [Fill.from_dict(self._row_to_dict(cursor, r)) for r in cursor.fetchall()]
+                    position.fills = fills
+
+            return position
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_positions(
+        self,
+        user_id: int,
+        status: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Position]:
+        """List positions for a user, optionally filtered by status."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM positions WHERE user_id = %s"
+            params = [user_id]
+
+            if status:
+                query += " AND status = %s"
+                params.append(status)
+
+            query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+
+            cursor.execute(query, params)
+            positions = [Position.from_dict(self._row_to_dict(cursor, r)) for r in cursor.fetchall()]
+
+            # Fetch legs for all positions in one query
+            if positions:
+                pos_ids = [p.id for p in positions]
+                placeholders = ', '.join(['%s'] * len(pos_ids))
+                cursor.execute(
+                    f"SELECT * FROM legs WHERE position_id IN ({placeholders}) ORDER BY created_at",
+                    pos_ids
+                )
+                legs_by_pos = {}
+                for row in cursor.fetchall():
+                    leg = Leg.from_dict(self._row_to_dict(cursor, row))
+                    if leg.position_id not in legs_by_pos:
+                        legs_by_pos[leg.position_id] = []
+                    legs_by_pos[leg.position_id].append(leg)
+
+                for pos in positions:
+                    pos.legs = legs_by_pos.get(pos.id, [])
+
+            return positions
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_position(
+        self,
+        position_id: str,
+        user_id: int,
+        version: int,
+        updates: dict
+    ) -> Optional[Position]:
+        """Update a position with optimistic locking (version check)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Check current version
+            cursor.execute(
+                "SELECT version FROM positions WHERE id = %s AND user_id = %s",
+                (position_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            current_version = row[0]
+
+            if current_version != version:
+                # Version mismatch - raise conflict error
+                raise VersionConflictError(current_version)
+
+            # Build update query
+            allowed_fields = ['status', 'tags', 'campaign_id', 'opened_at', 'closed_at']
+            set_clauses = []
+            params = []
+
+            for field in allowed_fields:
+                if field in updates:
+                    value = updates[field]
+                    if field == 'tags' and value is not None:
+                        value = json.dumps(value)
+                    set_clauses.append(f"{field} = %s")
+                    params.append(value)
+
+            if not set_clauses:
+                return self.get_position(position_id, user_id)
+
+            # Increment version
+            set_clauses.append("version = version + 1")
+            set_clauses.append("updated_at = NOW()")
+
+            params.extend([position_id, user_id, version])
+
+            cursor.execute(
+                f"UPDATE positions SET {', '.join(set_clauses)} WHERE id = %s AND user_id = %s AND version = %s",
+                params
+            )
+
+            if cursor.rowcount == 0:
+                # Race condition - version changed between check and update
+                cursor.execute(
+                    "SELECT version FROM positions WHERE id = %s AND user_id = %s",
+                    (position_id, user_id)
+                )
+                row = cursor.fetchone()
+                if row:
+                    raise VersionConflictError(row[0])
+                return None
+
+            conn.commit()
+            return self.get_position(position_id, user_id)
+        except VersionConflictError:
+            conn.rollback()
+            raise
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    def record_fill(self, fill: Fill) -> Fill:
+        """Record a fill for a leg."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            fill_data = fill.to_dict()
+            columns = ', '.join(fill_data.keys())
+            placeholders = ', '.join(['%s'] * len(fill_data))
+            cursor.execute(
+                f"INSERT INTO fills ({columns}) VALUES ({placeholders})",
+                list(fill_data.values())
+            )
+            conn.commit()
+            return fill
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    def close_position(
+        self,
+        position_id: str,
+        user_id: int,
+        version: int
+    ) -> Optional[Position]:
+        """Close a position with optimistic locking."""
+        return self.update_position(
+            position_id,
+            user_id,
+            version,
+            {
+                'status': 'closed',
+                'closed_at': datetime.utcnow().isoformat()
+            }
+        )
+
+    def get_position_snapshot(
+        self,
+        position_id: str,
+        user_id: int
+    ) -> Optional[dict]:
+        """Get a complete position snapshot for RiskGraph integration."""
+        position = self.get_position(position_id, user_id, include_legs=True, include_fills=True)
+        if not position:
+            return None
+
+        # Compute derived metadata
+        legs = position.legs or []
+        fills = position.fills or []
+
+        # Derive strategy type
+        if len(legs) == 1:
+            derived_strategy = 'single'
+        elif len(legs) == 2:
+            derived_strategy = 'vertical'
+        elif len(legs) == 3:
+            derived_strategy = 'butterfly'
+        else:
+            derived_strategy = 'custom'
+
+        # Compute net debit (sum of fill price * quantity)
+        net_debit = sum(f.price * f.quantity for f in fills)
+
+        # Compute DTE from first leg's expiry
+        dte = None
+        if legs and legs[0].expiry:
+            try:
+                expiry_date = datetime.strptime(legs[0].expiry, '%Y-%m-%d').date()
+                dte = (expiry_date - datetime.utcnow().date()).days
+            except (ValueError, TypeError):
+                pass
+
+        return {
+            'positionId': position.id,
+            'version': position.version,
+            'status': position.status,
+            'symbol': position.symbol,
+            'underlying': position.underlying,
+            'legs': [leg.to_api_dict() for leg in legs],
+            'fills': [fill.to_api_dict() for fill in fills],
+            'metadata': {
+                'derivedStrategy': derived_strategy,
+                'netDebit': net_debit,
+                'dte': dte,
+                'maxProfit': None,  # Computed by RiskGraph
+                'maxLoss': None,  # Computed by RiskGraph
+            }
+        }
+
+    # ==================== Position Events (SSE Event Log) ====================
+
+    def record_position_event(self, event: PositionEvent) -> PositionEvent:
+        """Record a position event for SSE replay."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Get next event_seq for this user
+            cursor.execute(
+                "SELECT COALESCE(MAX(event_seq), 0) + 1 FROM position_events WHERE user_id = %s",
+                (event.user_id,)
+            )
+            event.event_seq = cursor.fetchone()[0]
+
+            event_data = event.to_dict()
+            columns = ', '.join(event_data.keys())
+            placeholders = ', '.join(['%s'] * len(event_data))
+            cursor.execute(
+                f"INSERT INTO position_events ({columns}) VALUES ({placeholders})",
+                list(event_data.values())
+            )
+            conn.commit()
+            return event
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_position_events_since(
+        self,
+        user_id: int,
+        last_seq: int = 0,
+        limit: int = 100
+    ) -> List[PositionEvent]:
+        """Get position events since a given sequence number for replay."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM position_events WHERE user_id = %s AND event_seq > %s ORDER BY event_seq LIMIT %s",
+                (user_id, last_seq, limit)
+            )
+            return [PositionEvent.from_dict(self._row_to_dict(cursor, r)) for r in cursor.fetchall()]
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Idempotency Keys ====================
+
+    def check_idempotency_key(
+        self,
+        key: str,
+        user_id: int
+    ) -> Optional[dict]:
+        """Check if an idempotency key exists and return cached response."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT response_status, response_body FROM idempotency_keys WHERE id = %s AND user_id = %s AND expires_at > NOW()",
+                (key, user_id)
+            )
+            row = cursor.fetchone()
+            if row:
+                return {
+                    'status': row[0],
+                    'body': json.loads(row[1]) if row[1] else None
+                }
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def store_idempotency_key(
+        self,
+        key: str,
+        user_id: int,
+        status: int,
+        body: dict,
+        ttl_hours: int = 24
+    ) -> None:
+        """Store an idempotency key with response."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """
+                INSERT INTO idempotency_keys (id, user_id, response_status, response_body, expires_at)
+                VALUES (%s, %s, %s, %s, DATE_ADD(NOW(), INTERVAL %s HOUR))
+                ON DUPLICATE KEY UPDATE
+                    response_status = VALUES(response_status),
+                    response_body = VALUES(response_body),
+                    expires_at = VALUES(expires_at)
+                """,
+                (key, user_id, status, json.dumps(body), ttl_hours)
+            )
+            conn.commit()
+        finally:
+            cursor.close()
+            conn.close()
+
+    def cleanup_expired_idempotency_keys(self) -> int:
+        """Clean up expired idempotency keys. Returns count of deleted keys."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM idempotency_keys WHERE expires_at < NOW()")
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            cursor.close()
+            conn.close()
+
+
+class VersionConflictError(Exception):
+    """Raised when a version conflict occurs during optimistic locking."""
+    def __init__(self, current_version: int):
+        self.current_version = current_version
+        super().__init__(f"Version conflict: current version is {current_version}")

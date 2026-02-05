@@ -11,6 +11,8 @@ import AdminPage from './pages/Admin.tsx'
 import { AlertProvider } from './contexts/AlertContext.tsx'
 import { PathProvider } from './contexts/PathContext.tsx'
 import { TimezoneProvider } from './contexts/TimezoneContext.tsx'
+import { RiskGraphProvider } from './contexts/RiskGraphContext.tsx'
+import { TradeLogProvider } from './contexts/TradeLogContext.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -19,12 +21,16 @@ createRoot(document.getElementById('root')!).render(
         <PathProvider>
           <AuthWrapper>
             <TimezoneProvider>
+            <RiskGraphProvider>
+            <TradeLogProvider>
             <Routes>
               <Route path="/" element={<AppLayout><App /></AppLayout>} />
               <Route path="/profile" element={<ProfilePage />} />
               <Route path="/workbench" element={<WorkbenchPage />} />
               <Route path="/admin" element={<AdminPage />} />
             </Routes>
+            </TradeLogProvider>
+            </RiskGraphProvider>
             </TimezoneProvider>
           </AuthWrapper>
         </PathProvider>

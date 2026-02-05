@@ -34,6 +34,7 @@ import StrategyEditModal, { type StrategyData } from './components/StrategyEditM
 import type { ParsedStrategy } from './utils/tosParser';
 import { useAlerts } from './contexts/AlertContext';
 import { usePath } from './contexts/PathContext';
+import { useRiskGraph } from './contexts/RiskGraphContext';
 import type { AlertType, AlertBehavior } from './types/alerts';
 import ObserverPanel from './components/ObserverPanel';
 import GexChartPanel from './components/GexChartPanel';
@@ -42,7 +43,8 @@ import TradeTrackingPanel from './components/TradeTrackingPanel';
 import TrackingAnalyticsDashboard from './components/TrackingAnalyticsDashboard';
 import LeaderboardView from './components/LeaderboardView';
 import MonitorPanel from './components/MonitorPanel';
-import { VolumeProfileSettings, useIndicatorSettings, sigmaToPercentile } from './components/chart-primitives';
+import FloatingDialog from './components/FloatingDialog';
+import { VolumeProfileSettings, useIndicatorSettings } from './components/chart-primitives';
 import type { TradeSelectorModel, TradeRecommendation } from './types/tradeSelector';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
@@ -229,54 +231,6 @@ function createThrottle<T>(fn: (value: T) => void, limitMs: number): {
   };
 
   return { throttled, flush };
-}
-
-/**
- * Calculate Volume Profile using TradingView's VRVP algorithm
- * Divides price range into N bins and accumulates volume into each bin
- */
-function calculateVolumeProfileBins(
-  levels: { price: number; volume: number }[],
-  numBins: number
-): { price: number; volume: number }[] {
-  if (levels.length === 0) return [];
-
-  // Find price range
-  const prices = levels.map(l => l.price);
-  const minPrice = Math.min(...prices);
-  const maxPrice = Math.max(...prices);
-  const priceRange = maxPrice - minPrice;
-
-  if (priceRange <= 0) return levels;
-
-  // Clamp numBins to valid range
-  const effectiveBins = Math.max(20, Math.min(1000, numBins));
-
-  // TradingView formula: bin size = (High - Low) / Number of Rows
-  const binSize = priceRange / effectiveBins;
-
-  // Initialize bins
-  const bins: number[] = new Array(effectiveBins).fill(0);
-
-  // Assign each data point's volume to its bin
-  for (const level of levels) {
-    let binIndex = Math.floor((level.price - minPrice) / binSize);
-    // Handle edge case where price equals maxPrice
-    if (binIndex >= effectiveBins) binIndex = effectiveBins - 1;
-    if (binIndex < 0) binIndex = 0;
-    bins[binIndex] += level.volume;
-  }
-
-  // Convert bins back to levels with price at bin center
-  const rebinnedLevels: { price: number; volume: number }[] = [];
-  for (let i = 0; i < effectiveBins; i++) {
-    if (bins[i] > 0) {
-      const price = minPrice + (i + 0.5) * binSize; // Center of bin
-      rebinnedLevels.push({ price, volume: bins[i] });
-    }
-  }
-
-  return rebinnedLevels;
 }
 
 // Width options per strategy, per underlying
@@ -537,16 +491,17 @@ function App() {
   // User profile for header
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
-  // Popup and Risk Graph state
+  // Risk Graph context - provides strategies and operations
+  const {
+    strategies: riskGraphStrategies,
+    addStrategy: contextAddStrategy,
+    removeStrategy: contextRemoveStrategy,
+    toggleVisibility: contextToggleVisibility,
+    updateDebit: contextUpdateDebit,
+  } = useRiskGraph();
+
+  // Popup state
   const [selectedTile, setSelectedTile] = useState<SelectedStrategy | null>(null);
-  const [riskGraphStrategies, setRiskGraphStrategies] = useState<RiskGraphStrategy[]>(() => {
-    try {
-      const saved = localStorage.getItem('riskGraphStrategies');
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
   const [riskGraphAlerts, setRiskGraphAlerts] = useState<RiskGraphAlert[]>(() => {
     try {
       const saved = localStorage.getItem('riskGraphAlerts');
@@ -611,6 +566,28 @@ function App() {
   // FOTW Trade Log v2 state
   const [selectedLog, setSelectedLog] = useState<TradeLog | null>(null);
   const [logManagerOpen, setLogManagerOpen] = useState(false);
+
+  // Auto-fetch and select default log on startup
+  useEffect(() => {
+    const fetchAndSelectDefaultLog = async () => {
+      try {
+        const response = await fetch('/api/logs', { credentials: 'include' });
+        const result = await response.json();
+        if (result.success && result.data && result.data.length > 0) {
+          // Select the first active log (or just the first log)
+          const activeLog = result.data.find((log: TradeLog) => log.is_active) || result.data[0];
+          setSelectedLog(activeLog);
+        }
+      } catch (err) {
+        console.error('[App] Failed to fetch default log:', err);
+      }
+    };
+
+    // Only fetch if no log is selected
+    if (!selectedLog) {
+      fetchAndSelectDefaultLog();
+    }
+  }, []); // Run once on mount
   const [tradeDetailTrade, setTradeDetailTrade] = useState<Trade | null>(null);
   const [reportingLogId, setReportingLogId] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -623,6 +600,10 @@ function App() {
   const [monitorOpen, setMonitorOpen] = useState(false);
   const [pendingOrderCount, setPendingOrderCount] = useState(0);
   const [openTradeCount, setOpenTradeCount] = useState(0);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [monitorTrades, setMonitorTrades] = useState<any[]>([]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [monitorOrders, setMonitorOrders] = useState<any[]>([]);
 
   // Commentary panel state
   const [commentaryCollapsed, setCommentaryCollapsed] = useState(true);
@@ -788,34 +769,35 @@ function App() {
   };
 
   // Add strategy to risk graph list
-  const addToRiskGraph = () => {
+  const addToRiskGraph = async () => {
     if (!selectedTile) return;
-    const newStrategy: RiskGraphStrategy = {
-      ...selectedTile,
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      addedAt: Date.now(),
-      visible: true,
-    };
-    setRiskGraphStrategies(prev => [...prev, newStrategy]);
-    setSelectedTile(null);
+    try {
+      await contextAddStrategy({
+        ...selectedTile,
+        width: selectedTile.width || 0,
+      });
+      setSelectedTile(null);
+    } catch (err) {
+      console.error('Failed to add strategy:', err);
+    }
   };
 
   // Import ToS script as new strategy
-  const handleTosImport = (parsed: ParsedStrategy) => {
-    const newStrategy: RiskGraphStrategy = {
-      symbol: 'SPX',  // Default to SPX for ToS imports
-      strategy: parsed.strategy,
-      side: parsed.side,
-      strike: parsed.strike,
-      width: parsed.width,
-      dte: parsed.dte,
-      expiration: parsed.expiration,
-      debit: parsed.debit,
-      id: `tos-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-      addedAt: Date.now(),
-      visible: true,
-    };
-    setRiskGraphStrategies(prev => [...prev, newStrategy]);
+  const handleTosImport = async (parsed: ParsedStrategy) => {
+    try {
+      await contextAddStrategy({
+        symbol: 'SPX',  // Default to SPX for ToS imports
+        strategy: parsed.strategy,
+        side: parsed.side,
+        strike: parsed.strike,
+        width: parsed.width,
+        dte: parsed.dte,
+        expiration: parsed.expiration,
+        debit: parsed.debit,
+      });
+    } catch (err) {
+      console.error('Failed to import ToS strategy:', err);
+    }
   };
 
   // Close popup
@@ -840,28 +822,36 @@ function App() {
   }, []);
 
   // Remove strategy from risk graph
-  const removeFromRiskGraph = (id: string) => {
-    setRiskGraphStrategies(prev => prev.filter(s => s.id !== id));
+  const removeFromRiskGraph = async (id: string) => {
+    try {
+      await contextRemoveStrategy(id);
+    } catch (err) {
+      console.error('Failed to remove strategy:', err);
+    }
   };
 
   // Toggle strategy visibility in risk graph
-  const toggleStrategyVisibility = (id: string) => {
-    setRiskGraphStrategies(prev => prev.map(s =>
-      s.id === id ? { ...s, visible: !s.visible } : s
-    ));
+  const toggleStrategyVisibility = async (id: string) => {
+    try {
+      await contextToggleVisibility(id);
+    } catch (err) {
+      console.error('Failed to toggle visibility:', err);
+    }
   };
 
   // Update strategy from edit modal
-  const handleStrategyEdit = (updated: StrategyData) => {
-    setRiskGraphStrategies(prev => prev.map(s =>
-      s.id === updated.id ? { ...s, ...updated } : s
-    ));
+  const handleStrategyEdit = async (updated: StrategyData) => {
+    try {
+      // Update debit if changed
+      if (updated.debit !== undefined) {
+        await contextUpdateDebit(updated.id, updated.debit);
+      }
+    } catch (err) {
+      console.error('Failed to update strategy:', err);
+    }
   };
 
-  // Persist risk graph strategies to localStorage
-  useEffect(() => {
-    localStorage.setItem('riskGraphStrategies', JSON.stringify(riskGraphStrategies));
-  }, [riskGraphStrategies]);
+  // Note: Risk graph strategies are now persisted by RiskGraphContext (no localStorage needed)
 
   // Persist risk graph alerts to localStorage
   useEffect(() => {
@@ -919,10 +909,12 @@ function App() {
   };
 
   // Update strategy debit (for when actual fill differs from quoted price)
-  const updateStrategyDebit = (id: string, newDebit: number | null) => {
-    setRiskGraphStrategies(prev => prev.map(s =>
-      s.id === id ? { ...s, debit: newDebit } : s
-    ));
+  const updateStrategyDebit = async (id: string, newDebit: number | null) => {
+    try {
+      await contextUpdateDebit(id, newDebit);
+    } catch (err) {
+      console.error('Failed to update debit:', err);
+    }
   };
 
   // Trade Log handlers
@@ -978,27 +970,27 @@ function App() {
     setTradeRefreshTrigger(prev => prev + 1);
   }, []);
 
-  // Fetch monitor counts (pending orders + open trades)
+  // Fetch monitor data for badge and MonitorPanel
   const fetchMonitorCounts = useCallback(async () => {
     try {
       const ordersRes = await fetch('/api/orders/active', { credentials: 'include' });
-      if (!ordersRes.ok) {
-        console.warn('[Monitor] Orders fetch failed:', ordersRes.status);
-      } else {
+      if (ordersRes.ok) {
         const ordersData = await ordersRes.json();
         if (ordersData.success) {
-          const pendingCount = (ordersData.data.pending_entries?.length || 0) +
-                              (ordersData.data.pending_exits?.length || 0);
-          setPendingOrderCount(pendingCount);
+          const allOrders = [
+            ...(ordersData.data.pending_entries || []),
+            ...(ordersData.data.pending_exits || [])
+          ];
+          setMonitorOrders(allOrders);
+          setPendingOrderCount(allOrders.length);
         }
       }
 
       const tradesRes = await fetch('/api/trades?status=open', { credentials: 'include' });
-      if (!tradesRes.ok) {
-        console.warn('[Monitor] Trades fetch failed:', tradesRes.status);
-      } else {
+      if (tradesRes.ok) {
         const tradesData = await tradesRes.json();
         if (tradesData.success) {
+          setMonitorTrades(tradesData.data || []);
           setOpenTradeCount(tradesData.data?.length || 0);
         }
       }
@@ -1372,7 +1364,7 @@ function App() {
   }, [underlying]);
 
   // Fetch volume profile based on spot price (±300 points) - SPX only for now
-  // Mode: 'raw' (VWAP-based) or 'tv' (TradingView distributed smoothing)
+  // Data is pre-binned in Redis at $10 granularity - just fetch and render
   useEffect(() => {
     if (underlying !== 'I:SPX') {
       setVolumeProfile(null);
@@ -1384,9 +1376,11 @@ function App() {
 
     const minPrice = Math.floor(spotPrice - 300);
     const maxPrice = Math.ceil(spotPrice + 300);
-    const mode = vpConfig.mode || 'raw';
+    const mode = vpConfig.mode || 'tv';
 
-    fetch(`${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}&mode=${mode}`, { credentials: 'include' })
+    const url = `${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}&mode=${mode}`;
+
+    fetch(url, { credentials: 'include' })
       .then(r => r.json())
       .then(d => {
         if (d.success && d.data) {
@@ -1398,7 +1392,7 @@ function App() {
     // Refresh every 5 seconds (only when tab is visible)
     const interval = setInterval(() => {
       if (document.hidden) return;
-      fetch(`${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}&mode=${mode}`, { credentials: 'include' })
+      fetch(url, { credentials: 'include' })
         .then(r => r.json())
         .then(d => {
           if (d.success && d.data) {
@@ -1882,7 +1876,7 @@ function App() {
     }
   }, [heatmapGrid, changeGrid, heatmapDisplayMode, calculateR2R]);
 
-  // Process volume profile using TradingView VRVP bin algorithm
+  // Volume profile data is pre-binned and capped on the server
   // vpByPrice: key is price * 10 (e.g., 60001 = $6000.10)
   const vpByPrice = useMemo(() => {
     const result: Record<number, number> = {};
@@ -1891,28 +1885,14 @@ function App() {
       return result;
     }
 
-    // Step 1: Apply sigma-based percentile capping to filter outliers
-    const percentile = sigmaToPercentile(vpConfig.cappingSigma);
-    const volumes = volumeProfile.levels.map(l => l.volume).sort((a, b) => a - b);
-    const capIndex = Math.floor(volumes.length * percentile);
-    const volumeCap = volumes[capIndex] || volumeProfile.maxVolume;
-
-    const cappedLevels = volumeProfile.levels.map((level) => ({
-      price: level.price,
-      volume: Math.min(level.volume, volumeCap),
-    }));
-
-    // Step 2: Apply TradingView VRVP algorithm to bin the data
-    const rebinnedLevels = calculateVolumeProfileBins(cappedLevels, vpConfig.numBins);
-
-    // Convert rebinned levels to price-tenths format for getVpLevelsForStrike
-    for (const level of rebinnedLevels) {
+    // Data is already binned and capped by the API - just convert to priceTenths format
+    for (const level of volumeProfile.levels) {
       const priceTenths = Math.round(level.price * 10);
       result[priceTenths] = level.volume;
     }
 
     return result;
-  }, [volumeProfile, vpConfig.numBins, vpConfig.cappingSigma]);
+  }, [volumeProfile]);
 
   // Get volume profile levels for a strike (all $0.10 levels within ±2.5 range)
   const getVpLevelsForStrike = (strike: number): { pos: number; volume: number }[] => {
@@ -3066,102 +3046,108 @@ function App() {
       {/* Position Monitor Panel */}
       {monitorOpen && (
         <MonitorPanel
+          trades={monitorTrades}
+          orders={monitorOrders}
           onClose={() => setMonitorOpen(false)}
-          onCloseTrade={() => {
-            // Refresh counts after closing a trade
-            fetchMonitorCounts();
-          }}
-          onCancelOrder={() => {
-            // Refresh counts after cancelling an order
-            fetchMonitorCounts();
-          }}
+          onCloseTrade={() => fetchMonitorCounts()}
+          onCancelOrder={() => fetchMonitorCounts()}
         />
       )}
 
-      {/* Strategy Popup Modal */}
-      {selectedTile && (
-        <div className="popup-overlay" onClick={closePopup}>
-          <div className="popup-modal" onClick={e => e.stopPropagation()}>
-            <div className="popup-header">
-              <h3>
-                {selectedTile.strategy === 'single' ? 'Single Option' :
-                 selectedTile.strategy === 'vertical' ? 'Vertical Spread' : 'Butterfly'}
-              </h3>
-              <button className="popup-close" onClick={closePopup}>&times;</button>
+      {/* Strategy Popup - Floating Dialog */}
+      <FloatingDialog
+        isOpen={selectedTile !== null}
+        onClose={closePopup}
+        title={selectedTile?.strategy === 'single' ? 'Single Option' :
+               selectedTile?.strategy === 'vertical' ? 'Vertical Spread' : 'Butterfly'}
+        width={400}
+        showBackdrop={true}
+        closeOnBackdropClick={true}
+      >
+        {selectedTile && (
+          <>
+            <div className="form-row">
+              <span className="form-label">Symbol</span>
+              <span className="form-value">SPX</span>
+            </div>
+            <div className="form-row">
+              <span className="form-label">Expiration</span>
+              <span className="form-value">{selectedTile.expiration}</span>
+            </div>
+            <div className="form-row">
+              <span className="form-label">Strike</span>
+              <span className="form-value">{selectedTile.strike}</span>
+            </div>
+            {selectedTile.strategy !== 'single' && (
+              <div className="form-row">
+                <span className="form-label">Width</span>
+                <span className="form-value">{selectedTile.width}</span>
+              </div>
+            )}
+            <div className="form-row">
+              <span className="form-label">Side</span>
+              <span className={`form-value side-${selectedTile.side}`}>
+                {selectedTile.side.toUpperCase()}
+              </span>
+            </div>
+            <div className="form-row">
+              <span className="form-label">DTE</span>
+              <span className="form-value">{selectedTile.dte}</span>
+            </div>
+            <div className="form-row">
+              <span className="form-label">Debit</span>
+              <span className="form-value" style={{ color: '#fbbf24' }}>
+                {selectedTile.debit !== null ? `$${selectedTile.debit.toFixed(2)}` : '-'}
+              </span>
             </div>
 
-            <div className="popup-body">
-              <div className="order-details">
-                <div className="order-row">
-                  <span className="order-label">Symbol</span>
-                  <span className="order-value">SPX</span>
+            {selectedTile.strategy === 'butterfly' && (
+              <div className="strategy-legs">
+                <div className="strategy-leg">
+                  <span className="leg-action buy">BUY 1x</span>
+                  <span>{selectedTile.strike - selectedTile.width} {selectedTile.side.toUpperCase()}</span>
                 </div>
-                <div className="order-row">
-                  <span className="order-label">Expiration</span>
-                  <span className="order-value">{selectedTile.expiration}</span>
+                <div className="strategy-leg">
+                  <span className="leg-action sell">SELL 2x</span>
+                  <span>{selectedTile.strike} {selectedTile.side.toUpperCase()}</span>
                 </div>
-                <div className="order-row">
-                  <span className="order-label">Strike</span>
-                  <span className="order-value">{selectedTile.strike}</span>
-                </div>
-                {selectedTile.strategy !== 'single' && (
-                  <div className="order-row">
-                    <span className="order-label">Width</span>
-                    <span className="order-value">{selectedTile.width}</span>
-                  </div>
-                )}
-                <div className="order-row">
-                  <span className="order-label">Side</span>
-                  <span className="order-value side-badge" data-side={selectedTile.side}>
-                    {selectedTile.side.toUpperCase()}
-                  </span>
-                </div>
-                <div className="order-row">
-                  <span className="order-label">DTE</span>
-                  <span className="order-value">{selectedTile.dte}</span>
-                </div>
-                <div className="order-row highlight">
-                  <span className="order-label">Debit</span>
-                  <span className="order-value price">
-                    {selectedTile.debit !== null ? `$${selectedTile.debit.toFixed(2)}` : '-'}
-                  </span>
+                <div className="strategy-leg">
+                  <span className="leg-action buy">BUY 1x</span>
+                  <span>{selectedTile.strike + selectedTile.width} {selectedTile.side.toUpperCase()}</span>
                 </div>
               </div>
+            )}
 
-              {selectedTile.strategy === 'butterfly' && (
-                <div className="strategy-legs">
-                  <div className="leg">Buy 1x {selectedTile.strike - selectedTile.width} {selectedTile.side}</div>
-                  <div className="leg">Sell 2x {selectedTile.strike} {selectedTile.side}</div>
-                  <div className="leg">Buy 1x {selectedTile.strike + selectedTile.width} {selectedTile.side}</div>
+            {selectedTile.strategy === 'vertical' && (
+              <div className="strategy-legs">
+                <div className="strategy-leg">
+                  <span className="leg-action buy">BUY 1x</span>
+                  <span>{selectedTile.strike} {selectedTile.side.toUpperCase()}</span>
                 </div>
-              )}
-
-              {selectedTile.strategy === 'vertical' && (
-                <div className="strategy-legs">
-                  <div className="leg">Buy 1x {selectedTile.strike} {selectedTile.side}</div>
-                  <div className="leg">
-                    Sell 1x {selectedTile.side === 'call'
+                <div className="strategy-leg">
+                  <span className="leg-action sell">SELL 1x</span>
+                  <span>
+                    {selectedTile.side === 'call'
                       ? selectedTile.strike + selectedTile.width
-                      : selectedTile.strike - selectedTile.width} {selectedTile.side}
-                  </div>
+                      : selectedTile.strike - selectedTile.width} {selectedTile.side.toUpperCase()}
+                  </span>
                 </div>
-              )}
-
-              <div className="tos-script">
-                <label>TOS Script</label>
-                <code>{generateTosScript(selectedTile)}</code>
               </div>
+            )}
+
+            <div className="tos-script">
+              {generateTosScript(selectedTile)}
             </div>
 
-            <div className="popup-actions">
+            <div className="form-actions">
               <button
                 className={`btn btn-primary${tosCopied ? ' copied' : ''}`}
                 onClick={copyTosScript}
               >
-                {tosCopied ? 'Copied!' : 'Copy TOS Script'}
+                {tosCopied ? 'Copied!' : 'Copy TOS'}
               </button>
               <button className="btn btn-secondary" onClick={addToRiskGraph}>
-                Add to Risk Graph
+                + Risk Graph
               </button>
               <button
                 className="btn btn-success"
@@ -3184,9 +3170,9 @@ function App() {
                 Log Trade
               </button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        )}
+      </FloatingDialog>
 
       {/* Trade Entry Modal */}
       <TradeEntryModal

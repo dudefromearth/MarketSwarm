@@ -5,11 +5,13 @@
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import path from "path";
+import { fileURLToPath } from "url";
 import { loadConfig, getFallbackConfig, getConfig } from "./config.js";
 import { initRedis, closeRedis } from "./redis.js";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
 import { setConfig as setKeyConfig } from "./keys.js";
-import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, subscribeAlertsPubSub, stopPolling, getClientStats } from "./routes/sse.js";
+import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, subscribeAlertsPubSub, subscribeRiskGraphPubSub, subscribeTradeLogPubSub, stopPolling, getClientStats } from "./routes/sse.js";
 import modelsRoutes from "./routes/models.js";
 import authRoutes from "./routes/auth.js";
 import adminRoutes, { startActivityTracking, stopActivityTracking } from "./routes/admin.js";
@@ -64,22 +66,32 @@ app.use("/api/models", modelsRoutes);
 // Proxy journal endpoints to journal service (port 3002)
 // This handles /api/logs/*, /api/trades/*, /api/playbooks/*, /api/journals/*
 const JOURNAL_SERVICE = "http://localhost:3002";
-const journalPaths = ["/api/logs", "/api/trades", "/api/playbooks", "/api/journals", "/api/leaderboard", "/api/orders", "/api/alerts", "/api/symbols", "/api/tags", "/api/settings", "/api/journal", "/api/playbook"];
+const journalPaths = ["/api/logs", "/api/trades", "/api/playbooks", "/api/journals", "/api/leaderboard", "/api/orders", "/api/alerts", "/api/symbols", "/api/tags", "/api/settings", "/api/journal", "/api/playbook", "/api/risk-graph", "/api/positions", "/api/journal_entries"];
 
 journalPaths.forEach(path => {
   app.use(path, async (req, res) => {
     const url = `${JOURNAL_SERVICE}${req.originalUrl}`;
     try {
+      // Build headers, forwarding versioning/idempotency headers
+      const headers = {
+        "Content-Type": "application/json",
+        // Forward user info for journal service
+        "X-User-Id": req.user?.wp?.id || "",
+        "X-User-Email": req.user?.wp?.email || "",
+        "X-User-Name": req.user?.wp?.name || "",
+        "X-User-Issuer": req.user?.wp?.issuer || "",
+      };
+      // Forward idempotency and versioning headers
+      if (req.headers["idempotency-key"]) {
+        headers["Idempotency-Key"] = req.headers["idempotency-key"];
+      }
+      if (req.headers["if-match"]) {
+        headers["If-Match"] = req.headers["if-match"];
+      }
+
       const response = await fetch(url, {
         method: req.method,
-        headers: {
-          "Content-Type": "application/json",
-          // Forward user info for journal service
-          "X-User-Id": req.user?.wp?.id || "",
-          "X-User-Email": req.user?.wp?.email || "",
-          "X-User-Name": req.user?.wp?.name || "",
-          "X-User-Issuer": req.user?.wp?.issuer || "",
-        },
+        headers,
         body: ["GET", "HEAD"].includes(req.method) ? undefined : JSON.stringify(req.body),
       });
 
@@ -96,6 +108,24 @@ journalPaths.forEach(path => {
       res.status(502).json({ success: false, error: "Journal service unavailable" });
     }
   });
+});
+
+// Static file serving for production UI build
+// Serves from ui/dist - run 'npm run build' in ui/ to generate
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const UI_DIST = path.resolve(__dirname, "../../../ui/dist");
+
+// Serve static files (JS, CSS, images, etc.)
+app.use(express.static(UI_DIST));
+
+// SPA fallback - serve index.html for all non-API routes
+app.get("*", (req, res) => {
+  // Don't serve index.html for API or SSE routes (they should 404 if not matched)
+  if (req.path.startsWith("/api/") || req.path.startsWith("/sse/")) {
+    return res.status(404).json({ error: "Not found" });
+  }
+  res.sendFile(path.join(UI_DIST, "index.html"));
 });
 
 // Graceful shutdown
@@ -153,6 +183,8 @@ async function main() {
   subscribeVexyPubSub();
   subscribeHeatmapDiffs(["I:SPX", "I:NDX"]);
   subscribeAlertsPubSub();
+  subscribeRiskGraphPubSub();
+  subscribeTradeLogPubSub();
 
   // Start server
   const port = config.env.SSE_PORT;
@@ -176,6 +208,8 @@ async function main() {
     console.log(`   GET /sse/heatmap/:sym       - Stream heatmap updates`);
     console.log(`   GET /sse/vexy               - Stream commentary`);
     console.log(`   GET /sse/alerts             - Stream alert events`);
+    console.log(`   GET /sse/risk-graph         - Stream risk graph sync`);
+    console.log(`   GET /sse/trade-log          - Stream trade log events`);
     console.log(`   GET /sse/all                - Combined stream`);
     console.log("═══════════════════════════════════════════════════════");
 

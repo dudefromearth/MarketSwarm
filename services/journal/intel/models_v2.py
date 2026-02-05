@@ -1288,3 +1288,479 @@ class SelectorParams:
             'activatedAt': self.activated_at,
             'retiredAt': self.retired_at,
         }
+
+
+# =============================================================================
+# Risk Graph Service Models
+# =============================================================================
+
+@dataclass
+class RiskGraphStrategy:
+    """A risk graph strategy belonging to a user.
+
+    Represents a single options strategy (single, vertical, or butterfly)
+    being tracked on the risk graph for P&L analysis.
+    """
+    id: str
+    user_id: int
+
+    # Strategy geometry
+    symbol: str = 'SPX'
+    underlying: str = 'I:SPX'
+    strategy: str = 'butterfly'  # single, vertical, butterfly
+    side: str = 'call'  # call, put
+    strike: float = 0.0
+    width: Optional[int] = None
+    dte: int = 0
+    expiration: str = ''  # YYYY-MM-DD
+    debit: Optional[float] = None
+
+    # Display state
+    visible: bool = True
+    sort_order: int = 0
+    color: Optional[str] = None
+    label: Optional[str] = None
+
+    # State
+    added_at: int = 0  # Unix timestamp (ms)
+    is_active: bool = True
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new strategy ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        d['visible'] = 1 if d['visible'] else 0
+        d['is_active'] = 1 if d['is_active'] else 0
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'RiskGraphStrategy':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if 'visible' in d:
+            d['visible'] = bool(d['visible'])
+        if 'is_active' in d:
+            d['is_active'] = bool(d['is_active'])
+        # Handle expiration as date or string
+        if 'expiration' in d and d['expiration'] is not None:
+            if hasattr(d['expiration'], 'isoformat'):
+                d['expiration'] = d['expiration'].isoformat()
+            else:
+                d['expiration'] = str(d['expiration'])
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format with camelCase keys."""
+        return {
+            'id': self.id,
+            'userId': self.user_id,
+            'symbol': self.symbol,
+            'underlying': self.underlying,
+            'strategy': self.strategy,
+            'side': self.side,
+            'strike': self.strike,
+            'width': self.width,
+            'dte': self.dte,
+            'expiration': self.expiration,
+            'debit': self.debit,
+            'visible': self.visible,
+            'sortOrder': self.sort_order,
+            'color': self.color,
+            'label': self.label,
+            'addedAt': self.added_at,
+            'isActive': self.is_active,
+            'createdAt': self.created_at,
+            'updatedAt': self.updated_at,
+        }
+
+
+@dataclass
+class RiskGraphStrategyVersion:
+    """Version history for risk graph strategy changes (audit trail)."""
+    id: Optional[int] = None
+    strategy_id: str = ''
+    version: int = 1
+    debit: Optional[float] = None
+    visible: bool = True
+    label: Optional[str] = None
+    change_type: str = 'created'  # created, debit_updated, visibility_toggled, edited, deleted
+    change_reason: Optional[str] = None
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        d['visible'] = 1 if d['visible'] else 0
+        if d['id'] is None:
+            del d['id']
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'RiskGraphStrategyVersion':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if 'visible' in d:
+            d['visible'] = bool(d['visible'])
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'strategyId': self.strategy_id,
+            'version': self.version,
+            'debit': self.debit,
+            'visible': self.visible,
+            'label': self.label,
+            'changeType': self.change_type,
+            'changeReason': self.change_reason,
+            'createdAt': self.created_at,
+        }
+
+
+@dataclass
+class RiskGraphTemplate:
+    """A saved template for quickly adding strategies to the risk graph.
+
+    Templates store relative positions (strike offset from ATM) rather than
+    absolute strikes, making them reusable across different market conditions.
+    """
+    id: str
+    user_id: int
+    name: str
+    description: Optional[str] = None
+
+    # Template geometry (strike is relative to ATM)
+    symbol: str = 'SPX'
+    strategy: str = 'butterfly'  # single, vertical, butterfly
+    side: str = 'call'  # call, put
+    strike_offset: int = 0  # Offset from ATM (e.g., -10 = 10 points below)
+    width: Optional[int] = None
+    dte_target: int = 0  # Target DTE
+    debit_estimate: Optional[float] = None
+
+    # Sharing
+    is_public: bool = False
+    share_code: Optional[str] = None
+    use_count: int = 0
+
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new template ID."""
+        return str(uuid.uuid4())
+
+    @staticmethod
+    def generate_share_code() -> str:
+        """Generate a unique share code."""
+        import secrets
+        return secrets.token_urlsafe(12)[:16]
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        d = asdict(self)
+        d['is_public'] = 1 if d['is_public'] else 0
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'RiskGraphTemplate':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if 'is_public' in d:
+            d['is_public'] = bool(d['is_public'])
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format with camelCase keys."""
+        return {
+            'id': self.id,
+            'userId': self.user_id,
+            'name': self.name,
+            'description': self.description,
+            'symbol': self.symbol,
+            'strategy': self.strategy,
+            'side': self.side,
+            'strikeOffset': self.strike_offset,
+            'width': self.width,
+            'dteTarget': self.dte_target,
+            'debitEstimate': self.debit_estimate,
+            'isPublic': self.is_public,
+            'shareCode': self.share_code,
+            'useCount': self.use_count,
+            'createdAt': self.created_at,
+        }
+
+
+# =============================================================================
+# TradeLog Service Layer - Normalized Position Model
+# =============================================================================
+
+@dataclass
+class Position:
+    """A position aggregate - core entity for tracking trades.
+
+    This replaces the flattened Trade model with a normalized structure
+    that properly handles multi-leg strategies and multiple fills.
+    """
+    id: str
+    user_id: int
+    status: str  # 'planned', 'open', 'closed'
+    symbol: str  # e.g., 'SPX'
+    underlying: str  # e.g., 'I:SPX'
+    version: int = 1
+
+    opened_at: Optional[str] = None
+    closed_at: Optional[str] = None
+    tags: Optional[List[str]] = None
+    campaign_id: Optional[str] = None
+
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    # Denormalized for convenience (not stored, joined in queries)
+    legs: Optional[List['Leg']] = None
+    fills: Optional[List['Fill']] = None
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new position ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage (excludes denormalized fields)."""
+        d = {
+            'id': self.id,
+            'user_id': self.user_id,
+            'status': self.status,
+            'symbol': self.symbol,
+            'underlying': self.underlying,
+            'version': self.version,
+            'opened_at': self.opened_at,
+            'closed_at': self.closed_at,
+            'tags': json.dumps(self.tags) if self.tags else None,
+            'campaign_id': self.campaign_id,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+        }
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'Position':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        # Parse JSON fields
+        if isinstance(d.get('tags'), str):
+            d['tags'] = json.loads(d['tags']) if d['tags'] else None
+        # Convert datetime to ISO string
+        if isinstance(d.get('opened_at'), datetime):
+            d['opened_at'] = d['opened_at'].isoformat()
+        if isinstance(d.get('closed_at'), datetime):
+            d['closed_at'] = d['closed_at'].isoformat()
+        if isinstance(d.get('created_at'), datetime):
+            d['created_at'] = d['created_at'].isoformat()
+        if isinstance(d.get('updated_at'), datetime):
+            d['updated_at'] = d['updated_at'].isoformat()
+        # Remove denormalized fields if present
+        d.pop('legs', None)
+        d.pop('fills', None)
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format with camelCase keys."""
+        result = {
+            'id': self.id,
+            'userId': self.user_id,
+            'status': self.status,
+            'symbol': self.symbol,
+            'underlying': self.underlying,
+            'version': self.version,
+            'openedAt': self.opened_at,
+            'closedAt': self.closed_at,
+            'tags': self.tags,
+            'campaignId': self.campaign_id,
+            'createdAt': self.created_at,
+            'updatedAt': self.updated_at,
+        }
+        if self.legs is not None:
+            result['legs'] = [leg.to_api_dict() for leg in self.legs]
+        if self.fills is not None:
+            result['fills'] = [fill.to_api_dict() for fill in self.fills]
+        return result
+
+
+@dataclass
+class Leg:
+    """An individual option/stock/future leg of a position."""
+    id: str
+    position_id: str
+    instrument_type: str  # 'option', 'stock', 'future'
+    expiry: Optional[str] = None  # Date string 'YYYY-MM-DD'
+    strike: Optional[float] = None
+    right: Optional[str] = None  # 'call', 'put'
+    quantity: int = 0  # positive = long, negative = short
+
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new leg ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return {
+            'id': self.id,
+            'position_id': self.position_id,
+            'instrument_type': self.instrument_type,
+            'expiry': self.expiry,
+            'strike': self.strike,
+            'right': self.right,
+            'quantity': self.quantity,
+            'created_at': self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'Leg':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        # Convert date to string
+        if isinstance(d.get('expiry'), datetime):
+            d['expiry'] = d['expiry'].strftime('%Y-%m-%d')
+        elif hasattr(d.get('expiry'), 'isoformat'):  # date object
+            d['expiry'] = d['expiry'].isoformat()
+        if isinstance(d.get('created_at'), datetime):
+            d['created_at'] = d['created_at'].isoformat()
+        if d.get('strike') is not None:
+            d['strike'] = float(d['strike'])
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format with camelCase keys."""
+        return {
+            'id': self.id,
+            'positionId': self.position_id,
+            'instrumentType': self.instrument_type,
+            'expiry': self.expiry,
+            'strike': self.strike,
+            'right': self.right,
+            'quantity': self.quantity,
+            'createdAt': self.created_at,
+        }
+
+
+@dataclass
+class Fill:
+    """A price/quantity execution record for a leg."""
+    id: str
+    leg_id: str
+    price: float  # dollars (not cents)
+    quantity: int
+    occurred_at: str  # market reality - when it actually happened
+    recorded_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())  # system reality
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new fill ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return {
+            'id': self.id,
+            'leg_id': self.leg_id,
+            'price': self.price,
+            'quantity': self.quantity,
+            'occurred_at': self.occurred_at,
+            'recorded_at': self.recorded_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'Fill':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if isinstance(d.get('occurred_at'), datetime):
+            d['occurred_at'] = d['occurred_at'].isoformat()
+        if isinstance(d.get('recorded_at'), datetime):
+            d['recorded_at'] = d['recorded_at'].isoformat()
+        if d.get('price') is not None:
+            d['price'] = float(d['price'])
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format with camelCase keys."""
+        return {
+            'id': self.id,
+            'legId': self.leg_id,
+            'price': self.price,
+            'quantity': self.quantity,
+            'occurredAt': self.occurred_at,
+            'recordedAt': self.recorded_at,
+        }
+
+
+@dataclass
+class PositionEvent:
+    """An event in the position event log for SSE replay."""
+    id: Optional[int] = None  # Auto-increment
+    event_id: str = ''
+    event_seq: int = 0
+    event_type: str = ''  # 'PositionCreated', 'FillRecorded', etc.
+    aggregate_type: str = 'position'  # 'position' or 'order'
+    aggregate_id: str = ''
+    aggregate_version: int = 1
+    user_id: int = 0
+    payload: Optional[dict] = None
+    occurred_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_event_id() -> str:
+        """Generate a new event ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return {
+            'event_id': self.event_id,
+            'event_seq': self.event_seq,
+            'event_type': self.event_type,
+            'aggregate_type': self.aggregate_type,
+            'aggregate_id': self.aggregate_id,
+            'aggregate_version': self.aggregate_version,
+            'user_id': self.user_id,
+            'payload': json.dumps(self.payload) if self.payload else '{}',
+            'occurred_at': self.occurred_at,
+            'created_at': self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'PositionEvent':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        if isinstance(d.get('payload'), str):
+            d['payload'] = json.loads(d['payload']) if d['payload'] else {}
+        if isinstance(d.get('occurred_at'), datetime):
+            d['occurred_at'] = d['occurred_at'].isoformat()
+        if isinstance(d.get('created_at'), datetime):
+            d['created_at'] = d['created_at'].isoformat()
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format (SSE envelope)."""
+        return {
+            'event_id': self.event_id,
+            'event_seq': self.event_seq,
+            'type': self.event_type,
+            'aggregate_type': self.aggregate_type,
+            'aggregate_id': self.aggregate_id,
+            'aggregate_version': self.aggregate_version,
+            'occurred_at': self.occurred_at,
+            'payload': self.payload,
+        }

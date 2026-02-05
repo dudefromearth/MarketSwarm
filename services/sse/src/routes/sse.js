@@ -20,6 +20,8 @@ const clients = {
   bias_lfi: new Set(),
   market_mode: new Set(),
   alerts: new Set(),
+  risk_graph: new Map(), // userId -> Set of clients
+  trade_log: new Map(), // userId -> Set of clients
   all: new Set(),
 };
 
@@ -269,6 +271,69 @@ router.get("/alerts", (req, res) => {
 
   req.on("close", () => {
     clients.alerts.delete(res);
+  });
+});
+
+// GET /sse/risk-graph - User-scoped real-time risk graph updates
+router.get("/risk-graph", (req, res) => {
+  const user = getCurrentUser(req);
+  if (!user?.wp?.id) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+
+  const userId = String(user.wp.id);
+  sseHeaders(res);
+
+  // Track this client for user-scoped broadcasting
+  if (!clients.risk_graph.has(userId)) {
+    clients.risk_graph.set(userId, new Set());
+  }
+  clients.risk_graph.get(userId).add(res);
+
+  sendEvent(res, "connected", { channel: "risk-graph", userId, ts: Date.now() });
+
+  req.on("close", () => {
+    clients.risk_graph.get(userId)?.delete(res);
+    // Clean up empty user entry
+    if (clients.risk_graph.get(userId)?.size === 0) {
+      clients.risk_graph.delete(userId);
+    }
+  });
+});
+
+// GET /sse/trade-log - User-scoped real-time trade log updates
+// Supports ?last_seq=N for reconnection to resume from last seen event
+router.get("/trade-log", (req, res) => {
+  const user = getCurrentUser(req);
+  if (!user?.wp?.id) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+
+  const userId = String(user.wp.id);
+  const lastSeq = req.query.last_seq ? parseInt(req.query.last_seq, 10) : null;
+  sseHeaders(res);
+
+  // Track this client for user-scoped broadcasting
+  if (!clients.trade_log.has(userId)) {
+    clients.trade_log.set(userId, new Set());
+  }
+  clients.trade_log.get(userId).add(res);
+
+  sendEvent(res, "connected", {
+    channel: "trade-log",
+    userId,
+    lastSeq,
+    ts: Date.now(),
+  });
+
+  req.on("close", () => {
+    clients.trade_log.get(userId)?.delete(res);
+    // Clean up empty user entry
+    if (clients.trade_log.get(userId)?.size === 0) {
+      clients.trade_log.delete(userId);
+    }
   });
 });
 
@@ -685,6 +750,91 @@ export function subscribeAlertsPubSub() {
   });
 }
 
+// Subscribe to risk_graph_updates pub/sub for user-scoped real-time sync
+export function subscribeRiskGraphPubSub() {
+  const sub = getMarketRedisSub();
+
+  // Subscribe to pattern for all user channels
+  sub.psubscribe("risk_graph_updates:*", (err, count) => {
+    if (err) {
+      console.error("[sse] Failed to subscribe to risk_graph_updates:*:", err.message);
+    } else {
+      console.log(`[sse] Subscribed to risk_graph_updates:* (${count} patterns)`);
+    }
+  });
+
+  sub.on("pmessage", (pattern, channel, message) => {
+    if (pattern === "risk_graph_updates:*") {
+      try {
+        // Extract userId from channel (risk_graph_updates:123)
+        const userId = channel.split(":")[1];
+        const event = JSON.parse(message);
+
+        // Get event type and data
+        const eventType = event.type || "risk_graph_update";
+        const eventData = event.data || event;
+
+        // Broadcast only to this user's connected clients
+        const userClients = clients.risk_graph.get(userId);
+        if (userClients && userClients.size > 0) {
+          for (const client of userClients) {
+            try {
+              sendEvent(client, eventType, eventData);
+            } catch (err) {
+              userClients.delete(client);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[sse] risk_graph_updates parse error:", err.message);
+      }
+    }
+  });
+}
+
+// Subscribe to trade_log_updates pub/sub for user-scoped real-time sync
+// Events follow deterministic envelope: { event_id, event_seq, type, aggregate_type, aggregate_id, aggregate_version, occurred_at, payload }
+export function subscribeTradeLogPubSub() {
+  const sub = getMarketRedisSub();
+
+  // Subscribe to pattern for all user channels
+  sub.psubscribe("trade_log_updates:*", (err, count) => {
+    if (err) {
+      console.error("[sse] Failed to subscribe to trade_log_updates:*:", err.message);
+    } else {
+      console.log(`[sse] Subscribed to trade_log_updates:* (${count} patterns)`);
+    }
+  });
+
+  sub.on("pmessage", (pattern, channel, message) => {
+    if (pattern === "trade_log_updates:*") {
+      try {
+        // Extract userId from channel (trade_log_updates:123)
+        const userId = channel.split(":")[1];
+        const event = JSON.parse(message);
+
+        // Use the event type from the envelope (PositionCreated, FillRecorded, etc.)
+        const eventType = event.type || "trade_log_update";
+
+        // Broadcast only to this user's connected clients
+        const userClients = clients.trade_log.get(userId);
+        if (userClients && userClients.size > 0) {
+          for (const client of userClients) {
+            try {
+              // Send with the specific event type so frontend can use addEventListener
+              sendEvent(client, eventType, event);
+            } catch (err) {
+              userClients.delete(client);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[sse] trade_log_updates parse error:", err.message);
+      }
+    }
+  });
+}
+
 // Stats tracking
 let diffStats = {
   received: 0,
@@ -828,6 +978,14 @@ export function getClientStats() {
   for (const set of clients.trade_selector.values()) {
     tradeSelectorCount += set.size;
   }
+  let riskGraphCount = 0;
+  for (const set of clients.risk_graph.values()) {
+    riskGraphCount += set.size;
+  }
+  let tradeLogCount = 0;
+  for (const set of clients.trade_log.values()) {
+    tradeLogCount += set.size;
+  }
 
   return {
     clients: {
@@ -839,8 +997,10 @@ export function getClientStats() {
       vexy: clients.vexy.size,
       bias_lfi: clients.bias_lfi.size,
       alerts: clients.alerts.size,
+      risk_graph: riskGraphCount,
+      trade_log: tradeLogCount,
       all: clients.all.size,
-      total: clients.spot.size + gexCount + heatmapCount + candlesCount + tradeSelectorCount + clients.vexy.size + clients.bias_lfi.size + clients.alerts.size + clients.all.size,
+      total: clients.spot.size + gexCount + heatmapCount + candlesCount + tradeSelectorCount + clients.vexy.size + clients.bias_lfi.size + clients.alerts.size + riskGraphCount + tradeLogCount + clients.all.size,
     },
   };
 }
