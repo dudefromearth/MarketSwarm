@@ -5090,6 +5090,25 @@ class JournalOrchestrator:
             self.logger.error(f"list_ml_decisions error: {e}")
             return self._error_response(str(e), 500, request)
 
+    async def get_ml_decision_stats(self, request: web.Request) -> web.Response:
+        """GET /api/internal/ml/decisions/stats - Get ML decision statistics."""
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            # Get stats directly from database
+            stats = self.db.get_ml_decision_stats()
+
+            return self._json_response({
+                'success': True,
+                'data': stats
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_ml_decision_stats error: {e}")
+            return self._error_response(str(e), 500, request)
+
     async def get_ml_decision(self, request: web.Request) -> web.Response:
         """GET /api/internal/ml/decisions/:id - Get a single ML decision."""
         try:
@@ -5513,7 +5532,7 @@ class JournalOrchestrator:
             include_blob = request.query.get('include_blob', '').lower() == 'true'
             regime = request.query.get('regime')
 
-            champion = self.db.get_champion_model(regime=regime)
+            champion = self.db.get_champion_model(regime=regime, include_blob=include_blob)
 
             if not champion:
                 return self._json_response({
@@ -5999,6 +6018,7 @@ class JournalOrchestrator:
         # ML Decisions (logging)
         app.router.add_post('/api/internal/ml/decisions', self.log_ml_decision)
         app.router.add_get('/api/internal/ml/decisions', self.list_ml_decisions)
+        app.router.add_get('/api/internal/ml/decisions/stats', self.get_ml_decision_stats)
         app.router.add_get('/api/internal/ml/decisions/{id}', self.get_ml_decision)
         app.router.add_patch('/api/internal/ml/decisions/{id}/action', self.update_ml_decision_action)
 

@@ -122,6 +122,33 @@ interface EquityCurvePoint {
   drawdown: number;
 }
 
+interface MLDecisionStats {
+  totals: {
+    count: number;
+    avg_original: number;
+    avg_ml: number;
+    avg_final: number;
+    ml_stddev: number;
+  };
+  score_distribution: Array<{
+    bucket: string;
+    count: number;
+    avg_original: number;
+    avg_ml: number;
+  }>;
+  comparison: {
+    similar: number;
+    ml_much_higher: number;
+    ml_slightly_higher: number;
+    ml_much_lower: number;
+    ml_slightly_lower: number;
+  };
+  hourly_volume: Array<{
+    hour: string;
+    count: number;
+  }>;
+}
+
 // ============================================================================
 // Component
 // ============================================================================
@@ -138,6 +165,7 @@ export default function MLLabPage() {
   const [champion, setChampion] = useState<MLModel | null>(null);
   const [experiments, setExperiments] = useState<MLExperiment[]>([]);
   const [decisions, setDecisions] = useState<MLDecision[]>([]);
+  const [decisionStats, setDecisionStats] = useState<MLDecisionStats | null>(null);
   const [dailyPerformance, setDailyPerformance] = useState<DailyPerformance[]>([]);
   const [equityCurve, setEquityCurve] = useState<EquityCurvePoint[]>([]);
 
@@ -148,37 +176,38 @@ export default function MLLabPage() {
   // Fetch all data
   const fetchData = async () => {
     try {
-      const [
-        cbRes,
-        checkRes,
-        modelsRes,
-        championRes,
-        expRes,
-        decisionsRes,
-        perfRes,
-        equityRes,
-      ] = await Promise.all([
-        fetch("/api/admin/ml/circuit-breakers", { credentials: "include" }),
-        fetch("/api/admin/ml/circuit-breakers/check", { credentials: "include", method: "POST" }),
-        fetch("/api/admin/ml/models", { credentials: "include" }),
-        fetch("/api/admin/ml/models/champion", { credentials: "include" }),
-        fetch("/api/admin/ml/experiments", { credentials: "include" }),
-        fetch("/api/admin/ml/decisions?limit=100", { credentials: "include" }),
-        fetch("/api/admin/ml/daily-performance?limit=30", { credentials: "include" }),
-        fetch("/api/admin/ml/equity-curve?days=30", { credentials: "include" }),
+      // Fetch each endpoint separately to handle individual failures
+      const safeFetch = async (url: string, options?: RequestInit) => {
+        try {
+          const res = await fetch(url, { credentials: "include", ...options });
+          if (res.ok) return await res.json();
+          return null;
+        } catch {
+          return null;
+        }
+      };
+
+      const [cb, check, modelsList, champ, exps, decs, stats, perf, equity] = await Promise.all([
+        safeFetch("/api/admin/ml/circuit-breakers"),
+        safeFetch("/api/admin/ml/circuit-breakers/check", { method: "POST" }),
+        safeFetch("/api/admin/ml/models"),
+        safeFetch("/api/admin/ml/models/champion"),
+        safeFetch("/api/admin/ml/experiments"),
+        safeFetch("/api/admin/ml/decisions?limit=100"),
+        safeFetch("/api/admin/ml/decisions/stats"),
+        safeFetch("/api/admin/ml/daily-performance?limit=30"),
+        safeFetch("/api/admin/ml/equity-curve?days=30"),
       ]);
 
-      if (cbRes.ok) setCircuitBreakers(await cbRes.json());
-      if (checkRes.ok) setBreakerCheck(await checkRes.json());
-      if (modelsRes.ok) setModels(await modelsRes.json());
-      if (championRes.ok) {
-        const champData = await championRes.json();
-        if (champData && !champData.error) setChampion(champData);
-      }
-      if (expRes.ok) setExperiments(await expRes.json());
-      if (decisionsRes.ok) setDecisions(await decisionsRes.json());
-      if (perfRes.ok) setDailyPerformance(await perfRes.json());
-      if (equityRes.ok) setEquityCurve(await equityRes.json());
+      if (cb) setCircuitBreakers(cb);
+      if (check) setBreakerCheck(check);
+      if (modelsList) setModels(Array.isArray(modelsList) ? modelsList : []);
+      if (champ && !champ.error) setChampion(champ);
+      if (exps) setExperiments(Array.isArray(exps) ? exps : []);
+      if (decs) setDecisions(Array.isArray(decs) ? decs : []);
+      if (stats) setDecisionStats(stats);
+      if (perf) setDailyPerformance(Array.isArray(perf) ? perf : []);
+      if (equity) setEquityCurve(Array.isArray(equity) ? equity : []);
 
     } catch (err) {
       setError("Failed to load ML Lab data");
@@ -494,6 +523,103 @@ export default function MLLabPage() {
                 <div className="no-data">No champion model deployed. System is in rules-only mode.</div>
               )}
             </section>
+
+            {/* ML Decision Stats */}
+            {decisionStats && (
+              <section className="section">
+                <h2>ML Scoring Statistics</h2>
+                <div className="stats-summary">
+                  <div className="stat-card">
+                    <div className="stat-value">{decisionStats.totals.count.toLocaleString()}</div>
+                    <div className="stat-label">Total Decisions</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{decisionStats.totals.avg_original.toFixed(1)}</div>
+                    <div className="stat-label">Avg Original Score</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{decisionStats.totals.avg_ml.toFixed(1)}</div>
+                    <div className="stat-label">Avg ML Score</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{decisionStats.totals.avg_final.toFixed(1)}</div>
+                    <div className="stat-label">Avg Final Score</div>
+                  </div>
+                </div>
+
+                <h3 style={{ marginTop: "1.5rem", marginBottom: "1rem" }}>ML Score Distribution</h3>
+                <div className="chart-container">
+                  <ReactECharts
+                    option={{
+                      tooltip: { trigger: "axis" },
+                      xAxis: {
+                        type: "category",
+                        data: decisionStats.score_distribution.map((d) => d.bucket),
+                        axisLabel: { color: "#9ca3af" },
+                      },
+                      yAxis: {
+                        type: "value",
+                        axisLabel: { color: "#9ca3af" },
+                      },
+                      series: [
+                        {
+                          name: "Count",
+                          type: "bar",
+                          data: decisionStats.score_distribution.map((d) => d.count),
+                          itemStyle: {
+                            color: (params: { dataIndex: number }) => {
+                              const colors = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#10b981"];
+                              return colors[params.dataIndex] || "#6366f1";
+                            },
+                          },
+                        },
+                      ],
+                      grid: { left: 60, right: 20, top: 20, bottom: 40 },
+                    }}
+                    style={{ height: 250 }}
+                  />
+                </div>
+
+                <h3 style={{ marginTop: "1.5rem", marginBottom: "1rem" }}>ML vs Original Score Comparison</h3>
+                <div className="comparison-grid">
+                  <div className="comparison-item negative">
+                    <div className="comparison-value">{decisionStats.comparison.ml_much_lower?.toLocaleString() || 0}</div>
+                    <div className="comparison-label">ML Much Lower</div>
+                    <div className="comparison-pct">
+                      {((decisionStats.comparison.ml_much_lower || 0) / decisionStats.totals.count * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div className="comparison-item warning">
+                    <div className="comparison-value">{decisionStats.comparison.ml_slightly_lower?.toLocaleString() || 0}</div>
+                    <div className="comparison-label">ML Slightly Lower</div>
+                    <div className="comparison-pct">
+                      {((decisionStats.comparison.ml_slightly_lower || 0) / decisionStats.totals.count * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div className="comparison-item neutral">
+                    <div className="comparison-value">{decisionStats.comparison.similar?.toLocaleString() || 0}</div>
+                    <div className="comparison-label">Similar</div>
+                    <div className="comparison-pct">
+                      {((decisionStats.comparison.similar || 0) / decisionStats.totals.count * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div className="comparison-item positive-light">
+                    <div className="comparison-value">{decisionStats.comparison.ml_slightly_higher?.toLocaleString() || 0}</div>
+                    <div className="comparison-label">ML Slightly Higher</div>
+                    <div className="comparison-pct">
+                      {((decisionStats.comparison.ml_slightly_higher || 0) / decisionStats.totals.count * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div className="comparison-item positive">
+                    <div className="comparison-value">{decisionStats.comparison.ml_much_higher?.toLocaleString() || 0}</div>
+                    <div className="comparison-label">ML Much Higher</div>
+                    <div className="comparison-pct">
+                      {((decisionStats.comparison.ml_much_higher || 0) / decisionStats.totals.count * 100).toFixed(1)}%
+                    </div>
+                  </div>
+                </div>
+              </section>
+            )}
 
             {/* Equity Curve */}
             <section className="section">
@@ -1563,6 +1689,110 @@ const styles = `
     .comparison-vs {
       justify-content: center;
       padding: 0.5rem 0;
+    }
+  }
+
+  /* ML Stats Summary */
+  .stats-summary {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .stat-card {
+    background: rgba(24, 24, 27, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.75rem;
+    padding: 1.25rem;
+    text-align: center;
+  }
+
+  .stat-card .stat-value {
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: #f1f5f9;
+    margin-bottom: 0.25rem;
+  }
+
+  .stat-card .stat-label {
+    font-size: 0.75rem;
+    color: #71717a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  /* Comparison Grid */
+  .comparison-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0.75rem;
+  }
+
+  .comparison-item {
+    background: rgba(24, 24, 27, 0.6);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 0.75rem;
+    padding: 1rem;
+    text-align: center;
+  }
+
+  .comparison-item.negative {
+    border-color: rgba(239, 68, 68, 0.3);
+    background: rgba(239, 68, 68, 0.1);
+  }
+
+  .comparison-item.warning {
+    border-color: rgba(249, 115, 22, 0.3);
+    background: rgba(249, 115, 22, 0.1);
+  }
+
+  .comparison-item.neutral {
+    border-color: rgba(161, 161, 170, 0.3);
+    background: rgba(161, 161, 170, 0.1);
+  }
+
+  .comparison-item.positive-light {
+    border-color: rgba(34, 197, 94, 0.3);
+    background: rgba(34, 197, 94, 0.1);
+  }
+
+  .comparison-item.positive {
+    border-color: rgba(16, 185, 129, 0.3);
+    background: rgba(16, 185, 129, 0.15);
+  }
+
+  .comparison-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: #f1f5f9;
+  }
+
+  .comparison-label {
+    font-size: 0.7rem;
+    color: #9ca3af;
+    margin-top: 0.25rem;
+  }
+
+  .comparison-pct {
+    font-size: 0.875rem;
+    color: #71717a;
+    margin-top: 0.5rem;
+    font-weight: 500;
+  }
+
+  @media (max-width: 900px) {
+    .stats-summary {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .comparison-grid {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+
+  @media (max-width: 600px) {
+    .comparison-grid {
+      grid-template-columns: repeat(2, 1fr);
     }
   }
 `;

@@ -1187,6 +1187,10 @@ router.get("/ml/decisions", requireAdmin, async (req, res) => {
   await proxyToJournalML(req, res, `/decisions${params ? `?${params}` : ""}`);
 });
 
+router.get("/ml/decisions/stats", requireAdmin, async (req, res) => {
+  await proxyToJournalML(req, res, `/decisions/stats`);
+});
+
 router.get("/ml/decisions/:id", requireAdmin, async (req, res) => {
   await proxyToJournalML(req, res, `/decisions/${req.params.id}`);
 });

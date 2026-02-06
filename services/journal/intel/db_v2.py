@@ -5730,6 +5730,92 @@ class JournalDBv2:
             cursor.close()
             conn.close()
 
+    def get_ml_decision_stats(self) -> dict:
+        """Get ML decision statistics for dashboard."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            stats = {}
+
+            # Total counts
+            cursor.execute("""
+                SELECT COUNT(*) as total,
+                       AVG(original_score) as avg_original,
+                       AVG(ml_score) as avg_ml,
+                       AVG(final_score) as avg_final,
+                       STDDEV(ml_score) as ml_stddev
+                FROM ml_decisions
+                WHERE idea_id NOT LIKE 'test%'
+            """)
+            row = cursor.fetchone()
+            stats['totals'] = {
+                'count': row[0] or 0,
+                'avg_original': float(row[1]) if row[1] else 0,
+                'avg_ml': float(row[2]) if row[2] else 0,
+                'avg_final': float(row[3]) if row[3] else 0,
+                'ml_stddev': float(row[4]) if row[4] else 0,
+            }
+
+            # Score distribution buckets
+            cursor.execute("""
+                SELECT
+                    CASE
+                        WHEN ml_score < 10 THEN '0-10'
+                        WHEN ml_score < 25 THEN '10-25'
+                        WHEN ml_score < 50 THEN '25-50'
+                        WHEN ml_score < 75 THEN '50-75'
+                        ELSE '75-100'
+                    END as bucket,
+                    COUNT(*) as count,
+                    AVG(original_score) as avg_orig,
+                    AVG(ml_score) as avg_ml
+                FROM ml_decisions
+                WHERE idea_id NOT LIKE 'test%'
+                GROUP BY bucket
+                ORDER BY bucket
+            """)
+            stats['score_distribution'] = [
+                {'bucket': r[0], 'count': r[1], 'avg_original': float(r[2]) if r[2] else 0, 'avg_ml': float(r[3]) if r[3] else 0}
+                for r in cursor.fetchall()
+            ]
+
+            # ML vs Original comparison
+            cursor.execute("""
+                SELECT
+                    CASE
+                        WHEN ml_score > original_score + 20 THEN 'ml_much_higher'
+                        WHEN ml_score > original_score + 5 THEN 'ml_slightly_higher'
+                        WHEN ml_score < original_score - 20 THEN 'ml_much_lower'
+                        WHEN ml_score < original_score - 5 THEN 'ml_slightly_lower'
+                        ELSE 'similar'
+                    END as comparison,
+                    COUNT(*) as count
+                FROM ml_decisions
+                WHERE idea_id NOT LIKE 'test%'
+                GROUP BY comparison
+            """)
+            stats['comparison'] = {r[0]: r[1] for r in cursor.fetchall()}
+
+            # Hourly volume (last 24h)
+            cursor.execute("""
+                SELECT DATE_FORMAT(decision_time, '%Y-%m-%d %H:00:00') as hour,
+                       COUNT(*) as count
+                FROM ml_decisions
+                WHERE decision_time > DATE_SUB(NOW(), INTERVAL 24 HOUR)
+                  AND idea_id NOT LIKE 'test%'
+                GROUP BY hour
+                ORDER BY hour
+            """)
+            stats['hourly_volume'] = [
+                {'hour': str(r[0]), 'count': r[1]}
+                for r in cursor.fetchall()
+            ]
+
+            return stats
+        finally:
+            cursor.close()
+            conn.close()
+
     def update_ml_decision_action(self, decision_id: int, action: str) -> Optional[MLDecision]:
         """Update the action_taken for a decision (only valid progressions)."""
         conn = self._get_conn()
