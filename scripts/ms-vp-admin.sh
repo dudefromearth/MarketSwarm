@@ -91,9 +91,22 @@ run_download() {
 }
 
 run_build() {
+  local VISUALIZE="${1:-}"
+  local INTERACTIVE="${2:-}"
+  local AI_ANALYZE="${3:-}"
+
   clear
   line
   echo " VP Admin – Build Volume Profile Model"
+  if [[ -n "$VISUALIZE" ]]; then
+    echo " (with visualization for structural analysis)"
+  fi
+  if [[ -n "$AI_ANALYZE" ]]; then
+    echo " (with AI structural analysis via Claude Vision)"
+  fi
+  if [[ -n "$INTERACTIVE" ]]; then
+    echo " (with interactive structure editor)"
+  fi
   line
   echo "ROOT:        $ROOT"
   echo "VENV_PY:     $VENV_PY"
@@ -132,25 +145,48 @@ run_build() {
   echo "Building volume profile for $TICK from:"
   echo "  $FULL_PATH"
   echo "Publish mode: $PMODE"
+  if [[ -n "$VISUALIZE" ]]; then
+    echo "Visualization: enabled"
+  fi
+  if [[ -n "$AI_ANALYZE" ]]; then
+    echo "AI Analysis: enabled (Claude Vision)"
+  fi
+  if [[ -n "$INTERACTIVE" ]]; then
+    echo "Interactive editor: enabled"
+  fi
   line
   echo ""
 
   cd "$ROOT"
-  exec "$VENV_PY" "$BUILD_SCRIPT" \
-    --ticker "$TICK" \
-    --file "$FULL_PATH" \
-    --publish "$PMODE"
+
+  # Build command with optional flags
+  CMD=("$VENV_PY" "$BUILD_SCRIPT" --ticker "$TICK" --file "$FULL_PATH" --publish "$PMODE")
+
+  # Always save chart if visualization or AI analysis
+  if [[ -n "$VISUALIZE" || -n "$AI_ANALYZE" ]]; then
+    CMD+=(--save-chart "$VP_DATA_DIR/chart_${TICK}.png")
+  fi
+
+  if [[ -n "$AI_ANALYZE" ]]; then
+    CMD+=(--ai-analyze)
+  fi
+  if [[ -n "$INTERACTIVE" ]]; then
+    CMD+=(--interactive)
+  fi
+
+  exec "${CMD[@]}"
 }
 
 menu() {
   while true; do
     clear
     line
-    echo " MarketSwarm – VP Admin (Volume Profile)"
+    echo " MarketSwarm – VP Admin (Volume Profile / Dealer Gravity)"
     line
     echo ""
     echo "Current configuration:"
     echo "  POLYGON_API_KEY (set?):     ${POLYGON_API_KEY:+yes}"
+    echo "  ANTHROPIC_API_KEY (set?):   ${ANTHROPIC_API_KEY:+yes}"
     echo "  SYSTEM_REDIS_URL:           $SYSTEM_REDIS_URL"
     echo "  MARKET_REDIS_URL:           $MARKET_REDIS_URL"
     echo "  VP_TICKER:                  $VP_TICKER"
@@ -162,16 +198,24 @@ menu() {
     echo ""
     echo "  1) Download 1-min history (Polygon → JSON file)"
     echo "  2) Build volume profile model (JSON file → Redis)"
-    echo "  3) Quit"
+    echo "  3) Build with visualization (RAW vs TV comparison)"
+    echo "  4) Build with AI analysis (Claude Vision structural detection)"
+    echo "  5) Build with interactive editor (define structures manually)"
+    echo "  6) Full workflow: AI analysis + interactive refinement"
+    echo "  7) Quit"
     echo ""
     line
-    read -rp "Enter choice [1-3]: " CH
+    read -rp "Enter choice [1-7]: " CH
     echo ""
 
     case "$CH" in
-      1) run_download ;;  # exec, doesn't return
-      2) run_build ;;     # exec, doesn't return
-      3)
+      1) run_download ;;                    # exec, doesn't return
+      2) run_build ;;                       # exec, doesn't return
+      3) run_build "viz" ;;                 # with visualization
+      4) run_build "viz" "" "ai" ;;         # with AI analysis
+      5) run_build "viz" "interactive" ;;   # with interactive editor
+      6) run_build "viz" "interactive" "ai" ;;  # full workflow
+      7)
         echo "Goodbye"
         exit 0
         ;;
@@ -188,10 +232,18 @@ menu() {
 ###############################################
 if [[ $# -gt 0 ]]; then
   case "$1" in
-    download) run_download ;;
-    build)    run_build ;;
+    download)   run_download ;;
+    build)      run_build ;;
+    visualize)  run_build "viz" ;;
+    analyze)    run_build "viz" "interactive" ;;
     *)
-      echo "Usage: $0 [download|build]"
+      echo "Usage: $0 [download|build|visualize|analyze]"
+      echo ""
+      echo "Commands:"
+      echo "  download   - Download 1-min history from Polygon"
+      echo "  build      - Build volume profile and publish to Redis"
+      echo "  visualize  - Build with matplotlib visualization"
+      echo "  analyze    - Build with visualization + interactive structure editor"
       exit 1
       ;;
   esac
