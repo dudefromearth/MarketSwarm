@@ -134,7 +134,9 @@ export default function TradeLogPanel({
   const [closedCount, setClosedCount] = useState(0);
 
   const fetchTrades = useCallback(async () => {
+    console.log('[TradeLogPanel] fetchTrades called, selectedLogId:', selectedLogId);
     if (!selectedLogId) {
+      console.log('[TradeLogPanel] No selectedLogId, clearing trades');
       setTrades([]);
       setLoading(false);
       return;
@@ -142,6 +144,7 @@ export default function TradeLogPanel({
 
     setLoading(true);
     setError(null);
+    const startTime = performance.now();
 
     try {
       const params = new URLSearchParams();
@@ -150,12 +153,16 @@ export default function TradeLogPanel({
         params.set('status', statusFilter);
       }
 
+      console.log('[TradeLogPanel] Fetching trades for log:', selectedLogId);
       const response = await fetch(
-        `${JOURNAL_API}/api/logs/${selectedLogId}/trades?${params}`
+        `${JOURNAL_API}/api/logs/${selectedLogId}/trades?${params}`,
+        { credentials: 'include' }
       );
+      console.log('[TradeLogPanel] Response received in', (performance.now() - startTime).toFixed(0), 'ms, status:', response.status);
       const result = await response.json();
 
       if (result.success) {
+        console.log('[TradeLogPanel] Got', result.data.length, 'trades');
         setTrades(result.data);
 
         // Count by status
@@ -164,19 +171,21 @@ export default function TradeLogPanel({
         setOpenCount(open);
         setClosedCount(closed);
       } else {
+        console.log('[TradeLogPanel] Fetch failed:', result.error);
         setError(result.error || 'Failed to fetch trades');
       }
     } catch (err) {
       setError('Unable to connect to journal service');
-      console.error('TradeLogPanel fetch error:', err);
+      console.error('[TradeLogPanel] fetch error:', err);
     } finally {
+      console.log('[TradeLogPanel] Done, total time:', (performance.now() - startTime).toFixed(0), 'ms');
       setLoading(false);
     }
   }, [selectedLogId, statusFilter]);
 
   const fetchPendingOrders = useCallback(async () => {
     try {
-      const response = await fetch(`${JOURNAL_API}/api/orders/active`);
+      const response = await fetch(`${JOURNAL_API}/api/orders/active`, { credentials: 'include' });
       const result = await response.json();
       if (result.success) {
         const allOrders = [
@@ -195,7 +204,8 @@ export default function TradeLogPanel({
 
     try {
       const response = await fetch(`${JOURNAL_API}/api/orders/${orderId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        credentials: 'include'
       });
       const result = await response.json();
       if (result.success) {
@@ -250,7 +260,8 @@ export default function TradeLogPanel({
 
     try {
       const response = await fetch(
-        `${JOURNAL_API}/api/logs/${selectedLogId}/export?format=${format}`
+        `${JOURNAL_API}/api/logs/${selectedLogId}/export?format=${format}`,
+        { credentials: 'include' }
       );
 
       if (!response.ok) {
@@ -285,6 +296,7 @@ export default function TradeLogPanel({
         {
           method: 'POST',
           body: formData,
+          credentials: 'include',
         }
       );
 

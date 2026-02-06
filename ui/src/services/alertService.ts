@@ -261,7 +261,7 @@ export function subscribeToAlertStream(handlers: {
   onConnect?: () => void;
   onDisconnect?: () => void;
 }): () => void {
-  const es = new EventSource('/sse/alerts');
+  const es = new EventSource('/sse/alerts', { withCredentials: true });
 
   es.onopen = () => {
     handlers.onConnect?.();

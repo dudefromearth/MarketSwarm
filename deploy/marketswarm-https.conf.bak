@@ -1,0 +1,263 @@
+# =============================================================
+# MarketSwarm Production NGINX Configuration
+# =============================================================
+# Domain: flyonthewall.io
+# Backend Machine: 192.168.1.11 (your Mac running all services)
+# Nginx Machine: 100.94.9.60 (MiniThree)
+#
+# Services on 192.168.1.11:
+#   - Port 5173: Static file server (React frontend)
+#   - Port 3001: SSE Gateway (Node.js) - models, auth, SSE streams
+#   - Port 3002: Journal API (Python) - trades, logs, alerts
+#   - Port 8095: Copilot (Python) - MEL, ADI, commentary
+# =============================================================
+
+# Upstream definitions
+upstream static_frontend {
+    server 192.168.1.11:5173;
+    keepalive 16;
+}
+
+upstream sse_gateway {
+    server 192.168.1.11:3001;
+    keepalive 32;
+}
+
+upstream journal_api {
+    server 192.168.1.11:3002;
+    keepalive 16;
+}
+
+upstream copilot_api {
+    server 192.168.1.11:8095;
+    keepalive 8;
+}
+
+# =============================================================
+# HTTPS Server
+# =============================================================
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name flyonthewall.io www.flyonthewall.io;
+    add_header X-Served-By "MARKETSWARM-PROD" always;
+
+    # SSL Configuration
+    ssl_certificate     /etc/letsencrypt/live/flyonthewall.io/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/flyonthewall.io/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+
+    # Gzip (disabled for SSE/WebSocket paths)
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+    gzip_min_length 1000;
+
+    # File upload limit (journal attachments)
+    client_max_body_size 10M;
+
+    # Common proxy headers (applied to all proxy_pass)
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+
+    # ==========================================================
+    # SSE Streams (Port 3001) - MUST BE FIRST for /sse/
+    # ==========================================================
+    location /sse/ {
+        proxy_pass http://sse_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+
+        # Critical SSE settings
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        proxy_set_header X-Accel-Buffering no;
+        gzip off;
+
+        # Long timeouts for persistent connections
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+        send_timeout 86400s;
+    }
+
+    # ==========================================================
+    # SSE Gateway REST API (Port 3001)
+    # ==========================================================
+    location /api/models/ {
+        proxy_pass http://sse_gateway;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "keep-alive";
+        proxy_read_timeout 60s;
+    }
+
+    location /api/auth/ {
+        proxy_pass http://sse_gateway;
+        proxy_http_version 1.1;
+        proxy_read_timeout 30s;
+    }
+
+    location /api/profile/ {
+        proxy_pass http://sse_gateway;
+        proxy_http_version 1.1;
+        proxy_read_timeout 30s;
+    }
+
+    location /api/admin/ {
+        proxy_pass http://sse_gateway;
+        proxy_http_version 1.1;
+        proxy_read_timeout 30s;
+    }
+
+    location = /api/health {
+        proxy_pass http://sse_gateway;
+        proxy_read_timeout 10s;
+    }
+
+    # ==========================================================
+    # Journal API (Port 3002)
+    # ==========================================================
+    location /api/logs {
+        proxy_pass http://journal_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+
+    location /api/trades {
+        proxy_pass http://journal_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 60s;
+    }
+
+    location /api/symbols {
+        proxy_pass http://journal_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 30s;
+    }
+
+    location /api/tags {
+        proxy_pass http://journal_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 30s;
+    }
+
+    location /api/journal/ {
+        proxy_pass http://journal_api;
+        proxy_http_version 1.1;
+        client_max_body_size 10M;
+        proxy_read_timeout 120s;
+        proxy_send_timeout 120s;
+    }
+
+    location /api/playbook/ {
+        proxy_pass http://journal_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 60s;
+    }
+
+    location /api/alerts {
+        proxy_pass http://journal_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 30s;
+    }
+
+    location /api/prompt-alerts {
+        proxy_pass http://journal_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 30s;
+    }
+
+    location /api/settings {
+        proxy_pass http://journal_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 30s;
+    }
+
+    location /api/analytics {
+        proxy_pass http://journal_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 60s;
+    }
+
+    location /api/internal/ {
+        proxy_pass http://journal_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 30s;
+    }
+
+    # ==========================================================
+    # Copilot API (Port 8095)
+    # ==========================================================
+    location /api/mel/ {
+        proxy_pass http://copilot_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 30s;
+    }
+
+    location /api/adi/ {
+        proxy_pass http://copilot_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 30s;
+    }
+
+    location /api/commentary/ {
+        proxy_pass http://copilot_api;
+        proxy_http_version 1.1;
+        proxy_read_timeout 60s;
+    }
+
+    # Copilot WebSocket endpoints
+    location /ws/mel {
+        proxy_pass http://copilot_api;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+
+    location /ws/commentary {
+        proxy_pass http://copilot_api;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_buffering off;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+
+    # ==========================================================
+    # React Frontend (Port 5173 - Static File Server)
+    # ==========================================================
+    location / {
+        proxy_pass http://static_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "keep-alive";
+        proxy_read_timeout 30s;
+    }
+}
+
+# =============================================================
+# HTTP Server (Redirect to HTTPS)
+# =============================================================
+server {
+    listen 80;
+    listen [::]:80;
+    server_name flyonthewall.io www.flyonthewall.io;
+
+    # Let's Encrypt certificate renewal
+    location ^~ /.well-known/acme-challenge/ {
+        root /opt/homebrew/var/www/letsencrypt;
+        default_type "text/plain";
+        try_files $uri =404;
+    }
+
+    # Redirect everything else to HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}

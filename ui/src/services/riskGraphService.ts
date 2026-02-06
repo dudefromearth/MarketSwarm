@@ -28,6 +28,8 @@ async function apiCall<T>(
   url: string,
   options: RequestInit = {}
 ): Promise<T> {
+  const startTime = performance.now();
+  console.log('[riskGraphService] Calling:', url);
   const response = await fetch(url, {
     ...options,
     credentials: 'include',
@@ -37,9 +39,11 @@ async function apiCall<T>(
     },
   });
 
+  console.log('[riskGraphService] Response from', url, 'status:', response.status, 'in', (performance.now() - startTime).toFixed(0), 'ms');
   const data = await response.json();
 
   if (!response.ok || !data.success) {
+    console.error('[riskGraphService] Error from', url, ':', data.error || response.status);
     throw new Error(data.error || `API error: ${response.status}`);
   }
 

@@ -154,6 +154,12 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
       fetch('/api/models/trade_tracking/stats', { credentials: 'include' }),
     ]);
 
+    // Check for auth errors first
+    if (activeRes.status === 401 || activeRes.status === 403 ||
+        statsRes.status === 401 || statsRes.status === 403) {
+      throw new Error('Admin access required to view tracking data');
+    }
+
     if (!activeRes.ok || !statsRes.ok) {
       throw new Error('Failed to fetch current tracking data');
     }
@@ -321,17 +327,22 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
     }
   }, [isOpen, fetchData]);
 
-  // Auto-refresh current data every 5 seconds
+  // Auto-refresh current data every 15 seconds (with overlap protection)
   useEffect(() => {
     if (!isOpen || mode !== 'current') return;
 
+    let isFetching = false;
     const interval = setInterval(async () => {
+      if (isFetching) return; // Skip if previous fetch still running
+      isFetching = true;
       try {
         await fetchCurrentData();
       } catch (err) {
         console.error('[TrackingAnalytics] Auto-refresh error:', err);
+      } finally {
+        isFetching = false;
       }
-    }, 5000);
+    }, 15000);
     return () => clearInterval(interval);
   }, [isOpen, mode, fetchCurrentData]);
 

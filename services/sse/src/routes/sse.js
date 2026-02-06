@@ -38,6 +38,52 @@ const modelState = {
   alerts: null, // Latest alerts state
 };
 
+// Previous close cache (refreshed daily)
+const prevCloseCache = {
+  data: new Map(), // symbol -> { value, date }
+  lastRefresh: null,
+};
+
+/**
+ * Get previous trading day's close from trail data (cached)
+ */
+async function getPrevClose(redis, keys, symbol) {
+  const today = new Date().toDateString();
+
+  // Return cached value if from today
+  const cached = prevCloseCache.data.get(symbol);
+  if (cached && cached.date === today) {
+    return cached.value;
+  }
+
+  // Calculate previous trading day's close time (4:00-4:20 PM ET = 21:00-21:20 UTC)
+  const now = new Date();
+  const closeDate = new Date(now);
+  closeDate.setUTCHours(21, 0, 0, 0);
+  closeDate.setDate(closeDate.getDate() - 1);
+
+  // Skip weekends
+  const day = closeDate.getUTCDay();
+  if (day === 0) closeDate.setDate(closeDate.getDate() - 2); // Sunday -> Friday
+  if (day === 6) closeDate.setDate(closeDate.getDate() - 1); // Saturday -> Friday
+
+  const closeStart = Math.floor(closeDate.getTime() / 1000);
+  const closeEnd = closeStart + 1200; // 20 minute window
+
+  try {
+    const trailKey = keys.spotTrailKey(symbol);
+    const trailData = await redis.zrangebyscore(trailKey, closeStart, closeEnd);
+    if (trailData && trailData.length > 0) {
+      const lastEntry = JSON.parse(trailData[trailData.length - 1]);
+      prevCloseCache.data.set(symbol, { value: lastEntry.value, date: today });
+      return lastEntry.value;
+    }
+  } catch (err) {
+    console.error(`[sse] getPrevClose error for ${symbol}:`, err.message);
+  }
+  return null;
+}
+
 // SSE helper - send event to client with backpressure handling
 function sendEvent(res, event, data) {
   // Check if socket is writable and not backed up
@@ -514,7 +560,17 @@ export async function startPolling(config) {
             const parts = key.split(":");
             const symbol = parts.slice(3).join(":");
             try {
-              spotData[symbol] = JSON.parse(val);
+              const parsed = JSON.parse(val);
+
+              // Add change from previous close
+              const prevClose = await getPrevClose(redis, keys, symbol);
+              if (prevClose && parsed.value) {
+                parsed.prevClose = prevClose;
+                parsed.change = parsed.value - prevClose;
+                parsed.changePercent = ((parsed.value - prevClose) / prevClose) * 100;
+              }
+
+              spotData[symbol] = parsed;
             } catch {
               spotData[symbol] = val;
             }

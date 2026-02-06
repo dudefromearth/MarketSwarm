@@ -92,22 +92,8 @@ export default function AuthWrapper({ children }: AuthWrapperProps) {
     };
   }, []);
 
-  // Presence tracking - keep SSE connection alive for online status
-  // This runs when authenticated to track user as online
-  useEffect(() => {
-    if (auth.status !== 'authed') return;
-
-    // Connect to SSE /all endpoint just for presence tracking
-    const es = new EventSource(`${API_BASE}/sse/all`, { withCredentials: true });
-
-    es.onerror = () => {
-      // Silently handle errors - presence is best-effort
-    };
-
-    return () => {
-      es.close();
-    };
-  }, [auth.status]);
+  // Note: Presence tracking via /sse/all is handled by App.tsx
+  // Removed duplicate SSE connection here to avoid hitting browser connection limits
 
   // Loading state
   if (auth.status === 'loading') {

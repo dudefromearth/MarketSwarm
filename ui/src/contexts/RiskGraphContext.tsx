@@ -109,15 +109,19 @@ export function RiskGraphProvider({ children }: RiskGraphProviderProps) {
 
   // Fetch initial data from server
   const fetchStrategies = useCallback(async () => {
+    console.log('[RiskGraph] fetchStrategies called, USE_SERVER_RISK_GRAPH:', USE_SERVER_RISK_GRAPH);
     if (!USE_SERVER_RISK_GRAPH) return;
 
+    const startTime = performance.now();
     try {
       setLoading(true);
+      console.log('[RiskGraph] Starting fetch...');
       const data = await riskGraphService.fetchStrategies();
+      console.log('[RiskGraph] Got', data.length, 'strategies in', (performance.now() - startTime).toFixed(0), 'ms');
       setServerStrategies(data);
       setError(null);
     } catch (err) {
-      console.error('[RiskGraph] Failed to fetch strategies:', err);
+      console.error('[RiskGraph] Failed to fetch strategies in', (performance.now() - startTime).toFixed(0), 'ms:', err);
       setError(err instanceof Error ? err.message : 'Failed to load strategies');
     } finally {
       setLoading(false);

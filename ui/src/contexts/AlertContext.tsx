@@ -259,7 +259,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         eventSourceRef.current.close();
       }
 
-      const es = new EventSource('/sse/alerts');
+      const es = new EventSource('/sse/alerts', { withCredentials: true });
 
       es.onopen = () => {
         dispatch({ type: 'SET_CONNECTED', connected: true });

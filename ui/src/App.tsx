@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { marked } from 'marked';
 import './App.css';
 
@@ -54,7 +55,14 @@ type GexMode = 'combined' | 'net';
 type Side = 'call' | 'put' | 'both';
 
 interface SpotData {
-  [symbol: string]: { value: number; ts: string; symbol: string };
+  [symbol: string]: {
+    value: number;
+    ts: string;
+    symbol: string;
+    prevClose?: number;
+    change?: number;
+    changePercent?: number;
+  };
 }
 
 interface HeatmapTile {
@@ -407,6 +415,9 @@ function App() {
 
   // Path context for stage inference
   const { setActivePanel } = usePath();
+
+  // Navigation
+  const navigate = useNavigate();
 
   const [spot, setSpot] = useState<SpotData | null>(null);
   const [heatmap, setHeatmap] = useState<HeatmapData | null>(null);
@@ -2093,7 +2104,7 @@ function App() {
               </button>
               <button
                 className="header-admin-btn"
-                onClick={() => window.location.href = '/admin'}
+                onClick={() => navigate('/admin')}
                 title="Admin Panel"
               >
                 Admin
@@ -2120,11 +2131,21 @@ function App() {
             {spot?.[underlying] && (
               <span className="spot-price">
                 {underlying.replace('I:', '')} {spot[underlying].value.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                {spot[underlying].changePercent !== undefined && (
+                  <span className={`change-badge ${spot[underlying].changePercent >= 0 ? 'positive' : 'negative'}`}>
+                    {spot[underlying].changePercent >= 0 ? '+' : ''}{spot[underlying].changePercent.toFixed(2)}%
+                  </span>
+                )}
               </span>
             )}
             {spot?.['I:VIX'] && (
               <span className="vix-price">
                 VIX {spot['I:VIX'].value.toFixed(2)}
+                {spot['I:VIX'].changePercent !== undefined && (
+                  <span className={`change-badge ${spot['I:VIX'].changePercent >= 0 ? 'positive' : 'negative'}`}>
+                    {spot['I:VIX'].changePercent >= 0 ? '+' : ''}{spot['I:VIX'].changePercent.toFixed(2)}%
+                  </span>
+                )}
               </span>
             )}
           </div>

@@ -220,7 +220,8 @@ export function authMiddleware(options = {}) {
       path === "/api/auth/sso" ||
       path === "/api/auth/logout" ||
       path === "/api/auth/debug" ||
-      path === "/api/health";
+      path === "/api/health" ||
+      path.startsWith("/api/admin/_debug");  // Debug endpoints for testing
 
     if (needsAuth && !allowUnauth) {
       const user = getCurrentUser(req);

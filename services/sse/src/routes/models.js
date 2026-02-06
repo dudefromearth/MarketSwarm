@@ -8,7 +8,47 @@ import { requireAdmin } from "./admin.js";
 
 const router = Router();
 
-// GET /api/models/spot - Current spot prices
+/**
+ * Get previous trading day's close from trail data
+ * Returns the spot value around 4:00-4:20 PM ET from the previous trading day
+ */
+async function getPreviousClose(redis, symbol) {
+  const keys = getKeys();
+  const trailKey = keys.spotTrailKey(symbol);
+
+  // Calculate previous trading day's close time (4:00-4:20 PM ET = 21:00-21:20 UTC)
+  const now = new Date();
+  const today = new Date(now);
+  today.setUTCHours(21, 0, 0, 0); // 4 PM ET in UTC
+
+  // If market hasn't closed yet today, look at yesterday
+  // If it's before 4 PM ET, use yesterday. If after, could use today but safer to use yesterday
+  let closeDate = new Date(today);
+  closeDate.setDate(closeDate.getDate() - 1);
+
+  // Skip weekends (go back to Friday)
+  const day = closeDate.getUTCDay();
+  if (day === 0) closeDate.setDate(closeDate.getDate() - 2); // Sunday -> Friday
+  if (day === 6) closeDate.setDate(closeDate.getDate() - 1); // Saturday -> Friday
+
+  const closeStart = Math.floor(closeDate.getTime() / 1000);
+  const closeEnd = closeStart + 1200; // 20 minute window
+
+  try {
+    // Get values around market close
+    const trailData = await redis.zrangebyscore(trailKey, closeStart, closeEnd);
+    if (trailData && trailData.length > 0) {
+      // Get the last value in the range (closest to 4:20 PM)
+      const lastEntry = JSON.parse(trailData[trailData.length - 1]);
+      return lastEntry.value;
+    }
+  } catch (err) {
+    console.error(`[models] getPreviousClose error for ${symbol}:`, err.message);
+  }
+  return null;
+}
+
+// GET /api/models/spot - Current spot prices with change from previous close
 router.get("/spot", async (req, res) => {
   try {
     const redis = getMarketRedis();
@@ -25,7 +65,17 @@ router.get("/spot", async (req, res) => {
         const parts = key.split(":");
         const symbol = parts.slice(3).join(":");
         try {
-          result[symbol] = JSON.parse(val);
+          const spotData = JSON.parse(val);
+
+          // Get previous close and calculate change
+          const prevClose = await getPreviousClose(redis, symbol);
+          if (prevClose && spotData.value) {
+            spotData.prevClose = prevClose;
+            spotData.change = spotData.value - prevClose;
+            spotData.changePercent = ((spotData.value - prevClose) / prevClose) * 100;
+          }
+
+          result[symbol] = spotData;
         } catch {
           result[symbol] = val;
         }

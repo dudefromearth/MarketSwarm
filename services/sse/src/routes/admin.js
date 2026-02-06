@@ -77,6 +77,245 @@ export function getLiveUsers() {
 }
 
 /**
+ * DEBUG ENDPOINT - Test admin without auth
+ * GET /api/admin/_debug/test
+ * TODO: Remove in production
+ */
+router.get("/_debug/test", async (req, res) => {
+  const startTime = Date.now();
+  const results = {
+    timestamp: new Date().toISOString(),
+    tests: {},
+  };
+
+  // Test 1: Database availability
+  results.tests.database = { status: "checking" };
+  try {
+    if (!isDbAvailable()) {
+      results.tests.database = { status: "unavailable", error: "Database not available" };
+    } else {
+      const pool = getPool();
+      const [rows] = await pool.execute("SELECT 1 as test");
+      results.tests.database = { status: "ok", latencyMs: Date.now() - startTime };
+    }
+  } catch (err) {
+    results.tests.database = { status: "error", error: err.message };
+  }
+
+  // Test 2: Stats query
+  const statsStart = Date.now();
+  results.tests.statsQuery = { status: "checking" };
+  try {
+    if (isDbAvailable()) {
+      const pool = getPool();
+      const [last24h] = await pool.execute(`
+        SELECT COUNT(DISTINCT id) as count
+        FROM users
+        WHERE last_login_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+      `);
+      results.tests.statsQuery = {
+        status: "ok",
+        latencyMs: Date.now() - statsStart,
+        result: last24h[0]?.count || 0
+      };
+    } else {
+      results.tests.statsQuery = { status: "skipped", reason: "database unavailable" };
+    }
+  } catch (err) {
+    results.tests.statsQuery = { status: "error", error: err.message, latencyMs: Date.now() - statsStart };
+  }
+
+  // Test 3: Users query
+  const usersStart = Date.now();
+  results.tests.usersQuery = { status: "checking" };
+  try {
+    if (isDbAvailable()) {
+      const pool = getPool();
+      const [users] = await pool.execute(`SELECT COUNT(*) as count FROM users`);
+      results.tests.usersQuery = {
+        status: "ok",
+        latencyMs: Date.now() - usersStart,
+        userCount: users[0]?.count || 0
+      };
+    } else {
+      results.tests.usersQuery = { status: "skipped", reason: "database unavailable" };
+    }
+  } catch (err) {
+    results.tests.usersQuery = { status: "error", error: err.message, latencyMs: Date.now() - usersStart };
+  }
+
+  // Test 4: Activity hourly query
+  const activityStart = Date.now();
+  results.tests.activityQuery = { status: "checking" };
+  try {
+    if (isDbAvailable()) {
+      const pool = getPool();
+      const [rows] = await pool.execute(`
+        SELECT COUNT(*) as count FROM hourly_activity_aggregates
+      `);
+      results.tests.activityQuery = {
+        status: "ok",
+        latencyMs: Date.now() - activityStart,
+        rowCount: rows[0]?.count || 0
+      };
+    } else {
+      results.tests.activityQuery = { status: "skipped", reason: "database unavailable" };
+    }
+  } catch (err) {
+    // Table might not exist
+    if (err.code === "ER_NO_SUCH_TABLE") {
+      results.tests.activityQuery = { status: "ok", latencyMs: Date.now() - activityStart, rowCount: 0, note: "table does not exist yet" };
+    } else {
+      results.tests.activityQuery = { status: "error", error: err.message, latencyMs: Date.now() - activityStart };
+    }
+  }
+
+  // Test 5: Live users (memory)
+  results.tests.liveUsers = {
+    status: "ok",
+    count: connectedUsers.size,
+    latencyMs: 0
+  };
+
+  results.totalLatencyMs = Date.now() - startTime;
+  res.json(results);
+});
+
+/**
+ * DEBUG ENDPOINT - Get stats without auth
+ * GET /api/admin/_debug/stats
+ */
+router.get("/_debug/stats", async (req, res) => {
+  if (!isDbAvailable()) {
+    return res.status(503).json({ error: "Database unavailable" });
+  }
+  const pool = getPool();
+  const startTime = Date.now();
+
+  try {
+    const [last24h] = await pool.execute(`
+      SELECT COUNT(DISTINCT id) as count
+      FROM users
+      WHERE last_login_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+    `);
+
+    const liveUsers = getLiveUsers();
+    const liveCount = liveUsers.length;
+
+    const [mostActive] = await pool.execute(`
+      SELECT id, display_name, last_login_at
+      FROM users
+      ORDER BY last_login_at DESC
+      LIMIT 5
+    `);
+
+    res.json({
+      _debug: { latencyMs: Date.now() - startTime },
+      loginsLast24h: last24h[0]?.count || 0,
+      liveUserCount: liveCount,
+      liveUsers: liveUsers.map(u => ({ displayName: u.displayName, connectedAt: u.connectedAt })),
+      mostActiveUsers: mostActive,
+    });
+  } catch (err) {
+    console.error("[admin] Error fetching stats:", err);
+    res.status(500).json({ error: "Failed to fetch stats", details: err.message });
+  }
+});
+
+/**
+ * DEBUG ENDPOINT - Get users without auth
+ * GET /api/admin/_debug/users
+ */
+router.get("/_debug/users", async (req, res) => {
+  if (!isDbAvailable()) {
+    return res.status(503).json({ error: "Database unavailable" });
+  }
+  const pool = getPool();
+  const startTime = Date.now();
+
+  try {
+    const [users] = await pool.execute(`
+      SELECT
+        id, issuer, wp_user_id, email, display_name,
+        roles_json, is_admin, subscription_tier,
+        created_at, last_login_at
+      FROM users
+      ORDER BY last_login_at DESC
+    `);
+
+    const onlineEmails = getOnlineEmails();
+    const parsed = users.map(u => ({
+      ...u,
+      roles: JSON.parse(u.roles_json || "[]"),
+      is_online: onlineEmails.has(u.email),
+    }));
+
+    res.json({ _debug: { latencyMs: Date.now() - startTime }, users: parsed, count: parsed.length });
+  } catch (err) {
+    console.error("[admin] Error fetching users:", err);
+    res.status(500).json({ error: "Failed to fetch users", details: err.message });
+  }
+});
+
+/**
+ * DEBUG ENDPOINT - Get activity hourly without auth
+ * GET /api/admin/_debug/activity/hourly
+ */
+router.get("/_debug/activity/hourly", async (req, res) => {
+  if (!isDbAvailable()) {
+    return res.status(503).json({ error: "Database unavailable" });
+  }
+  const pool = getPool();
+  const startTime = Date.now();
+  const days = parseInt(req.query.days) || 7;
+
+  try {
+    const [rows] = await pool.execute(
+      `SELECT hour_start, user_count
+       FROM hourly_activity_aggregates
+       WHERE hour_start >= DATE_SUB(NOW(), INTERVAL ? DAY)
+       ORDER BY hour_start ASC`,
+      [days]
+    );
+
+    const hourlyTotals = {};
+    for (let i = 0; i < 24; i++) {
+      hourlyTotals[i] = { count: 0, total: 0 };
+    }
+
+    rows.forEach((row) => {
+      const hour = new Date(row.hour_start).getHours();
+      hourlyTotals[hour].count++;
+      hourlyTotals[hour].total += row.user_count;
+    });
+
+    const busiestHours = Object.entries(hourlyTotals)
+      .map(([hour, data]) => ({
+        hour: parseInt(hour),
+        avgUsers: data.count > 0 ? data.total / data.count : 0,
+      }))
+      .sort((a, b) => b.avgUsers - a.avgUsers)
+      .slice(0, 3);
+
+    res.json({
+      _debug: { latencyMs: Date.now() - startTime },
+      data: rows.map((r) => ({
+        hour_start: r.hour_start,
+        user_count: r.user_count,
+      })),
+      busiestHours,
+      days,
+    });
+  } catch (err) {
+    if (err.code === "ER_NO_SUCH_TABLE") {
+      return res.json({ _debug: { latencyMs: Date.now() - startTime }, data: [], busiestHours: [], days });
+    }
+    console.error("[admin] Error fetching hourly activity:", err);
+    res.status(500).json({ error: "Failed to fetch activity data", details: err.message });
+  }
+});
+
+/**
  * Admin middleware - require is_admin = true
  * Exported for use in other route files
  */

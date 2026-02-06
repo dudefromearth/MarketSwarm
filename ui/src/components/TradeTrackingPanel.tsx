@@ -1,7 +1,7 @@
 // ui/src/components/TradeTrackingPanel.tsx
 // Trade Idea Tracking - P&L instrumentation display
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 
 interface TrackingStats {
   activeCount: number;
@@ -58,8 +58,13 @@ export default function TradeTrackingPanel({ isOpen = true }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'stats' | 'active' | 'history'>('stats');
+  const isFetchingRef = useRef(false);
 
   const fetchData = useCallback(async () => {
+    // Prevent overlapping requests
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
     try {
       const [statsRes, activeRes, historyRes] = await Promise.all([
         fetch('/api/models/trade_tracking/stats', { credentials: 'include' }),
@@ -67,9 +72,19 @@ export default function TradeTrackingPanel({ isOpen = true }: Props) {
         fetch('/api/models/trade_tracking/history?limit=50', { credentials: 'include' }),
       ]);
 
+      // Check for auth errors
+      if (statsRes.status === 401 || statsRes.status === 403) {
+        setError('Admin access required');
+        setLoading(false);
+        isFetchingRef.current = false;
+        return;
+      }
+
       if (statsRes.ok) {
         const statsData = await statsRes.json();
         if (statsData.success) setStats(statsData.data);
+      } else {
+        console.warn('[TradeTrackingPanel] Stats fetch failed:', statsRes.status);
       }
 
       if (activeRes.ok) {
@@ -88,6 +103,7 @@ export default function TradeTrackingPanel({ isOpen = true }: Props) {
       console.error('[TradeTrackingPanel] Error:', err);
     } finally {
       setLoading(false);
+      isFetchingRef.current = false;
     }
   }, []);
 
@@ -95,7 +111,7 @@ export default function TradeTrackingPanel({ isOpen = true }: Props) {
     if (!isOpen) return;
 
     fetchData();
-    const interval = setInterval(fetchData, 5000); // Refresh every 5 seconds
+    const interval = setInterval(fetchData, 15000);
     return () => clearInterval(interval);
   }, [isOpen, fetchData]);
 

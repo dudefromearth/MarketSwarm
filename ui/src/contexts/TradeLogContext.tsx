@@ -164,13 +164,16 @@ export function TradeLogProvider({ children }: TradeLogProviderProps) {
   }, []);
 
   const refreshTrades = useCallback(async () => {
+    console.log('[TradeLogContext] refreshTrades called');
+    const startTime = performance.now();
     try {
       setLoading(true);
       const data = await tradeLogService.fetchLegacyTrades();
+      console.log('[TradeLogContext] Got', data.length, 'trades in', (performance.now() - startTime).toFixed(0), 'ms');
       setTrades(data);
       setError(null);
     } catch (err) {
-      console.error('[TradeLog] Failed to fetch trades:', err);
+      console.error('[TradeLogContext] Failed to fetch trades in', (performance.now() - startTime).toFixed(0), 'ms:', err);
       setError(err instanceof Error ? err.message : 'Failed to load trades');
     } finally {
       setLoading(false);

@@ -15,6 +15,17 @@ import { TimezoneProvider } from './contexts/TimezoneContext.tsx'
 import { RiskGraphProvider } from './contexts/RiskGraphContext.tsx'
 import { TradeLogProvider } from './contexts/TradeLogContext.tsx'
 
+// Wrapper component for routes that need trading providers
+function TradingProviders({ children }: { children: React.ReactNode }) {
+  return (
+    <RiskGraphProvider>
+      <TradeLogProvider>
+        {children}
+      </TradeLogProvider>
+    </RiskGraphProvider>
+  );
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
@@ -22,17 +33,21 @@ createRoot(document.getElementById('root')!).render(
         <PathProvider>
           <AuthWrapper>
             <TimezoneProvider>
-            <RiskGraphProvider>
-            <TradeLogProvider>
-            <Routes>
-              <Route path="/" element={<AppLayout><App /></AppLayout>} />
-              <Route path="/profile" element={<ProfilePage />} />
-              <Route path="/workbench" element={<WorkbenchPage />} />
-              <Route path="/admin" element={<AdminPage />} />
-              <Route path="/admin/ml-lab" element={<MLLabPage />} />
-            </Routes>
-            </TradeLogProvider>
-            </RiskGraphProvider>
+              <Routes>
+                <Route path="/" element={
+                  <TradingProviders>
+                    <AppLayout><App /></AppLayout>
+                  </TradingProviders>
+                } />
+                <Route path="/profile" element={<ProfilePage />} />
+                <Route path="/workbench" element={
+                  <TradingProviders>
+                    <WorkbenchPage />
+                  </TradingProviders>
+                } />
+                <Route path="/admin" element={<AdminPage />} />
+                <Route path="/admin/ml-lab" element={<MLLabPage />} />
+              </Routes>
             </TimezoneProvider>
           </AuthWrapper>
         </PathProvider>

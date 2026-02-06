@@ -43,21 +43,29 @@ export default function LogSelector({
 
   useEffect(() => {
     const fetchLogs = async () => {
+      console.log('[LogSelector] Starting fetch, selectedLogId:', selectedLogId);
+      const startTime = performance.now();
       try {
-        const response = await fetch(`${JOURNAL_API}/api/logs`);
+        const response = await fetch(`${JOURNAL_API}/api/logs`, { credentials: 'include' });
+        console.log('[LogSelector] Response received in', (performance.now() - startTime).toFixed(0), 'ms, status:', response.status);
         const result = await response.json();
 
         if (result.success && result.data.length > 0) {
           setLogs(result.data);
+          console.log('[LogSelector] Got', result.data.length, 'logs');
 
           // Auto-select first log if none selected
           if (!selectedLogId) {
+            console.log('[LogSelector] Auto-selecting first log:', result.data[0].id);
             onSelectLog(result.data[0]);
           }
+        } else {
+          console.log('[LogSelector] No logs or failed:', result);
         }
       } catch (err) {
-        console.error('LogSelector fetch error:', err);
+        console.error('[LogSelector] fetch error:', err);
       } finally {
+        console.log('[LogSelector] Done, total time:', (performance.now() - startTime).toFixed(0), 'ms');
         setLoading(false);
       }
     };
