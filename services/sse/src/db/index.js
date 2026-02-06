@@ -170,8 +170,107 @@ async function createTables() {
     }
 
     console.log("[db] Users table ready");
+
+    // Dealer Gravity config tables
+    await createDealerGravityTables();
   } catch (e) {
     console.error("[db] Failed to create tables:", e.message);
+  }
+}
+
+/**
+ * Create Dealer Gravity configuration tables
+ */
+async function createDealerGravityTables() {
+  if (!pool) return;
+
+  // User Dealer Gravity display configurations
+  const createDGConfigsTable = `
+    CREATE TABLE IF NOT EXISTS dealer_gravity_configs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      name VARCHAR(100) NOT NULL DEFAULT 'Default',
+
+      -- Display settings
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      mode ENUM('raw', 'tv') NOT NULL DEFAULT 'tv',
+      width_percent INT NOT NULL DEFAULT 15,
+      num_bins INT NOT NULL DEFAULT 50,
+      capping_sigma DECIMAL(3,2) NOT NULL DEFAULT 2.00,
+      color VARCHAR(7) NOT NULL DEFAULT '#9333ea',
+      transparency INT NOT NULL DEFAULT 50,
+      show_volume_nodes BOOLEAN NOT NULL DEFAULT TRUE,
+      show_volume_wells BOOLEAN NOT NULL DEFAULT TRUE,
+      show_crevasses BOOLEAN NOT NULL DEFAULT TRUE,
+
+      is_default BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+      UNIQUE KEY uq_user_name (user_id, name),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+
+  // GEX panel configurations
+  const createGexConfigsTable = `
+    CREATE TABLE IF NOT EXISTS gex_panel_configs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT TRUE,
+      mode ENUM('combined', 'net') NOT NULL DEFAULT 'combined',
+      calls_color VARCHAR(7) NOT NULL DEFAULT '#22c55e',
+      puts_color VARCHAR(7) NOT NULL DEFAULT '#ef4444',
+      width_px INT NOT NULL DEFAULT 60,
+
+      is_default BOOLEAN NOT NULL DEFAULT FALSE,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+
+  // AI analysis history (using Dealer Gravity lexicon)
+  const createDGAnalysesTable = `
+    CREATE TABLE IF NOT EXISTS dealer_gravity_analyses (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      symbol VARCHAR(20) NOT NULL DEFAULT 'SPX',
+      spot_price DECIMAL(10,2),
+
+      -- Structural results (Dealer Gravity terminology)
+      volume_nodes JSON,
+      volume_wells JSON,
+      crevasses JSON,
+      market_memory_strength DECIMAL(3,2),
+      bias ENUM('bullish', 'bearish', 'neutral'),
+      analysis_text TEXT,
+
+      -- Metadata
+      provider VARCHAR(20),
+      model VARCHAR(100),
+      tokens_used INT,
+      latency_ms INT,
+
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+      INDEX idx_user_created (user_id, created_at),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+
+  try {
+    await pool.execute(createDGConfigsTable);
+    console.log("[db] dealer_gravity_configs table ready");
+
+    await pool.execute(createGexConfigsTable);
+    console.log("[db] gex_panel_configs table ready");
+
+    await pool.execute(createDGAnalysesTable);
+    console.log("[db] dealer_gravity_analyses table ready");
+  } catch (e) {
+    console.error("[db] Failed to create Dealer Gravity tables:", e.message);
   }
 }
 

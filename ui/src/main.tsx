@@ -14,15 +14,18 @@ import { PathProvider } from './contexts/PathContext.tsx'
 import { TimezoneProvider } from './contexts/TimezoneContext.tsx'
 import { RiskGraphProvider } from './contexts/RiskGraphContext.tsx'
 import { TradeLogProvider } from './contexts/TradeLogContext.tsx'
+import { DealerGravityProvider } from './contexts/DealerGravityContext.tsx'
 
 // Wrapper component for routes that need trading providers
 function TradingProviders({ children }: { children: React.ReactNode }) {
   return (
-    <RiskGraphProvider>
-      <TradeLogProvider>
-        {children}
-      </TradeLogProvider>
-    </RiskGraphProvider>
+    <DealerGravityProvider>
+      <RiskGraphProvider>
+        <TradeLogProvider>
+          {children}
+        </TradeLogProvider>
+      </RiskGraphProvider>
+    </DealerGravityProvider>
   );
 }
 

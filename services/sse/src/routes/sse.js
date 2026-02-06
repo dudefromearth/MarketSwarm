@@ -22,6 +22,7 @@ const clients = {
   alerts: new Set(),
   risk_graph: new Map(), // userId -> Set of clients
   trade_log: new Map(), // userId -> Set of clients
+  dealer_gravity: new Set(), // Dealer Gravity artifact updates
   all: new Set(),
 };
 
@@ -36,6 +37,7 @@ const modelState = {
   bias_lfi: null,
   market_mode: null,
   alerts: null, // Latest alerts state
+  dealer_gravity: null, // Latest artifact update event
 };
 
 // Previous close cache (refreshed daily)
@@ -380,6 +382,24 @@ router.get("/trade-log", (req, res) => {
     if (clients.trade_log.get(userId)?.size === 0) {
       clients.trade_log.delete(userId);
     }
+  });
+});
+
+// GET /sse/dealer-gravity - Dealer Gravity artifact update events
+// Subscribes to artifact_version changes for live UI updates
+router.get("/dealer-gravity", (req, res) => {
+  sseHeaders(res);
+  clients.dealer_gravity.add(res);
+
+  // Send current state if available
+  if (modelState.dealer_gravity) {
+    sendEvent(res, "dealer_gravity_artifact_updated", modelState.dealer_gravity);
+  }
+
+  sendEvent(res, "connected", { channel: "dealer-gravity", ts: Date.now() });
+
+  req.on("close", () => {
+    clients.dealer_gravity.delete(res);
   });
 });
 
@@ -891,6 +911,54 @@ export function subscribeTradeLogPubSub() {
   });
 }
 
+// Subscribe to dealer_gravity_updated pub/sub for artifact refresh notifications
+export function subscribeDealerGravityPubSub() {
+  const sub = getMarketRedisSub();
+  const channel = "dealer_gravity_updated";
+
+  sub.subscribe(channel, (err) => {
+    if (err) {
+      console.error(`[sse] Failed to subscribe to ${channel}:`, err.message);
+    } else {
+      console.log(`[sse] Subscribed to ${channel}`);
+    }
+  });
+
+  sub.on("message", (ch, message) => {
+    if (ch === channel) {
+      try {
+        const event = JSON.parse(message);
+        // Event format: { type, symbol, artifact_version, occurred_at }
+
+        // Update modelState
+        modelState.dealer_gravity = event;
+
+        // Broadcast to dealer_gravity subscribers
+        for (const client of clients.dealer_gravity) {
+          try {
+            sendEvent(client, "dealer_gravity_artifact_updated", event);
+          } catch (err) {
+            clients.dealer_gravity.delete(client);
+          }
+        }
+
+        // Also broadcast to /all clients
+        for (const client of clients.all) {
+          try {
+            sendEvent(client, "dealer_gravity_artifact_updated", event);
+          } catch (err) {
+            clients.all.delete(client);
+          }
+        }
+
+        console.log(`[sse] Dealer Gravity artifact updated: ${event.artifact_version}`);
+      } catch (err) {
+        console.error("[sse] dealer_gravity_updated parse error:", err.message);
+      }
+    }
+  });
+}
+
 // Stats tracking
 let diffStats = {
   received: 0,
@@ -1055,8 +1123,9 @@ export function getClientStats() {
       alerts: clients.alerts.size,
       risk_graph: riskGraphCount,
       trade_log: tradeLogCount,
+      dealer_gravity: clients.dealer_gravity.size,
       all: clients.all.size,
-      total: clients.spot.size + gexCount + heatmapCount + candlesCount + tradeSelectorCount + clients.vexy.size + clients.bias_lfi.size + clients.alerts.size + riskGraphCount + tradeLogCount + clients.all.size,
+      total: clients.spot.size + gexCount + heatmapCount + candlesCount + tradeSelectorCount + clients.vexy.size + clients.bias_lfi.size + clients.alerts.size + riskGraphCount + tradeLogCount + clients.dealer_gravity.size + clients.all.size,
     },
   };
 }
