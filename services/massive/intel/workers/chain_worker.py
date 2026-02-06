@@ -236,7 +236,7 @@ class ChainWorker:
 
     async def _run_once(self) -> None:
         r = await self._redis_conn()
-        vix = await self._load_spot("VIX")
+        vix = await self._load_spot("I:VIX")
         ts = int(time.time())
 
         start = time.monotonic()
