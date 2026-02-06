@@ -1362,7 +1362,7 @@ class JournalDBv2:
                 cursor.execute("""
                     CREATE TABLE ml_decisions (
                         id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                        idea_id VARCHAR(36) NOT NULL,
+                        idea_id VARCHAR(100) NOT NULL,
                         decision_time DATETIME(3) NOT NULL,
 
                         -- Model identification (for exact reproducibility)
@@ -1396,7 +1396,7 @@ class JournalDBv2:
                     CREATE TABLE pnl_events (
                         id BIGINT AUTO_INCREMENT PRIMARY KEY,
                         event_time DATETIME(3) NOT NULL,
-                        idea_id VARCHAR(36) NOT NULL,
+                        idea_id VARCHAR(100) NOT NULL,
                         trade_id VARCHAR(36) DEFAULT NULL,
                         strategy_id VARCHAR(36) DEFAULT NULL,
 
@@ -6060,7 +6060,7 @@ class JournalDBv2:
             cursor.close()
             conn.close()
 
-    def get_champion_model(self, regime: Optional[str] = None) -> Optional[MLModel]:
+    def get_champion_model(self, regime: Optional[str] = None, include_blob: bool = False) -> Optional[MLModel]:
         """Get the current champion model, optionally for a specific regime."""
         conn = self._get_conn()
         cursor = conn.cursor()
@@ -6079,7 +6079,7 @@ class JournalDBv2:
             cursor.execute(query, params)
             row = cursor.fetchone()
             if row:
-                return MLModel.from_dict(self._row_to_dict(cursor, row))
+                return MLModel.from_dict(self._row_to_dict(cursor, row), include_blob=include_blob)
             return None
         finally:
             cursor.close()

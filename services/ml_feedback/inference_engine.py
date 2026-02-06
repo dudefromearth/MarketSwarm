@@ -73,9 +73,10 @@ class CachedModel:
 class InferenceEngine:
     """Two-tier ML scoring: fast path (sync) + deep path (async)."""
 
-    def __init__(self, db=None, config: MLConfig = None):
+    def __init__(self, db=None, config: MLConfig = None, journal_api_url: str = None):
         self.db = db
         self.config = config or DEFAULT_CONFIG
+        self.journal_api_url = journal_api_url or "http://localhost:3002"
         self._fast_model: Optional[CachedModel] = None
         self._deep_model: Optional[CachedModel] = None
         self._regime_models: Dict[str, CachedModel] = {}
@@ -84,24 +85,76 @@ class InferenceEngine:
         self._context_timestamps: Dict[str, datetime] = {}
 
     async def load_models(self) -> None:
-        """Load champion models from registry."""
-        if not self.db:
-            return
+        """Load champion models from registry (via API or direct DB)."""
+        import logging
+        logger = logging.getLogger(__name__)
 
-        # Load primary champion model
-        champion = await self._load_champion_model()
+        # Try API first, then fallback to direct DB
+        logger.info(f"[INFERENCE] Loading models from API: {self.journal_api_url}")
+        champion = await self._load_champion_model_via_api()
+        if champion:
+            logger.info(f"[INFERENCE] Loaded champion model v{champion.version} via API")
+        elif self.db:
+            logger.info("[INFERENCE] API load failed, trying direct DB")
+            champion = await self._load_champion_model_from_db()
+            if champion:
+                logger.info(f"[INFERENCE] Loaded champion model v{champion.version} via DB")
+        else:
+            logger.warning("[INFERENCE] No champion model loaded (no API response and no DB)")
+
         if champion:
             self._fast_model = champion
             self._deep_model = champion
 
         # Load regime-specific models
         for regime in ['chaos', 'goldilocks_1', 'goldilocks_2', 'zombieland']:
-            regime_model = await self._load_champion_model(regime=regime)
+            regime_model = await self._load_champion_model_via_api(regime=regime)
+            if not regime_model and self.db:
+                regime_model = await self._load_champion_model_from_db(regime=regime)
             if regime_model:
                 self._regime_models[regime] = regime_model
 
-    async def _load_champion_model(self, regime: str = None) -> Optional[CachedModel]:
-        """Load champion model from database."""
+    async def _load_champion_model_via_api(self, regime: str = None) -> Optional[CachedModel]:
+        """Load champion model via Journal API (includes model blob)."""
+        import aiohttp
+        import json
+        import base64
+
+        try:
+            url = f"{self.journal_api_url}/api/internal/ml/models/champion?include_blob=true"
+            if regime:
+                url += f"&regime={regime}"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                    if resp.status != 200:
+                        return None
+
+                    data = await resp.json()
+                    if not data.get('success') or not data.get('data'):
+                        return None
+
+                    model_data = data['data']
+                    if not model_data.get('modelBlob'):
+                        return None
+
+                    # Decode base64 model blob
+                    model_bytes = base64.b64decode(model_data['modelBlob'])
+                    model = pickle.loads(model_bytes)
+
+                    return CachedModel(
+                        model_id=model_data['id'],
+                        version=model_data['modelVersion'],
+                        model=model,
+                        feature_list=model_data.get('featureList', []),
+                        regime=regime,
+                    )
+        except Exception as e:
+            # Silently fail - will try DB fallback
+            return None
+
+    async def _load_champion_model_from_db(self, regime: str = None) -> Optional[CachedModel]:
+        """Load champion model from database (fallback)."""
         if not self.db:
             return None
 

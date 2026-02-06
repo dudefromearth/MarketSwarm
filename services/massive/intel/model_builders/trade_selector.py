@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import random
 import time
 import uuid
 from datetime import datetime, date, timezone
@@ -335,12 +336,20 @@ class TradeSelectorModelBuilder:
 
         try:
             self._feature_extractor = FeatureExtractor()
-            self._ml_engine = InferenceEngine()
+            self._ml_engine = InferenceEngine(journal_api_url=self.journal_api_url)
             self._circuit_breaker = CircuitBreaker()
 
             # Load models
             await self._ml_engine.load_models()
-            self.logger.info("[TRADE_SELECTOR] ML Engine initialized", emoji="🤖")
+
+            # Log model loading status
+            if self._ml_engine._fast_model:
+                self.logger.info(
+                    f"[TRADE_SELECTOR] ML Engine initialized with model v{self._ml_engine._fast_model.version}",
+                    emoji="🤖"
+                )
+            else:
+                self.logger.warn("[TRADE_SELECTOR] ML Engine initialized but no model loaded", emoji="⚠️")
         except Exception as e:
             self.logger.error(f"[TRADE_SELECTOR] ML Engine init failed: {e}", emoji="💥")
             self.ml_enabled = False
@@ -456,25 +465,28 @@ class TradeSelectorModelBuilder:
 
         try:
             # Log to Journal API
-            async with self._get_http_session() as session:
-                async with session.post(
-                    f"{self.journal_api_url}/api/internal/ml/decisions",
-                    json={
-                        "idea_id": idea_id,
-                        "selector_params_version": self._active_params_version or 1,
-                        "feature_snapshot_id": feature_snapshot_id,
-                        "original_score": original_score,
-                        "ml_score": ml_score,
-                        "final_score": final_score,
-                        "experiment_id": experiment_id,
-                        "experiment_arm": experiment_arm,
-                        "action_taken": "ranked",
-                    },
-                ) as resp:
-                    if resp.status != 201:
-                        self.logger.debug(f"[TRADE_SELECTOR] ML decision log failed: {resp.status}")
+            session = await self._get_http_session()
+            async with session.post(
+                f"{self.journal_api_url}/api/internal/ml/decisions",
+                json={
+                    "idea_id": idea_id,
+                    "selector_params_version": self._active_params_version or 1,
+                    "feature_snapshot_id": feature_snapshot_id,
+                    "original_score": original_score,
+                    "ml_score": ml_score,
+                    "final_score": final_score,
+                    "experiment_id": experiment_id,
+                    "experiment_arm": experiment_arm,
+                    "action_taken": "ranked",
+                },
+            ) as resp:
+                if resp.status == 201:
+                    self.logger.info(f"[TRADE_SELECTOR] ML decision logged successfully")
+                else:
+                    text = await resp.text()
+                    self.logger.warning(f"[TRADE_SELECTOR] ML decision log failed: {resp.status} - {text[:100]}")
         except Exception as e:
-            self.logger.debug(f"[TRADE_SELECTOR] ML decision log error: {e}")
+            self.logger.warning(f"[TRADE_SELECTOR] ML decision log error: {e}")
 
     # ------------------------------------------------------------------
     # Data Loading
@@ -2135,6 +2147,14 @@ class TradeSelectorModelBuilder:
                             )
                             if ml_score is not None:
                                 ml_scored_count += 1
+                                # Log decision for feedback loop (sample ~1% to reduce volume)
+                                if random.random() < 0.01:
+                                    await self._log_ml_decision(
+                                        idea_id=idea_id,
+                                        original_score=composite,
+                                        ml_score=ml_score,
+                                        final_score=final_composite,
+                                    )
 
                         confidence = self._calculate_confidence(
                             has_gex=bool(gex_by_strike),
