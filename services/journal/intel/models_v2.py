@@ -2232,6 +2232,8 @@ class MLModel:
     def from_dict(cls, d: dict) -> 'MLModel':
         """Create from dictionary (e.g., from database row)."""
         d = dict(d)
+        # Remove model_blob - not stored in dataclass (too large)
+        d.pop('model_blob', None)
         if isinstance(d.get('feature_list'), str):
             d['feature_list'] = json.loads(d['feature_list']) if d['feature_list'] else []
         if isinstance(d.get('hyperparameters'), str):
@@ -2244,8 +2246,9 @@ class MLModel:
             d['created_at'] = d['created_at'].isoformat()
         return cls(**d)
 
-    def to_api_dict(self) -> dict:
+    def to_api_dict(self, include_blob: bool = False) -> dict:
         """Convert to API response format."""
+        # Note: model_blob is not included as it's too large and not stored in this dataclass
         return {
             'id': self.id,
             'modelName': self.model_name,

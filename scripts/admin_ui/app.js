@@ -1574,15 +1574,20 @@ function renderMLChampion() {
         return;
     }
 
+    // API uses camelCase
+    const valAuc = champ.metrics?.valAuc ?? champ.val_auc;
+    const trainSamples = champ.metrics?.trainSamples ?? champ.train_samples;
+    const top10 = champ.topKUtility?.top10AvgPnl ?? champ.top_10_avg_pnl;
+
     container.innerHTML = `
         <div class="champion-info">
-            <div class="champion-name">${champ.model_name || 'Unknown'} <span class="version">v${champ.model_version || '?'}</span></div>
-            <div class="champion-type">${champ.model_type || '—'} | ${champ.feature_set_version || '—'}</div>
+            <div class="champion-name">${champ.modelName || champ.model_name || 'Unknown'} <span class="version">v${champ.modelVersion || champ.model_version || '?'}</span></div>
+            <div class="champion-type">${champ.modelType || champ.model_type || '—'} | ${champ.featureSetVersion || champ.feature_set_version || '—'}</div>
         </div>
         <div class="champion-stats">
-            <div class="stat"><span class="label">Val AUC</span><span class="value">${champ.val_auc?.toFixed(3) || '—'}</span></div>
-            <div class="stat"><span class="label">Samples</span><span class="value">${champ.train_samples?.toLocaleString() || '—'}</span></div>
-            <div class="stat"><span class="label">Top-10</span><span class="value">${champ.top_10_avg_pnl ? '$' + champ.top_10_avg_pnl.toFixed(0) : '—'}</span></div>
+            <div class="stat"><span class="label">Val AUC</span><span class="value">${valAuc ? parseFloat(valAuc).toFixed(3) : '—'}</span></div>
+            <div class="stat"><span class="label">Samples</span><span class="value">${trainSamples?.toLocaleString() || '—'}</span></div>
+            <div class="stat"><span class="label">Top-10</span><span class="value">${top10 ? '$' + parseFloat(top10).toFixed(0) : '—'}</span></div>
         </div>
     `;
 }
