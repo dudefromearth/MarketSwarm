@@ -19,15 +19,18 @@
 // BANNED TERMS: POC, VAH, VAL, Value Area, HVN, LVN
 
 import { Router } from "express";
-import { getMarketRedis } from "../redis.js";
+import { getSystemRedis, getMarketRedis } from "../redis.js";
 import { getPool, isDbAvailable } from "../db/index.js";
 
 const router = Router();
 
 // Redis keys - using existing massive volume profile data
+// VP Admin stores JSON string at massive:volume_profile
+const VP_JSON_KEY = "massive:volume_profile";
+// Legacy hash-based keys (for backwards compatibility)
 const VP_DATA_KEY = "massive:volume_profile:spx";
 const VP_META_KEY = "massive:volume_profile:spx:meta";
-// Legacy keys for pre-computed artifacts (if available)
+// Pre-computed artifact keys
 const ARTIFACT_KEY = "dealer_gravity:artifact:spx";
 const CONTEXT_KEY = "dealer_gravity:context:spx";
 
@@ -110,16 +113,74 @@ setInterval(() => {
  */
 router.get("/artifact", async (req, res) => {
   try {
-    const redis = getMarketRedis();
+    // Volume profile data is on system-redis (massive:volume_profile)
+    const redis = getSystemRedis();
 
-    // First check for pre-computed artifact
+    // First check for pre-computed artifact (on system-redis)
     const precomputed = await redis.get(ARTIFACT_KEY);
     if (precomputed) {
       const data = JSON.parse(precomputed);
       return res.json({ success: true, data, ts: Date.now() });
     }
 
-    // Fall back to reading from massive:volume_profile:spx hash
+    // Try reading VP Admin JSON format (massive:volume_profile)
+    const vpJson = await redis.get(VP_JSON_KEY);
+    if (vpJson) {
+      const vpData = JSON.parse(vpJson);
+
+      // Use TV smoothed buckets (preferred) or fall back to RAW
+      const buckets = vpData.buckets_tv || vpData.buckets_raw || {};
+      const minPrice = vpData.min_price || 2000;
+      const maxPrice = vpData.max_price || 7000;
+      const step = vpData.bin_size || 1;
+
+      // Build bins array from buckets (sparse → dense)
+      const bins = [];
+      let maxVolume = 0;
+      for (let price = minPrice; price <= maxPrice; price += step) {
+        const vol = parseFloat(buckets[String(price)] || 0);
+        bins.push(vol);
+        if (vol > maxVolume) maxVolume = vol;
+      }
+
+      // Normalize to 0-1000 scale
+      const normalizedScale = 1000;
+      const normalizedBins = bins.map(v =>
+        maxVolume > 0 ? Math.round((v / maxVolume) * normalizedScale) : 0
+      );
+
+      // Get structures from VP Admin analysis
+      const structures = vpData.structures || {};
+
+      const artifact = {
+        profile: {
+          min: minPrice,
+          max: maxPrice,
+          step: step,
+          bins: normalizedBins,
+          maxVolume,
+          normalizedScale,
+        },
+        structures: {
+          volume_nodes: structures.volume_nodes || [],
+          volume_wells: structures.volume_wells || [],
+          crevasses: structures.crevasses || [],
+        },
+        meta: {
+          spot: null, // Would come from live spot price
+          algorithm: "tv_microbins_30",
+          artifact_version: vpData.last_updated || "v1",
+          last_update: vpData.last_updated || new Date().toISOString(),
+          min_price: minPrice,
+          max_price: maxPrice,
+          bin_count: vpData.bin_count || bins.length,
+        },
+      };
+
+      return res.json({ success: true, data: artifact, ts: Date.now() });
+    }
+
+    // Fall back to reading from massive:volume_profile:spx hash (legacy)
     const [vpData, metaData] = await Promise.all([
       redis.hgetall(VP_DATA_KEY),
       redis.hgetall(VP_META_KEY),
@@ -212,18 +273,98 @@ router.get("/artifact", async (req, res) => {
  */
 router.get("/context", async (req, res) => {
   try {
-    const redis = getMarketRedis();
-    const context = await redis.get(CONTEXT_KEY);
+    const redis = getSystemRedis();
 
-    if (!context) {
+    // First check for pre-computed context
+    const precomputed = await redis.get(CONTEXT_KEY);
+    if (precomputed) {
+      const data = JSON.parse(precomputed);
+      return res.json({ success: true, data, ts: Date.now() });
+    }
+
+    // Compute basic context from VP data
+    const vpJson = await redis.get(VP_JSON_KEY);
+    if (!vpJson) {
       return res.status(503).json({
         success: false,
-        error: "Context not ready - pipeline may be initializing",
+        error: "Context not ready - volume profile data not available",
       });
     }
 
-    const data = JSON.parse(context);
-    res.json({ success: true, data, ts: Date.now() });
+    const vpData = JSON.parse(vpJson);
+    const structures = vpData.structures || {};
+    const volumeNodes = structures.volume_nodes || [];
+    const volumeWells = structures.volume_wells || [];
+    const crevasses = structures.crevasses || [];
+
+    // Get current spot price (from market-redis if available)
+    let spot = null;
+    try {
+      const marketRedis = getMarketRedis();
+      const spotData = await marketRedis.get("massive:model:spot:I:SPX");
+      if (spotData) {
+        const parsed = JSON.parse(spotData);
+        spot = parsed.value || parsed.spot || null;
+      }
+    } catch (e) {
+      // Spot not available
+    }
+
+    // Compute context metrics
+    let nearestVolumeNode = null;
+    let nearestVolumeNodeDist = null;
+    let volumeWellProximity = null;
+    let inCrevasse = false;
+
+    if (spot && volumeNodes.length > 0) {
+      // Find nearest volume node
+      let minDist = Infinity;
+      for (const node of volumeNodes) {
+        const dist = Math.abs(spot - node);
+        if (dist < minDist) {
+          minDist = dist;
+          nearestVolumeNode = node;
+        }
+      }
+      nearestVolumeNodeDist = (nearestVolumeNode - spot) / spot; // Relative distance
+    }
+
+    if (spot && volumeWells.length > 0) {
+      // Find proximity to nearest volume well
+      let minDist = Infinity;
+      for (const well of volumeWells) {
+        const dist = Math.abs(spot - well);
+        if (dist < minDist) {
+          minDist = dist;
+        }
+      }
+      volumeWellProximity = spot > 0 ? minDist / spot : null;
+    }
+
+    if (spot && crevasses.length > 0) {
+      // Check if spot is in any crevasse
+      for (const [start, end] of crevasses) {
+        if (spot >= start && spot <= end) {
+          inCrevasse = true;
+          break;
+        }
+      }
+    }
+
+    const context = {
+      symbol: vpData.synthetic_symbol || "SPX",
+      spot,
+      nearestVolumeNode,
+      nearestVolumeNodeDist,
+      volumeWellProximity,
+      inCrevasse,
+      marketMemoryStrength: 0.85, // Default - would be computed from volume distribution
+      gammaAlignment: null, // Would come from GEX data
+      artifactVersion: vpData.last_updated || "v1",
+      timestamp: new Date().toISOString(),
+    };
+
+    res.json({ success: true, data: context, ts: Date.now() });
   } catch (err) {
     console.error("[dealer-gravity] /context error:", err.message);
     res.status(500).json({ success: false, error: err.message });

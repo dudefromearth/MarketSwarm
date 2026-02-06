@@ -11,7 +11,7 @@ const SESSION_COOKIE = "ms_session";
 /**
  * Get auth config from truth (via getConfig)
  */
-function getAuthConfig() {
+export function getAuthConfig() {
   const config = getConfig();
   if (!config) {
     // Fallback if config not loaded yet
@@ -221,7 +221,9 @@ export function authMiddleware(options = {}) {
       path === "/api/auth/logout" ||
       path === "/api/auth/debug" ||
       path === "/api/health" ||
-      path.startsWith("/api/admin/_debug");  // Debug endpoints for testing
+      path.startsWith("/api/admin/_debug") ||  // Debug endpoints for testing
+      path === "/api/dealer-gravity/artifact" ||  // VP artifact (public read)
+      path === "/api/dealer-gravity/context";     // VP context (public read)
 
     if (needsAuth && !allowUnauth) {
       const user = getCurrentUser(req);
