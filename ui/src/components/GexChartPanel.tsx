@@ -15,7 +15,7 @@
  * - Skeleton placeholder during initial load
  */
 
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import {
   createChart,
   ColorType,
@@ -31,6 +31,8 @@ import {
   sigmaToPercentile,
 } from './chart-primitives';
 import type { VolumeProfileDataPoint } from './chart-primitives';
+import { captureChart } from '../utils/chartCapture';
+import { analyzeChart, type DGAnalysisResult } from '../services/dealerGravityService';
 
 // Types
 type CandleData = {
@@ -190,6 +192,38 @@ export default function GexChartPanel({
   // Settings dialog visibility
   const [showVpSettings, setShowVpSettings] = useState(false);
   const [showGexSettings, setShowGexSettings] = useState(false);
+
+  // AI Analysis state
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<DGAnalysisResult | null>(null);
+  const [showAnalysis, setShowAnalysis] = useState(false);
+
+  // Handle AI analysis request
+  const handleAnalyze = useCallback(async () => {
+    if (!chartRef.current || analyzing) return;
+
+    setAnalyzing(true);
+    setShowAnalysis(true);
+    setAnalysisResult(null);
+
+    try {
+      // Capture chart screenshot
+      const imageBase64 = captureChart(chartRef.current);
+      if (!imageBase64) {
+        console.error('[GexChartPanel] Failed to capture chart');
+        setAnalyzing(false);
+        return;
+      }
+
+      // Call AI analysis API
+      const result = await analyzeChart(imageBase64, currentSpot || 0);
+      setAnalysisResult(result);
+    } catch (error) {
+      console.error('[GexChartPanel] Analysis failed:', error);
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [analyzing, currentSpot]);
 
   // Sync external gexMode prop with config (if parent changes it)
   useEffect(() => {
@@ -535,16 +569,34 @@ export default function GexChartPanel({
       {/* Header with timeframe selector */}
       <div className="gex-chart-header">
         <h3>Dealer Gravity</h3>
-        <div className="gex-chart-tf-selector">
-          {(['5m', '10m', '15m'] as Timeframe[]).map((tf) => (
-            <button
-              key={tf}
-              className={`gex-chart-tf-btn ${timeframe === tf ? 'active' : ''}`}
-              onClick={() => setTimeframe(tf)}
-            >
-              {tf}
-            </button>
-          ))}
+        <div className="gex-chart-header-controls">
+          <div className="gex-chart-tf-selector">
+            {(['5m', '10m', '15m'] as Timeframe[]).map((tf) => (
+              <button
+                key={tf}
+                className={`gex-chart-tf-btn ${timeframe === tf ? 'active' : ''}`}
+                onClick={() => setTimeframe(tf)}
+              >
+                {tf}
+              </button>
+            ))}
+          </div>
+          <button
+            className={`gex-chart-ai-btn ${analyzing ? 'analyzing' : ''}`}
+            onClick={handleAnalyze}
+            disabled={analyzing || !chartRef.current}
+            title="AI Analysis - Analyze chart structure"
+          >
+            {analyzing ? (
+              <span className="ai-spinner" />
+            ) : (
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10"/>
+                <path d="M12 16v-4M12 8h.01"/>
+              </svg>
+            )}
+            AI
+          </button>
         </div>
       </div>
 
@@ -778,6 +830,74 @@ export default function GexChartPanel({
               onResetToFactory={resetToFactoryDefaults}
               onClose={() => setShowGexSettings(false)}
             />
+          </div>
+        </div>
+      )}
+
+      {/* AI Analysis Results Panel */}
+      {showAnalysis && (
+        <div className="dg-analysis-panel">
+          <div className="dg-analysis-header">
+            <h4>AI Analysis</h4>
+            <button
+              className="dg-analysis-close"
+              onClick={() => setShowAnalysis(false)}
+              title="Close"
+            >
+              ×
+            </button>
+          </div>
+          <div className="dg-analysis-content">
+            {analyzing ? (
+              <div className="dg-analysis-loading">
+                <div className="ai-spinner" />
+                <span>Analyzing chart structure...</span>
+              </div>
+            ) : analysisResult ? (
+              <>
+                <div className="dg-analysis-bias">
+                  <span className={`bias-badge ${analysisResult.bias}`}>
+                    {analysisResult.bias.toUpperCase()}
+                  </span>
+                  <span className="memory-strength">
+                    Memory: {(analysisResult.marketMemoryStrength * 100).toFixed(0)}%
+                  </span>
+                </div>
+                <div className="dg-analysis-structures">
+                  {analysisResult.volumeNodes.length > 0 && (
+                    <div className="structure-item">
+                      <span className="structure-label">Volume Nodes:</span>
+                      <span className="structure-values">
+                        {analysisResult.volumeNodes.map(p => p.toFixed(0)).join(', ')}
+                      </span>
+                    </div>
+                  )}
+                  {analysisResult.volumeWells.length > 0 && (
+                    <div className="structure-item">
+                      <span className="structure-label">Volume Wells:</span>
+                      <span className="structure-values">
+                        {analysisResult.volumeWells.map(p => p.toFixed(0)).join(', ')}
+                      </span>
+                    </div>
+                  )}
+                  {analysisResult.crevasses.length > 0 && (
+                    <div className="structure-item">
+                      <span className="structure-label">Crevasses:</span>
+                      <span className="structure-values">
+                        {analysisResult.crevasses.map(([s, e]) => `${s.toFixed(0)}-${e.toFixed(0)}`).join(', ')}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                <div className="dg-analysis-summary">
+                  {analysisResult.summary}
+                </div>
+              </>
+            ) : (
+              <div className="dg-analysis-empty">
+                Click AI to analyze the chart
+              </div>
+            )}
           </div>
         </div>
       )}

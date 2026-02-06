@@ -29,6 +29,66 @@ const ARTIFACT_KEY = "dealer_gravity:artifact:spx";
 const CONTEXT_KEY = "dealer_gravity:context:spx";
 
 // ===========================================================================
+// Rate Limiting for AI Analysis
+// ===========================================================================
+
+// Rate limit: 5 requests per minute per user
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 5;
+
+// In-memory rate limit tracker: userId -> { count, windowStart }
+const rateLimitTracker = new Map();
+
+/**
+ * Check if user is rate limited for AI analysis
+ * @param {number|string} userId
+ * @returns {{ limited: boolean, remaining: number, resetIn: number }}
+ */
+function checkRateLimit(userId) {
+  const now = Date.now();
+  const userKey = String(userId);
+
+  let tracker = rateLimitTracker.get(userKey);
+
+  // Initialize or reset window if expired
+  if (!tracker || now - tracker.windowStart > RATE_LIMIT_WINDOW_MS) {
+    tracker = { count: 0, windowStart: now };
+    rateLimitTracker.set(userKey, tracker);
+  }
+
+  const remaining = Math.max(0, RATE_LIMIT_MAX_REQUESTS - tracker.count);
+  const resetIn = Math.max(0, RATE_LIMIT_WINDOW_MS - (now - tracker.windowStart));
+
+  return {
+    limited: tracker.count >= RATE_LIMIT_MAX_REQUESTS,
+    remaining,
+    resetIn,
+  };
+}
+
+/**
+ * Increment rate limit counter for user
+ * @param {number|string} userId
+ */
+function incrementRateLimit(userId) {
+  const userKey = String(userId);
+  const tracker = rateLimitTracker.get(userKey);
+  if (tracker) {
+    tracker.count++;
+  }
+}
+
+// Cleanup old rate limit entries every 5 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, tracker] of rateLimitTracker.entries()) {
+    if (now - tracker.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
+      rateLimitTracker.delete(key);
+    }
+  }
+}, 5 * 60 * 1000);
+
+// ===========================================================================
 // Tier 1: Visualization Artifact API
 // ===========================================================================
 
@@ -543,11 +603,25 @@ router.post("/analyze", async (req, res) => {
   }
 
   try {
-    const userId = req.user?.id;
+    const userId = req.user?.wp?.id || req.user?.id;
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });
     }
+
+    // Rate limiting check
+    const rateLimit = checkRateLimit(userId);
+    if (rateLimit.limited) {
+      return res.status(429).json({
+        success: false,
+        error: "Rate limit exceeded",
+        retryAfter: Math.ceil(rateLimit.resetIn / 1000),
+        message: `AI analysis is limited to ${RATE_LIMIT_MAX_REQUESTS} requests per minute. Try again in ${Math.ceil(rateLimit.resetIn / 1000)} seconds.`,
+      });
+    }
+
+    // Increment rate limit counter
+    incrementRateLimit(userId);
 
     const { imageBase64, spotPrice } = req.body;
 

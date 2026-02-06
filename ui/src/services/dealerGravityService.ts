@@ -31,6 +31,9 @@ import type {
   DGArtifactUpdatedEvent,
 } from '../types/dealerGravity';
 
+// Re-export types for consumers
+export type { DGAnalysisResult };
+
 const API_BASE = '/api/dealer-gravity';
 
 // ============================================================================
