@@ -24,7 +24,10 @@ import { getPool, isDbAvailable } from "../db/index.js";
 
 const router = Router();
 
-// Redis keys
+// Redis keys - using existing massive volume profile data
+const VP_DATA_KEY = "massive:volume_profile:spx";
+const VP_META_KEY = "massive:volume_profile:spx:meta";
+// Legacy keys for pre-computed artifacts (if available)
 const ARTIFACT_KEY = "dealer_gravity:artifact:spx";
 const CONTEXT_KEY = "dealer_gravity:context:spx";
 
@@ -95,31 +98,95 @@ setInterval(() => {
 /**
  * GET /api/dealer-gravity/artifact
  *
- * Passthrough from Redis - returns the pre-computed visualization artifact.
- * The frontend receives render-ready data: bins, structures, metadata.
- * NO computation happens here.
+ * Returns the volume profile artifact from Redis.
+ * Reads from massive:volume_profile:spx (hash) and transforms to artifact format.
  *
  * Response format:
  * {
- *   profile: { min, step, bins },
+ *   profile: { min, step, bins, levels },
  *   structures: { volume_nodes, volume_wells, crevasses },
- *   meta: { spot, algorithm, artifact_version, last_update }
+ *   meta: { spot, algorithm, artifact_version, last_update, min_price, max_price }
  * }
  */
 router.get("/artifact", async (req, res) => {
   try {
     const redis = getMarketRedis();
-    const artifact = await redis.get(ARTIFACT_KEY);
 
-    if (!artifact) {
+    // First check for pre-computed artifact
+    const precomputed = await redis.get(ARTIFACT_KEY);
+    if (precomputed) {
+      const data = JSON.parse(precomputed);
+      return res.json({ success: true, data, ts: Date.now() });
+    }
+
+    // Fall back to reading from massive:volume_profile:spx hash
+    const [vpData, metaData] = await Promise.all([
+      redis.hgetall(VP_DATA_KEY),
+      redis.hgetall(VP_META_KEY),
+    ]);
+
+    if (!vpData || Object.keys(vpData).length === 0) {
       return res.status(503).json({
         success: false,
-        error: "Artifact not ready - pipeline may be initializing",
+        error: "Volume profile data not available",
       });
     }
 
-    const data = JSON.parse(artifact);
-    res.json({ success: true, data, ts: Date.now() });
+    // Transform hash data to artifact format
+    // Hash keys are price * 100 (cents), values are volumes
+    const minPrice = parseFloat(metaData?.min_price) || 0;
+    const maxPrice = parseFloat(metaData?.max_price) || Infinity;
+
+    const levels = [];
+    for (const [priceKey, volume] of Object.entries(vpData)) {
+      const price = parseFloat(priceKey) / 100; // Convert from cents
+      // Filter to relevant price range (skip old historical data)
+      if (price >= minPrice && price <= maxPrice) {
+        levels.push({ price, volume: parseInt(volume, 10) });
+      }
+    }
+
+    // Sort by price
+    levels.sort((a, b) => a.price - b.price);
+
+    // Calculate bins (normalized to 0-1000 scale)
+    const maxVolume = Math.max(...levels.map(l => l.volume));
+    const normalizedScale = 1000;
+
+    // Build artifact response
+    const artifact = {
+      profile: {
+        min: parseFloat(metaData?.min_price) || levels[0]?.price || 0,
+        max: parseFloat(metaData?.max_price) || levels[levels.length - 1]?.price || 0,
+        step: levels.length > 1 ? (levels[1].price - levels[0].price) : 0.1,
+        levels: levels.map(l => ({
+          price: l.price,
+          volume: l.volume,
+          normalized: Math.round((l.volume / maxVolume) * normalizedScale),
+        })),
+        maxVolume,
+        normalizedScale,
+      },
+      structures: {
+        // Structures are added by Node Admin AI analysis
+        // Return empty arrays if not yet analyzed
+        volume_nodes: [],
+        volume_wells: [],
+        crevasses: [],
+      },
+      meta: {
+        algorithm: "massive_vp",
+        artifact_version: "live",
+        last_update: metaData?.last_updated || new Date().toISOString(),
+        min_price: parseFloat(metaData?.min_price) || 0,
+        max_price: parseFloat(metaData?.max_price) || 0,
+        total_volume: parseInt(metaData?.total_volume, 10) || 0,
+        levels_count: parseInt(metaData?.levels, 10) || levels.length,
+        days_processed: parseInt(metaData?.days_processed, 10) || 0,
+      },
+    };
+
+    res.json({ success: true, data: artifact, ts: Date.now() });
   } catch (err) {
     console.error("[dealer-gravity] /artifact error:", err.message);
     res.status(500).json({ success: false, error: err.message });
