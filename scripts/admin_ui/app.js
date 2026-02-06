@@ -189,6 +189,8 @@ document.addEventListener('DOMContentLoaded', () => {
     loadAdminVersion();
     // Also fetch analytics on startup to populate alerts
     setTimeout(refreshAnalytics, 1000);
+    // Load ML Lab data
+    setTimeout(refreshMLLab, 500);
 });
 
 // Load admin version on startup
@@ -1425,4 +1427,263 @@ async function loadRedisKey(key) {
 
 function closeRedisValue() {
     document.getElementById('redis-value-panel').classList.add('hidden');
+}
+
+// ============================================================
+// ML Lab
+// ============================================================
+
+let mlLabData = {
+    circuitBreakers: null,
+    breakerCheck: null,
+    champion: null,
+    experiments: [],
+    decisions: [],
+    dailyPerformance: []
+};
+
+async function refreshMLLab() {
+    try {
+        const safeFetch = async (url, options = {}) => {
+            try {
+                const res = await fetch(url, options);
+                if (!res.ok) return null;
+                const json = await res.json();
+                return json.success ? json.data : json;
+            } catch {
+                return null;
+            }
+        };
+
+        const [cb, champ, exps, decs, perf] = await Promise.all([
+            safeFetch(`${API_BASE}/api/ml/circuit-breakers`),
+            safeFetch(`${API_BASE}/api/ml/models/champion`),
+            safeFetch(`${API_BASE}/api/ml/experiments`),
+            safeFetch(`${API_BASE}/api/ml/decisions?limit=10`),
+            safeFetch(`${API_BASE}/api/ml/daily-performance?limit=7`),
+        ]);
+
+        if (cb) mlLabData.circuitBreakers = { data: cb };
+        if (champ) mlLabData.champion = champ;
+        mlLabData.experiments = Array.isArray(exps) ? exps : [];
+        mlLabData.decisions = Array.isArray(decs) ? decs : [];
+        mlLabData.dailyPerformance = Array.isArray(perf) ? perf : [];
+
+        renderMLLab();
+    } catch (err) {
+        console.error('ML Lab refresh error:', err);
+    }
+}
+
+function renderMLLab() {
+    renderMLStatus();
+    renderMLBreakers();
+    renderMLChampion();
+    renderMLExperiments();
+    renderMLDecisions();
+    renderMLPerformance();
+}
+
+function renderMLStatus() {
+    const statusEl = document.getElementById('ml-system-status');
+    const toggleBtn = document.getElementById('ml-toggle-btn');
+    const check = mlLabData.breakerCheck;
+    const cb = mlLabData.circuitBreakers;
+
+    if (!cb) {
+        statusEl.innerHTML = '<span class="status-dot unknown"></span><span class="status-text">Unable to connect to ML service</span>';
+        toggleBtn.textContent = 'ML: Unknown';
+        toggleBtn.className = 'btn btn-sm btn-secondary';
+        return;
+    }
+
+    // Check if any breakers triggered
+    const data = cb.data || cb;
+    const breakers = data.breakers || {};
+    const triggeredBreakers = Object.entries(breakers).filter(([k, v]) => v.triggered);
+    const hasTriggered = triggeredBreakers.length > 0;
+
+    const statusClass = !hasTriggered ? 'ok' : 'warning';
+    const statusText = !hasTriggered ? 'All Systems Go' : 'Breakers Triggered';
+
+    statusEl.innerHTML = `<span class="status-dot ${statusClass}"></span><span class="status-text">${statusText}</span>`;
+
+    if (hasTriggered) {
+        statusEl.innerHTML += `<span class="triggered-count">${triggeredBreakers.length} breaker(s) triggered</span>`;
+    }
+
+    const mlEnabled = data.mlEnabled ?? true;
+    toggleBtn.textContent = mlEnabled ? 'ML: Enabled' : 'ML: Disabled';
+    toggleBtn.className = mlEnabled ? 'btn btn-sm btn-success' : 'btn btn-sm btn-danger';
+}
+
+function renderMLBreakers() {
+    const container = document.getElementById('ml-breakers');
+    const cb = mlLabData.circuitBreakers;
+
+    if (!cb) {
+        container.innerHTML = '<div class="empty">No data</div>';
+        return;
+    }
+
+    const data = cb.data || cb;
+    const breakers = data.breakers || {};
+
+    const formatCurrency = (v) => {
+        const sign = v >= 0 ? '+' : '-';
+        return `${sign}$${Math.abs(v).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    };
+
+    const formatPct = (v) => v != null ? `${(v * 100).toFixed(1)}%` : '—';
+
+    const dailyPnl = data.dailyPnl ?? 0;
+    const dailyLimit = breakers.dailyLossLimit?.threshold ?? 5000;
+    const drawdownLimit = breakers.maxDrawdown?.threshold ?? 0.2;
+    const orderRateLimit = breakers.orderRate?.threshold ?? 10;
+
+    container.innerHTML = `
+        <div class="breaker-row">
+            <span class="breaker-label">Daily P&L</span>
+            <span class="breaker-value ${dailyPnl >= 0 ? 'positive' : 'negative'}">${formatCurrency(dailyPnl)}</span>
+            <span class="breaker-limit">Limit: -$${dailyLimit.toLocaleString()}</span>
+        </div>
+        <div class="breaker-row">
+            <span class="breaker-label">Loss Limit</span>
+            <span class="breaker-value">${breakers.dailyLossLimit?.triggered ? 'TRIGGERED' : 'OK'}</span>
+            <span class="breaker-limit">-$${dailyLimit}</span>
+        </div>
+        <div class="breaker-row">
+            <span class="breaker-label">Drawdown</span>
+            <span class="breaker-value">${breakers.maxDrawdown?.triggered ? 'TRIGGERED' : 'OK'}</span>
+            <span class="breaker-limit">Max: ${formatPct(drawdownLimit)}</span>
+        </div>
+        <div class="breaker-row">
+            <span class="breaker-label">Order Rate</span>
+            <span class="breaker-value">${breakers.orderRate?.triggered ? 'TRIGGERED' : 'OK'}</span>
+            <span class="breaker-limit">Max: ${orderRateLimit}/s</span>
+        </div>
+    `;
+}
+
+function renderMLChampion() {
+    const container = document.getElementById('ml-champion');
+    const champ = mlLabData.champion;
+
+    if (!champ || (typeof champ === 'object' && Object.keys(champ).length === 0)) {
+        container.innerHTML = '<div class="empty">No champion model deployed (rules-only mode)</div>';
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="champion-info">
+            <div class="champion-name">${champ.model_name || 'Unknown'} <span class="version">v${champ.model_version || '?'}</span></div>
+            <div class="champion-type">${champ.model_type || '—'} | ${champ.feature_set_version || '—'}</div>
+        </div>
+        <div class="champion-stats">
+            <div class="stat"><span class="label">Val AUC</span><span class="value">${champ.val_auc?.toFixed(3) || '—'}</span></div>
+            <div class="stat"><span class="label">Samples</span><span class="value">${champ.train_samples?.toLocaleString() || '—'}</span></div>
+            <div class="stat"><span class="label">Top-10</span><span class="value">${champ.top_10_avg_pnl ? '$' + champ.top_10_avg_pnl.toFixed(0) : '—'}</span></div>
+        </div>
+    `;
+}
+
+function renderMLExperiments() {
+    const container = document.getElementById('ml-experiments');
+    const exps = mlLabData.experiments.filter(e => e.status === 'running');
+
+    if (exps.length === 0) {
+        container.innerHTML = '<div class="empty">No active experiments</div>';
+        return;
+    }
+
+    container.innerHTML = exps.map(exp => `
+        <div class="experiment-item">
+            <div class="exp-name">${exp.experiment_name}</div>
+            <div class="exp-stats">
+                <span>Champion: ${exp.champion_samples} samples</span>
+                <span>Challenger: ${exp.challenger_samples} samples</span>
+            </div>
+            ${exp.p_value ? `<div class="exp-pvalue">p = ${exp.p_value.toFixed(4)}</div>` : ''}
+        </div>
+    `).join('');
+}
+
+function renderMLDecisions() {
+    const container = document.getElementById('ml-decisions');
+    const decs = mlLabData.decisions;
+
+    if (!decs || decs.length === 0) {
+        container.innerHTML = '<div class="empty">No recent decisions</div>';
+        return;
+    }
+
+    container.innerHTML = `
+        <table class="ml-table">
+            <thead>
+                <tr><th>Time</th><th>Original</th><th>ML</th><th>Final</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+                ${decs.slice(0, 10).map(d => `
+                    <tr>
+                        <td>${new Date(d.decision_time).toLocaleTimeString()}</td>
+                        <td>${d.original_score?.toFixed(1) || '—'}</td>
+                        <td class="ml-score">${d.ml_score?.toFixed(1) || '—'}</td>
+                        <td>${d.final_score?.toFixed(1) || '—'}</td>
+                        <td><span class="action-badge ${d.action_taken}">${d.action_taken}</span></td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function renderMLPerformance() {
+    const container = document.getElementById('ml-performance');
+    const perf = mlLabData.dailyPerformance;
+
+    if (!perf || perf.length === 0) {
+        container.innerHTML = '<div class="empty">No performance data</div>';
+        return;
+    }
+
+    const formatCurrency = (v) => {
+        const sign = v >= 0 ? '+' : '-';
+        return `${sign}$${Math.abs(v).toFixed(2)}`;
+    };
+
+    container.innerHTML = `
+        <table class="ml-table">
+            <thead>
+                <tr><th>Date</th><th>Net P&L</th><th>Trades</th><th>Win Rate</th><th>Drawdown</th></tr>
+            </thead>
+            <tbody>
+                ${perf.map(d => `
+                    <tr>
+                        <td>${d.date}</td>
+                        <td class="${d.net_pnl >= 0 ? 'positive' : 'negative'}">${formatCurrency(d.net_pnl)}</td>
+                        <td>${d.trade_count}</td>
+                        <td>${d.trade_count > 0 ? ((d.win_count / d.trade_count) * 100).toFixed(1) + '%' : '—'}</td>
+                        <td>${d.drawdown_pct ? (d.drawdown_pct * 100).toFixed(1) + '%' : '—'}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+async function toggleML() {
+    const cb = mlLabData.circuitBreakers;
+    if (!cb) return;
+
+    const data = cb.data || cb;
+    const endpoint = data.mlEnabled
+        ? `${API_BASE}/api/ml/circuit-breakers/disable-ml`
+        : `${API_BASE}/api/ml/circuit-breakers/enable-ml`;
+
+    try {
+        await fetch(endpoint, { method: 'POST' });
+        await refreshMLLab();
+    } catch (err) {
+        console.error('Toggle ML error:', err);
+    }
 }

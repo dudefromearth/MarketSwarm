@@ -172,6 +172,66 @@
             </div>
         </div>
 
+        <!-- ML Lab Section -->
+        <div class="ml-lab-section">
+            <div class="panel-header">
+                <h2>ML Lab - Trade Selector</h2>
+                <div class="panel-actions">
+                    <button id="ml-toggle-btn" class="btn btn-sm" onclick="toggleML()">ML: Loading...</button>
+                    <button class="btn btn-secondary btn-sm" onclick="refreshMLLab()">Refresh</button>
+                </div>
+            </div>
+
+            <div class="ml-status-bar">
+                <div id="ml-system-status" class="ml-system-status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Loading...</span>
+                </div>
+            </div>
+
+            <div class="ml-grid">
+                <!-- Circuit Breakers -->
+                <div class="ml-card">
+                    <h4>Circuit Breakers</h4>
+                    <div id="ml-breakers" class="ml-breakers">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Champion Model -->
+                <div class="ml-card">
+                    <h4>Champion Model</h4>
+                    <div id="ml-champion" class="ml-champion">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Daily Performance -->
+                <div class="ml-card wide">
+                    <h4>Daily Performance (Last 7 Days)</h4>
+                    <div id="ml-performance" class="ml-performance">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Active Experiments -->
+                <div class="ml-card">
+                    <h4>Active Experiments</h4>
+                    <div id="ml-experiments" class="ml-experiments">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Recent Decisions -->
+                <div class="ml-card">
+                    <h4>Recent Decisions</h4>
+                    <div id="ml-decisions" class="ml-decisions">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <footer>
             <span id="last-update">Last update: never</span>
             <span id="repo-path" title="Node repository path">Repo: discovering...</span>

@@ -1646,3 +1646,262 @@ footer {
     white-space: pre-wrap;
     word-break: break-all;
 }
+
+/* ============================================================
+   ML Lab Section
+   ============================================================ */
+
+.ml-lab-section {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    margin-top: 20px;
+}
+
+.ml-status-bar {
+    margin-bottom: 16px;
+}
+
+.ml-system-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 16px;
+    background: var(--bg-tertiary);
+    border-radius: 6px;
+    font-weight: 500;
+}
+
+.ml-system-status .status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.ml-system-status .status-dot.ok {
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+}
+
+.ml-system-status .status-dot.warning {
+    background: var(--warning);
+    box-shadow: 0 0 8px var(--warning);
+}
+
+.ml-system-status .status-dot.error {
+    background: var(--error);
+    box-shadow: 0 0 8px var(--error);
+}
+
+.ml-system-status .status-dot.unknown {
+    background: var(--text-muted);
+}
+
+.ml-system-status .triggered-count {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--warning);
+}
+
+.ml-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+
+.ml-card {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+}
+
+.ml-card.wide {
+    grid-column: span 2;
+}
+
+.ml-card h4 {
+    margin: 0 0 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+.ml-card .empty {
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+    padding: 20px;
+}
+
+/* Breakers */
+.breaker-row {
+    display: flex;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 13px;
+}
+
+.breaker-row:last-child {
+    border-bottom: none;
+}
+
+.breaker-label {
+    flex: 1;
+    color: var(--text-secondary);
+}
+
+.breaker-value {
+    width: 80px;
+    text-align: right;
+    font-weight: 600;
+}
+
+.breaker-value.positive {
+    color: var(--success);
+}
+
+.breaker-value.negative {
+    color: var(--error);
+}
+
+.breaker-limit {
+    width: 100px;
+    text-align: right;
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* Champion */
+.champion-info {
+    margin-bottom: 12px;
+}
+
+.champion-name {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.champion-name .version {
+    font-weight: normal;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.champion-type {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.champion-stats {
+    display: flex;
+    gap: 16px;
+}
+
+.champion-stats .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.champion-stats .label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.champion-stats .value {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+/* Experiments */
+.experiment-item {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.experiment-item:last-child {
+    border-bottom: none;
+}
+
+.exp-name {
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+.exp-stats {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.exp-pvalue {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+/* ML Tables */
+.ml-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.ml-table th {
+    text-align: left;
+    padding: 6px 8px;
+    color: var(--text-muted);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.ml-table td {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.ml-table .positive {
+    color: var(--success);
+}
+
+.ml-table .negative {
+    color: var(--error);
+}
+
+.ml-table .ml-score {
+    color: #a855f7;
+}
+
+.action-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    text-transform: uppercase;
+}
+
+.action-badge.ranked {
+    background: rgba(113, 113, 122, 0.2);
+    color: #71717a;
+}
+
+.action-badge.presented {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+}
+
+.action-badge.traded {
+    background: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+}
+
+.action-badge.dismissed {
+    background: rgba(239, 68, 68, 0.2);
+    color: #ef4444;
+}

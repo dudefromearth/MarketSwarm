@@ -1294,6 +1294,67 @@ def create_web_app():
         except Exception as e:
             return {"error": str(e)}
 
+    # ================================================================
+    # ML Lab API Proxy (forwards to Journal service)
+    # ================================================================
+
+    JOURNAL_API_URL = "http://localhost:3002"
+
+    def proxy_ml_request(path: str, method: str = "GET", body: dict = None):
+        """Proxy request to Journal service ML endpoints."""
+        import requests
+        try:
+            url = f"{JOURNAL_API_URL}/api/internal/ml{path}"
+            if method == "GET":
+                resp = requests.get(url, timeout=5)
+            else:
+                resp = requests.post(url, json=body, timeout=5)
+            return resp.json() if resp.ok else {"error": f"Journal service returned {resp.status_code}"}
+        except requests.exceptions.ConnectionError:
+            return {"error": "Cannot connect to Journal service"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    @app.get("/api/ml/circuit-breakers")
+    def api_ml_circuit_breakers():
+        return proxy_ml_request("/circuit-breakers")
+
+    @app.post("/api/ml/circuit-breakers/check")
+    def api_ml_circuit_breakers_check():
+        return proxy_ml_request("/circuit-breakers/check", "POST")
+
+    @app.post("/api/ml/circuit-breakers/disable-ml")
+    def api_ml_disable():
+        return proxy_ml_request("/circuit-breakers/disable-ml", "POST")
+
+    @app.post("/api/ml/circuit-breakers/enable-ml")
+    def api_ml_enable():
+        return proxy_ml_request("/circuit-breakers/enable-ml", "POST")
+
+    @app.get("/api/ml/models")
+    def api_ml_models():
+        return proxy_ml_request("/models")
+
+    @app.get("/api/ml/models/champion")
+    def api_ml_models_champion():
+        return proxy_ml_request("/models/champion")
+
+    @app.get("/api/ml/experiments")
+    def api_ml_experiments():
+        return proxy_ml_request("/experiments")
+
+    @app.get("/api/ml/decisions")
+    def api_ml_decisions(limit: int = 100):
+        return proxy_ml_request(f"/decisions?limit={limit}")
+
+    @app.get("/api/ml/daily-performance")
+    def api_ml_daily_performance(limit: int = 30):
+        return proxy_ml_request(f"/daily-performance?limit={limit}")
+
+    @app.get("/api/ml/equity-curve")
+    def api_ml_equity_curve(days: int = 30):
+        return proxy_ml_request(f"/equity-curve?days={days}")
+
     return app
 
 
