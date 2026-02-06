@@ -204,7 +204,17 @@ export default function MLLabPage() {
       if (modelsList) setModels(Array.isArray(modelsList) ? modelsList : (modelsList?.data || []));
       if (champ && !champ.error) setChampion(champ?.data || champ);
       if (exps) setExperiments(Array.isArray(exps) ? exps : (exps?.data || []));
-      if (decs) setDecisions(Array.isArray(decs) ? decs : (decs?.data || []));
+
+      // Debug: log raw decisions response
+      console.log('[MLLab] Raw decisions response:', decs);
+      const decisionsArray = Array.isArray(decs) ? decs : (decs?.data || []);
+      console.log('[MLLab] Extracted decisions array:', decisionsArray);
+      if (decisionsArray.length > 0) {
+        console.log('[MLLab] First decision:', decisionsArray[0]);
+        console.log('[MLLab] First decision keys:', Object.keys(decisionsArray[0]));
+      }
+      if (decs) setDecisions(decisionsArray);
+
       if (stats) setDecisionStats(stats?.data || stats);
       if (perf) setDailyPerformance(Array.isArray(perf) ? perf : (perf?.data || []));
       if (equity) setEquityCurve(Array.isArray(equity) ? equity : (equity?.data || []));

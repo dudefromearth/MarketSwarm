@@ -1464,10 +1464,10 @@ async function refreshMLLab() {
         ]);
 
         if (cb) mlLabData.circuitBreakers = { data: cb };
-        if (champ) mlLabData.champion = champ;
-        mlLabData.experiments = Array.isArray(exps) ? exps : [];
-        mlLabData.decisions = Array.isArray(decs) ? decs : [];
-        mlLabData.dailyPerformance = Array.isArray(perf) ? perf : [];
+        if (champ) mlLabData.champion = champ?.data || champ;
+        mlLabData.experiments = Array.isArray(exps) ? exps : (exps?.data || []);
+        mlLabData.decisions = Array.isArray(decs) ? decs : (decs?.data || []);
+        mlLabData.dailyPerformance = Array.isArray(perf) ? perf : (perf?.data || []);
 
         renderMLLab();
     } catch (err) {
@@ -1630,11 +1630,11 @@ function renderMLDecisions() {
             <tbody>
                 ${decs.slice(0, 10).map(d => `
                     <tr>
-                        <td>${new Date(d.decision_time).toLocaleTimeString()}</td>
-                        <td>${d.original_score?.toFixed(1) || '—'}</td>
-                        <td class="ml-score">${d.ml_score?.toFixed(1) || '—'}</td>
-                        <td>${d.final_score?.toFixed(1) || '—'}</td>
-                        <td><span class="action-badge ${d.action_taken}">${d.action_taken}</span></td>
+                        <td>${d.decisionTime ? new Date(d.decisionTime).toLocaleTimeString() : '—'}</td>
+                        <td>${d.originalScore != null ? Number(d.originalScore).toFixed(1) : '—'}</td>
+                        <td class="ml-score">${d.mlScore != null ? Number(d.mlScore).toFixed(1) : '—'}</td>
+                        <td>${d.finalScore != null ? Number(d.finalScore).toFixed(1) : '—'}</td>
+                        <td><span class="action-badge ${d.actionTaken || 'unknown'}">${d.actionTaken || '—'}</span></td>
                     </tr>
                 `).join('')}
             </tbody>
