@@ -1,8 +1,9 @@
 // ui/src/components/PeakUsageChart.tsx
-// Admin dashboard chart showing peak usage over time
+// Admin dashboard heatmap showing peak usage patterns by hour and day
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import * as echarts from "echarts";
+import { useTimezone } from "../contexts/TimezoneContext";
 
 interface HourlyData {
   hour_start: string;
@@ -18,13 +19,22 @@ interface Props {
   days?: number;
 }
 
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const HOURS = Array.from({ length: 24 }, (_, i) => {
+  if (i === 0) return "12a";
+  if (i === 12) return "12p";
+  if (i < 12) return `${i}a`;
+  return `${i - 12}p`;
+});
+
 export default function PeakUsageChart({ days = 7 }: Props) {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartInstance = useRef<echarts.ECharts | null>(null);
-  const [data, setData] = useState<HourlyData[]>([]);
+  const [rawData, setRawData] = useState<HourlyData[]>([]);
   const [busiestHours, setBusiestHours] = useState<BusiestHour[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const { timezone } = useTimezone();
 
   // Fetch data
   useEffect(() => {
@@ -36,7 +46,7 @@ export default function PeakUsageChart({ days = 7 }: Props) {
         });
         if (!res.ok) throw new Error("Failed to fetch activity data");
         const json = await res.json();
-        setData(json.data || []);
+        setRawData(json.data || []);
         setBusiestHours(json.busiestHours || []);
         setError(null);
       } catch (err) {
@@ -48,80 +58,155 @@ export default function PeakUsageChart({ days = 7 }: Props) {
     fetchData();
   }, [days]);
 
+  // Convert raw hourly data to heatmap format [hour, dayOfWeek, count]
+  // Aggregated by hour-of-day and day-of-week in user's timezone
+  const heatmapData = useMemo(() => {
+    if (rawData.length === 0) return [];
+
+    // Create a 7x24 grid for day-of-week x hour aggregation
+    const grid: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
+    const counts: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
+
+    rawData.forEach((d) => {
+      // Parse the UTC timestamp and convert to user's timezone
+      const utcDate = new Date(d.hour_start);
+
+      // Convert to user's timezone
+      const localDate = new Date(utcDate.toLocaleString("en-US", { timeZone: timezone }));
+      const dayOfWeek = localDate.getDay(); // 0 = Sunday
+      const hour = localDate.getHours();
+
+      grid[dayOfWeek][hour] += d.user_count;
+      counts[dayOfWeek][hour] += 1;
+    });
+
+    // Convert to echarts heatmap format: [hour, day, value]
+    const result: [number, number, number][] = [];
+    for (let day = 0; day < 7; day++) {
+      for (let hour = 0; hour < 24; hour++) {
+        // Average if we have multiple samples, otherwise use sum
+        const value = counts[day][hour] > 0
+          ? Math.round(grid[day][hour] / counts[day][hour] * 10) / 10
+          : 0;
+        result.push([hour, day, value]);
+      }
+    }
+
+    return result;
+  }, [rawData, timezone]);
+
+  // Find peak times in user's timezone
+  const peakInfo = useMemo(() => {
+    if (heatmapData.length === 0) return null;
+
+    // Find the max value and peak day
+    let maxValue = 0;
+    let peakDay = 0;
+
+    heatmapData.forEach(([, day, value]) => {
+      if (value > maxValue) {
+        maxValue = value;
+        peakDay = day;
+      }
+    });
+
+    // Find busiest hour overall (across all days)
+    const hourTotals = Array(24).fill(0);
+    heatmapData.forEach(([hour, , value]) => {
+      hourTotals[hour] += value;
+    });
+    const busiestHourIdx = hourTotals.indexOf(Math.max(...hourTotals));
+
+    return {
+      maxValue,
+      peakDay: DAYS[peakDay],
+      peakHour: busiestHourIdx,
+      totalUsers: Math.round(heatmapData.reduce((sum, [, , v]) => sum + v, 0)),
+    };
+  }, [heatmapData]);
+
   // Render chart
   useEffect(() => {
-    if (!chartRef.current || data.length === 0) return;
+    if (!chartRef.current || heatmapData.length === 0) return;
 
     if (!chartInstance.current) {
       chartInstance.current = echarts.init(chartRef.current, "dark");
     }
 
     const chart = chartInstance.current;
-
-    // Prepare data for chart
-    const xData = data.map((d) => {
-      const date = new Date(d.hour_start);
-      return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours()}:00`;
-    });
-    const yData = data.map((d) => d.user_count);
+    const maxValue = Math.max(...heatmapData.map((d) => d[2]), 1);
 
     const option: echarts.EChartsOption = {
       tooltip: {
-        trigger: "axis",
-        axisPointer: { type: "shadow" },
+        position: "top",
         formatter: (params: any) => {
-          const p = params[0];
-          return `${p.name}<br/><strong>${p.value}</strong> user${p.value !== 1 ? "s" : ""} online`;
+          const hour = params.data[0];
+          const day = DAYS[params.data[1]];
+          const count = params.data[2];
+          const hourLabel = hour === 0 ? "12:00 AM" : hour < 12 ? `${hour}:00 AM` : hour === 12 ? "12:00 PM" : `${hour - 12}:00 PM`;
+          return `<strong>${day}</strong> at ${hourLabel}<br/><span style="color: #60a5fa">~${count.toFixed(1)}</span> avg users`;
         },
+        backgroundColor: "rgba(24, 24, 27, 0.95)",
+        borderColor: "rgba(255, 255, 255, 0.1)",
+        textStyle: { color: "#e4e4e7", fontSize: 12 },
       },
       grid: {
-        top: 20,
-        right: 20,
-        bottom: 40,
-        left: 50,
+        top: 10,
+        right: 15,
+        bottom: 35,
+        left: 45,
       },
       xAxis: {
         type: "category",
-        data: xData,
+        data: HOURS,
+        splitArea: { show: true, areaStyle: { color: ["transparent", "rgba(255,255,255,0.01)"] } },
         axisLabel: {
           fontSize: 9,
           color: "#71717a",
-          rotate: 45,
-          interval: Math.floor(data.length / 12),
+          interval: 2,
         },
-        axisLine: { lineStyle: { color: "#27272a" } },
+        axisLine: { show: false },
         axisTick: { show: false },
       },
       yAxis: {
-        type: "value",
-        minInterval: 1,
+        type: "category",
+        data: DAYS,
+        splitArea: { show: true, areaStyle: { color: ["transparent", "rgba(255,255,255,0.01)"] } },
         axisLabel: {
           fontSize: 10,
           color: "#71717a",
         },
         axisLine: { show: false },
-        splitLine: { lineStyle: { color: "#1f1f23" } },
+        axisTick: { show: false },
+      },
+      visualMap: {
+        min: 0,
+        max: maxValue,
+        calculable: false,
+        orient: "horizontal",
+        left: "center",
+        bottom: 0,
+        show: false,
+        inRange: {
+          color: ["#18181b", "#1e3a5f", "#1d4ed8", "#3b82f6", "#60a5fa", "#93c5fd"],
+        },
       },
       series: [
         {
-          type: "bar",
-          data: yData,
-          itemStyle: {
-            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-              { offset: 0, color: "#60a5fa" },
-              { offset: 1, color: "#3b82f6" },
-            ]),
-            borderRadius: [2, 2, 0, 0],
-          },
+          name: "Peak Usage",
+          type: "heatmap",
+          data: heatmapData,
           emphasis: {
             itemStyle: {
-              color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-                { offset: 0, color: "#93c5fd" },
-                { offset: 1, color: "#60a5fa" },
-              ]),
+              shadowBlur: 10,
+              shadowColor: "rgba(59, 130, 246, 0.5)",
             },
           },
-          barMaxWidth: 20,
+          itemStyle: {
+            borderColor: "#09090b",
+            borderWidth: 1,
+            borderRadius: 3,
+          },
         },
       ],
     };
@@ -134,7 +219,7 @@ export default function PeakUsageChart({ days = 7 }: Props) {
     return () => {
       window.removeEventListener("resize", handleResize);
     };
-  }, [data]);
+  }, [heatmapData]);
 
   // Cleanup
   useEffect(() => {
@@ -176,7 +261,7 @@ export default function PeakUsageChart({ days = 7 }: Props) {
     );
   }
 
-  if (data.length === 0) {
+  if (rawData.length === 0) {
     return (
       <div className="peak-usage-chart empty">
         <div className="chart-header">
@@ -188,23 +273,42 @@ export default function PeakUsageChart({ days = 7 }: Props) {
     );
   }
 
+  // Get timezone abbreviation for display
+  const tzAbbrev = new Date().toLocaleTimeString("en-US", {
+    timeZone: timezone,
+    timeZoneName: "short"
+  }).split(" ").pop();
+
   return (
     <div className="peak-usage-chart">
       <div className="chart-header">
-        <h3>Peak Usage (Last {days} Days)</h3>
-        {busiestHours.length > 0 && (
-          <div className="busiest-hours">
-            <span className="busiest-label">Busiest:</span>
-            {busiestHours.map((h, i) => (
-              <span key={h.hour} className="busiest-hour">
-                {formatHour(h.hour)}
-                {i < busiestHours.length - 1 && ", "}
+        <div className="chart-title">
+          <h3>Peak Usage Pattern</h3>
+          <span className="timezone-badge">{tzAbbrev}</span>
+        </div>
+        <div className="chart-stats">
+          {peakInfo && (
+            <>
+              <span className="stat">
+                <span className="stat-label">Busiest:</span>
+                <span className="stat-value">{formatHour(peakInfo.peakHour)}</span>
               </span>
-            ))}
-          </div>
-        )}
+              {busiestHours.length > 0 && (
+                <span className="stat">
+                  <span className="stat-label">Peak Day:</span>
+                  <span className="stat-value">{peakInfo.peakDay}</span>
+                </span>
+              )}
+            </>
+          )}
+        </div>
       </div>
-      <div ref={chartRef} style={{ width: "100%", height: "200px" }} />
+      <div ref={chartRef} style={{ width: "100%", height: "220px" }} />
+      <div className="chart-footer">
+        <span className="legend-label">Less active</span>
+        <div className="legend-gradient" />
+        <span className="legend-label">More active</span>
+      </div>
       <style>{styles}</style>
     </div>
   );
@@ -223,7 +327,13 @@ const styles = `
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .chart-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .chart-header h3 {
@@ -233,20 +343,60 @@ const styles = `
     color: #f1f5f9;
   }
 
-  .busiest-hours {
+  .timezone-badge {
+    padding: 0.125rem 0.375rem;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 0.25rem;
+    font-size: 0.625rem;
+    color: #60a5fa;
+    font-weight: 500;
+    text-transform: uppercase;
+  }
+
+  .chart-stats {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+  }
+
+  .stat {
     display: flex;
     align-items: center;
     gap: 0.375rem;
     font-size: 0.75rem;
   }
 
-  .busiest-label {
+  .stat-label {
     color: #71717a;
   }
 
-  .busiest-hour {
+  .stat-value {
     color: #60a5fa;
     font-weight: 500;
+  }
+
+  .chart-footer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .legend-label {
+    font-size: 0.625rem;
+    color: #52525b;
+    text-transform: uppercase;
+  }
+
+  .legend-gradient {
+    width: 80px;
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(to right, #18181b, #1e3a5f, #1d4ed8, #3b82f6, #60a5fa, #93c5fd);
   }
 
   .chart-loading,
@@ -255,7 +405,7 @@ const styles = `
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 200px;
+    height: 220px;
     color: #71717a;
     font-size: 0.875rem;
   }
