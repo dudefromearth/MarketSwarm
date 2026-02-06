@@ -85,18 +85,18 @@ interface MLExperiment {
 
 interface MLDecision {
   id: number;
-  idea_id: string;
-  decision_time: string;
-  model_id: number | null;
-  model_version: number | null;
-  selector_params_version: number;
-  feature_snapshot_id: number | null;
-  original_score: number;
-  ml_score: number | null;
-  final_score: number;
-  experiment_id: number | null;
-  experiment_arm: "champion" | "challenger" | null;
-  action_taken: "ranked" | "presented" | "traded" | "dismissed";
+  ideaId: string;
+  decisionTime: string;
+  modelId: number | null;
+  modelVersion: number | null;
+  selectorParamsVersion: number;
+  featureSnapshotId: number | null;
+  originalScore: number;
+  mlScore: number | null;
+  finalScore: number;
+  experimentId: number | null;
+  experimentArm: "champion" | "challenger" | null;
+  actionTaken: "ranked" | "presented" | "traded" | "dismissed";
 }
 
 interface DailyPerformance {
@@ -201,13 +201,13 @@ export default function MLLabPage() {
 
       if (cb) setCircuitBreakers(cb);
       if (check) setBreakerCheck(check);
-      if (modelsList) setModels(Array.isArray(modelsList) ? modelsList : []);
-      if (champ && !champ.error) setChampion(champ);
-      if (exps) setExperiments(Array.isArray(exps) ? exps : []);
-      if (decs) setDecisions(Array.isArray(decs) ? decs : []);
-      if (stats) setDecisionStats(stats);
-      if (perf) setDailyPerformance(Array.isArray(perf) ? perf : []);
-      if (equity) setEquityCurve(Array.isArray(equity) ? equity : []);
+      if (modelsList) setModels(Array.isArray(modelsList) ? modelsList : (modelsList?.data || []));
+      if (champ && !champ.error) setChampion(champ?.data || champ);
+      if (exps) setExperiments(Array.isArray(exps) ? exps : (exps?.data || []));
+      if (decs) setDecisions(Array.isArray(decs) ? decs : (decs?.data || []));
+      if (stats) setDecisionStats(stats?.data || stats);
+      if (perf) setDailyPerformance(Array.isArray(perf) ? perf : (perf?.data || []));
+      if (equity) setEquityCurve(Array.isArray(equity) ? equity : (equity?.data || []));
 
     } catch (err) {
       setError("Failed to load ML Lab data");
@@ -252,7 +252,11 @@ export default function MLLabPage() {
 
   const formatDate = (d: string) => {
     if (!d) return "—";
-    return new Date(d).toLocaleString();
+    // Handle ISO dates with microseconds (trim to milliseconds for JS Date)
+    const normalized = d.replace(/(\.\d{3})\d+/, "$1");
+    const date = new Date(normalized);
+    if (isNaN(date.getTime())) return "—";
+    return date.toLocaleString();
   };
 
   const formatShortDate = (d: string) => {
@@ -830,18 +834,18 @@ export default function MLLabPage() {
                     <tbody>
                       {decisions.map((d) => (
                         <tr key={d.id}>
-                          <td className="time-cell">{formatDate(d.decision_time)}</td>
-                          <td className="idea-cell">{d.idea_id.slice(0, 8)}...</td>
-                          <td className="score-cell">{d.original_score.toFixed(1)}</td>
-                          <td className="score-cell ml">{d.ml_score?.toFixed(1) ?? "—"}</td>
-                          <td className="score-cell final">{d.final_score.toFixed(1)}</td>
+                          <td className="time-cell">{formatDate(d.decisionTime)}</td>
+                          <td className="idea-cell">{d.ideaId?.slice(0, 30) || "—"}...</td>
+                          <td className="score-cell">{d.originalScore != null ? Number(d.originalScore).toFixed(1) : "—"}</td>
+                          <td className="score-cell ml">{d.mlScore != null ? Number(d.mlScore).toFixed(1) : "—"}</td>
+                          <td className="score-cell final">{d.finalScore != null ? Number(d.finalScore).toFixed(1) : "—"}</td>
                           <td>
-                            <span className={`action-badge ${d.action_taken}`}>{d.action_taken}</span>
+                            <span className={`action-badge ${d.actionTaken || "unknown"}`}>{d.actionTaken || "—"}</span>
                           </td>
                           <td>
-                            {d.experiment_id ? (
-                              <span className={`arm-badge ${d.experiment_arm}`}>
-                                {d.experiment_arm}
+                            {d.experimentId ? (
+                              <span className={`arm-badge ${d.experimentArm}`}>
+                                {d.experimentArm}
                               </span>
                             ) : (
                               "—"
