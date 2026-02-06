@@ -17,6 +17,20 @@ export interface PnLPoint {
 
 export type PriceAlertType = 'price_above' | 'price_below' | 'price_touch';
 
+/** Backdrop render props - passed to backdrop component */
+export interface BackdropRenderProps {
+  /** Chart area width (excluding padding) */
+  width: number;
+  /** Chart area height (excluding padding) */
+  height: number;
+  /** Minimum price in current view (X-axis) */
+  priceMin: number;
+  /** Maximum price in current view (X-axis) */
+  priceMax: number;
+  /** Current spot price */
+  spotPrice: number;
+}
+
 export interface PnLChartProps {
   expirationData: PnLPoint[];
   theoreticalData: PnLPoint[];
@@ -26,6 +40,8 @@ export interface PnLChartProps {
   strikes: number[];
   onOpenAlertDialog?: (price: number, type: PriceAlertType) => void;
   alertLines?: { price: number; color: string; label?: string }[];
+  /** Optional backdrop render function - rendered behind chart */
+  renderBackdrop?: (props: BackdropRenderProps) => React.ReactNode;
 }
 
 export interface PnLChartHandle {
@@ -50,6 +66,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
   strikes,
   onOpenAlertDialog,
   alertLines = [],
+  renderBackdrop,
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -67,6 +84,9 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
   const [axisZoomHint, setAxisZoomHint] = useState<'x' | 'y' | null>(null);
   const [crosshair, setCrosshair] = useState<{ x: number; y: number } | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; price: number } | null>(null);
+
+  // Backdrop dimensions and view state - updated on draw
+  const [backdropProps, setBackdropProps] = useState<BackdropRenderProps | null>(null);
 
   // Calculate bounds that fit all data + breakevens + spot with padding
   // Break-even span (trade width) should fill 2/3 of chart width
@@ -170,6 +190,9 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     const width = container.clientWidth;
     const height = container.clientHeight;
 
+    // Skip drawing if container has no dimensions yet
+    if (width < 50 || height < 50) return;
+
     // Handle high DPI displays
     const dpr = window.devicePixelRatio || 1;
     canvas.width = width * dpr;
@@ -180,9 +203,35 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
 
     const { xMin, xMax, yMin, yMax } = viewState.current;
 
-    // Clear
+    // Update backdrop props for external render
+    const chartWidth = width - PADDING.left - PADDING.right;
+    const chartHeight = height - PADDING.top - PADDING.bottom;
+    setBackdropProps({
+      width: chartWidth,
+      height: chartHeight,
+      priceMin: xMin,
+      priceMax: xMax,
+      spotPrice,
+    });
+
+    // Clear - fill axis areas, leave chart area for backdrop to show
     ctx.fillStyle = '#0a0a0a';
-    ctx.fillRect(0, 0, width, height);
+    // Top padding
+    ctx.fillRect(0, 0, width, PADDING.top);
+    // Bottom padding
+    ctx.fillRect(0, height - PADDING.bottom, width, PADDING.bottom);
+    // Left padding
+    ctx.fillRect(0, PADDING.top, PADDING.left, chartHeight);
+    // Right padding
+    ctx.fillRect(width - PADDING.right, PADDING.top, PADDING.right, chartHeight);
+
+    // Chart area background (semi-transparent if backdrop exists)
+    if (renderBackdrop) {
+      ctx.fillStyle = 'rgba(10, 10, 10, 0.85)'; // Semi-transparent to let backdrop show
+    } else {
+      ctx.fillStyle = '#0a0a0a';
+    }
+    ctx.fillRect(PADDING.left, PADDING.top, chartWidth, chartHeight);
 
     // Draw grid
     ctx.strokeStyle = '#1a1a1a';
@@ -454,7 +503,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     ctx.fillStyle = '#666';
     ctx.fillText('Real-Time', legendX + 20, legendY + 15);
 
-  }, [expirationData, theoreticalData, spotPrice, expirationBreakevens, theoreticalBreakevens, strikes, alertLines, toCanvasX, toCanvasY]);
+  }, [expirationData, theoreticalData, spotPrice, expirationBreakevens, theoreticalBreakevens, strikes, alertLines, toCanvasX, toCanvasY, renderBackdrop]);
 
   // Calculate nice step size for axis labels
   function calculateNiceStep(range: number, targetSteps: number): number {
@@ -679,29 +728,77 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     if (strategyHash !== prevStrategyHash.current) {
       autoFit();
       prevStrategyHash.current = strategyHash;
+      // Also trigger a delayed autoFit in case container wasn't measured yet
+      const timer = setTimeout(() => autoFit(), 50);
+      return () => clearTimeout(timer);
     }
   }, [strategyHash, autoFit]);
 
-  // Handle resize
+  // Handle resize - both window and container
   useEffect(() => {
     const handleResize = () => draw();
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [draw]);
 
-  // Initial draw
+    // Also observe container resize - call autoFit on first resize to set proper bounds
+    const container = containerRef.current;
+    let resizeObserver: ResizeObserver | null = null;
+    let hasInitialSize = false;
+    if (container) {
+      resizeObserver = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        if (entry && entry.contentRect.width > 0 && entry.contentRect.height > 0) {
+          if (!hasInitialSize) {
+            // First time we have valid dimensions - do full autoFit
+            hasInitialSize = true;
+            autoFit();
+          } else {
+            draw();
+          }
+        }
+      });
+      resizeObserver.observe(container);
+    }
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+    };
+  }, [draw, autoFit]);
+
+  // Initial draw - with a small delay to ensure container is measured
   useEffect(() => {
-    draw();
-  }, [draw]);
+    autoFit();
+    // Redraw after a short delay to ensure layout is complete
+    const timer = setTimeout(() => autoFit(), 100);
+    return () => clearTimeout(timer);
+  }, [autoFit]);
 
   return (
     <div
       ref={containerRef}
-      style={{ width: '100%', height: '100%', position: 'relative' }}
+      style={{ width: '100%', height: '100%', minHeight: '300px', position: 'relative' }}
     >
+      {/* Backdrop layer - renders behind the canvas */}
+      {renderBackdrop && backdropProps && (
+        <div
+          style={{
+            position: 'absolute',
+            top: PADDING.top,
+            left: PADDING.left,
+            width: backdropProps.width,
+            height: backdropProps.height,
+            pointerEvents: 'none',
+            zIndex: 0,
+          }}
+        >
+          {renderBackdrop(backdropProps)}
+        </div>
+      )}
       <canvas
         ref={canvasRef}
-        style={{ display: 'block', cursor: cursorStyle }}
+        style={{ display: 'block', cursor: cursorStyle, position: 'relative', zIndex: 1, background: 'transparent' }}
         onMouseDown={(e) => { handleMouseDown(e); setCursorStyle('grabbing'); closeContextMenu(); }}
         onMouseMove={(e) => { handleMouseMove(e); if (!isDragging.current) handleMouseHover(e); }}
         onMouseUp={handleMouseUp}

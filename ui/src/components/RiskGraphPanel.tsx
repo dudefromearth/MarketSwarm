@@ -10,7 +10,8 @@
  */
 
 import { useRef, useMemo, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
-import PnLChart, { type PnLChartHandle, type PriceAlertType } from './PnLChart';
+import PnLChart, { type PnLChartHandle, type PriceAlertType, type BackdropRenderProps } from './PnLChart';
+import RiskGraphBackdrop from './RiskGraphBackdrop';
 import {
   useRiskGraphCalculations,
   type Strategy,
@@ -20,6 +21,7 @@ import {
   PRICING_MODELS,
 } from '../hooks/useRiskGraphCalculations';
 import { useAlerts } from '../contexts/AlertContext';
+import { useDealerGravity } from '../contexts/DealerGravityContext';
 import type {
   AlertType,
   AlertBehavior,
@@ -173,10 +175,18 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     getTriggeredAlerts,
   } = useAlerts();
 
+  // Dealer Gravity context for backdrop
+  const { artifact: dgArtifact, config: dgConfig } = useDealerGravity();
+
   const pnlChartRef = useRef<PnLChartHandle>(null);
 
   // Track meaningful analyzer interaction for reflection hook
   const [hasAnalyzerInteraction, setHasAnalyzerInteraction] = useState(false);
+
+  // Backdrop visibility controls
+  const [showVolumeProfile, setShowVolumeProfile] = useState(true);
+  const [showStructuralLines, setShowStructuralLines] = useState(true);
+  const [backdropOpacity, setBackdropOpacity] = useState(0.5);
 
   // Expose autoFit to parent
   useImperativeHandle(ref, () => ({
@@ -323,6 +333,26 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     onOpenAlertDialog(strategyId, Math.round(price), conditionMap[type]);
   }, [strategies, onOpenAlertDialog]);
 
+  // Render backdrop for Dealer Gravity visualization
+  const renderBackdrop = useCallback((props: BackdropRenderProps) => {
+    // Only render if we have DG data and backdrop is enabled
+    if (!dgArtifact && !dgConfig?.enabled) return null;
+
+    return (
+      <RiskGraphBackdrop
+        width={props.width}
+        height={props.height}
+        priceMin={props.priceMin}
+        priceMax={props.priceMax}
+        spotPrice={props.spotPrice}
+        showVolumeProfile={showVolumeProfile}
+        showStructuralLines={showStructuralLines}
+        opacity={backdropOpacity}
+        volumeHeightPercent={25}
+      />
+    );
+  }, [dgArtifact, dgConfig?.enabled, showVolumeProfile, showStructuralLines, backdropOpacity]);
+
   // Format DTE display
   const formatDTE = (hours: number) => {
     if (hours <= 0) return '0m';
@@ -416,6 +446,34 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
       <div className="panel-header">
         <h3>Risk Graph {strategies.length > 0 && `(${strategies.length})`}</h3>
         <div className="panel-header-actions">
+          {/* Dealer Gravity Backdrop Controls */}
+          {dgArtifact && (
+            <div className="backdrop-controls" title="Dealer Gravity Backdrop">
+              <button
+                className={`btn-backdrop-toggle ${showVolumeProfile ? 'active' : ''}`}
+                onClick={() => setShowVolumeProfile(!showVolumeProfile)}
+                title="Toggle Volume Profile"
+              >
+                VP
+              </button>
+              <button
+                className={`btn-backdrop-toggle ${showStructuralLines ? 'active' : ''}`}
+                onClick={() => setShowStructuralLines(!showStructuralLines)}
+                title="Toggle Structural Lines (Volume Nodes, Wells, Crevasses)"
+              >
+                DG
+              </button>
+              <input
+                type="range"
+                className="backdrop-opacity-slider"
+                min="0"
+                max="100"
+                value={backdropOpacity * 100}
+                onChange={(e) => setBackdropOpacity(Number(e.target.value) / 100)}
+                title={`Backdrop Opacity: ${Math.round(backdropOpacity * 100)}%`}
+              />
+            </div>
+          )}
           {onOpenMonitor && (
             <button
               className="btn-monitor"
@@ -470,6 +528,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                   strikes={chartStrikes}
                   onOpenAlertDialog={handleOpenAlertDialog}
                   alertLines={alertLinesForChart}
+                  renderBackdrop={renderBackdrop}
                 />
               )}
             </div>
