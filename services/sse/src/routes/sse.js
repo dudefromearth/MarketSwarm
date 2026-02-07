@@ -22,6 +22,7 @@ const clients = {
   alerts: new Set(),
   risk_graph: new Map(), // userId -> Set of clients
   trade_log: new Map(), // userId -> Set of clients
+  positions: new Map(), // userId -> Set of clients
   dealer_gravity: new Set(), // Dealer Gravity artifact updates
   all: new Set(),
 };
@@ -381,6 +382,35 @@ router.get("/trade-log", (req, res) => {
     // Clean up empty user entry
     if (clients.trade_log.get(userId)?.size === 0) {
       clients.trade_log.delete(userId);
+    }
+  });
+});
+
+// GET /sse/positions - User-scoped real-time position updates
+// Receives events when positions are created, updated, or deleted
+router.get("/positions", (req, res) => {
+  const user = getCurrentUser(req);
+  if (!user?.wp?.id) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+
+  const userId = String(user.wp.id);
+  sseHeaders(res);
+
+  // Track this client for user-scoped broadcasting
+  if (!clients.positions.has(userId)) {
+    clients.positions.set(userId, new Set());
+  }
+  clients.positions.get(userId).add(res);
+
+  sendEvent(res, "connected", { channel: "positions", userId, ts: Date.now() });
+
+  req.on("close", () => {
+    clients.positions.get(userId)?.delete(res);
+    // Clean up empty user entry
+    if (clients.positions.get(userId)?.size === 0) {
+      clients.positions.delete(userId);
     }
   });
 });
@@ -959,6 +989,48 @@ export function subscribeDealerGravityPubSub() {
   });
 }
 
+// Subscribe to positions:updates pub/sub for user-scoped real-time sync
+// Events: position created, updated, deleted, batch_created, reordered
+export function subscribePositionsPubSub() {
+  const sub = getMarketRedisSub();
+  const channel = "positions:updates";
+
+  sub.subscribe(channel, (err) => {
+    if (err) {
+      console.error(`[sse] Failed to subscribe to ${channel}:`, err.message);
+    } else {
+      console.log(`[sse] Subscribed to ${channel}`);
+    }
+  });
+
+  sub.on("message", (ch, message) => {
+    if (ch === channel) {
+      try {
+        const event = JSON.parse(message);
+        // Event format: { type: "position", action, userId, position, timestamp }
+
+        const userId = String(event.userId);
+        const action = event.action || "updated";
+        const eventType = `position_${action}`;
+
+        // Broadcast only to this user's connected clients
+        const userClients = clients.positions.get(userId);
+        if (userClients && userClients.size > 0) {
+          for (const client of userClients) {
+            try {
+              sendEvent(client, eventType, event);
+            } catch (err) {
+              userClients.delete(client);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[sse] positions:updates parse error:", err.message);
+      }
+    }
+  });
+}
+
 // Stats tracking
 let diffStats = {
   received: 0,
@@ -1110,6 +1182,10 @@ export function getClientStats() {
   for (const set of clients.trade_log.values()) {
     tradeLogCount += set.size;
   }
+  let positionsCount = 0;
+  for (const set of clients.positions.values()) {
+    positionsCount += set.size;
+  }
 
   return {
     clients: {
@@ -1123,6 +1199,7 @@ export function getClientStats() {
       alerts: clients.alerts.size,
       risk_graph: riskGraphCount,
       trade_log: tradeLogCount,
+      positions: positionsCount,
       dealer_gravity: clients.dealer_gravity.size,
       all: clients.all.size,
       total: clients.spot.size + gexCount + heatmapCount + candlesCount + tradeSelectorCount + clients.vexy.size + clients.bias_lfi.size + clients.alerts.size + riskGraphCount + tradeLogCount + clients.dealer_gravity.size + clients.all.size,

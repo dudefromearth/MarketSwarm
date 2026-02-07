@@ -11,11 +11,12 @@ import { loadConfig, getFallbackConfig, getConfig } from "./config.js";
 import { initRedis, closeRedis } from "./redis.js";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
 import { setConfig as setKeyConfig } from "./keys.js";
-import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, subscribeAlertsPubSub, subscribeRiskGraphPubSub, subscribeTradeLogPubSub, subscribeDealerGravityPubSub, stopPolling, getClientStats } from "./routes/sse.js";
+import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, subscribeAlertsPubSub, subscribeRiskGraphPubSub, subscribeTradeLogPubSub, subscribeDealerGravityPubSub, subscribePositionsPubSub, stopPolling, getClientStats } from "./routes/sse.js";
 import modelsRoutes from "./routes/models.js";
 import authRoutes from "./routes/auth.js";
 import adminRoutes, { startActivityTracking, stopActivityTracking } from "./routes/admin.js";
 import dealerGravityRoutes from "./routes/dealerGravity.js";
+import positionsRoutes from "./routes/positions.js";
 import { authMiddleware, logAuthConfig } from "./auth.js";
 import { initDb, closeDb } from "./db/index.js";
 
@@ -64,11 +65,12 @@ app.use("/api/admin", adminRoutes);
 app.use("/sse", sseRoutes);
 app.use("/api/models", modelsRoutes);
 app.use("/api/dealer-gravity", dealerGravityRoutes);
+app.use("/api/positions", positionsRoutes);
 
 // Proxy journal endpoints to journal service (port 3002)
 // This handles /api/logs/*, /api/trades/*, /api/playbooks/*, /api/journals/*
 const JOURNAL_SERVICE = "http://localhost:3002";
-const journalPaths = ["/api/logs", "/api/trades", "/api/playbooks", "/api/journals", "/api/leaderboard", "/api/orders", "/api/alerts", "/api/symbols", "/api/tags", "/api/settings", "/api/journal", "/api/playbook", "/api/risk-graph", "/api/positions", "/api/journal_entries"];
+const journalPaths = ["/api/logs", "/api/trades", "/api/playbooks", "/api/journals", "/api/leaderboard", "/api/orders", "/api/alerts", "/api/symbols", "/api/tags", "/api/settings", "/api/journal", "/api/playbook", "/api/risk-graph", "/api/journal_entries"];
 
 journalPaths.forEach(path => {
   app.use(path, async (req, res) => {
@@ -221,6 +223,7 @@ async function main() {
   subscribeRiskGraphPubSub();
   subscribeTradeLogPubSub();
   subscribeDealerGravityPubSub();
+  subscribePositionsPubSub();
 
   // Start server
   const port = config.env.SSE_PORT;
@@ -247,11 +250,17 @@ async function main() {
     console.log(`   GET /sse/risk-graph         - Stream risk graph sync`);
     console.log(`   GET /sse/trade-log          - Stream trade log events`);
     console.log(`   GET /sse/dealer-gravity     - Stream DG artifact updates`);
+    console.log(`   GET /sse/positions          - Stream position updates`);
     console.log(`   GET /sse/all                - Combined stream`);
     console.log(" Dealer Gravity Endpoints:");
     console.log(`   GET /api/dealer-gravity/artifact  - Visualization artifact`);
     console.log(`   GET /api/dealer-gravity/context   - ML-ready context`);
     console.log(`   GET /api/dealer-gravity/configs   - User DG configs`);
+    console.log(" Position Endpoints:");
+    console.log(`   GET /api/positions                - List positions`);
+    console.log(`   POST /api/positions               - Create position`);
+    console.log(`   PATCH /api/positions/:id          - Update position`);
+    console.log(`   DELETE /api/positions/:id         - Delete position`);
     console.log("═══════════════════════════════════════════════════════");
 
     if (config.env.PUBLIC_MODE) {

@@ -173,6 +173,9 @@ async function createTables() {
 
     // Dealer Gravity config tables
     await createDealerGravityTables();
+
+    // Positions table (leg-based model)
+    await createPositionsTables();
   } catch (e) {
     console.error("[db] Failed to create tables:", e.message);
   }
@@ -195,7 +198,8 @@ async function createDealerGravityTables() {
       enabled BOOLEAN NOT NULL DEFAULT TRUE,
       mode ENUM('raw', 'tv') NOT NULL DEFAULT 'tv',
       width_percent INT NOT NULL DEFAULT 15,
-      num_bins INT NOT NULL DEFAULT 50,
+      rows_layout ENUM('number_of_rows', 'ticks_per_row') NOT NULL DEFAULT 'number_of_rows',
+      row_size INT NOT NULL DEFAULT 24,
       capping_sigma DECIMAL(3,2) NOT NULL DEFAULT 2.00,
       color VARCHAR(7) NOT NULL DEFAULT '#9333ea',
       transparency INT NOT NULL DEFAULT 50,
@@ -271,6 +275,71 @@ async function createDealerGravityTables() {
     console.log("[db] dealer_gravity_analyses table ready");
   } catch (e) {
     console.error("[db] Failed to create Dealer Gravity tables:", e.message);
+  }
+}
+
+/**
+ * Create Positions table (leg-based model)
+ * Supports 12+ strategy types with individual contract legs
+ */
+async function createPositionsTables() {
+  if (!pool) return;
+
+  // Positions table - stores multi-leg option positions
+  const createPositionsTable = `
+    CREATE TABLE IF NOT EXISTS positions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      symbol VARCHAR(20) NOT NULL DEFAULT 'SPX',
+
+      -- Position type (derived from legs, but cached for queries)
+      position_type ENUM(
+        'single', 'vertical', 'calendar', 'diagonal',
+        'butterfly', 'bwb', 'condor',
+        'straddle', 'strangle',
+        'iron_fly', 'iron_condor',
+        'custom'
+      ) NOT NULL DEFAULT 'single',
+      direction ENUM('long', 'short') NOT NULL DEFAULT 'long',
+
+      -- Legs stored as JSON array
+      -- Each leg: { strike, expiration, right, quantity, fillPrice?, fillDate? }
+      legs_json JSON NOT NULL,
+
+      -- Computed convenience fields (derived from legs)
+      primary_expiration DATE NOT NULL,
+      dte INT NOT NULL DEFAULT 0,
+
+      -- Cost basis
+      cost_basis DECIMAL(10,2) DEFAULT NULL,
+      cost_basis_type ENUM('debit', 'credit', 'net') DEFAULT 'debit',
+
+      -- Display settings
+      visible BOOLEAN NOT NULL DEFAULT TRUE,
+      sort_order INT NOT NULL DEFAULT 0,
+      color VARCHAR(7) DEFAULT NULL,
+      label VARCHAR(100) DEFAULT NULL,
+
+      -- Timestamps
+      added_at BIGINT NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+      -- Optimistic locking version
+      version INT NOT NULL DEFAULT 1,
+
+      INDEX idx_user_positions (user_id),
+      INDEX idx_user_symbol (user_id, symbol),
+      INDEX idx_user_expiration (user_id, primary_expiration),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+
+  try {
+    await pool.execute(createPositionsTable);
+    console.log("[db] positions table ready");
+  } catch (e) {
+    console.error("[db] Failed to create positions table:", e.message);
   }
 }
 
