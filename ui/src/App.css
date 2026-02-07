@@ -12091,6 +12091,49 @@ body {
   border-color: #3b82f6;
 }
 
+.mini-risk-graph {
+  flex-shrink: 0;
+  margin-left: -4px;
+}
+
+.direction-toggle {
+  display: flex;
+  gap: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #333;
+}
+
+.direction-btn {
+  padding: 5px 10px;
+  background: #252535;
+  border: none;
+  color: #888;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.direction-btn:first-child {
+  border-right: 1px solid #333;
+}
+
+.direction-btn:hover {
+  background: #303040;
+  color: #ccc;
+}
+
+.direction-btn.long.active {
+  background: #166534;
+  color: #22c55e;
+}
+
+.direction-btn.short.active {
+  background: #7f1d1d;
+  color: #ef4444;
+}
+
 .selected-type-badge {
   display: inline-flex;
   align-items: center;
@@ -12101,6 +12144,7 @@ body {
   color: #60a5fa;
   font-size: 12px;
   font-weight: 500;
+  white-space: nowrap;
 }
 
 /* Quick Setup Row */

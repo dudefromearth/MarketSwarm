@@ -50,100 +50,179 @@ interface PositionCreateModalProps {
 }
 
 type CreateMode = 'build' | 'import';
+type Direction = 'long' | 'short';
 
-// All position types for the dropdown
-const ALL_POSITION_TYPES: PositionType[] = [
-  'single',
-  'vertical',
-  'butterfly',
-  'bwb',
-  'condor',
-  'straddle',
-  'strangle',
-  'iron_fly',
-  'iron_condor',
-  'calendar',
-  'diagonal',
+// Position type categories for organized dropdown
+const POSITION_TYPE_CATEGORIES: { label: string; types: PositionType[] }[] = [
+  { label: 'Basic', types: ['single', 'vertical'] },
+  { label: 'Spreads', types: ['butterfly', 'bwb', 'condor'] },
+  { label: 'Volatility', types: ['straddle', 'strangle', 'iron_fly', 'iron_condor'] },
+  { label: 'Time', types: ['calendar', 'diagonal'] },
 ];
 
+// Types that default to short
+const SHORT_DEFAULT_TYPES: PositionType[] = [
+  'iron_fly',
+  'iron_condor',
+  'straddle',
+  'strangle',
+  'condor',
+];
+
+// Mini risk graph SVG paths for each position type (normalized 0-24 width, 0-12 height)
+// These represent the general P&L shape at expiration
+const MINI_RISK_GRAPHS: Record<PositionType, { path: string; color: string }> = {
+  single: {
+    // Long call: flat then diagonal up
+    path: 'M0,10 L12,10 L24,2',
+    color: '#22c55e',
+  },
+  vertical: {
+    // Debit spread: flat, diagonal, flat
+    path: 'M0,10 L6,10 L12,4 L18,4 L24,4',
+    color: '#22c55e',
+  },
+  butterfly: {
+    // Butterfly: V shape with wings capped
+    path: 'M0,8 L6,8 L12,2 L18,8 L24,8',
+    color: '#3b82f6',
+  },
+  bwb: {
+    // BWB: Asymmetric butterfly
+    path: 'M0,8 L5,8 L12,2 L20,9 L24,9',
+    color: '#8b5cf6',
+  },
+  condor: {
+    // Condor: Flat top tent
+    path: 'M0,8 L4,8 L8,3 L16,3 L20,8 L24,8',
+    color: '#3b82f6',
+  },
+  straddle: {
+    // Straddle: V shape
+    path: 'M0,2 L12,10 L24,2',
+    color: '#f59e0b',
+  },
+  strangle: {
+    // Strangle: Wide V shape
+    path: 'M0,2 L6,8 L18,8 L24,2',
+    color: '#f59e0b',
+  },
+  iron_fly: {
+    // Iron fly: Inverted tent
+    path: 'M0,4 L6,4 L12,10 L18,4 L24,4',
+    color: '#ef4444',
+  },
+  iron_condor: {
+    // Iron condor: Flat bottom tent
+    path: 'M0,4 L4,4 L8,9 L16,9 L20,4 L24,4',
+    color: '#ef4444',
+  },
+  calendar: {
+    // Calendar: Curved peak
+    path: 'M0,8 Q12,0 24,8',
+    color: '#06b6d4',
+  },
+  diagonal: {
+    // Diagonal: Asymmetric curved peak
+    path: 'M0,9 Q10,0 24,6',
+    color: '#06b6d4',
+  },
+  custom: {
+    path: 'M0,6 L24,6',
+    color: '#6b7280',
+  },
+};
+
+// Get default direction for a position type
+function getDefaultDirection(type: PositionType): Direction {
+  return SHORT_DEFAULT_TYPES.includes(type) ? 'short' : 'long';
+}
+
 // Default leg configurations for each position type
+// Direction flips all quantities (long -> short inverts signs)
 function getDefaultLegs(
   positionType: PositionType,
   baseStrike: number,
   width: number,
   expiration: string,
-  right: 'call' | 'put'
+  right: 'call' | 'put',
+  direction: Direction
 ): PositionLeg[] {
+  // Direction multiplier: 1 for long, -1 for short
+  const d = direction === 'long' ? 1 : -1;
+
   switch (positionType) {
     case 'single':
-      return [{ strike: baseStrike, expiration, right, quantity: 1 }];
+      return [{ strike: baseStrike, expiration, right, quantity: 1 * d }];
 
     case 'vertical':
       return right === 'call'
         ? [
-            { strike: baseStrike, expiration, right: 'call', quantity: 1 },
-            { strike: baseStrike + width, expiration, right: 'call', quantity: -1 },
+            { strike: baseStrike, expiration, right: 'call', quantity: 1 * d },
+            { strike: baseStrike + width, expiration, right: 'call', quantity: -1 * d },
           ]
         : [
-            { strike: baseStrike - width, expiration, right: 'put', quantity: -1 },
-            { strike: baseStrike, expiration, right: 'put', quantity: 1 },
+            { strike: baseStrike - width, expiration, right: 'put', quantity: -1 * d },
+            { strike: baseStrike, expiration, right: 'put', quantity: 1 * d },
           ];
 
     case 'butterfly':
     case 'bwb':
       return [
-        { strike: baseStrike - width, expiration, right, quantity: 1 },
-        { strike: baseStrike, expiration, right, quantity: -2 },
-        { strike: baseStrike + width, expiration, right, quantity: 1 },
+        { strike: baseStrike - width, expiration, right, quantity: 1 * d },
+        { strike: baseStrike, expiration, right, quantity: -2 * d },
+        { strike: baseStrike + width, expiration, right, quantity: 1 * d },
       ];
 
     case 'condor':
       return [
-        { strike: baseStrike - width * 1.5, expiration, right, quantity: 1 },
-        { strike: baseStrike - width * 0.5, expiration, right, quantity: -1 },
-        { strike: baseStrike + width * 0.5, expiration, right, quantity: -1 },
-        { strike: baseStrike + width * 1.5, expiration, right, quantity: 1 },
+        { strike: baseStrike - width * 1.5, expiration, right, quantity: 1 * d },
+        { strike: baseStrike - width * 0.5, expiration, right, quantity: -1 * d },
+        { strike: baseStrike + width * 0.5, expiration, right, quantity: -1 * d },
+        { strike: baseStrike + width * 1.5, expiration, right, quantity: 1 * d },
       ];
 
     case 'straddle':
       return [
-        { strike: baseStrike, expiration, right: 'call', quantity: 1 },
-        { strike: baseStrike, expiration, right: 'put', quantity: 1 },
+        { strike: baseStrike, expiration, right: 'call', quantity: 1 * d },
+        { strike: baseStrike, expiration, right: 'put', quantity: 1 * d },
       ];
 
     case 'strangle':
       return [
-        { strike: baseStrike - width, expiration, right: 'put', quantity: 1 },
-        { strike: baseStrike + width, expiration, right: 'call', quantity: 1 },
+        { strike: baseStrike - width, expiration, right: 'put', quantity: 1 * d },
+        { strike: baseStrike + width, expiration, right: 'call', quantity: 1 * d },
       ];
 
     case 'iron_fly':
+      // Iron fly: short the ATM straddle, long the wings
+      // Short iron fly = credit received (typical)
       return [
-        { strike: baseStrike - width, expiration, right: 'put', quantity: 1 },
-        { strike: baseStrike, expiration, right: 'put', quantity: -1 },
-        { strike: baseStrike, expiration, right: 'call', quantity: -1 },
-        { strike: baseStrike + width, expiration, right: 'call', quantity: 1 },
+        { strike: baseStrike - width, expiration, right: 'put', quantity: 1 * d },
+        { strike: baseStrike, expiration, right: 'put', quantity: -1 * d },
+        { strike: baseStrike, expiration, right: 'call', quantity: -1 * d },
+        { strike: baseStrike + width, expiration, right: 'call', quantity: 1 * d },
       ];
 
     case 'iron_condor':
+      // Iron condor: short the inner strikes, long the outer wings
       return [
-        { strike: baseStrike - width * 1.5, expiration, right: 'put', quantity: 1 },
-        { strike: baseStrike - width * 0.5, expiration, right: 'put', quantity: -1 },
-        { strike: baseStrike + width * 0.5, expiration, right: 'call', quantity: -1 },
-        { strike: baseStrike + width * 1.5, expiration, right: 'call', quantity: 1 },
+        { strike: baseStrike - width * 1.5, expiration, right: 'put', quantity: 1 * d },
+        { strike: baseStrike - width * 0.5, expiration, right: 'put', quantity: -1 * d },
+        { strike: baseStrike + width * 0.5, expiration, right: 'call', quantity: -1 * d },
+        { strike: baseStrike + width * 1.5, expiration, right: 'call', quantity: 1 * d },
       ];
 
     case 'calendar':
     case 'diagonal':
-      // For time spreads, we'll use same strike but need different expiration
-      // The user will need to adjust the far expiration manually
+      // For time spreads: sell near, buy far
       return [
-        { strike: baseStrike, expiration, right, quantity: -1 },
-        { strike: baseStrike, expiration, right, quantity: 1 }, // User should change this expiration
+        { strike: baseStrike, expiration, right, quantity: -1 * d },
+        { strike: baseStrike, expiration, right, quantity: 1 * d },
       ];
 
     default:
-      return [{ strike: baseStrike, expiration, right, quantity: 1 }];
+      return [{ strike: baseStrike, expiration, right, quantity: 1 * d }];
   }
 }
 
@@ -165,6 +244,7 @@ export default function PositionCreateModal({
   // Build mode state
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [positionType, setPositionType] = useState<PositionType>('butterfly');
+  const [direction, setDirection] = useState<Direction>('long');
   const [legs, setLegs] = useState<PositionLeg[]>([]);
   const [costBasis, setCostBasis] = useState('');
   const [costBasisType, setCostBasisType] = useState<CostBasisType>('debit');
@@ -172,6 +252,12 @@ export default function PositionCreateModal({
   const [width, setWidth] = useState('20');
   const [expiration, setExpiration] = useState('');
   const [primaryRight, setPrimaryRight] = useState<'call' | 'put'>('call');
+
+  // Update direction when position type changes
+  const handlePositionTypeChange = useCallback((newType: PositionType) => {
+    setPositionType(newType);
+    setDirection(getDefaultDirection(newType));
+  }, []);
 
   // Import mode state
   const [scriptInput, setScriptInput] = useState('');
@@ -206,10 +292,10 @@ export default function PositionCreateModal({
     if (mode === 'build' && expiration) {
       const strike = parseFloat(baseStrike) || 5900;
       const w = parseFloat(width) || 20;
-      const newLegs = getDefaultLegs(positionType, strike, w, expiration, primaryRight);
+      const newLegs = getDefaultLegs(positionType, strike, w, expiration, primaryRight, direction);
       setLegs(newLegs);
     }
-  }, [mode, positionType, baseStrike, width, expiration, primaryRight]);
+  }, [mode, positionType, baseStrike, width, expiration, primaryRight, direction]);
 
   // Parse script when input changes
   useEffect(() => {
@@ -383,20 +469,55 @@ export default function PositionCreateModal({
 
               {/* Position Type Selection */}
               <div className="form-group position-type-row">
-                <label>Position Type</label>
+                <label>Type</label>
                 <select
                   className="position-type-select"
                   value={positionType}
-                  onChange={e => setPositionType(e.target.value as PositionType)}
+                  onChange={e => handlePositionTypeChange(e.target.value as PositionType)}
                 >
-                  {ALL_POSITION_TYPES.map(type => (
-                    <option key={type} value={type}>
-                      {POSITION_TYPE_LABELS[type]}
-                    </option>
+                  {POSITION_TYPE_CATEGORIES.map(category => (
+                    <optgroup key={category.label} label={category.label}>
+                      {category.types.map(type => (
+                        <option key={type} value={type}>
+                          {POSITION_TYPE_LABELS[type]}
+                        </option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
+                <svg
+                  className="mini-risk-graph"
+                  viewBox="0 0 24 12"
+                  width="28"
+                  height="14"
+                >
+                  <path
+                    d={MINI_RISK_GRAPHS[positionType]?.path || MINI_RISK_GRAPHS.custom.path}
+                    stroke={MINI_RISK_GRAPHS[positionType]?.color || MINI_RISK_GRAPHS.custom.color}
+                    strokeWidth="1.5"
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                <div className="direction-toggle">
+                  <button
+                    type="button"
+                    className={`direction-btn long ${direction === 'long' ? 'active' : ''}`}
+                    onClick={() => setDirection('long')}
+                  >
+                    Long
+                  </button>
+                  <button
+                    type="button"
+                    className={`direction-btn short ${direction === 'short' ? 'active' : ''}`}
+                    onClick={() => setDirection('short')}
+                  >
+                    Short
+                  </button>
+                </div>
                 <span className="selected-type-badge">
-                  {POSITION_TYPE_LABELS[positionType]}
+                  {direction === 'long' ? 'Long' : 'Short'} {POSITION_TYPE_LABELS[positionType]}
                 </span>
               </div>
 
