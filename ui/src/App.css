@@ -12103,6 +12103,11 @@ body {
   background: #1a1a24;
   border-radius: 4px;
   padding: 2px;
+  transition: transform 0.2s ease;
+}
+
+.mini-risk-graph.flipped {
+  transform: scaleY(-1);
 }
 
 .direction-toggle {

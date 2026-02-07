@@ -487,7 +487,7 @@ export default function PositionCreateModal({
                 </select>
                 <div className="position-type-display">
                   <svg
-                    className="mini-risk-graph"
+                    className={`mini-risk-graph ${direction === 'short' ? 'flipped' : ''}`}
                     viewBox="0 0 24 12"
                     width="48"
                     height="24"
