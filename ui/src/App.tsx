@@ -2388,6 +2388,7 @@ function App() {
               </button>
             </>
           )}
+          <SyncStatusIndicator />
         </div>
         <div className="header-center">
           <div className="underlying-selector">
