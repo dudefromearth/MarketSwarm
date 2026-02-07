@@ -89,59 +89,82 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
   const [backdropProps, setBackdropProps] = useState<BackdropRenderProps | null>(null);
 
   // Calculate bounds that fit all data + breakevens + spot with padding
-  // Break-even span (trade width) should fill 2/3 of chart width
+  // Ensures breakevens are visible with padding around them
   const calculateFitBounds = useCallback((): ViewState => {
     if (expirationData.length === 0) {
       return { xMin: spotPrice - 50, xMax: spotPrice + 50, yMin: -100, yMax: 100 };
     }
 
-    // Collect all Y points
+    // === X-AXIS: Include strikes AND breakevens ===
+    // Collect all important price points: strikes, breakevens, and spot
+    const allBreakevens = [...expirationBreakevens, ...theoreticalBreakevens].filter(b => isFinite(b));
+    const allPricePoints = [
+      ...strikes,
+      ...allBreakevens,
+      spotPrice,
+    ].filter(p => isFinite(p));
+
+    if (allPricePoints.length === 0) {
+      return { xMin: spotPrice - 50, xMax: spotPrice + 50, yMin: -100, yMax: 100 };
+    }
+
+    const priceMin = Math.min(...allPricePoints);
+    const priceMax = Math.max(...allPricePoints);
+    const priceSpan = priceMax - priceMin;
+    const priceCenter = (priceMin + priceMax) / 2;
+
+    // Minimum padding ensures narrow ranges are visible
+    // Use at least 25 points or 30% of price span, whichever is larger
+    const minPadding = Math.max(25, priceSpan * 0.3);
+
+    // Show the full range (strikes + breakevens) with padding
+    let chartHalfWidth: number;
+    if (priceSpan > 0) {
+      // Show full span with padding on each side
+      chartHalfWidth = (priceSpan / 2) + minPadding;
+    } else {
+      // Single point - use minimum padding to create visible range
+      chartHalfWidth = minPadding * 2;
+    }
+
+    const xMin = priceCenter - chartHalfWidth;
+    const xMax = priceCenter + chartHalfWidth;
+
+    // === Y-AXIS: P&L bounds with sensible limits ===
+    // Collect P&L points only within the visible X range to avoid extreme tails
+    const visibleExpData = expirationData.filter(p => p.price >= xMin && p.price <= xMax);
+    const visibleTheoData = theoreticalData.filter(p => p.price >= xMin && p.price <= xMax);
+
     const allY = [
-      ...expirationData.map(p => p.pnl),
-      ...theoreticalData.map(p => p.pnl),
+      ...visibleExpData.map(p => p.pnl),
+      ...visibleTheoData.map(p => p.pnl),
       0, // Always include zero line
     ];
 
-    const yMin = Math.min(...allY);
-    const yMax = Math.max(...allY);
-    const yRange = yMax - yMin || 100;
-
-    // Trade width is defined by ALL break-evens (expiration + theoretical/real-time)
-    // Theoretical break-evens are typically wider
-    const allBreakevens = [...expirationBreakevens, ...theoreticalBreakevens];
-
-    let tradeMin: number, tradeMax: number;
-
-    if (allBreakevens.length >= 2) {
-      tradeMin = Math.min(...allBreakevens);
-      tradeMax = Math.max(...allBreakevens);
-    } else if (allBreakevens.length === 1) {
-      // Single break-even - center around it with strikes
-      const be = allBreakevens[0];
-      const strikeSpan = strikes.length > 0
-        ? Math.max(...strikes) - Math.min(...strikes)
-        : 50;
-      tradeMin = be - strikeSpan;
-      tradeMax = be + strikeSpan;
-    } else {
-      // No break-evens - use strikes
-      tradeMin = Math.min(...strikes, spotPrice);
-      tradeMax = Math.max(...strikes, spotPrice);
+    // If no data in visible range, fall back to all data
+    if (allY.length <= 1) {
+      allY.push(...expirationData.map(p => p.pnl));
+      allY.push(...theoreticalData.map(p => p.pnl));
     }
 
-    const tradeWidth = tradeMax - tradeMin || 100;
-    const tradeCenter = (tradeMin + tradeMax) / 2;
+    let yMin = Math.min(...allY);
+    let yMax = Math.max(...allY);
 
-    // Trade width should fill 2/3 of chart, so total chart = tradeWidth * 1.5
-    const chartWidth = tradeWidth * 1.5;
+    // Ensure minimum Y range for visibility
+    const yRange = yMax - yMin || 100;
+    if (yRange < 50) {
+      const yCenter = (yMin + yMax) / 2;
+      yMin = yCenter - 50;
+      yMax = yCenter + 50;
+    }
 
     return {
-      xMin: tradeCenter - chartWidth / 2,
-      xMax: tradeCenter + chartWidth / 2,
+      xMin,
+      xMax,
       yMin: yMin - yRange * 0.1,
       yMax: yMax + yRange * 0.1,
     };
-  }, [expirationData, theoreticalData, expirationBreakevens, theoreticalBreakevens, strikes, spotPrice]);
+  }, [expirationData, theoreticalData, strikes, spotPrice, expirationBreakevens, theoreticalBreakevens]);
 
   // Auto-fit view to data
   const autoFit = useCallback(() => {

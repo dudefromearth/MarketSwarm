@@ -7188,6 +7188,19 @@ body {
   color: #fff;
 }
 
+.monitor-btn.view {
+  background: transparent;
+  border: 1px solid #8b5cf6;
+  color: #8b5cf6;
+  padding: 4px 8px;
+  font-size: 14px;
+}
+
+.monitor-btn.view:hover {
+  background: #8b5cf6;
+  color: #fff;
+}
+
 .monitor-close {
   background: transparent;
   border: none;
@@ -11718,8 +11731,9 @@ body {
    ============================================ */
 
 .position-edit-modal {
-  min-width: 420px;
-  max-width: 500px;
+  min-width: 560px;
+  max-width: 600px;
+  width: 560px;
 }
 
 .position-edit-body .position-type-display {
@@ -11770,7 +11784,7 @@ body {
 }
 
 .position-edit-body .leg-quantity {
-  width: 55px;
+  width: 42px;
   padding: 4px 6px;
   font-size: 11px;
   background: #252525;
@@ -11780,7 +11794,7 @@ body {
 }
 
 .position-edit-body .leg-strike {
-  width: 70px;
+  width: 90px;
   padding: 4px 6px;
   font-size: 11px;
   background: #252525;
@@ -11802,7 +11816,7 @@ body {
 
 .position-edit-body .leg-expiration {
   flex: 1;
-  min-width: 100px;
+  min-width: 130px;
   padding: 4px 6px;
   font-size: 11px;
   background: #252525;
@@ -14953,4 +14967,109 @@ body {
 
 .floating-modal.is-dragging .modal-header.draggable-handle {
   cursor: grabbing;
+}
+
+/* ============================================
+   Error Boundary - Graceful error handling
+   ============================================ */
+
+.error-boundary-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  padding: 20px;
+  background: rgba(239, 68, 68, 0.05);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 8px;
+  margin: 10px;
+}
+
+.error-boundary-content {
+  text-align: center;
+  max-width: 400px;
+}
+
+.error-boundary-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+
+.error-boundary-title {
+  color: #ef4444;
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+}
+
+.error-boundary-message {
+  color: #94a3b8;
+  font-size: 14px;
+  margin: 0 0 16px 0;
+}
+
+.error-boundary-details {
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 12px;
+  margin-bottom: 16px;
+  max-height: 100px;
+  overflow: auto;
+}
+
+.error-boundary-details code {
+  color: #f87171;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  word-break: break-word;
+}
+
+.error-boundary-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-bottom: 12px;
+}
+
+.error-boundary-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.error-boundary-btn.retry {
+  background: #3b82f6;
+  border: none;
+  color: white;
+}
+
+.error-boundary-btn.retry:hover {
+  background: #2563eb;
+}
+
+.error-boundary-btn.report {
+  background: transparent;
+  border: 1px solid #64748b;
+  color: #94a3b8;
+}
+
+.error-boundary-btn.report:hover {
+  border-color: #94a3b8;
+  color: #e2e8f0;
+}
+
+.error-boundary-btn.report.reported {
+  border-color: #22c55e;
+  color: #22c55e;
+  cursor: default;
+}
+
+.error-boundary-help {
+  color: #64748b;
+  font-size: 12px;
+  margin: 0;
 }

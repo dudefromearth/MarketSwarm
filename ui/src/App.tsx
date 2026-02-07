@@ -40,6 +40,7 @@ import { useRiskGraph } from './contexts/RiskGraphContext';
 import { usePositionsContext } from './contexts/PositionsContext';
 import { useSyncStatus } from './contexts/ApiClientContext';
 import { positionsToStrategies, riskGraphStrategyToPosition } from './utils/positionBridge';
+import { recognizePositionType, strategyToLegs } from './utils/positionRecognition';
 import SyncStatusIndicator from './components/SyncStatusIndicator';
 import NotificationCenter from './components/NotificationCenter';
 import type { AlertType, AlertBehavior } from './types/alerts';
@@ -1022,54 +1023,62 @@ function App() {
   // Create position from PositionCreateModal
   const handlePositionCreate = async (position: CreatedPosition) => {
     try {
-      // Derive legacy fields from legs for backward compatibility
-      const legs = position.legs;
-      const sortedLegs = [...legs].sort((a, b) => a.strike - b.strike);
-      const strikes = sortedLegs.map(l => l.strike);
+      if (USE_NEW_POSITIONS_API) {
+        // Use new positions API directly with full leg data
+        const recognition = recognizePositionType(position.legs);
+        await addPosition({
+          symbol: position.symbol,
+          positionType: recognition.type,
+          direction: recognition.direction,
+          legs: position.legs,
+          costBasis: position.costBasis,
+          costBasisType: position.costBasisType,
+        });
+      } else {
+        // Legacy path: derive legacy fields from legs
+        const legs = position.legs;
+        const sortedLegs = [...legs].sort((a, b) => a.strike - b.strike);
+        const strikes = sortedLegs.map(l => l.strike);
 
-      // Determine legacy strategy type
-      let legacyStrategy: 'butterfly' | 'vertical' | 'single' = 'single';
-      if (legs.length === 3) {
-        legacyStrategy = 'butterfly';
-      } else if (legs.length === 2) {
-        legacyStrategy = 'vertical';
+        // Determine legacy strategy type
+        let legacyStrategy: 'butterfly' | 'vertical' | 'single' = 'single';
+        if (legs.length === 3) {
+          legacyStrategy = 'butterfly';
+        } else if (legs.length === 2) {
+          legacyStrategy = 'vertical';
+        }
+
+        // Determine side from dominant leg type
+        const calls = legs.filter(l => l.right === 'call').length;
+        const puts = legs.filter(l => l.right === 'put').length;
+        const side: 'call' | 'put' = calls >= puts ? 'call' : 'put';
+
+        // Calculate center strike and width
+        let centerStrike = strikes[0];
+        let width = 0;
+
+        if (legs.length === 3) {
+          centerStrike = strikes[1];
+          width = strikes[1] - strikes[0];
+        } else if (legs.length === 2) {
+          centerStrike = strikes[0];
+          width = strikes[1] - strikes[0];
+        } else if (legs.length === 4) {
+          centerStrike = Math.round((strikes[1] + strikes[2]) / 2);
+          width = strikes[1] - strikes[0];
+        }
+
+        await legacyAddStrategy({
+          symbol: position.symbol,
+          strategy: legacyStrategy,
+          side,
+          strike: centerStrike,
+          width,
+          dte: position.dte,
+          expiration: position.expiration,
+          debit: position.costBasis,
+        });
       }
-
-      // Determine side from dominant leg type
-      const calls = legs.filter(l => l.right === 'call').length;
-      const puts = legs.filter(l => l.right === 'put').length;
-      const side: 'call' | 'put' = calls >= puts ? 'call' : 'put';
-
-      // Calculate center strike and width
-      let centerStrike = strikes[0];
-      let width = 0;
-
-      if (legs.length === 3) {
-        // Butterfly: center is middle strike
-        centerStrike = strikes[1];
-        width = strikes[1] - strikes[0];
-      } else if (legs.length === 2) {
-        // Vertical: first strike is the anchor
-        centerStrike = strikes[0];
-        width = strikes[1] - strikes[0];
-      } else if (legs.length === 4) {
-        // Condor/Iron: use average of inner strikes
-        centerStrike = Math.round((strikes[1] + strikes[2]) / 2);
-        width = strikes[1] - strikes[0];
-      }
-
-      // Add strategy with legacy fields (extended fields like legs/costBasisType
-      // are not yet supported in LegacyRiskGraphStrategy - will be added in future)
-      await contextAddStrategy({
-        symbol: position.symbol,
-        strategy: legacyStrategy,
-        side,
-        strike: centerStrike,
-        width,
-        dte: position.dte,
-        expiration: position.expiration,
-        debit: position.costBasis,
-      });
     } catch (err) {
       console.error('Failed to create position:', err);
     }
@@ -1294,6 +1303,52 @@ function App() {
     const interval = setInterval(fetchMonitorCounts, 30000); // Every 30 seconds
     return () => clearInterval(interval);
   }, [fetchMonitorCounts]);
+
+  // Handler to view a trade in the Risk Graph
+  const handleViewTradeInRiskGraph = useCallback(async (trade: {
+    symbol: string;
+    side: string;
+    strategy?: string;
+    strike?: number;
+    width?: number;
+    dte?: number;
+    entry_price: number;
+  }) => {
+    try {
+      // Convert trade to position format
+      const strategy = (trade.strategy || 'single') as 'single' | 'vertical' | 'butterfly';
+      const side = (trade.side || 'call') as 'call' | 'put';
+      const strike = trade.strike || 6000; // Fallback if no strike (shouldn't happen)
+      const width = trade.width || 20;
+
+      // Calculate expiration date from DTE
+      const today = new Date();
+      const expDate = new Date(today);
+      expDate.setDate(expDate.getDate() + (trade.dte || 0));
+      const expiration = expDate.toISOString().split('T')[0];
+
+      // Convert to legs
+      const legs = strategyToLegs(strategy, side, strike, width, expiration);
+
+      // Recognize position type
+      const recognition = recognizePositionType(legs);
+
+      // Add to positions
+      await addPosition({
+        symbol: trade.symbol || 'SPX',
+        positionType: recognition.type,
+        direction: recognition.direction,
+        legs,
+        costBasis: trade.entry_price / 100, // Convert cents to dollars
+        costBasisType: 'debit',
+      });
+
+      // Close the monitor panel
+      setMonitorOpen(false);
+    } catch (err) {
+      console.error('[Monitor] Failed to add position to Risk Graph:', err);
+    }
+  }, [addPosition]);
 
   // Scroll sync handler for GEX panel
   const handleGexScroll = useCallback(() => {
@@ -3392,6 +3447,7 @@ function App() {
           onClose={() => setMonitorOpen(false)}
           onCloseTrade={() => fetchMonitorCounts()}
           onCancelOrder={() => fetchMonitorCounts()}
+          onViewInRiskGraph={handleViewTradeInRiskGraph}
         />
       )}
 

@@ -44,13 +44,22 @@ async function publishPositionUpdate(userId, action, position) {
  * Transform database row to API response format
  */
 function rowToPosition(row) {
+  // MySQL JSON columns return parsed objects, not strings
+  // Handle both cases for safety
+  let legs = row.legs_json;
+  if (typeof legs === 'string') {
+    legs = JSON.parse(legs || '[]');
+  } else if (!legs) {
+    legs = [];
+  }
+
   return {
     id: row.id,
     userId: row.user_id,
     symbol: row.symbol,
     positionType: row.position_type,
     direction: row.direction,
-    legs: JSON.parse(row.legs_json || "[]"),
+    legs,
     primaryExpiration: row.primary_expiration,
     dte: row.dte,
     costBasis: row.cost_basis ? parseFloat(row.cost_basis) : null,
@@ -107,7 +116,7 @@ router.get("/", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.id;
+    const userId = req.user?.wp?.id;
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });
@@ -171,7 +180,7 @@ router.get("/:id", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.id;
+    const userId = req.user?.wp?.id;
     const positionId = parseInt(req.params.id);
 
     if (!userId) {
@@ -225,13 +234,15 @@ router.get("/:id", async (req, res) => {
  * }
  */
 router.post("/", async (req, res) => {
+  console.log("[positions] POST / - request body:", JSON.stringify(req.body));
+
   if (!isDbAvailable()) {
     return res.status(503).json({ success: false, error: "Database not available" });
   }
 
   try {
     const pool = getPool();
-    const userId = req.user?.id;
+    const userId = req.user?.wp?.id;
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });
@@ -351,7 +362,7 @@ router.patch("/:id", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.id;
+    const userId = req.user?.wp?.id;
     const positionId = parseInt(req.params.id);
     const expectedVersion = req.headers["if-match"]
       ? parseInt(req.headers["if-match"])
@@ -483,7 +494,7 @@ router.delete("/:id", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.id;
+    const userId = req.user?.wp?.id;
     const positionId = parseInt(req.params.id);
 
     if (!userId) {
@@ -535,7 +546,7 @@ router.post("/batch", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.id;
+    const userId = req.user?.wp?.id;
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });
@@ -657,7 +668,7 @@ router.patch("/reorder", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.id;
+    const userId = req.user?.wp?.id;
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });

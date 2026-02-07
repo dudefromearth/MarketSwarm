@@ -193,6 +193,9 @@ function calculateSkewedIV(
   return baseIV * (1 + skewAdjustment + atmAdjustment);
 }
 
+// Import position types
+import type { PositionLeg, PositionType, PositionDirection } from '../types/riskGraph';
+
 // Types
 export interface Strategy {
   id: string;
@@ -204,6 +207,10 @@ export interface Strategy {
   visible: boolean;
   dte?: number;
   expiration?: string;
+  // New leg-based fields (optional for backward compat)
+  legs?: PositionLeg[];
+  positionType?: PositionType;
+  direction?: PositionDirection;
 }
 
 export interface PnLPoint {
@@ -712,12 +719,97 @@ function butterflyExpirationPnL(
 }
 
 /**
- * Calculate total expiration P&L for a strategy
+ * Calculate expiration P&L for a single leg at a specific expiration date
+ * For legs expiring ON this date: use intrinsic value
+ * For legs expiring AFTER this date: use Black-Scholes theoretical value
  */
-function calculateExpirationPnL(strategy: Strategy, price: number): number {
+function legExpirationPnL(
+  price: number,
+  leg: PositionLeg,
+  primaryExpiration?: string,
+  baseVolatility?: number
+): number {
+  // If no primary expiration specified or leg expires on/before primary, use intrinsic
+  if (!primaryExpiration || !leg.expiration || leg.expiration <= primaryExpiration) {
+    const intrinsic = leg.right === 'call'
+      ? Math.max(0, price - leg.strike)
+      : Math.max(0, leg.strike - price);
+    return intrinsic * leg.quantity;
+  }
+
+  // Leg expires AFTER primary expiration - it still has time value
+  // Calculate time remaining from primary expiration to this leg's expiration
+  const primaryDate = new Date(primaryExpiration + 'T16:00:00');
+  const legExpDate = new Date(leg.expiration + 'T16:00:00');
+  const daysRemaining = Math.max(1, (legExpDate.getTime() - primaryDate.getTime()) / (1000 * 60 * 60 * 24));
+  const timeToExpiry = daysRemaining / 365;
+
+  // Use provided volatility or default
+  const vol = baseVolatility || 0.20;
+  const rate = 0.05;
+
+  // Calculate theoretical value using Black-Scholes
+  const theoreticalValue = leg.right === 'call'
+    ? blackScholesCall(price, leg.strike, timeToExpiry, rate, vol)
+    : blackScholesPut(price, leg.strike, timeToExpiry, rate, vol);
+
+  return theoreticalValue * leg.quantity;
+}
+
+/**
+ * Get the primary (earliest) expiration from legs
+ */
+function getPrimaryExpiration(legs: PositionLeg[]): string | undefined {
+  const expirations = legs.map(l => l.expiration).filter(Boolean);
+  if (expirations.length === 0) return undefined;
+  return expirations.sort()[0];
+}
+
+/**
+ * Check if position has multiple expirations (calendar/diagonal)
+ */
+function hasMultipleExpirations(legs: PositionLeg[]): boolean {
+  const expirations = new Set(legs.map(l => l.expiration).filter(Boolean));
+  return expirations.size > 1;
+}
+
+/**
+ * Calculate total expiration P&L from legs
+ * For calendars/diagonals: values far-dated legs using Black-Scholes at primary expiration
+ */
+function calculateLegsExpirationPnL(
+  legs: PositionLeg[],
+  price: number,
+  debit: number,
+  baseVolatility?: number
+): number {
+  const multiplier = 100;
+  let pnlPerShare = 0;
+
+  // For multi-expiration positions, calculate P&L at the primary (nearest) expiration
+  const primaryExp = hasMultipleExpirations(legs) ? getPrimaryExpiration(legs) : undefined;
+
+  for (const leg of legs) {
+    pnlPerShare += legExpirationPnL(price, leg, primaryExp, baseVolatility);
+  }
+
+  return (pnlPerShare - debit) * multiplier;
+}
+
+/**
+ * Calculate total expiration P&L for a strategy
+ * For calendars/diagonals: uses Black-Scholes for far-dated legs at primary expiration
+ */
+function calculateExpirationPnL(strategy: Strategy, price: number, baseVolatility?: number): number {
   const debit = strategy.debit || 0;
   const multiplier = 100; // Standard equity option multiplier
 
+  // If legs are provided, use leg-based calculation
+  if (strategy.legs && strategy.legs.length > 0) {
+    return calculateLegsExpirationPnL(strategy.legs, price, debit, baseVolatility);
+  }
+
+  // Legacy calculation for backward compatibility
   let pnlPerShare = 0;
 
   switch (strategy.strategy) {
@@ -736,6 +828,61 @@ function calculateExpirationPnL(strategy: Strategy, price: number): number {
 }
 
 /**
+ * Calculate Greeks for a single leg
+ */
+function calculateLegGreeks(
+  leg: PositionLeg,
+  price: number,
+  baseVolatility: number,
+  rate: number,
+  timeToExpiryYears: number,
+  spotPrice: number,
+  regime: RegimeConfig
+): OptionGreeks {
+  const T = Math.max(0, timeToExpiryYears);
+  const skewedIV = calculateSkewedIV(baseVolatility, leg.strike, spotPrice, regime);
+  const g = calculateOptionGreeks(price, leg.strike, T, rate, skewedIV, leg.right === 'call');
+
+  // Scale by quantity (positive for long, negative for short)
+  return {
+    delta: g.delta * leg.quantity,
+    gamma: g.gamma * Math.abs(leg.quantity), // Gamma is always additive in absolute
+    theta: g.theta * leg.quantity,
+  };
+}
+
+/**
+ * Calculate aggregate Greeks from legs
+ */
+function calculateLegsGreeks(
+  legs: PositionLeg[],
+  price: number,
+  baseVolatility: number,
+  rate: number,
+  timeToExpiryYears: number,
+  spotPrice: number,
+  regime: RegimeConfig
+): OptionGreeks {
+  const multiplier = 100;
+  let delta = 0;
+  let gamma = 0;
+  let theta = 0;
+
+  for (const leg of legs) {
+    const g = calculateLegGreeks(leg, price, baseVolatility, rate, timeToExpiryYears, spotPrice, regime);
+    delta += g.delta;
+    gamma += g.gamma * (leg.quantity > 0 ? 1 : -1); // Gamma sign based on position
+    theta += g.theta;
+  }
+
+  return {
+    delta: delta * multiplier,
+    gamma: gamma * multiplier,
+    theta: theta * multiplier,
+  };
+}
+
+/**
  * Calculate Greeks for a strategy at a given price with volatility skew
  */
 function calculateStrategyGreeks(
@@ -749,6 +896,11 @@ function calculateStrategyGreeks(
 ): OptionGreeks {
   const multiplier = 100;
   const T = Math.max(0, timeToExpiryYears);
+
+  // If legs are provided, use leg-based calculation
+  if (strategy.legs && strategy.legs.length > 0) {
+    return calculateLegsGreeks(strategy.legs, price, baseVolatility, rate, timeToExpiryYears, spotPrice, regime);
+  }
 
   // Use skewed IV for each strike
   const getGreeks = (K: number, isCall: boolean) => {
@@ -868,6 +1020,70 @@ interface PricingParams {
   mcSeed: number;
 }
 
+/**
+ * Calculate theoretical P&L for a single leg using its own expiration
+ */
+function calculateLegTheoreticalValue(
+  leg: PositionLeg,
+  price: number,
+  baseVolatility: number,
+  rate: number,
+  baseTimeYears: number,
+  spotPrice: number,
+  regime: RegimeConfig,
+  primaryExpiration?: string
+): number {
+  // Calculate this leg's specific time to expiry
+  let legTimeYears = baseTimeYears;
+
+  if (leg.expiration && primaryExpiration && leg.expiration !== primaryExpiration) {
+    // This leg has a different expiration - calculate its specific time
+    const now = new Date();
+    const legExpDate = new Date(leg.expiration + 'T16:00:00');
+    const daysToLegExp = Math.max(0.001, (legExpDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    legTimeYears = daysToLegExp / 365;
+  }
+
+  // Get skewed IV for this strike
+  const skewedIV = calculateSkewedIV(baseVolatility, leg.strike, spotPrice, regime);
+
+  // Price the option with its specific time to expiry
+  const legValue = leg.right === 'call'
+    ? blackScholesCall(price, leg.strike, legTimeYears, rate, skewedIV)
+    : blackScholesPut(price, leg.strike, legTimeYears, rate, skewedIV);
+
+  return legValue * leg.quantity;
+}
+
+/**
+ * Calculate theoretical P&L from legs
+ * For calendars/diagonals: each leg uses its own time to expiration
+ */
+function calculateLegsTheoreticalPnL(
+  legs: PositionLeg[],
+  price: number,
+  debit: number,
+  baseVolatility: number,
+  rate: number,
+  baseTimeYears: number,
+  spotPrice: number,
+  regime: RegimeConfig
+): number {
+  const multiplier = 100;
+  let theoreticalValue = 0;
+
+  // Get primary expiration for multi-expiration detection
+  const primaryExp = hasMultipleExpirations(legs) ? getPrimaryExpiration(legs) : undefined;
+
+  for (const leg of legs) {
+    theoreticalValue += calculateLegTheoreticalValue(
+      leg, price, baseVolatility, rate, baseTimeYears, spotPrice, regime, primaryExp
+    );
+  }
+
+  return (theoreticalValue - debit) * multiplier;
+}
+
 function calculateTheoreticalPnL(
   strategy: Strategy,
   price: number,
@@ -883,7 +1099,7 @@ function calculateTheoreticalPnL(
 
   // At true expiration (T=0), return expiration P&L
   if (T <= 0) {
-    return calculateExpirationPnL(strategy, price);
+    return calculateExpirationPnL(strategy, price, baseVolatility);
   }
 
   // Create pricing functions based on selected model
@@ -934,6 +1150,15 @@ function calculateTheoreticalPnL(
       break;
   }
 
+  // If legs are provided, use leg-based calculation with per-leg time to expiry
+  if (strategy.legs && strategy.legs.length > 0) {
+    return calculateLegsTheoreticalPnL(
+      strategy.legs, price, debit,
+      baseVolatility, rate, T, spotPrice, params.regime
+    );
+  }
+
+  // Legacy calculation for backward compatibility
   let theoreticalValue = 0;
 
   switch (strategy.strategy) {
@@ -1101,6 +1326,15 @@ function getCriticalStrikes(strategies: Strategy[]): number[] {
   for (const s of strategies) {
     if (!s.visible) continue;
 
+    // If legs are provided, extract strikes from legs
+    if (s.legs && s.legs.length > 0) {
+      for (const leg of s.legs) {
+        strikes.add(leg.strike);
+      }
+      continue;
+    }
+
+    // Legacy: extract strikes from strategy type
     switch (s.strategy) {
       case 'single':
         strikes.add(s.strike);
@@ -1307,10 +1541,11 @@ export function useRiskGraphCalculations({
     let maxPnL = -Infinity;
 
     for (const price of pricePoints) {
-      // Expiration P&L (intrinsic value)
+      // Expiration P&L (at primary expiration)
+      // For calendars/diagonals: far-dated legs valued using Black-Scholes
       let expPnL = 0;
       for (const strat of visibleStrategies) {
-        expPnL += calculateExpirationPnL(strat, price);
+        expPnL += calculateExpirationPnL(strat, price, volatility);
       }
       expirationPoints.push({ price, pnl: expPnL });
 

@@ -3,7 +3,7 @@
  *
  * Features:
  * - P&L chart (PnLChart) with expiration and theoretical curves
- * - Strategies list with visibility toggle and debit editing
+ * - Positions list with visibility toggle and debit editing
  * - Alerts section with price line alerts
  * - 3D of Options controls (time, spot, volatility simulation)
  * - Summary stats (Real-Time P&L, Max Profit, Max Loss)
@@ -29,6 +29,9 @@ import type {
   AlertBehavior,
   AlertCondition,
 } from '../types/alerts';
+import type { PositionLeg, PositionType, PositionDirection, CostBasisType } from '../types/riskGraph';
+import { recognizePositionType, strategyToLegs } from '../utils/positionRecognition';
+import { formatLegsDisplay, formatPositionLabel } from '../utils/positionFormatting';
 
 // Re-export types for consumers
 export type { AlertBehavior, AlertType };
@@ -38,7 +41,7 @@ export interface RiskGraphPanelHandle {
   autoFit: () => void;
 }
 
-// Strategy details for popup/risk graph
+// Strategy details for popup/risk graph (legacy interface)
 export interface SelectedStrategy {
   strategy: 'butterfly' | 'vertical' | 'single';
   side: 'call' | 'put';
@@ -50,10 +53,18 @@ export interface SelectedStrategy {
   symbol?: string;  // Underlying symbol (SPX, NDX, etc.)
 }
 
+// Extended interface with leg support and cost basis
 export interface RiskGraphStrategy extends SelectedStrategy {
   id: string;
   addedAt: number;
   visible: boolean;
+  // New leg-based fields (optional for backward compat)
+  legs?: PositionLeg[];
+  positionType?: PositionType;
+  direction?: PositionDirection;
+  // Cost basis (debit = you paid, credit = you received)
+  costBasis?: number | null;      // Absolute value of cost
+  costBasisType?: CostBasisType;  // 'debit' or 'credit'
 }
 
 // Price alert line (visual only, separate from strategy alerts)
@@ -119,8 +130,8 @@ export interface RiskGraphPanelProps {
   // Reflection hook - opens Journal for capturing insights
   onOpenJournal?: () => void;
 
-  // ToS Import - opens modal to import ToS scripts
-  onImportToS?: () => void;
+  // Create Position - opens PositionCreateModal
+  onCreatePosition?: () => void;
 
   // Edit strategy - opens modal to edit existing strategy
   onEditStrategy?: (id: string) => void;
@@ -165,7 +176,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   onSimSpotChange,
   onResetSimulation,
   onOpenJournal,
-  onImportToS,
+  onCreatePosition,
   onEditStrategy,
   onLogTrade,
   onOpenMonitor,
@@ -189,10 +200,10 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   // Track meaningful analyzer interaction for reflection hook
   const [hasAnalyzerInteraction, setHasAnalyzerInteraction] = useState(false);
 
-  // Backdrop visibility controls
-  const [showVolumeProfile, setShowVolumeProfile] = useState(true);
-  const [showGex, setShowGex] = useState(true);
-  const [showStructuralLines, setShowStructuralLines] = useState(true);
+  // Backdrop visibility controls (off by default - user can enable as needed)
+  const [showVolumeProfile, setShowVolumeProfile] = useState(false);
+  const [showGex, setShowGex] = useState(false);
+  const [showStructuralLines, setShowStructuralLines] = useState(false);
   const [backdropOpacity, setBackdropOpacity] = useState(0.8);
   const [showDGSettings, setShowDGSettings] = useState(false);
 
@@ -265,6 +276,10 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
       visible: s.visible,
       dte: s.dte,
       expiration: s.expiration,
+      // Include leg-based fields for accurate multi-leg position rendering
+      legs: s.legs,
+      positionType: s.positionType,
+      direction: s.direction,
     })),
     [strategies]
   );
@@ -288,6 +303,11 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   // Extract strikes from strategies for chart
   const chartStrikes = useMemo(() => {
     return strategies.filter(s => s.visible).flatMap(strat => {
+      // Use legs if available for accurate strike extraction
+      if (strat.legs && strat.legs.length > 0) {
+        return strat.legs.map(leg => leg.strike);
+      }
+      // Legacy fallback
       if (strat.strategy === 'butterfly') {
         return [strat.strike - strat.width, strat.strike, strat.strike + strat.width];
       } else if (strat.strategy === 'vertical') {
@@ -552,11 +572,11 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
               {strategies.length === 0 ? (
                 <div className="risk-graph-chart-empty">
                   <div className="chart-empty-content">
-                    <p className="empty-title">Add a strategy to begin analysis</p>
+                    <p className="empty-title">Add a position to begin analysis</p>
                     <p className="empty-hint">Click a heatmap tile → "Add to Risk Graph"</p>
-                    {onImportToS && (
-                      <button className="btn-import-tos-empty" onClick={onImportToS}>
-                        Import from ToS
+                    {onCreatePosition && (
+                      <button className="btn-import-tos-empty" onClick={onCreatePosition}>
+                        + Create Position
                       </button>
                     )}
                   </div>
@@ -578,23 +598,23 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
             </div>
           </div>
 
-          {/* Sidebar: Strategies + Alerts */}
+          {/* Sidebar: Positions + Alerts */}
           <div className="risk-graph-sidebar">
-                {/* Strategy List */}
+                {/* Position List */}
                 <div className="risk-graph-strategies">
                   <div className="section-header">
-                    Strategies
+                    Positions
                     <div className="section-header-actions">
-                      {onImportToS && (
+                      {onCreatePosition && (
                         <button
-                          className="btn-import-tos"
-                          title="Import ToS Script"
+                          className="btn-create-position"
+                          title="Create new position"
                           onClick={(e) => {
                             e.stopPropagation();
-                            onImportToS();
+                            onCreatePosition();
                           }}
                         >
-                          +ToS
+                          + Create
                         </button>
                       )}
                       {hasAnalyzerInteraction && onOpenJournal && (
@@ -614,60 +634,92 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                   </div>
                   <div className="strategies-list">
                     {strategies.map(strat => {
-                      const strategyLabel = strat.strategy === 'butterfly' ? 'Butterfly'
-                        : strat.strategy === 'vertical' ? 'Vertical'
-                        : 'Single';
-                      const strikeDisplay = strat.strategy === 'butterfly'
-                        ? `${strat.strike - strat.width}/${strat.strike}/${strat.strike + strat.width}`
-                        : strat.strategy === 'vertical'
-                        ? `${strat.strike}/${strat.side === 'call' ? strat.strike + strat.width : strat.strike - strat.width}`
-                        : `${strat.strike}`;
+                      // Derive legs from strategy if not already provided
+                      const legs = strat.legs || strategyToLegs(
+                        strat.strategy,
+                        strat.side,
+                        strat.strike,
+                        strat.width,
+                        strat.expiration
+                      );
+
+                      // Recognize position type from legs
+                      const recognition = strat.positionType
+                        ? { type: strat.positionType, direction: strat.direction || 'long', isSymmetric: true }
+                        : recognizePositionType(legs);
+
+                      const positionType = recognition.type;
+                      const direction = recognition.direction;
+                      const isAsymmetric = recognition.isSymmetric === false;
+
+                      // Format display values
+                      const positionLabel = formatPositionLabel(positionType, direction, legs);
+                      const legsNotation = formatLegsDisplay(legs);
+
+                      // Determine cost basis type (debit or credit)
+                      // Default to 'debit' for legacy positions, use explicit value if set
+                      const costBasisType = strat.costBasisType || 'debit';
+                      const costBasis = strat.costBasis ?? strat.debit ?? null;
+                      const isCredit = costBasisType === 'credit';
 
                       return (
-                        <div key={strat.id} className={`risk-graph-strategy-item ${!strat.visible ? 'hidden-strategy' : ''}`}>
-                          <div className="strategy-content">
-                            <div className="strategy-row-top">
+                        <div key={strat.id} className={`risk-graph-position-item ${!strat.visible ? 'hidden-position' : ''}`}>
+                          <div className="position-content">
+                            {/* Header Row: Symbol, Label, DTE, Cost Basis */}
+                            <div className="position-row-header">
                               {strat.symbol && (
-                                <span className="strategy-symbol" title={strat.symbol}>
+                                <span className="position-symbol" title={strat.symbol}>
                                   {strat.symbol}
                                 </span>
                               )}
-                              <span className="strategy-type" title={strategyLabel}>
-                                {strat.strategy === 'butterfly' ? 'BF' : strat.strategy === 'vertical' ? 'VS' : 'SGL'}
+                              <span className="position-label" title={positionLabel}>
+                                {positionLabel}
                               </span>
-                              <span className="strategy-strike" title={`Strikes: ${strikeDisplay}`}>
-                                {strat.strike}{strat.width > 0 ? `/${strat.width}w` : ''}
-                              </span>
-                              <span className={`strategy-side ${strat.side}`}>
-                                {strat.side.charAt(0).toUpperCase()}
-                              </span>
-                              <span className="strategy-dte" title={`${strat.dte} days to expiration`}>
+                              <span className="position-dte" title={`${strat.dte} days to expiration`}>
                                 {strat.dte}d
                               </span>
-                              <span className="strategy-debit">
-                                $<input
-                                  type="number"
-                                  className="debit-input"
-                                  defaultValue={strat.debit !== null ? strat.debit.toFixed(2) : ''}
-                                  key={`debit-${strat.id}-${strat.debit}`}
-                                  step="0.01"
-                                  min="0"
-                                  placeholder="0.00"
-                                  onBlur={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    setHasAnalyzerInteraction(true);
-                                    onUpdateStrategyDebit(strat.id, isNaN(val) ? null : val);
-                                  }}
-                                  onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                      e.currentTarget.blur();
-                                    }
-                                  }}
-                                  onClick={(e) => e.stopPropagation()}
-                                />
+                              {/* Prominent Debit/Credit Badge */}
+                              <span className={`position-cost-basis ${isCredit ? 'credit' : 'debit'}`}>
+                                <span className="cost-type-badge">{isCredit ? 'CR' : 'DR'}</span>
+                                <span className="cost-value">
+                                  $<input
+                                    type="number"
+                                    className="debit-input"
+                                    defaultValue={costBasis !== null ? costBasis.toFixed(2) : ''}
+                                    key={`debit-${strat.id}-${costBasis}`}
+                                    step="0.01"
+                                    min="0"
+                                    placeholder="0.00"
+                                    onBlur={(e) => {
+                                      const val = parseFloat(e.target.value);
+                                      setHasAnalyzerInteraction(true);
+                                      onUpdateStrategyDebit(strat.id, isNaN(val) ? null : val);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.currentTarget.blur();
+                                      }
+                                    }}
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                </span>
                               </span>
                             </div>
-                            <div className="strategy-row-bottom">
+
+                            {/* Legs Row: Leg notation */}
+                            <div className="position-row-legs">
+                              <span className="position-legs-notation" title={legsNotation}>
+                                {legsNotation}
+                              </span>
+                              {isAsymmetric && (
+                                <span className="position-asym-badge" title="Asymmetric wing widths">
+                                  asym
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Actions Row */}
+                            <div className="position-row-actions">
                               <button
                                 className={`btn-toggle-visibility ${strat.visible ? 'visible' : 'hidden'}`}
                                 onClick={() => {
@@ -682,7 +734,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                                 <button
                                   className="btn-edit-strategy"
                                   onClick={() => onEditStrategy(strat.id)}
-                                  title="Edit strategy"
+                                  title="Edit position"
                                 >
                                   Edit
                                 </button>
@@ -690,7 +742,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                               <button
                                 className="btn-alert"
                                 onClick={() => onStartNewAlert(strat.id)}
-                                title="Create alert for this strategy"
+                                title="Create alert for this position"
                               >
                                 Alert
                               </button>
@@ -698,7 +750,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                                 <button
                                   className="btn-log-trade"
                                   onClick={() => onLogTrade(strat)}
-                                  title="Log trade with this strategy"
+                                  title="Log trade with this position"
                                 >
                                   Log
                                 </button>
@@ -706,7 +758,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                               <button
                                 className="btn-remove"
                                 onClick={() => onRemoveStrategy(strat.id)}
-                                title="Remove strategy"
+                                title="Remove position"
                               >
                                 ×
                               </button>
@@ -717,7 +769,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                     })}
                     {strategies.length === 0 && (
                       <div className="strategies-empty">
-                        No strategies loaded
+                        No positions loaded
                       </div>
                     )}
                   </div>

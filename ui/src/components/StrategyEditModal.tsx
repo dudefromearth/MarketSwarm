@@ -1,6 +1,9 @@
 /**
  * StrategyEditModal - Edit existing risk graph strategies
  *
+ * NOTE: This is the legacy modal. For new leg-based editing, use PositionEditModal.
+ * This file is kept for backward compatibility.
+ *
  * Form-based editor for strategy parameters:
  * - Symbol (from available symbols in settings)
  * - Strategy type (butterfly, vertical, single)
@@ -9,6 +12,7 @@
  */
 
 import { useState, useCallback, useEffect } from 'react';
+import { useDraggable } from '../hooks/useDraggable';
 
 const JOURNAL_API = '';
 
@@ -30,6 +34,10 @@ export interface StrategyData {
   symbol?: string;
 }
 
+// Re-export PositionEditModal for consumers who want the new leg-based editor
+export { default as PositionEditModal } from './PositionEditModal';
+export type { StrategyData as PositionData } from './PositionEditModal';
+
 interface StrategyEditModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -40,6 +48,12 @@ interface StrategyEditModalProps {
 export default function StrategyEditModal({ isOpen, onClose, onSave, strategy }: StrategyEditModalProps) {
   const [availableSymbols, setAvailableSymbols] = useState<AvailableSymbol[]>([]);
   const [symbol, setSymbol] = useState<string>('SPX');
+
+  // Draggable modal
+  const { dragHandleProps, containerStyle, isDragging } = useDraggable({
+    handleSelector: '.strategy-edit-header',
+    initialCentered: true,
+  });
   const [strategyType, setStrategyType] = useState<'butterfly' | 'vertical' | 'single'>('butterfly');
   const [side, setSide] = useState<'call' | 'put'>('call');
   const [strike, setStrike] = useState<string>('');
@@ -128,8 +142,14 @@ export default function StrategyEditModal({ isOpen, onClose, onSave, strategy }:
 
   return (
     <div className="strategy-edit-overlay" onClick={handleClose}>
-      <div className="strategy-edit-modal" onClick={e => e.stopPropagation()}>
-        <div className="strategy-edit-header">
+      <div
+        className={`strategy-edit-modal floating-modal ${isDragging ? 'is-dragging' : ''}`}
+        onClick={e => e.stopPropagation()}
+        ref={dragHandleProps.ref}
+        onMouseDown={dragHandleProps.onMouseDown}
+        style={containerStyle}
+      >
+        <div className="strategy-edit-header draggable-handle">
           <h3>Edit Strategy</h3>
           <button className="close-btn" onClick={handleClose}>&times;</button>
         </div>

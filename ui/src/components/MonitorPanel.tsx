@@ -2,6 +2,8 @@
 // Pure display component - receives data as props from App.tsx
 
 import { useState } from 'react';
+import { ErrorBoundary } from './ErrorBoundary';
+import { safeCurrency, safeString } from '../utils/safeFormat';
 
 interface Trade {
   id: string;
@@ -31,14 +33,16 @@ interface MonitorPanelProps {
   onClose: () => void;
   onCloseTrade?: (tradeId: string) => void;
   onCancelOrder?: (orderId: number) => void;
+  onViewInRiskGraph?: (trade: Trade) => void;
 }
 
-export default function MonitorPanel({
+function MonitorPanelContent({
   trades,
   orders,
   onClose,
   onCloseTrade,
   onCancelOrder,
+  onViewInRiskGraph,
 }: MonitorPanelProps) {
   const [activeTab, setActiveTab] = useState<'trades' | 'orders'>('trades');
   const [error, setError] = useState<string | null>(null);
@@ -123,6 +127,15 @@ export default function MonitorPanel({
                       <span>Entry: ${(t.entry_price / 100).toFixed(2)}</span>
                     </div>
                     <div className="monitor-item-actions">
+                      {onViewInRiskGraph && (
+                        <button
+                          className="monitor-btn view"
+                          onClick={() => onViewInRiskGraph(t)}
+                          title="View in Risk Graph"
+                        >
+                          📈
+                        </button>
+                      )}
                       <button className="monitor-btn close" onClick={() => handleCloseTrade(t.id)}>
                         Close
                       </button>
@@ -136,16 +149,16 @@ export default function MonitorPanel({
               <div className="monitor-empty">No pending orders</div>
             ) : (
               <div className="monitor-list">
-                {orders.map(o => (
-                  <div key={o.id} className="monitor-item">
+                {orders.map((o, idx) => (
+                  <div key={o.id ?? idx} className="monitor-item">
                     <div className="monitor-item-main">
-                      <span className="monitor-symbol">{o.symbol}</span>
-                      <span className="monitor-direction">{o.direction}</span>
-                      <span className="monitor-type">{o.order_type}</span>
+                      <span className="monitor-symbol">{safeString(o.symbol, '—')}</span>
+                      <span className="monitor-direction">{safeString(o.direction, '—')}</span>
+                      <span className="monitor-type">{safeString(o.order_type, '—')}</span>
                     </div>
                     <div className="monitor-item-details">
-                      <span>Limit: ${o.limit_price.toFixed(2)}</span>
-                      <span>Qty: {o.quantity}</span>
+                      <span>Limit: {safeCurrency(o.limit_price)}</span>
+                      <span>Qty: {o.quantity ?? '—'}</span>
                     </div>
                     <div className="monitor-item-actions">
                       <button className="monitor-btn cancel" onClick={() => handleCancelOrder(o.id)}>
@@ -160,5 +173,14 @@ export default function MonitorPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+// Wrap with ErrorBoundary for graceful error handling
+export default function MonitorPanel(props: MonitorPanelProps) {
+  return (
+    <ErrorBoundary componentName="Position Monitor">
+      <MonitorPanelContent {...props} />
+    </ErrorBoundary>
   );
 }
