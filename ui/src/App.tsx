@@ -41,6 +41,7 @@ import { usePositionsContext } from './contexts/PositionsContext';
 import { useSyncStatus } from './contexts/ApiClientContext';
 import { positionsToStrategies, riskGraphStrategyToPosition } from './utils/positionBridge';
 import SyncStatusIndicator from './components/SyncStatusIndicator';
+import NotificationCenter from './components/NotificationCenter';
 import type { AlertType, AlertBehavior } from './types/alerts';
 import RoutineDrawer from './components/RoutineDrawer';
 import GexChartPanel from './components/GexChartPanel';
@@ -2388,6 +2389,7 @@ function App() {
               </button>
             </>
           )}
+          <NotificationCenter />
           <SyncStatusIndicator />
         </div>
         <div className="header-center">
