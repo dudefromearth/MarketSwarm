@@ -433,10 +433,13 @@ export default function PositionCreateModal({
     return recognizePositionType(currentLegs);
   }, [currentLegs]);
 
-  // Format display
+  // Format display - use user's selection in build mode, inferred in import mode
   const positionLabel = useMemo(() => {
+    if (mode === 'build') {
+      return formatPositionLabel(positionType, direction, currentLegs);
+    }
     return formatPositionLabel(recognition.type, recognition.direction, currentLegs);
-  }, [recognition, currentLegs]);
+  }, [mode, positionType, direction, recognition, currentLegs]);
 
   const legsNotation = useMemo(() => {
     return formatLegsDisplay(currentLegs);
