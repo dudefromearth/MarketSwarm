@@ -3600,6 +3600,7 @@ function App() {
         onClose={() => setShowPositionCreate(false)}
         onCreate={handlePositionCreate}
         defaultSymbol={underlying.replace('I:', '')}
+        atmStrike={spot?.[underlying]?.value}
       />
 
       {/* Position Edit Modal (Leg-based) */}

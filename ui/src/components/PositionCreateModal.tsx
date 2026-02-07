@@ -47,6 +47,7 @@ interface PositionCreateModalProps {
   onClose: () => void;
   onCreate: (position: CreatedPosition) => void;
   defaultSymbol?: string;
+  atmStrike?: number;  // Current ATM strike price
 }
 
 type CreateMode = 'build' | 'import';
@@ -230,6 +231,7 @@ export default function PositionCreateModal({
   onClose,
   onCreate,
   defaultSymbol = 'SPX',
+  atmStrike = 5900,
 }: PositionCreateModalProps) {
   const [availableSymbols, setAvailableSymbols] = useState<AvailableSymbol[]>([]);
   const [mode, setMode] = useState<CreateMode>('build');
@@ -240,6 +242,9 @@ export default function PositionCreateModal({
     initialCentered: true,
   });
 
+  // Round ATM to nearest 5 for cleaner strikes
+  const roundedAtm = Math.round(atmStrike / 5) * 5;
+
   // Build mode state
   const [symbol, setSymbol] = useState(defaultSymbol);
   const [positionType, setPositionType] = useState<PositionType>('butterfly');
@@ -247,7 +252,7 @@ export default function PositionCreateModal({
   const [legs, setLegs] = useState<PositionLeg[]>([]);
   const [costBasis, setCostBasis] = useState('');
   const [costBasisType, setCostBasisType] = useState<CostBasisType>('debit');
-  const [baseStrike, setBaseStrike] = useState('5900');
+  const [baseStrike, setBaseStrike] = useState(roundedAtm.toString());
   const [width, setWidth] = useState('20');
   const [expiration, setExpiration] = useState('');
   const [primaryRight, setPrimaryRight] = useState<'call' | 'put'>('call');
@@ -313,8 +318,11 @@ export default function PositionCreateModal({
       const nextFriday = new Date(today);
       nextFriday.setDate(today.getDate() + daysUntilFriday);
       setExpiration(nextFriday.toISOString().split('T')[0]);
+
+      // Set base strike to ATM
+      setBaseStrike(roundedAtm.toString());
     }
-  }, [isOpen]);
+  }, [isOpen, roundedAtm]);
 
   // Generate legs when build parameters change
   useEffect(() => {
