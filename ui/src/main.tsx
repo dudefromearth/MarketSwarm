@@ -15,17 +15,23 @@ import { TimezoneProvider } from './contexts/TimezoneContext.tsx'
 import { RiskGraphProvider } from './contexts/RiskGraphContext.tsx'
 import { TradeLogProvider } from './contexts/TradeLogContext.tsx'
 import { DealerGravityProvider } from './contexts/DealerGravityContext.tsx'
+import { ApiClientProvider } from './contexts/ApiClientContext.tsx'
+import { PositionsProvider } from './contexts/PositionsContext.tsx'
 
 // Wrapper component for routes that need trading providers
 function TradingProviders({ children }: { children: React.ReactNode }) {
   return (
-    <DealerGravityProvider>
-      <RiskGraphProvider>
-        <TradeLogProvider>
-          {children}
-        </TradeLogProvider>
-      </RiskGraphProvider>
-    </DealerGravityProvider>
+    <ApiClientProvider offlineEnabled={true}>
+      <DealerGravityProvider>
+        <RiskGraphProvider>
+          <PositionsProvider>
+            <TradeLogProvider>
+              {children}
+            </TradeLogProvider>
+          </PositionsProvider>
+        </RiskGraphProvider>
+      </DealerGravityProvider>
+    </ApiClientProvider>
   );
 }
 

@@ -4,7 +4,7 @@
  * Request/response types for the Market Swarm API.
  */
 
-import type { Position, PositionLeg, CostBasisType } from '@market-swarm/core';
+import type { Position, PositionLeg, PositionType, PositionDirection, CostBasisType } from '@market-swarm/core';
 
 // ============================================================
 // API Response Types
@@ -24,10 +24,11 @@ export interface ApiResponse<T> {
 
 /** Input for creating a position */
 export interface CreatePositionInput {
-  symbol: string;
-  underlying?: string;
+  symbol?: string;
+  positionType: PositionType;
+  direction: PositionDirection;
   legs: PositionLeg[];
-  costBasis?: number;
+  costBasis?: number | null;
   costBasisType?: CostBasisType;
   visible?: boolean;
   label?: string | null;
@@ -36,7 +37,11 @@ export interface CreatePositionInput {
 
 /** Input for updating a position */
 export interface UpdatePositionInput {
-  costBasis?: number;
+  symbol?: string;
+  positionType?: PositionType;
+  direction?: PositionDirection;
+  legs?: PositionLeg[];
+  costBasis?: number | null;
   costBasisType?: CostBasisType;
   visible?: boolean;
   label?: string | null;

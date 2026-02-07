@@ -2,24 +2,33 @@
  * Positions Endpoint
  *
  * CRUD operations for leg-based positions.
+ * Returns ApiResponse wrappers for consistent error handling.
  */
 
 import type { Position } from '@market-swarm/core';
 import type { NetworkAdapter } from '../adapters/types.js';
 import type {
+  ApiResponse,
   PositionsListResponse,
   PositionResponse,
   CreatePositionInput,
   UpdatePositionInput,
 } from '../types.js';
 
+export interface BatchCreateResponse {
+  created: number;
+  ids: string[];
+  errors?: Array<{ index: number; error: string }>;
+}
+
 export interface PositionsEndpoint {
-  list(): Promise<Position[]>;
-  get(id: string): Promise<Position>;
-  create(input: CreatePositionInput): Promise<Position>;
-  update(id: string, input: UpdatePositionInput): Promise<Position>;
-  delete(id: string): Promise<void>;
-  reorder(ids: string[]): Promise<void>;
+  list(): Promise<ApiResponse<Position[]>>;
+  get(id: string): Promise<ApiResponse<Position>>;
+  create(input: CreatePositionInput): Promise<ApiResponse<Position>>;
+  update(id: string, input: UpdatePositionInput): Promise<ApiResponse<Position>>;
+  delete(id: string): Promise<ApiResponse<void>>;
+  createBatch(inputs: CreatePositionInput[]): Promise<ApiResponse<BatchCreateResponse>>;
+  reorder(order: Array<{ id: string; sortOrder: number }>): Promise<ApiResponse<void>>;
 }
 
 export function createPositionsEndpoint(
@@ -30,78 +39,185 @@ export function createPositionsEndpoint(
   const endpoint = `${baseUrl}/api/positions`;
 
   return {
-    async list(): Promise<Position[]> {
-      const response = await network.request<PositionsListResponse>(endpoint, {
-        headers: getHeaders(),
-      });
+    async list(): Promise<ApiResponse<Position[]>> {
+      try {
+        const response = await network.request<PositionsListResponse>(endpoint, {
+          headers: getHeaders(),
+        });
 
-      if (!response.ok || !response.data.success) {
-        throw new Error(response.data.error ?? 'Failed to fetch positions');
-      }
+        if (!response.ok || !response.data.success) {
+          return {
+            success: false,
+            error: response.data.error ?? 'Failed to fetch positions',
+          };
+        }
 
-      return response.data.data ?? [];
-    },
-
-    async get(id: string): Promise<Position> {
-      const response = await network.request<PositionResponse>(`${endpoint}/${id}`, {
-        headers: getHeaders(),
-      });
-
-      if (!response.ok || !response.data.success || !response.data.data) {
-        throw new Error(response.data.error ?? 'Position not found');
-      }
-
-      return response.data.data;
-    },
-
-    async create(input: CreatePositionInput): Promise<Position> {
-      const response = await network.request<PositionResponse>(endpoint, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: input,
-      });
-
-      if (!response.ok || !response.data.success || !response.data.data) {
-        throw new Error(response.data.error ?? 'Failed to create position');
-      }
-
-      return response.data.data;
-    },
-
-    async update(id: string, input: UpdatePositionInput): Promise<Position> {
-      const response = await network.request<PositionResponse>(`${endpoint}/${id}`, {
-        method: 'PATCH',
-        headers: getHeaders(),
-        body: input,
-      });
-
-      if (!response.ok || !response.data.success || !response.data.data) {
-        throw new Error(response.data.error ?? 'Failed to update position');
-      }
-
-      return response.data.data;
-    },
-
-    async delete(id: string): Promise<void> {
-      const response = await network.request<{ success: boolean }>(`${endpoint}/${id}`, {
-        method: 'DELETE',
-        headers: getHeaders(),
-      });
-
-      if (!response.ok || !response.data.success) {
-        throw new Error('Failed to delete position');
+        return {
+          success: true,
+          data: response.data.data ?? [],
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : 'Network error',
+        };
       }
     },
 
-    async reorder(ids: string[]): Promise<void> {
-      const response = await network.request<{ success: boolean }>(`${endpoint}/reorder`, {
-        method: 'POST',
-        headers: getHeaders(),
-        body: { ids },
-      });
+    async get(id: string): Promise<ApiResponse<Position>> {
+      try {
+        const response = await network.request<PositionResponse>(`${endpoint}/${id}`, {
+          headers: getHeaders(),
+        });
 
-      if (!response.ok || !response.data.success) {
-        throw new Error('Failed to reorder positions');
+        if (!response.ok || !response.data.success || !response.data.data) {
+          return {
+            success: false,
+            error: response.data.error ?? 'Position not found',
+          };
+        }
+
+        return {
+          success: true,
+          data: response.data.data,
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : 'Network error',
+        };
+      }
+    },
+
+    async create(input: CreatePositionInput): Promise<ApiResponse<Position>> {
+      try {
+        const response = await network.request<PositionResponse>(endpoint, {
+          method: 'POST',
+          headers: getHeaders(),
+          body: input,
+        });
+
+        if (!response.ok || !response.data.success || !response.data.data) {
+          return {
+            success: false,
+            error: response.data.error ?? 'Failed to create position',
+          };
+        }
+
+        return {
+          success: true,
+          data: response.data.data,
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : 'Network error',
+        };
+      }
+    },
+
+    async update(id: string, input: UpdatePositionInput): Promise<ApiResponse<Position>> {
+      try {
+        const response = await network.request<PositionResponse>(`${endpoint}/${id}`, {
+          method: 'PATCH',
+          headers: getHeaders(),
+          body: input,
+        });
+
+        if (!response.ok || !response.data.success || !response.data.data) {
+          return {
+            success: false,
+            error: response.data.error ?? 'Failed to update position',
+          };
+        }
+
+        return {
+          success: true,
+          data: response.data.data,
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : 'Network error',
+        };
+      }
+    },
+
+    async delete(id: string): Promise<ApiResponse<void>> {
+      try {
+        const response = await network.request<{ success: boolean }>(`${endpoint}/${id}`, {
+          method: 'DELETE',
+          headers: getHeaders(),
+        });
+
+        if (!response.ok || !response.data.success) {
+          return {
+            success: false,
+            error: 'Failed to delete position',
+          };
+        }
+
+        return { success: true };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : 'Network error',
+        };
+      }
+    },
+
+    async createBatch(inputs: CreatePositionInput[]): Promise<ApiResponse<BatchCreateResponse>> {
+      try {
+        const response = await network.request<{
+          success: boolean;
+          data?: BatchCreateResponse;
+          error?: string;
+        }>(`${endpoint}/batch`, {
+          method: 'POST',
+          headers: getHeaders(),
+          body: { positions: inputs },
+        });
+
+        if (!response.ok || !response.data.success) {
+          return {
+            success: false,
+            error: response.data.error ?? 'Failed to create positions',
+          };
+        }
+
+        return {
+          success: true,
+          data: response.data.data ?? { created: 0, ids: [] },
+        };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : 'Network error',
+        };
+      }
+    },
+
+    async reorder(order: Array<{ id: string; sortOrder: number }>): Promise<ApiResponse<void>> {
+      try {
+        const response = await network.request<{ success: boolean }>(`${endpoint}/reorder`, {
+          method: 'PATCH',
+          headers: getHeaders(),
+          body: { order },
+        });
+
+        if (!response.ok || !response.data.success) {
+          return {
+            success: false,
+            error: 'Failed to reorder positions',
+          };
+        }
+
+        return { success: true };
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : 'Network error',
+        };
       }
     },
   };

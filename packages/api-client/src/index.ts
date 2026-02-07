@@ -94,4 +94,13 @@ export { SyncManager } from './sync/manager.js';
 
 // Endpoints
 export type { StrategiesEndpoint } from './endpoints/strategies.js';
-export type { PositionsEndpoint } from './endpoints/positions.js';
+export type { PositionsEndpoint, BatchCreateResponse } from './endpoints/positions.js';
+
+// Re-export core types for convenience
+export type {
+  Position,
+  PositionLeg,
+  PositionType,
+  PositionDirection,
+  CostBasisType,
+} from '@market-swarm/core';
