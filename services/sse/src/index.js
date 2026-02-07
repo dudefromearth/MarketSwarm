@@ -112,6 +112,39 @@ journalPaths.forEach(path => {
   });
 });
 
+// Proxy Vexy AI endpoints to vexy_ai service (port 3005)
+// This handles /api/vexy/* including routine-briefing
+const VEXY_SERVICE = "http://localhost:3005";
+
+app.use("/api/vexy", async (req, res) => {
+  const url = `${VEXY_SERVICE}${req.originalUrl}`;
+  try {
+    const headers = {
+      "Content-Type": "application/json",
+      "X-User-Id": req.user?.wp?.id || "",
+      "X-User-Email": req.user?.wp?.email || "",
+    };
+
+    const response = await fetch(url, {
+      method: req.method,
+      headers,
+      body: ["GET", "HEAD"].includes(req.method) ? undefined : JSON.stringify(req.body),
+    });
+
+    const contentType = response.headers.get("content-type");
+    if (contentType?.includes("application/json")) {
+      const data = await response.json();
+      res.status(response.status).json(data);
+    } else {
+      const text = await response.text();
+      res.status(response.status).send(text);
+    }
+  } catch (err) {
+    console.error(`[proxy] Vexy proxy error for ${req.method} ${url}:`, err.message);
+    res.status(502).json({ success: false, error: "Vexy AI service unavailable" });
+  }
+});
+
 // Static file serving for production UI build
 // Serves from ui/dist - run 'npm run build' in ui/ to generate
 const __filename = fileURLToPath(import.meta.url);
