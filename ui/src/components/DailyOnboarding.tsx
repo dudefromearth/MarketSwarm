@@ -18,10 +18,11 @@ interface DailyOnboardingProps {
 
 const PHASES = [
   { id: 'routine', label: 'Routine', icon: '1' },
-  { id: 'analysis', label: 'Structural Analysis', icon: '2' },
+  { id: 'structure', label: 'Structure', icon: '2' },
   { id: 'selection', label: 'Selection', icon: '3' },
-  { id: 'decision', label: 'Decision', icon: '4' },
-  { id: 'process', label: 'Process', icon: '5' },
+  { id: 'analysis', label: 'Analysis', icon: '4' },
+  { id: 'action', label: 'Action', icon: '5' },
+  { id: 'process', label: 'Process', icon: '6' },
 ];
 
 export default function DailyOnboarding({ onActivate }: DailyOnboardingProps) {
