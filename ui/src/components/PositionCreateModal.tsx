@@ -253,7 +253,7 @@ export default function PositionCreateModal({
   const [costBasis, setCostBasis] = useState('');
   const [costBasisType, setCostBasisType] = useState<CostBasisType>('debit');
   const [baseStrike, setBaseStrike] = useState(roundedAtm.toString());
-  const [width, setWidth] = useState('10');
+  const [width, setWidth] = useState('20');
   const [expiration, setExpiration] = useState('');
   const [primaryRight, setPrimaryRight] = useState<'call' | 'put'>('call');
 
@@ -629,9 +629,9 @@ export default function PositionCreateModal({
                       <StrikeDropdown
                         value={leg.strike}
                         onChange={strike => updateLeg(index, { strike })}
-                        atmStrike={parseFloat(baseStrike) || 5900}
-                        minStrike={4000}
-                        maxStrike={7000}
+                        atmStrike={roundedAtm}
+                        minStrike={roundedAtm - 500}
+                        maxStrike={roundedAtm + 500}
                         strikeStep={5}
                         className="leg-strike-dropdown"
                       />
