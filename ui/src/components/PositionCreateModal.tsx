@@ -252,10 +252,40 @@ export default function PositionCreateModal({
   const [expiration, setExpiration] = useState('');
   const [primaryRight, setPrimaryRight] = useState<'call' | 'put'>('call');
 
+  // Vega warning for short calendars/diagonals
+  const [showVegaWarning, setShowVegaWarning] = useState(false);
+  const [pendingShortType, setPendingShortType] = useState<PositionType | null>(null);
+
+  // Types that need vega warning when going short
+  const VEGA_SENSITIVE_TYPES: PositionType[] = ['calendar', 'diagonal'];
+
   // Update direction when position type changes
   const handlePositionTypeChange = useCallback((newType: PositionType) => {
     setPositionType(newType);
     setDirection(getDefaultDirection(newType));
+  }, []);
+
+  // Handle direction change with vega warning check
+  const handleDirectionChange = useCallback((newDirection: Direction) => {
+    if (newDirection === 'short' && VEGA_SENSITIVE_TYPES.includes(positionType)) {
+      setPendingShortType(positionType);
+      setShowVegaWarning(true);
+    } else {
+      setDirection(newDirection);
+    }
+  }, [positionType]);
+
+  // Confirm short calendar/diagonal despite vega warning
+  const confirmShortVega = useCallback(() => {
+    setDirection('short');
+    setShowVegaWarning(false);
+    setPendingShortType(null);
+  }, []);
+
+  // Cancel short calendar/diagonal
+  const cancelShortVega = useCallback(() => {
+    setShowVegaWarning(false);
+    setPendingShortType(null);
   }, []);
 
   // Import mode state
@@ -504,14 +534,14 @@ export default function PositionCreateModal({
                     <button
                       type="button"
                       className={`direction-btn long ${direction === 'long' ? 'active' : ''}`}
-                      onClick={() => setDirection('long')}
+                      onClick={() => handleDirectionChange('long')}
                     >
                       L
                     </button>
                     <button
                       type="button"
                       className={`direction-btn short ${direction === 'short' ? 'active' : ''}`}
-                      onClick={() => setDirection('short')}
+                      onClick={() => handleDirectionChange('short')}
                     >
                       S
                     </button>
@@ -766,6 +796,32 @@ export default function PositionCreateModal({
           </button>
         </div>
       </div>
+
+      {/* Vega Warning Modal */}
+      {showVegaWarning && (
+        <div className="vega-warning-overlay" onClick={cancelShortVega}>
+          <div className="vega-warning-modal" onClick={e => e.stopPropagation()}>
+            <div className="vega-warning-icon">⚠️</div>
+            <h4>Short {pendingShortType === 'calendar' ? 'Calendar' : 'Diagonal'} Warning</h4>
+            <p>
+              Short {pendingShortType === 'calendar' ? 'calendars' : 'diagonals'} are
+              <strong> extra sensitive to vega</strong> (implied volatility changes).
+            </p>
+            <p>
+              A spike in IV can cause significant losses even if the underlying
+              moves in your favor. This strategy requires careful volatility management.
+            </p>
+            <div className="vega-warning-buttons">
+              <button className="btn btn-cancel" onClick={cancelShortVega}>
+                Cancel
+              </button>
+              <button className="btn btn-danger" onClick={confirmShortVega}>
+                Do it
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

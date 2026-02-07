@@ -12171,6 +12171,65 @@ body {
   white-space: nowrap;
 }
 
+/* Vega Warning Modal */
+.vega-warning-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.vega-warning-modal {
+  background: #1f2937;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  padding: 24px;
+  max-width: 360px;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.vega-warning-icon {
+  font-size: 32px;
+  margin-bottom: 12px;
+}
+
+.vega-warning-modal h4 {
+  margin: 0 0 12px;
+  color: #f59e0b;
+  font-size: 16px;
+}
+
+.vega-warning-modal p {
+  margin: 0 0 12px;
+  color: #9ca3af;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.vega-warning-modal p strong {
+  color: #fbbf24;
+}
+
+.vega-warning-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 20px;
+}
+
+.vega-warning-buttons .btn-danger {
+  background: #dc2626;
+  color: white;
+}
+
+.vega-warning-buttons .btn-danger:hover {
+  background: #b91c1c;
+}
+
 /* Quick Setup Row */
 .quick-setup-row {
   display: flex;
