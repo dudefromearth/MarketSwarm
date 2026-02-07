@@ -777,7 +777,7 @@ export default function PositionCreateModal({
                     <div className="parsed-cost">
                       <span className="label">Cost:</span>
                       <span className={`value ${parsedPosition.costBasisType}`}>
-                        {parsedPosition.costBasisType === 'credit' ? 'CR' : 'DR'} ${parsedPosition.costBasis.toFixed(2)}
+                        ${parsedPosition.costBasis.toFixed(2)} {parsedPosition.costBasisType === 'credit' ? 'Credit' : 'Debit'}
                       </span>
                     </div>
                   )}
@@ -812,14 +812,14 @@ export default function PositionCreateModal({
                   className={`cost-type-btn debit ${costBasisType === 'debit' ? 'active' : ''}`}
                   onClick={() => setCostBasisType('debit')}
                 >
-                  DR
+                  Debit
                 </button>
                 <button
                   type="button"
                   className={`cost-type-btn credit ${costBasisType === 'credit' ? 'active' : ''}`}
                   onClick={() => setCostBasisType('credit')}
                 >
-                  CR
+                  Credit
                 </button>
               </div>
               <span className="cost-basis-dollar">$</span>
@@ -845,7 +845,7 @@ export default function PositionCreateModal({
                 <span className="preview-dte">{dte}d</span>
                 {costBasis && (
                   <span className={`preview-cost-basis ${costBasisType}`}>
-                    {costBasisType === 'credit' ? 'CR' : 'DR'} ${costBasis}
+                    ${costBasis} {costBasisType === 'credit' ? 'Credit' : 'Debit'}
                   </span>
                 )}
               </div>

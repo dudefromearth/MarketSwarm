@@ -12336,6 +12336,46 @@ body {
   width: 110px;
 }
 
+/* Cost Basis Toggle */
+.position-create-body .cost-type-toggle {
+  display: flex;
+  gap: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid #333;
+  flex-shrink: 0;
+}
+
+.position-create-body .cost-type-btn {
+  padding: 6px 12px;
+  background: #252535;
+  border: none;
+  color: #888;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.position-create-body .cost-type-btn:first-child {
+  border-right: 1px solid #333;
+}
+
+.position-create-body .cost-type-btn:hover {
+  background: #303040;
+  color: #ccc;
+}
+
+.position-create-body .cost-type-btn.debit.active {
+  background: #7f1d1d;
+  color: #ef4444;
+}
+
+.position-create-body .cost-type-btn.credit.active {
+  background: #166534;
+  color: #22c55e;
+}
+
 /* Script Input */
 .position-create-body .script-input {
   width: 100%;
