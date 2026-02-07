@@ -227,7 +227,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
 
     // Chart area background (semi-transparent if backdrop exists)
     if (renderBackdrop) {
-      ctx.fillStyle = 'rgba(10, 10, 10, 0.85)'; // Semi-transparent to let backdrop show
+      ctx.fillStyle = 'rgba(10, 10, 10, 0.4)'; // More transparent to let backdrop show through
     } else {
       ctx.fillStyle = '#0a0a0a';
     }
@@ -735,6 +735,9 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
   }, [strategyHash, autoFit]);
 
   // Handle resize - both window and container
+  // Track if we've done the initial size setup - using ref to persist across re-renders
+  const hasInitialSizeRef = useRef(false);
+
   useEffect(() => {
     const handleResize = () => draw();
     window.addEventListener('resize', handleResize);
@@ -742,14 +745,13 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     // Also observe container resize - call autoFit on first resize to set proper bounds
     const container = containerRef.current;
     let resizeObserver: ResizeObserver | null = null;
-    let hasInitialSize = false;
     if (container) {
       resizeObserver = new ResizeObserver((entries) => {
         const entry = entries[0];
         if (entry && entry.contentRect.width > 0 && entry.contentRect.height > 0) {
-          if (!hasInitialSize) {
+          if (!hasInitialSizeRef.current) {
             // First time we have valid dimensions - do full autoFit
-            hasInitialSize = true;
+            hasInitialSizeRef.current = true;
             autoFit();
           } else {
             draw();
@@ -765,15 +767,17 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
         resizeObserver.disconnect();
       }
     };
-  }, [draw, autoFit]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draw]); // Intentionally exclude autoFit - we only want to call it once on initial size
 
-  // Initial draw - with a small delay to ensure container is measured
+  // Initial draw - only on mount, with a small delay to ensure container is measured
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     autoFit();
     // Redraw after a short delay to ensure layout is complete
     const timer = setTimeout(() => autoFit(), 100);
     return () => clearTimeout(timer);
-  }, [autoFit]);
+  }, []); // Intentionally empty - only run on mount
 
   return (
     <div

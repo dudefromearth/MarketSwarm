@@ -23,6 +23,7 @@ import {
 } from '../hooks/useRiskGraphCalculations';
 import { useAlerts } from '../contexts/AlertContext';
 import { useDealerGravity } from '../contexts/DealerGravityContext';
+import { useIndicatorSettings } from './chart-primitives';
 import type {
   AlertType,
   AlertBehavior,
@@ -131,6 +132,9 @@ export interface RiskGraphPanelProps {
   onOpenMonitor?: () => void;
   pendingOrderCount?: number;
   openTradeCount?: number;
+
+  // GEX data for backdrop (from App.tsx)
+  gexByStrike?: Record<number, { calls: number; puts: number }>;
 }
 
 export interface RiskGraphPanelHandle {
@@ -167,6 +171,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   onOpenMonitor,
   pendingOrderCount = 0,
   openTradeCount = 0,
+  gexByStrike,
 }, ref) {
   // Get alerts from shared context
   const {
@@ -186,9 +191,13 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
 
   // Backdrop visibility controls
   const [showVolumeProfile, setShowVolumeProfile] = useState(true);
+  const [showGex, setShowGex] = useState(true);
   const [showStructuralLines, setShowStructuralLines] = useState(true);
-  const [backdropOpacity, setBackdropOpacity] = useState(0.5);
+  const [backdropOpacity, setBackdropOpacity] = useState(0.8);
   const [showDGSettings, setShowDGSettings] = useState(false);
+
+  // Get GEX and VP configs from indicator settings (inherits from DG chart settings)
+  const { gexConfig, vpConfig: volumeProfileConfig } = useIndicatorSettings();
 
   // Expose autoFit to parent
   useImperativeHandle(ref, () => ({
@@ -335,10 +344,12 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     onOpenAlertDialog(strategyId, Math.round(price), conditionMap[type]);
   }, [strategies, onOpenAlertDialog]);
 
-  // Render backdrop for Dealer Gravity visualization
+  // Render backdrop for Dealer Gravity visualization (VP + GEX + Structural Lines)
   const renderBackdrop = useCallback((props: BackdropRenderProps) => {
-    // Only render if we have DG data and backdrop is enabled
-    if (!dgArtifact && !dgConfig?.enabled) return null;
+    // Show backdrop if we have any data to display
+    const hasVPData = dgArtifact?.profile;
+    const hasGexData = gexByStrike && Object.keys(gexByStrike).length > 0;
+    if (!hasVPData && !hasGexData) return null;
 
     return (
       <RiskGraphBackdrop
@@ -348,12 +359,26 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
         priceMax={props.priceMax}
         spotPrice={props.spotPrice}
         showVolumeProfile={showVolumeProfile}
+        showGex={showGex}
         showStructuralLines={showStructuralLines}
         opacity={backdropOpacity}
-        volumeHeightPercent={25}
+        gexByStrike={gexByStrike}
+        gexConfig={{
+          callColor: gexConfig.callColor,
+          putColor: gexConfig.putColor,
+          mode: gexConfig.mode,
+          barHeight: gexConfig.barHeight,
+        }}
+        vpConfig={{
+          color: volumeProfileConfig.color,
+          widthPercent: volumeProfileConfig.widthPercent,
+          rowsLayout: volumeProfileConfig.rowsLayout,
+          rowSize: volumeProfileConfig.rowSize,
+          transparency: volumeProfileConfig.transparency,
+        }}
       />
     );
-  }, [dgArtifact, dgConfig?.enabled, showVolumeProfile, showStructuralLines, backdropOpacity]);
+  }, [dgArtifact, dgConfig?.enabled, showVolumeProfile, showGex, showStructuralLines, backdropOpacity, gexByStrike, gexConfig, volumeProfileConfig]);
 
   // Format DTE display
   const formatDTE = (hours: number) => {
@@ -449,7 +474,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
         <h3>Risk Graph {strategies.length > 0 && `(${strategies.length})`}</h3>
         <div className="panel-header-actions">
           {/* Dealer Gravity Backdrop Controls */}
-          {dgArtifact && (
+          {(dgArtifact || (gexByStrike && Object.keys(gexByStrike).length > 0)) && (
             <div className="backdrop-controls" title="Dealer Gravity Backdrop">
               <button
                 className={`btn-backdrop-toggle ${showVolumeProfile ? 'active' : ''}`}
@@ -457,6 +482,13 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                 title="Toggle Volume Profile"
               >
                 VP
+              </button>
+              <button
+                className={`btn-backdrop-toggle ${showGex ? 'active' : ''}`}
+                onClick={() => setShowGex(!showGex)}
+                title="Toggle GEX (Gamma Exposure)"
+              >
+                GEX
               </button>
               <button
                 className={`btn-backdrop-toggle ${showStructuralLines ? 'active' : ''}`}

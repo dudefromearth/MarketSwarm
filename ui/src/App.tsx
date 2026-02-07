@@ -2905,6 +2905,7 @@ function App() {
           onOpenMonitor={() => setMonitorOpen(true)}
           pendingOrderCount={pendingOrderCount}
           openTradeCount={openTradeCount}
+          gexByStrike={gexByStrike}
         />
 
       </div>
