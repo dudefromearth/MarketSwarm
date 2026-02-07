@@ -31,11 +31,16 @@ import PlaybookView from './components/PlaybookView';
 import AlertCreationModal, { type EditingAlertData } from './components/AlertCreationModal';
 import RiskGraphPanel from './components/RiskGraphPanel';
 import TosImportModal from './components/TosImportModal';
-import StrategyEditModal, { type StrategyData } from './components/StrategyEditModal';
+import PositionEditModal, { type StrategyData } from './components/PositionEditModal';
+import PositionCreateModal, { type CreatedPosition } from './components/PositionCreateModal';
 import type { ParsedStrategy } from './utils/tosParser';
 import { useAlerts } from './contexts/AlertContext';
 import { usePath } from './contexts/PathContext';
 import { useRiskGraph } from './contexts/RiskGraphContext';
+import { usePositionsContext } from './contexts/PositionsContext';
+import { useSyncStatus } from './contexts/ApiClientContext';
+import { positionsToStrategies, riskGraphStrategyToPosition } from './utils/positionBridge';
+import SyncStatusIndicator from './components/SyncStatusIndicator';
 import type { AlertType, AlertBehavior } from './types/alerts';
 import RoutineDrawer from './components/RoutineDrawer';
 import GexChartPanel from './components/GexChartPanel';
@@ -508,14 +513,88 @@ function App() {
   // User profile for header
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
 
-  // Risk Graph context - provides strategies and operations
+  // Risk Graph context - provides legacy strategies (fallback)
   const {
-    strategies: riskGraphStrategies,
-    addStrategy: contextAddStrategy,
-    removeStrategy: contextRemoveStrategy,
-    toggleVisibility: contextToggleVisibility,
-    updateDebit: contextUpdateDebit,
+    strategies: legacyStrategies,
+    addStrategy: legacyAddStrategy,
+    removeStrategy: legacyRemoveStrategy,
+    toggleVisibility: legacyToggleVisibility,
+    updateDebit: legacyUpdateDebit,
   } = useRiskGraph();
+
+  // New positions context - leg-based model with offline support
+  const {
+    positions,
+    loading: positionsLoading,
+    connected: positionsConnected,
+    addPosition,
+    updatePosition,
+    removePosition,
+    toggleVisibility: positionsToggleVisibility,
+    updateCostBasis,
+  } = usePositionsContext();
+
+  // Sync status for offline indicator
+  const { isOnline, hasPendingChanges, pendingCount } = useSyncStatus();
+
+  // Feature flag: use new positions API (enable once backend is verified working)
+  const USE_NEW_POSITIONS_API = true;
+
+  // Convert positions to legacy strategy format for RiskGraphPanel
+  const riskGraphStrategies = useMemo(() => {
+    if (!USE_NEW_POSITIONS_API) {
+      return legacyStrategies;
+    }
+    return positionsToStrategies(positions);
+  }, [positions, legacyStrategies, USE_NEW_POSITIONS_API]);
+
+  // Bridged CRUD operations - use new API when enabled
+  const contextRemoveStrategy = useCallback(async (id: string) => {
+    if (USE_NEW_POSITIONS_API) {
+      await removePosition(id);
+    } else {
+      await legacyRemoveStrategy(id);
+    }
+  }, [USE_NEW_POSITIONS_API, removePosition, legacyRemoveStrategy]);
+
+  const contextToggleVisibility = useCallback(async (id: string) => {
+    if (USE_NEW_POSITIONS_API) {
+      await positionsToggleVisibility(id);
+    } else {
+      await legacyToggleVisibility(id);
+    }
+  }, [USE_NEW_POSITIONS_API, positionsToggleVisibility, legacyToggleVisibility]);
+
+  const contextUpdateDebit = useCallback(async (id: string, debit: number | null, reason?: string) => {
+    if (USE_NEW_POSITIONS_API) {
+      await updateCostBasis(id, debit, 'debit');
+    } else {
+      await legacyUpdateDebit(id, debit, reason);
+    }
+  }, [USE_NEW_POSITIONS_API, updateCostBasis, legacyUpdateDebit]);
+
+  const contextAddStrategy = useCallback(async (strategy: Omit<RiskGraphStrategy, 'id' | 'addedAt' | 'visible'>) => {
+    if (USE_NEW_POSITIONS_API) {
+      // Convert legacy strategy input to position format
+      const positionInput = riskGraphStrategyToPosition({
+        ...strategy,
+        id: '', // Will be assigned by backend
+        addedAt: Date.now(),
+        visible: true,
+      } as RiskGraphStrategy);
+
+      await addPosition({
+        symbol: positionInput.symbol,
+        positionType: positionInput.positionType,
+        direction: positionInput.direction,
+        legs: positionInput.legs,
+        costBasis: positionInput.costBasis,
+        costBasisType: positionInput.costBasisType,
+      });
+    } else {
+      await legacyAddStrategy(strategy);
+    }
+  }, [USE_NEW_POSITIONS_API, addPosition, legacyAddStrategy]);
 
   // Popup state
   const [selectedTile, setSelectedTile] = useState<SelectedStrategy | null>(null);
@@ -539,6 +618,7 @@ function App() {
   );
   const [tosCopied, setTosCopied] = useState(false);
   const [showTosImport, setShowTosImport] = useState(false);
+  const [showPositionCreate, setShowPositionCreate] = useState(false);
   const [editingStrategy, setEditingStrategy] = useState<RiskGraphStrategy | null>(null);
 
   // Panel collapse and layout state
@@ -938,6 +1018,62 @@ function App() {
     }
   };
 
+  // Create position from PositionCreateModal
+  const handlePositionCreate = async (position: CreatedPosition) => {
+    try {
+      // Derive legacy fields from legs for backward compatibility
+      const legs = position.legs;
+      const sortedLegs = [...legs].sort((a, b) => a.strike - b.strike);
+      const strikes = sortedLegs.map(l => l.strike);
+
+      // Determine legacy strategy type
+      let legacyStrategy: 'butterfly' | 'vertical' | 'single' = 'single';
+      if (legs.length === 3) {
+        legacyStrategy = 'butterfly';
+      } else if (legs.length === 2) {
+        legacyStrategy = 'vertical';
+      }
+
+      // Determine side from dominant leg type
+      const calls = legs.filter(l => l.right === 'call').length;
+      const puts = legs.filter(l => l.right === 'put').length;
+      const side: 'call' | 'put' = calls >= puts ? 'call' : 'put';
+
+      // Calculate center strike and width
+      let centerStrike = strikes[0];
+      let width = 0;
+
+      if (legs.length === 3) {
+        // Butterfly: center is middle strike
+        centerStrike = strikes[1];
+        width = strikes[1] - strikes[0];
+      } else if (legs.length === 2) {
+        // Vertical: first strike is the anchor
+        centerStrike = strikes[0];
+        width = strikes[1] - strikes[0];
+      } else if (legs.length === 4) {
+        // Condor/Iron: use average of inner strikes
+        centerStrike = Math.round((strikes[1] + strikes[2]) / 2);
+        width = strikes[1] - strikes[0];
+      }
+
+      // Add strategy with legacy fields (extended fields like legs/costBasisType
+      // are not yet supported in LegacyRiskGraphStrategy - will be added in future)
+      await contextAddStrategy({
+        symbol: position.symbol,
+        strategy: legacyStrategy,
+        side,
+        strike: centerStrike,
+        width,
+        dte: position.dte,
+        expiration: position.expiration,
+        debit: position.costBasis,
+      });
+    } catch (err) {
+      console.error('Failed to create position:', err);
+    }
+  };
+
   // Close popup
   const closePopup = () => setSelectedTile(null);
 
@@ -977,12 +1113,24 @@ function App() {
     }
   };
 
-  // Update strategy from edit modal
+  // Update position from edit modal (handles both legacy and leg-based updates)
   const handleStrategyEdit = async (updated: StrategyData) => {
     try {
-      // Update debit if changed
-      if (updated.debit !== undefined) {
-        await contextUpdateDebit(updated.id, updated.debit);
+      if (USE_NEW_POSITIONS_API && updated.legs) {
+        // Use new positions API for full leg-based updates
+        await updatePosition(updated.id, {
+          symbol: updated.symbol,
+          legs: updated.legs,
+          costBasis: updated.costBasis ?? updated.debit ?? null,
+          costBasisType: updated.costBasisType || 'debit',
+          positionType: updated.positionType,
+          direction: updated.direction,
+        });
+      } else {
+        // Legacy: only update debit
+        if (updated.debit !== undefined) {
+          await contextUpdateDebit(updated.id, updated.debit);
+        }
       }
     } catch (err) {
       console.error('Failed to update strategy:', err);
@@ -3018,7 +3166,7 @@ function App() {
             setSimSpotOffset(0);
           }}
           onOpenJournal={() => setJournalOpen(true)}
-          onImportToS={() => setShowTosImport(true)}
+          onCreatePosition={() => setShowPositionCreate(true)}
           onEditStrategy={(id) => {
             const strat = riskGraphStrategies.find(s => s.id === id);
             if (strat) setEditingStrategy(strat);
@@ -3436,15 +3584,23 @@ function App() {
         editingAlert={alertModalEditingAlert}
       />
 
-      {/* ToS Import Modal */}
+      {/* ToS Import Modal (legacy - kept for backward compat) */}
       <TosImportModal
         isOpen={showTosImport}
         onClose={() => setShowTosImport(false)}
         onImport={handleTosImport}
       />
 
-      {/* Strategy Edit Modal */}
-      <StrategyEditModal
+      {/* Position Create Modal (Build or Import) */}
+      <PositionCreateModal
+        isOpen={showPositionCreate}
+        onClose={() => setShowPositionCreate(false)}
+        onCreate={handlePositionCreate}
+        defaultSymbol={underlying.replace('I:', '')}
+      />
+
+      {/* Position Edit Modal (Leg-based) */}
+      <PositionEditModal
         isOpen={editingStrategy !== null}
         onClose={() => setEditingStrategy(null)}
         onSave={handleStrategyEdit}
