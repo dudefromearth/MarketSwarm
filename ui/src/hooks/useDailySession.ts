@@ -5,7 +5,7 @@
  * session activation state for the Left-to-Right workflow.
  */
 
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 
 // Stage types (matching PathContext)
 type Stage = 'discovery' | 'analysis' | 'action' | 'reflection' | 'distillation';
@@ -54,7 +54,21 @@ export function getCurrentETHour(): number {
   return hours + minutes / 60;
 }
 
+// How often to update the current hour (in ms)
+const TIME_UPDATE_INTERVAL = 60000; // 1 minute
+
 export function useDailySession() {
+  // Track current ET hour to re-evaluate time-based hints
+  // Updates every minute to catch market open/close transitions
+  const [currentHour, setCurrentHour] = useState(getCurrentETHour);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentHour(getCurrentETHour());
+    }, TIME_UPDATE_INTERVAL);
+    return () => clearInterval(interval);
+  }, []);
+
   const [state, setState] = useState<DailySessionState>(() => {
     const today = getTodayET();
     const storedDate = localStorage.getItem(STORAGE_KEYS.sessionDate);
@@ -127,6 +141,7 @@ export function useDailySession() {
   }, [state.stagesVisited]);
 
   // Determine if Routine drawer should hint
+  // Uses currentHour state (updates every minute) to catch market open transition
   const shouldHintRoutine = useMemo(() => {
     // Hint if session just activated and discovery not yet visited
     if (state.sessionActivated && !state.stagesVisited.includes('discovery')) {
@@ -134,25 +149,24 @@ export function useDailySession() {
     }
 
     // Hint during pre-market if discovery not visited
-    const hour = getCurrentETHour();
-    const isPreMarket = hour < 9.5; // Before 9:30 AM ET
+    const isPreMarket = currentHour < 9.5; // Before 9:30 AM ET
     if (isPreMarket && !state.stagesVisited.includes('discovery')) {
       return true;
     }
 
     return false;
-  }, [state.sessionActivated, state.stagesVisited]);
+  }, [state.sessionActivated, state.stagesVisited, currentHour]);
 
   // Determine if Process drawer should hint
+  // Uses currentHour state (updates every minute) to catch market close transition
   const shouldHintProcess = useMemo(() => {
     // Only hint after market close if user has taken action
-    const hour = getCurrentETHour();
-    const isPostMarket = hour >= 16; // After 4:00 PM ET
+    const isPostMarket = currentHour >= 16; // After 4:00 PM ET
     const hasTakenAction = state.stagesVisited.includes('action');
     const hasReflected = state.stagesVisited.includes('reflection');
 
     return isPostMarket && hasTakenAction && !hasReflected;
-  }, [state.stagesVisited]);
+  }, [state.stagesVisited, currentHour]);
 
   // Show onboarding overlay if first open today and not yet activated
   const showOnboarding = state.isFirstOpenToday && !state.sessionActivated;
@@ -165,7 +179,6 @@ export function useDailySession() {
     activateSession,
     markStageVisited,
     hasVisitedStage,
-    getCurrentETHour,
   };
 }
 
