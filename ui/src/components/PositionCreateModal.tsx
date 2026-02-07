@@ -485,40 +485,42 @@ export default function PositionCreateModal({
                     </optgroup>
                   ))}
                 </select>
-                <svg
-                  className="mini-risk-graph"
-                  viewBox="0 0 24 12"
-                  width="28"
-                  height="14"
-                >
-                  <path
-                    d={MINI_RISK_GRAPHS[positionType]?.path || MINI_RISK_GRAPHS.custom.path}
-                    stroke={MINI_RISK_GRAPHS[positionType]?.color || MINI_RISK_GRAPHS.custom.color}
-                    strokeWidth="1.5"
-                    fill="none"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                <div className="direction-toggle">
-                  <button
-                    type="button"
-                    className={`direction-btn long ${direction === 'long' ? 'active' : ''}`}
-                    onClick={() => setDirection('long')}
+                <div className="position-type-display">
+                  <svg
+                    className="mini-risk-graph"
+                    viewBox="0 0 24 12"
+                    width="48"
+                    height="24"
                   >
-                    Long
-                  </button>
-                  <button
-                    type="button"
-                    className={`direction-btn short ${direction === 'short' ? 'active' : ''}`}
-                    onClick={() => setDirection('short')}
-                  >
-                    Short
-                  </button>
+                    <path
+                      d={MINI_RISK_GRAPHS[positionType]?.path || MINI_RISK_GRAPHS.custom.path}
+                      stroke={MINI_RISK_GRAPHS[positionType]?.color || MINI_RISK_GRAPHS.custom.color}
+                      strokeWidth="1.5"
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  <div className="direction-toggle">
+                    <button
+                      type="button"
+                      className={`direction-btn long ${direction === 'long' ? 'active' : ''}`}
+                      onClick={() => setDirection('long')}
+                    >
+                      L
+                    </button>
+                    <button
+                      type="button"
+                      className={`direction-btn short ${direction === 'short' ? 'active' : ''}`}
+                      onClick={() => setDirection('short')}
+                    >
+                      S
+                    </button>
+                  </div>
+                  <span className="selected-type-label">
+                    {direction === 'long' ? 'Long' : 'Short'} {POSITION_TYPE_LABELS[positionType]}
+                  </span>
                 </div>
-                <span className="selected-type-badge">
-                  {direction === 'long' ? 'Long' : 'Short'} {POSITION_TYPE_LABELS[positionType]}
-                </span>
               </div>
 
               {/* Quick Setup (Strike, Width, Expiration) */}

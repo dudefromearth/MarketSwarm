@@ -12091,9 +12091,18 @@ body {
   border-color: #3b82f6;
 }
 
+.position-type-display {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
 .mini-risk-graph {
   flex-shrink: 0;
-  margin-left: -4px;
+  background: #1a1a24;
+  border-radius: 4px;
+  padding: 2px;
 }
 
 .direction-toggle {
@@ -12102,17 +12111,19 @@ body {
   border-radius: 4px;
   overflow: hidden;
   border: 1px solid #333;
+  flex-shrink: 0;
 }
 
 .direction-btn {
-  padding: 5px 10px;
+  padding: 4px 8px;
   background: #252535;
   border: none;
   color: #888;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
+  min-width: 24px;
 }
 
 .direction-btn:first-child {
@@ -12134,6 +12145,14 @@ body {
   color: #ef4444;
 }
 
+.selected-type-label {
+  color: #e5e7eb;
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Legacy badge - kept for backward compat */
 .selected-type-badge {
   display: inline-flex;
   align-items: center;
