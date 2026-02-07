@@ -45,6 +45,9 @@ import TrackingAnalyticsDashboard from './components/TrackingAnalyticsDashboard'
 import LeaderboardView from './components/LeaderboardView';
 import MonitorPanel from './components/MonitorPanel';
 import FloatingDialog from './components/FloatingDialog';
+import DailyOnboarding from './components/DailyOnboarding';
+import ProcessBar, { type ProcessPhase } from './components/ProcessBar';
+import { useDailySession } from './hooks/useDailySession';
 import { VolumeProfileSettings, useIndicatorSettings } from './components/chart-primitives';
 import type { TradeSelectorModel, TradeRecommendation } from './types/tradeSelector';
 
@@ -539,7 +542,8 @@ function App() {
   const [gexCollapsed, setGexCollapsed] = useState(false);
   const [gexDrawerOpen, setGexDrawerOpen] = useState(false); // GEX drawer overlay state
   const [heatmapCollapsed, setHeatmapCollapsed] = useState(false);
-  const [widgetsRowCollapsed, setWidgetsRowCollapsed] = useState(false);
+  const [isRiskGraphHovered, setIsRiskGraphHovered] = useState(false); // Track mouse over Risk Graph
+  const [widgetsRowCollapsed, setWidgetsRowCollapsed] = useState(true);
   const prevWidgetsCollapsed = useRef(widgetsRowCollapsed);
   const [priceAlertLines, setPriceAlertLines] = useState<PriceAlertLine[]>(() => {
     try {
@@ -618,6 +622,127 @@ function App() {
 
   // Commentary panel state
   const [commentaryCollapsed, setCommentaryCollapsed] = useState(true);
+
+  // Action phase trigger - transient/sticky state for when user commits capital
+  // (saves trade, creates alert, sends to broker)
+  const [actionTriggeredAt, setActionTriggeredAt] = useState<number | null>(null);
+  const ACTION_PHASE_DURATION = 4000; // 4 seconds sticky duration
+
+  // Callback to trigger the action phase (called on commits)
+  const triggerActionPhase = useCallback(() => {
+    setActionTriggeredAt(Date.now());
+  }, []);
+
+  // Clear action phase after duration expires
+  useEffect(() => {
+    if (!actionTriggeredAt) return;
+    const elapsed = Date.now() - actionTriggeredAt;
+    const remaining = ACTION_PHASE_DURATION - elapsed;
+    if (remaining <= 0) {
+      setActionTriggeredAt(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setActionTriggeredAt(null);
+    }, remaining);
+    return () => clearTimeout(timer);
+  }, [actionTriggeredAt]);
+
+  // Daily session tracking for LTR workflow
+  const {
+    showOnboarding,
+    shouldHintRoutine,
+    shouldHintProcess,
+    stagesVisited,
+    activateSession,
+    markStageVisited,
+  } = useDailySession();
+
+  // Compute active phase for ProcessBar based on what's currently open
+  // Priority order from spec: Action → Routine → Process → Analysis → Structure → Selection → Neutral
+  //
+  // Key rules from spec:
+  // - Analysis = Risk Graph interaction ONLY ("Any time the operator is actively using the Risk Graph")
+  // - Action = Commitment events only (trade saved, alert created, sent to broker)
+  // - Selection = Heatmap, Trade Selector, candidate browsing (includes tile popup)
+  // - Opening modals does NOT trigger any phase (falls through to underlying context)
+  const activeProcessPhase: ProcessPhase | undefined = useMemo(() => {
+    // Priority 1: Action (temporary override)
+    // Sticky for ~4 seconds after trade/alert/broker commit
+    if (actionTriggeredAt && (Date.now() - actionTriggeredAt) < ACTION_PHASE_DURATION) {
+      return 'action';
+    }
+
+    // Priority 2: Routine Drawer open
+    // User is in morning routine, checklists, pre-market context
+    if (!commentaryCollapsed) return 'routine';
+
+    // Priority 3: Process Drawer open
+    // User is in Trade Log, Journal, Playbook, Retrospectives
+    if (!tradeLogCollapsed) return 'process';
+
+    // Priority 4: Risk Graph interaction → Analysis
+    // "Any time the operator is actively using the Risk Graph, Analysis must be highlighted"
+    // This is ONLY for Risk Graph - modals and popups do NOT trigger Analysis
+    if (isRiskGraphHovered) return 'analysis';
+
+    // Priority 5: Dealer Gravity / GEX active → Structure
+    // "What is the market shape?" - VP, GEX structures, structural price levels
+    if (gexDrawerOpen) return 'structure';
+    if (!gexCollapsed) return 'structure';
+
+    // Priority 6: Idea discovery → Selection
+    // Heatmap, Trade Selector, candidate lists, tile popup (browsing possible trades)
+    // Note: selectedTile is the heatmap popup - this is Selection, not Analysis
+    if (!heatmapCollapsed || selectedTile !== null) return 'selection';
+
+    // Default: No phase highlighted (neutral state)
+    // "If nothing is active: no phase is highlighted"
+    // Note: Open modals (tradeEntryOpen, alertModalStrategy) intentionally fall through here
+    // Spec says: "Action is NOT triggered by: Opening a trade entry modal"
+    // And Analysis is ONLY for Risk Graph, so modals = neutral unless underlying context applies
+    return undefined;
+  }, [actionTriggeredAt, commentaryCollapsed, tradeLogCollapsed, isRiskGraphHovered, gexDrawerOpen, gexCollapsed, heatmapCollapsed, selectedTile]);
+
+  // Drawer proximity tracking for gravitational glow effect
+  const [routineProximity, setRoutineProximity] = useState(0);
+  const [processProximity, setProcessProximity] = useState(0);
+  const routineDrawerRef = useRef<HTMLDivElement>(null);
+  const processDrawerRef = useRef<HTMLDivElement>(null);
+
+  // Mouse proximity tracking for drawer glow effect
+  useEffect(() => {
+    const PROXIMITY_THRESHOLD = 200; // pixels - start glowing when within this distance
+
+    const handleMouseMove = (e: MouseEvent) => {
+      // Calculate distance to left edge (routine drawer)
+      const leftDist = e.clientX;
+      const routineIntensity = leftDist < PROXIMITY_THRESHOLD
+        ? Math.pow(1 - (leftDist / PROXIMITY_THRESHOLD), 1.5) // Exponential falloff
+        : 0;
+      setRoutineProximity(routineIntensity);
+
+      // Calculate distance to right edge (process drawer)
+      const rightDist = window.innerWidth - e.clientX;
+      const processIntensity = rightDist < PROXIMITY_THRESHOLD
+        ? Math.pow(1 - (rightDist / PROXIMITY_THRESHOLD), 1.5)
+        : 0;
+      setProcessProximity(processIntensity);
+    };
+
+    const handleMouseLeave = () => {
+      setRoutineProximity(0);
+      setProcessProximity(0);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseleave', handleMouseLeave);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseleave', handleMouseLeave);
+    };
+  }, []);
 
   // Path stage inference - infer active panel from UI state
   useEffect(() => {
@@ -954,7 +1079,9 @@ function App() {
 
   const onTradeSaved = useCallback(() => {
     setTradeRefreshTrigger(prev => prev + 1);
-  }, []);
+    // Trigger Action phase - user committed capital
+    triggerActionPhase();
+  }, [triggerActionPhase]);
 
   // Log management handlers
   const handleSelectLog = useCallback((log: TradeLog) => {
@@ -2169,6 +2296,9 @@ function App() {
         </div>
       </header>
 
+      {/* Process Bar - Persistent orientation anchor (from pr-spec.md) */}
+      <ProcessBar stagesVisited={stagesVisited} activePhase={activeProcessPhase} />
+
       {/* Widget Row - Indicator Widgets */}
       <div className={`widget-row-container ${widgetsRowCollapsed ? 'collapsed' : ''}`}>
         <div
@@ -2850,7 +2980,12 @@ function App() {
           )}
         </div>
 
-        {/* Risk Graph Panel */}
+        {/* Risk Graph Panel - Mouse tracking for Analysis phase highlighting */}
+        <div
+          onMouseEnter={() => setIsRiskGraphHovered(true)}
+          onMouseLeave={() => setIsRiskGraphHovered(false)}
+          style={{ display: 'contents' }}
+        >
         <RiskGraphPanel
           strategies={riskGraphStrategies}
           onRemoveStrategy={removeFromRiskGraph}
@@ -2907,6 +3042,7 @@ function App() {
           openTradeCount={openTradeCount}
           gexByStrike={gexByStrike}
         />
+        </div>
 
       </div>
 
@@ -2917,12 +3053,21 @@ function App() {
         <span>v{heatmap?.version || '-'}</span>
       </div>
 
-      {/* Commentary Panel (Left Edge) */}
+      {/* Routine Panel (Left Edge) - Warm tones with gravitational glow */}
       <div
-        className={`commentary-edge-bar ${!commentaryCollapsed ? 'open' : ''}`}
-        onClick={() => setCommentaryCollapsed(!commentaryCollapsed)}
+        ref={routineDrawerRef}
+        className={`commentary-edge-bar routine-drawer ${!commentaryCollapsed ? 'open' : ''} ${shouldHintRoutine ? 'hint' : ''}`}
+        style={{ '--proximity': routineProximity } as React.CSSProperties}
+        onClick={() => {
+          setCommentaryCollapsed(!commentaryCollapsed);
+          if (commentaryCollapsed) {
+            markStageVisited('discovery');
+          }
+        }}
       >
-        <span className="edge-bar-label">💬 Observer</span>
+        <div className="drawer-tab">
+          <span className="drawer-tab-label">Routine</span>
+        </div>
       </div>
 
       <div className={`commentary-overlay ${!commentaryCollapsed ? 'open' : ''}`}>
@@ -2937,12 +3082,21 @@ function App() {
         </div>
       </div>
 
-      {/* Trade Log Edge Bar + Overlay */}
+      {/* Process Panel (Right Edge) - Cool tones with gravitational glow */}
       <div
-        className={`trade-log-edge-bar ${!tradeLogCollapsed ? 'open' : ''}`}
-        onClick={() => setTradeLogCollapsed(!tradeLogCollapsed)}
+        ref={processDrawerRef}
+        className={`trade-log-edge-bar process-drawer ${!tradeLogCollapsed ? 'open' : ''} ${shouldHintProcess ? 'hint' : ''}`}
+        style={{ '--proximity': processProximity } as React.CSSProperties}
+        onClick={() => {
+          setTradeLogCollapsed(!tradeLogCollapsed);
+          if (tradeLogCollapsed) {
+            markStageVisited('reflection');
+          }
+        }}
       >
-        <span className="edge-bar-label">Trade Log</span>
+        <div className="drawer-tab">
+          <span className="drawer-tab-label">Process</span>
+        </div>
       </div>
 
       <div className={`trade-log-overlay ${!tradeLogCollapsed ? 'open' : ''}`}>
@@ -3250,6 +3404,8 @@ function App() {
                 entryDebit: strategy?.debit || undefined,
                 minProfitThreshold: alertData.minProfitThreshold,
               });
+              // Trigger Action phase - user armed a future trigger
+              triggerActionPhase();
             }
           }
         }}
@@ -3280,6 +3436,11 @@ function App() {
         onSave={handleStrategyEdit}
         strategy={editingStrategy}
       />
+
+      {/* Daily Onboarding Overlay (shows on first open each day) */}
+      {showOnboarding && (
+        <DailyOnboarding onActivate={activateSession} />
+      )}
 
       {/* FOTW Path Indicator */}
       <PathIndicator />

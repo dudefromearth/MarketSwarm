@@ -1,0 +1,204 @@
+/**
+ * Daily Onboarding Styles
+ *
+ * First entry overlay with horizontal process bar.
+ * Visual language: subdued, meditative, intentional.
+ */
+
+/* ============================================
+   Overlay Container
+   ============================================ */
+
+.daily-onboarding-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1001;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 1;
+  transition: opacity 0.4s ease-out;
+}
+
+.daily-onboarding-overlay.fading {
+  opacity: 0;
+}
+
+/* ============================================
+   Content Container
+   ============================================ */
+
+.daily-onboarding-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+  padding: 40px 60px;
+  pointer-events: none;
+}
+
+/* ============================================
+   Heading
+   ============================================ */
+
+.daily-onboarding-heading {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.heading-line {
+  width: 60px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #555, transparent);
+}
+
+.heading-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+}
+
+/* ============================================
+   Process Bar
+   ============================================ */
+
+.daily-process-bar {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.process-phase-wrapper {
+  display: flex;
+  align-items: center;
+}
+
+.process-phase {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 20px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  min-width: 100px;
+  transition: all 0.2s ease;
+}
+
+.phase-number {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  color: #666;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.phase-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: #777;
+  text-align: center;
+  white-space: nowrap;
+}
+
+/* Phase-specific color accents (subtle) */
+.process-phase-routine .phase-number {
+  color: #b8860b;
+  border-color: rgba(184, 134, 11, 0.3);
+}
+
+.process-phase-process .phase-number {
+  color: #4a6fa5;
+  border-color: rgba(74, 111, 165, 0.3);
+}
+
+/* ============================================
+   Connector Arrows
+   ============================================ */
+
+.phase-connector {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+}
+
+.connector-arrow {
+  display: block;
+  width: 24px;
+  height: 1px;
+  background: linear-gradient(90deg, #444, #555);
+  position: relative;
+}
+
+.connector-arrow::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid #555;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+}
+
+/* ============================================
+   Hint Text
+   ============================================ */
+
+.daily-onboarding-hint {
+  font-size: 12px;
+  color: #555;
+  margin-top: 16px;
+  opacity: 0.8;
+  animation: hint-pulse 2s ease-in-out infinite;
+}
+
+@keyframes hint-pulse {
+  0%, 100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+/* ============================================
+   Responsive
+   ============================================ */
+
+@media (max-width: 900px) {
+  .daily-process-bar {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+  }
+
+  .phase-connector {
+    display: none;
+  }
+
+  .process-phase {
+    min-width: 80px;
+    padding: 12px 16px;
+  }
+
+  .phase-label {
+    font-size: 10px;
+  }
+}

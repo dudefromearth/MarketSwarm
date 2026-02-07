@@ -1,0 +1,221 @@
+/**
+ * Process Bar Styles
+ *
+ * The persistent "anchor of orientation" - always visible,
+ * non-interactive, cannot be disabled.
+ *
+ * Visual language: minimal, ambient, horizontal flow.
+ * Color semantics:
+ *   - Warm (left/Routine): #b8860b accents
+ *   - Neutral (center): muted grays
+ *   - Cool (right/Process): #4a6fa5 accents
+ */
+
+/* ============================================
+   Container
+   ============================================ */
+
+.process-bar {
+  position: relative;
+  z-index: 100;
+  width: 100%;
+  height: 32px;
+  background: linear-gradient(
+    to bottom,
+    rgba(20, 20, 22, 0.95),
+    rgba(16, 16, 18, 0.98)
+  );
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  pointer-events: none; /* Non-interactive */
+  flex-shrink: 0;
+}
+
+.process-bar--static {
+  opacity: 0.7;
+}
+
+.process-bar--subtle {
+  opacity: 0.85;
+}
+
+.process-bar--guided {
+  opacity: 1;
+}
+
+/* ============================================
+   Inner Layout
+   ============================================ */
+
+.process-bar-inner {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 24px;
+}
+
+/* ============================================
+   Phase Wrapper (phase + connector)
+   ============================================ */
+
+.process-bar-phase-wrapper {
+  display: flex;
+  align-items: center;
+}
+
+/* ============================================
+   Phase Item
+   ============================================ */
+
+.process-bar-phase {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 12px;
+  transition: all 0.3s ease;
+}
+
+.process-bar-phase-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  transition: all 0.3s ease;
+}
+
+.process-bar-phase-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.4);
+  letter-spacing: 0.3px;
+  transition: color 0.3s ease;
+}
+
+/* ============================================
+   Phase Colors (by position in flow)
+   ============================================ */
+
+/* Warm - Routine (left) */
+.process-bar-phase--warm .process-bar-phase-dot {
+  background: rgba(184, 134, 11, 0.3);
+}
+
+.process-bar-phase--warm.visited .process-bar-phase-dot,
+.process-bar-phase--warm.active .process-bar-phase-dot {
+  background: #b8860b;
+  box-shadow: 0 0 6px rgba(184, 134, 11, 0.5);
+}
+
+.process-bar-phase--warm.visited .process-bar-phase-label,
+.process-bar-phase--warm.active .process-bar-phase-label {
+  color: rgba(184, 134, 11, 0.9);
+}
+
+/* Neutral - Center phases */
+.process-bar-phase--neutral .process-bar-phase-dot {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.process-bar-phase--neutral.visited .process-bar-phase-dot,
+.process-bar-phase--neutral.active .process-bar-phase-dot {
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.2);
+}
+
+.process-bar-phase--neutral.visited .process-bar-phase-label,
+.process-bar-phase--neutral.active .process-bar-phase-label {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Cool - Process (right) */
+.process-bar-phase--cool .process-bar-phase-dot {
+  background: rgba(74, 111, 165, 0.3);
+}
+
+.process-bar-phase--cool.visited .process-bar-phase-dot,
+.process-bar-phase--cool.active .process-bar-phase-dot {
+  background: #4a6fa5;
+  box-shadow: 0 0 6px rgba(74, 111, 165, 0.5);
+}
+
+.process-bar-phase--cool.visited .process-bar-phase-label,
+.process-bar-phase--cool.active .process-bar-phase-label {
+  color: rgba(74, 111, 165, 0.9);
+}
+
+/* ============================================
+   Active Phase Emphasis (guided mode)
+   ============================================ */
+
+.process-bar--guided .process-bar-phase.active {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.process-bar--guided .process-bar-phase.active .process-bar-phase-dot {
+  animation: phase-pulse 2s ease-in-out infinite;
+}
+
+@keyframes phase-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.8;
+  }
+}
+
+/* ============================================
+   Connector Lines
+   ============================================ */
+
+.process-bar-connector {
+  display: block;
+  width: 24px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.1),
+    rgba(255, 255, 255, 0.15),
+    rgba(255, 255, 255, 0.1)
+  );
+  margin: 0 4px;
+  transition: background 0.3s ease;
+}
+
+.process-bar-connector.visited {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.2),
+    rgba(255, 255, 255, 0.3),
+    rgba(255, 255, 255, 0.2)
+  );
+}
+
+/* ============================================
+   Responsive
+   ============================================ */
+
+@media (max-width: 768px) {
+  .process-bar {
+    height: 28px;
+  }
+
+  .process-bar-phase {
+    padding: 3px 8px;
+    gap: 4px;
+  }
+
+  .process-bar-phase-label {
+    font-size: 10px;
+  }
+
+  .process-bar-connector {
+    width: 12px;
+  }
+}

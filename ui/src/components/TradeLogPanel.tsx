@@ -134,9 +134,7 @@ export default function TradeLogPanel({
   const [closedCount, setClosedCount] = useState(0);
 
   const fetchTrades = useCallback(async () => {
-    console.log('[TradeLogPanel] fetchTrades called, selectedLogId:', selectedLogId);
     if (!selectedLogId) {
-      console.log('[TradeLogPanel] No selectedLogId, clearing trades');
       setTrades([]);
       setLoading(false);
       return;
@@ -144,7 +142,6 @@ export default function TradeLogPanel({
 
     setLoading(true);
     setError(null);
-    const startTime = performance.now();
 
     try {
       const params = new URLSearchParams();
@@ -153,16 +150,12 @@ export default function TradeLogPanel({
         params.set('status', statusFilter);
       }
 
-      console.log('[TradeLogPanel] Fetching trades for log:', selectedLogId);
       const response = await fetch(
-        `${JOURNAL_API}/api/logs/${selectedLogId}/trades?${params}`,
-        { credentials: 'include' }
+        `${JOURNAL_API}/api/logs/${selectedLogId}/trades?${params}`
       );
-      console.log('[TradeLogPanel] Response received in', (performance.now() - startTime).toFixed(0), 'ms, status:', response.status);
       const result = await response.json();
 
       if (result.success) {
-        console.log('[TradeLogPanel] Got', result.data.length, 'trades');
         setTrades(result.data);
 
         // Count by status
@@ -171,31 +164,33 @@ export default function TradeLogPanel({
         setOpenCount(open);
         setClosedCount(closed);
       } else {
-        console.log('[TradeLogPanel] Fetch failed:', result.error);
         setError(result.error || 'Failed to fetch trades');
       }
     } catch (err) {
       setError('Unable to connect to journal service');
-      console.error('[TradeLogPanel] fetch error:', err);
+      console.error('TradeLogPanel fetch error:', err);
     } finally {
-      console.log('[TradeLogPanel] Done, total time:', (performance.now() - startTime).toFixed(0), 'ms');
       setLoading(false);
     }
   }, [selectedLogId, statusFilter]);
 
   const fetchPendingOrders = useCallback(async () => {
     try {
-      const response = await fetch(`${JOURNAL_API}/api/orders/active`, { credentials: 'include' });
+      const response = await fetch(`${JOURNAL_API}/api/orders/active`, {
+        credentials: 'include'
+      });
       const result = await response.json();
+      console.log('[TradeLogPanel] Pending orders response:', result);
       if (result.success) {
         const allOrders = [
-          ...result.data.pending_entries,
-          ...result.data.pending_exits
+          ...(result.data.pending_entries || []),
+          ...(result.data.pending_exits || [])
         ];
+        console.log('[TradeLogPanel] Pending orders count:', allOrders.length);
         setPendingOrders(allOrders);
       }
     } catch (err) {
-      console.error('Failed to fetch pending orders:', err);
+      console.error('[TradeLogPanel] Failed to fetch pending orders:', err);
     }
   }, []);
 
@@ -204,8 +199,7 @@ export default function TradeLogPanel({
 
     try {
       const response = await fetch(`${JOURNAL_API}/api/orders/${orderId}`, {
-        method: 'DELETE',
-        credentials: 'include'
+        method: 'DELETE'
       });
       const result = await response.json();
       if (result.success) {
@@ -260,8 +254,7 @@ export default function TradeLogPanel({
 
     try {
       const response = await fetch(
-        `${JOURNAL_API}/api/logs/${selectedLogId}/export?format=${format}`,
-        { credentials: 'include' }
+        `${JOURNAL_API}/api/logs/${selectedLogId}/export?format=${format}`
       );
 
       if (!response.ok) {
@@ -296,7 +289,6 @@ export default function TradeLogPanel({
         {
           method: 'POST',
           body: formData,
-          credentials: 'include',
         }
       );
 
@@ -423,8 +415,8 @@ export default function TradeLogPanel({
         <div className="trade-log-status-bar">
           <span className="status-bar-item">
             <span className="status-bar-label">P&L:</span>
-            <span className={`status-bar-value ${selectedLog.total_pnl >= 0 ? 'profit' : 'loss'}`}>
-              {selectedLog.total_pnl >= 0 ? '+' : ''}${(selectedLog.total_pnl / 100).toFixed(0)}
+            <span className={`status-bar-value ${(selectedLog.total_pnl ?? 0) >= 0 ? 'profit' : 'loss'}`}>
+              {(selectedLog.total_pnl ?? 0) >= 0 ? '+' : ''}${selectedLog.total_pnl != null ? (selectedLog.total_pnl / 100).toFixed(0) : '0'}
             </span>
           </span>
           <span className="status-bar-item">
@@ -441,19 +433,6 @@ export default function TradeLogPanel({
           </span>
         </div>
       )}
-
-      {/* Loop Indicator - The Trade Log is the hinge between Action and Reflection */}
-      <div className="improvement-loop-indicator">
-        <span className="loop-stage">Discovery</span>
-        <span className="loop-arrow">→</span>
-        <span className="loop-stage">Analysis</span>
-        <span className="loop-arrow">→</span>
-        <span className="loop-stage current">Action</span>
-        <span className="loop-arrow">→</span>
-        <span className="loop-stage">Reflection</span>
-        <span className="loop-arrow">→</span>
-        <span className="loop-stage">Distillation</span>
-      </div>
 
       <div className="trade-log-filters">
         <div className="status-tabs">
@@ -541,7 +520,7 @@ export default function TradeLogPanel({
                     </span>
                     <span className="order-symbol">{order.symbol}</span>
                     <span className="order-type-badge">{order.order_type}</span>
-                    <span className="order-price">@ ${order.limit_price.toFixed(2)}</span>
+                    <span className="order-price">@ ${typeof order.limit_price === 'number' ? order.limit_price.toFixed(2) : order.limit_price ?? '-'}</span>
                     <span className="order-qty">x{order.quantity}</span>
                   </div>
                   <div className="order-actions">
@@ -618,7 +597,7 @@ export default function TradeLogPanel({
                     </td>
                     <td className="trade-qty">{trade.quantity}</td>
                     <td className="trade-entry">
-                      {(trade.entry_price / 100).toFixed(2)}
+                      {trade.entry_price != null ? (trade.entry_price / 100).toFixed(2) : '-'}
                     </td>
                     <td className="trade-exit">
                       {trade.exit_price !== null

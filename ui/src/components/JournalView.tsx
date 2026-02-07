@@ -235,19 +235,6 @@ export default function JournalView({ onClose, onOpenPlaybook, tradeContext }: J
         </div>
       </div>
 
-      {/* Loop Indicator - Journal is where Reflection happens */}
-      <div className="improvement-loop-indicator">
-        <span className="loop-stage">Discovery</span>
-        <span className="loop-arrow">→</span>
-        <span className="loop-stage">Analysis</span>
-        <span className="loop-arrow">→</span>
-        <span className="loop-stage">Action</span>
-        <span className="loop-arrow">→</span>
-        <span className="loop-stage current">Reflection</span>
-        <span className="loop-arrow">→</span>
-        <span className="loop-stage">Distillation</span>
-      </div>
-
       <div className="journal-content">
         {activeTab === 'entries' ? (
           <div className="journal-entries-layout">

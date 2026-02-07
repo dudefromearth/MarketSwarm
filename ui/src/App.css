@@ -2,6 +2,11 @@
   box-sizing: border-box;
 }
 
+:root {
+  /* Drawer offset: header (~56px) + process bar (32px) + app padding (12px) */
+  --drawer-top-offset: 100px;
+}
+
 body {
   margin: 0;
   background: #0a0a0a;
@@ -464,12 +469,11 @@ body {
   border-bottom: none;
 }
 
-/* Collapsed Summary - Key info displayed inline */
+/* Collapsed Summary - Key info displayed inline, left-aligned after "Indicators" */
 .widget-row-summary {
   display: flex;
   gap: 24px;
-  margin-left: auto;
-  padding-right: 8px;
+  margin-left: 16px;
 }
 
 .widget-row-summary .summary-item {
@@ -1239,6 +1243,15 @@ body {
 
 .panel-header:hover {
   background: #151515;
+}
+
+/* Risk Graph panel header - brighter to differentiate (non-collapsible) */
+.echarts-risk-graph-panel .panel-header {
+  background: #1a1a1a;
+}
+
+.echarts-risk-graph-panel .panel-header:hover {
+  background: #242424;
 }
 
 .panel-header h3 {
@@ -2527,7 +2540,7 @@ body {
 .risk-graph-sidebar .risk-graph-alerts {
   flex: 1;
   min-height: 0; /* Allow shrinking */
-  background: #111;
+  background: #1e1e1e;
   border-radius: 4px;
   padding: 8px;
   display: flex;
@@ -2587,7 +2600,7 @@ body {
 
 .risk-graph-sidebar .risk-graph-strategy-item {
   padding: 6px 8px;
-  background: #1a1a1a;
+  background: #2a2a2a;
   border-radius: 4px;
   margin-bottom: 4px;
 }
@@ -2647,7 +2660,7 @@ body {
   justify-content: space-between;
   align-items: center;
   padding: 4px 6px;
-  background: #1a1a1a;
+  background: #2a2a2a;
   border-radius: 4px;
   margin-bottom: 4px;
   font-size: 10px;
@@ -2659,7 +2672,7 @@ body {
 }
 
 .risk-graph-sidebar .alert-item.clickable:hover {
-  background: #252525;
+  background: #363636;
 }
 
 .risk-graph-sidebar .alert-info {
@@ -3974,8 +3987,8 @@ body {
 /* Time Machine Controls */
 .time-machine-panel {
   padding: 8px 12px;
-  background: #0a0a0a;
-  border-top: 1px solid #222;
+  background: #1a1a1a;
+  border-top: 1px solid #333;
   transition: all 0.2s;
 }
 
@@ -4634,8 +4647,8 @@ body {
   flex-wrap: wrap;
   gap: 16px;
   padding: 12px 16px;
-  background: #0d0d0d;
-  border-top: 1px solid #222;
+  background: #1a1a1a;
+  border-top: 1px solid #333;
 }
 
 .risk-graph-stats .stat {
@@ -5864,35 +5877,6 @@ body {
 
 .status-bar-value.loss {
   color: #f87171;
-}
-
-/* Improvement Loop Indicator - Quiet orientation, not instruction */
-.improvement-loop-indicator {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: #0a0a0a;
-  border-bottom: 1px solid #1a1a1a;
-}
-
-.improvement-loop-indicator .loop-stage {
-  font-size: 10px;
-  color: #444;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  font-weight: 500;
-}
-
-.improvement-loop-indicator .loop-stage.current {
-  color: #60a5fa;
-  font-weight: 600;
-}
-
-.improvement-loop-indicator .loop-arrow {
-  font-size: 10px;
-  color: #333;
 }
 
 /* Reflection Hook - Trade closed affordance */
@@ -7719,10 +7703,10 @@ body {
 
 .trade-log-overlay {
   position: fixed;
-  top: 0;
+  top: var(--drawer-top-offset);
   right: 0;
   width: 900px;
-  height: 100vh;
+  height: calc(100vh - var(--drawer-top-offset));
   background: #0d0d0d;
   border-left: 1px solid #333;
   z-index: 1000;
@@ -7767,13 +7751,13 @@ body {
   padding: 16px;
 }
 
-/* Trade Log Edge Bar */
+/* Trade Log Edge Bar - opens below header and process bar */
 .trade-log-edge-bar {
   position: fixed;
-  top: 0;
+  top: var(--drawer-top-offset);
   right: 0;
   width: 24px;
-  height: 100vh;
+  height: calc(100vh - var(--drawer-top-offset));
   background: linear-gradient(to right, #4a4a4a, #5a5a5a);
   box-shadow: -4px 0 16px rgba(150, 150, 150, 0.5), -8px 0 32px rgba(120, 120, 120, 0.3);
   background: linear-gradient(to right, #1a1a1a, #252525);
@@ -7813,13 +7797,13 @@ body {
   text-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
 }
 
-/* Trade Log Overlay - slide animation */
+/* Trade Log Overlay - slide animation, opens below header and process bar */
 .trade-log-overlay {
   position: fixed;
-  top: 0;
+  top: var(--drawer-top-offset);
   right: -900px;
   width: 900px;
-  height: 100vh;
+  height: calc(100vh - var(--drawer-top-offset));
   background: #0d0d0d;
   border-left: 1px solid #333;
   z-index: 1000;
@@ -9569,13 +9553,13 @@ body {
   cursor: pointer;
 }
 
-/* Commentary Edge Bar (Left Side) */
+/* Commentary Edge Bar (Left Side) - opens below header and process bar */
 .commentary-edge-bar {
   position: fixed;
-  top: 0;
+  top: var(--drawer-top-offset);
   left: 0;
   width: 16px;
-  height: 100vh;
+  height: calc(100vh - var(--drawer-top-offset));
   background: linear-gradient(to left, #4a4a4a, #5a5a5a);
   border-right: 1px solid #666;
   box-shadow: 4px 0 16px rgba(150, 150, 150, 0.5), 8px 0 32px rgba(120, 120, 120, 0.3);
@@ -9615,13 +9599,13 @@ body {
   text-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
 }
 
-/* Commentary Overlay */
+/* Commentary Overlay - Routine Drawer (wider for components), opens below header and process bar */
 .commentary-overlay {
   position: fixed;
-  top: 0;
-  left: -360px;
-  width: 360px;
-  height: 100vh;
+  top: var(--drawer-top-offset);
+  left: -800px;
+  width: 800px;
+  height: calc(100vh - var(--drawer-top-offset));
   background: #0d0d0d;
   border-right: 1px solid #333;
   z-index: 1000;
@@ -9675,6 +9659,258 @@ body {
   text-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
 }
 
+/* ============================================
+   WORKFLOW DRAWER COLOR LANGUAGE
+   Left (Routine): Warm/golden - readiness, alertness
+   Right (Process): Cool/blue - calm, reflection
+
+   Features:
+   - Protruding tab with label (like a window shade pull)
+   - Soft ambient glow that extends outward
+   - Proximity-based glow intensity (gravitational pull)
+   ============================================ */
+
+/* === SHARED DRAWER TAB STRUCTURE === */
+
+/* Override base edge bar styles for workflow drawers */
+.commentary-edge-bar.routine-drawer,
+.trade-log-edge-bar.process-drawer {
+  overflow: visible;  /* Allow tab to protrude */
+  width: 12px;  /* Visible bar that glows */
+}
+
+.commentary-edge-bar.routine-drawer:hover,
+.trade-log-edge-bar.process-drawer:hover {
+  width: 12px;  /* Don't expand the bar on hover */
+}
+
+.drawer-tab {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.drawer-tab-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  white-space: nowrap;
+}
+
+/* === ROUTINE DRAWER (Left - Warm/Golden) === */
+.commentary-edge-bar.routine-drawer {
+  --proximity: 0;
+  background: linear-gradient(to right, #2a2315, #1f1a12, #151310);
+  border: none;
+  /* Soft ambient glow along the ENTIRE bar - extends outward, intensifies with proximity */
+  box-shadow:
+    /* Inner glow - tight to bar */
+    calc(6px + var(--proximity) * 10px) 0 calc(12px + var(--proximity) * 20px) rgba(255, 215, 0, calc(0.08 + var(--proximity) * 0.15)),
+    /* Mid glow - medium spread */
+    calc(15px + var(--proximity) * 30px) 0 calc(35px + var(--proximity) * 50px) rgba(218, 165, 32, calc(0.12 + var(--proximity) * 0.35)),
+    /* Outer glow - wide ambient */
+    calc(30px + var(--proximity) * 60px) 0 calc(70px + var(--proximity) * 90px) rgba(184, 134, 11, calc(0.08 + var(--proximity) * 0.25)),
+    /* Far glow - very soft, wide reach */
+    calc(50px + var(--proximity) * 100px) 0 calc(120px + var(--proximity) * 150px) rgba(218, 165, 32, calc(0.04 + var(--proximity) * 0.15));
+  transition: box-shadow 0.15s ease-out, background 0.2s ease;
+}
+
+/* Routine Tab - protrudes to the right, seamlessly connected to bar */
+.commentary-edge-bar.routine-drawer .drawer-tab {
+  top: 50%;
+  right: -28px;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 80px;
+  background: linear-gradient(to right, #2a2315, #1f1a12);
+  border-radius: 0 8px 8px 0;
+  /* Tab glow blends with bar glow */
+  box-shadow:
+    calc(8px + var(--proximity) * 15px) 0 calc(16px + var(--proximity) * 25px) rgba(218, 165, 32, calc(0.2 + var(--proximity) * 0.35)),
+    calc(15px + var(--proximity) * 25px) 0 calc(30px + var(--proximity) * 40px) rgba(184, 134, 11, calc(0.1 + var(--proximity) * 0.2));
+}
+
+.commentary-edge-bar.routine-drawer .drawer-tab-label {
+  color: #d4a84b;
+  text-shadow: 0 0 calc(8px + var(--proximity) * 12px) rgba(218, 165, 32, calc(0.5 + var(--proximity) * 0.5));
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+}
+
+.commentary-edge-bar.routine-drawer:hover {
+  background: linear-gradient(to right, #3a3020, #2a2518, #1f1a12);
+  box-shadow:
+    10px 0 20px rgba(255, 215, 0, 0.2),
+    25px 0 50px rgba(218, 165, 32, 0.45),
+    50px 0 100px rgba(184, 134, 11, 0.3),
+    80px 0 160px rgba(218, 165, 32, 0.18);
+}
+
+.commentary-edge-bar.routine-drawer:hover .drawer-tab {
+  background: linear-gradient(to right, #3a3020, #2a2518);
+  box-shadow:
+    12px 0 24px rgba(218, 165, 32, 0.5),
+    20px 0 40px rgba(255, 215, 0, 0.3);
+}
+
+.commentary-edge-bar.routine-drawer:hover .drawer-tab-label {
+  color: #f0c060;
+  text-shadow: 0 0 20px rgba(255, 215, 0, 0.8);
+}
+
+/* Routine Close Bar (inside overlay) - subtle glow, smaller than edge bar */
+.commentary-overlay .commentary-close-bar {
+  background: linear-gradient(to right, #2a2518, #1f1a12);
+  border: none;
+  box-shadow: -3px 0 8px rgba(218, 165, 32, 0.1);
+}
+
+.commentary-overlay .commentary-close-bar .close-bar-label {
+  color: #a08040;
+  text-shadow: none;
+}
+
+.commentary-overlay .commentary-close-bar:hover {
+  background: linear-gradient(to right, #3a3020, #2a2518);
+  box-shadow: -4px 0 12px rgba(218, 165, 32, 0.2);
+}
+
+.commentary-overlay .commentary-close-bar:hover .close-bar-label {
+  color: #d4a84b;
+  text-shadow: 0 0 6px rgba(218, 165, 32, 0.4);
+}
+
+/* === PROCESS DRAWER (Right - Cool/Blue) === */
+.trade-log-edge-bar.process-drawer {
+  --proximity: 0;
+  background: linear-gradient(to left, #1a1c28, #12141c, #101318);
+  border: none;
+  /* Soft ambient glow along the ENTIRE bar - extends outward, intensifies with proximity */
+  box-shadow:
+    /* Inner glow - tight to bar */
+    calc(-6px - var(--proximity) * 10px) 0 calc(12px + var(--proximity) * 20px) rgba(138, 180, 232, calc(0.08 + var(--proximity) * 0.15)),
+    /* Mid glow - medium spread */
+    calc(-15px - var(--proximity) * 30px) 0 calc(35px + var(--proximity) * 50px) rgba(96, 165, 250, calc(0.12 + var(--proximity) * 0.35)),
+    /* Outer glow - wide ambient */
+    calc(-30px - var(--proximity) * 60px) 0 calc(70px + var(--proximity) * 90px) rgba(74, 111, 165, calc(0.08 + var(--proximity) * 0.25)),
+    /* Far glow - very soft, wide reach */
+    calc(-50px - var(--proximity) * 100px) 0 calc(120px + var(--proximity) * 150px) rgba(96, 165, 250, calc(0.04 + var(--proximity) * 0.15));
+  transition: box-shadow 0.15s ease-out, background 0.2s ease;
+}
+
+/* Process Tab - protrudes to the left, seamlessly connected to bar */
+.trade-log-edge-bar.process-drawer .drawer-tab {
+  top: 50%;
+  left: -28px;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 80px;
+  background: linear-gradient(to left, #1a1c28, #12141c);
+  border-radius: 8px 0 0 8px;
+  /* Tab glow blends with bar glow */
+  box-shadow:
+    calc(-8px - var(--proximity) * 15px) 0 calc(16px + var(--proximity) * 25px) rgba(96, 165, 250, calc(0.2 + var(--proximity) * 0.35)),
+    calc(-15px - var(--proximity) * 25px) 0 calc(30px + var(--proximity) * 40px) rgba(74, 111, 165, calc(0.1 + var(--proximity) * 0.2));
+}
+
+.trade-log-edge-bar.process-drawer .drawer-tab-label {
+  color: #6b8cba;
+  text-shadow: 0 0 calc(8px + var(--proximity) * 12px) rgba(96, 165, 250, calc(0.5 + var(--proximity) * 0.5));
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}
+
+.trade-log-edge-bar.process-drawer:hover {
+  background: linear-gradient(to left, #252838, #1a1c28, #12141c);
+  box-shadow:
+    -10px 0 20px rgba(138, 180, 232, 0.2),
+    -25px 0 50px rgba(96, 165, 250, 0.45),
+    -50px 0 100px rgba(74, 111, 165, 0.3),
+    -80px 0 160px rgba(96, 165, 250, 0.18);
+}
+
+.trade-log-edge-bar.process-drawer:hover .drawer-tab {
+  background: linear-gradient(to left, #252838, #1a1c28);
+  box-shadow:
+    -12px 0 24px rgba(96, 165, 250, 0.5),
+    -20px 0 40px rgba(138, 180, 232, 0.3);
+}
+
+.trade-log-edge-bar.process-drawer:hover .drawer-tab-label {
+  color: #8ab4e8;
+  text-shadow: 0 0 20px rgba(138, 180, 232, 0.8);
+}
+
+/* Process Close Bar (inside overlay) - subtle glow, smaller than edge bar */
+.trade-log-overlay .trade-log-close-bar {
+  background: linear-gradient(to left, #1a1c28, #12141c);
+  border: none;
+  box-shadow: 3px 0 8px rgba(96, 165, 250, 0.1);
+}
+
+.trade-log-overlay .trade-log-close-bar .close-bar-label {
+  color: #4a6a8a;
+  text-shadow: none;
+}
+
+.trade-log-overlay .trade-log-close-bar:hover {
+  background: linear-gradient(to left, #252838, #1a1c28);
+  box-shadow: 4px 0 12px rgba(96, 165, 250, 0.2);
+}
+
+.trade-log-overlay .trade-log-close-bar:hover .close-bar-label {
+  color: #6b8cba;
+  text-shadow: 0 0 6px rgba(96, 165, 250, 0.4);
+}
+
+/* === HINT GLOW ANIMATIONS (Pulsing to draw attention) === */
+@keyframes routine-hint-glow {
+  0%, 100% {
+    box-shadow:
+      6px 0 12px rgba(255, 215, 0, 0.1),
+      15px 0 35px rgba(218, 165, 32, 0.15),
+      30px 0 70px rgba(184, 134, 11, 0.1),
+      50px 0 120px rgba(218, 165, 32, 0.05);
+  }
+  50% {
+    box-shadow:
+      12px 0 25px rgba(255, 215, 0, 0.25),
+      30px 0 60px rgba(218, 165, 32, 0.45),
+      60px 0 110px rgba(184, 134, 11, 0.3),
+      100px 0 180px rgba(218, 165, 32, 0.18);
+  }
+}
+
+@keyframes process-hint-glow {
+  0%, 100% {
+    box-shadow:
+      -6px 0 12px rgba(138, 180, 232, 0.1),
+      -15px 0 35px rgba(96, 165, 250, 0.15),
+      -30px 0 70px rgba(74, 111, 165, 0.1),
+      -50px 0 120px rgba(96, 165, 250, 0.05);
+  }
+  50% {
+    box-shadow:
+      -12px 0 25px rgba(138, 180, 232, 0.25),
+      -30px 0 60px rgba(96, 165, 250, 0.45),
+      -60px 0 110px rgba(74, 111, 165, 0.3),
+      -100px 0 180px rgba(96, 165, 250, 0.18);
+  }
+}
+
+.commentary-edge-bar.routine-drawer.hint {
+  animation: routine-hint-glow 2.5s ease-in-out infinite;
+}
+
+.trade-log-edge-bar.process-drawer.hint {
+  animation: process-hint-glow 2.5s ease-in-out infinite;
+}
+
 .commentary-panel-inner {
   margin-right: 16px;
   flex: 1;
@@ -9683,13 +9919,13 @@ body {
   overflow: hidden;
 }
 
-/* GEX Expanded Drawer (Right Side) */
+/* GEX Expanded Drawer (Right Side) - opens below header and process bar */
 .gex-edge-bar {
   position: fixed;
-  top: 0;
+  top: var(--drawer-top-offset);
   right: 0;
   width: 16px;
-  height: 100vh;
+  height: calc(100vh - var(--drawer-top-offset));
   background: linear-gradient(to right, #444, #555);
   display: flex;
   align-items: center;
@@ -9727,13 +9963,13 @@ body {
   text-shadow: 0 0 12px rgba(255, 255, 255, 0.6);
 }
 
-/* GEX Overlay - slides in from left, 50% width */
+/* GEX Overlay - slides in from left, 50% width, opens below header and process bar */
 .gex-overlay {
   position: fixed;
-  top: 0;
+  top: var(--drawer-top-offset);
   left: -50vw;
   width: 50vw;
-  height: 100vh;
+  height: calc(100vh - var(--drawer-top-offset));
   background: #0d0d0d;
   z-index: 1000;
   display: flex;
