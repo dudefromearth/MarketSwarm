@@ -253,7 +253,7 @@ export default function PositionCreateModal({
   const [costBasis, setCostBasis] = useState('');
   const [costBasisType, setCostBasisType] = useState<CostBasisType>('debit');
   const [baseStrike, setBaseStrike] = useState(roundedAtm.toString());
-  const [width, setWidth] = useState('20');
+  const [width, setWidth] = useState('10');
   const [expiration, setExpiration] = useState('');
   const [primaryRight, setPrimaryRight] = useState<'call' | 'put'>('call');
 
