@@ -5,7 +5,7 @@
 
 import type { Position, PositionLeg, PositionType, PositionDirection, CostBasisType } from '@market-swarm/core';
 import type { RiskGraphStrategy } from '../components/RiskGraphPanel';
-import { getCenterStrike, getWingWidth } from './positionRecognition';
+import { getCenterStrike, getWidth } from './positionRecognition';
 
 /**
  * Convert a Position (new leg-based model) to RiskGraphStrategy (legacy format)
@@ -21,7 +21,7 @@ import { getCenterStrike, getWingWidth } from './positionRecognition';
 export function positionToRiskGraphStrategy(position: Position): RiskGraphStrategy {
   // Get derived values from legs
   const centerStrike = getCenterStrike(position.legs);
-  const wingWidth = getWingWidth(position.legs);
+  const wingWidth = getWidth(position.legs);
 
   // Determine legacy strategy type
   let strategy: 'butterfly' | 'vertical' | 'single';

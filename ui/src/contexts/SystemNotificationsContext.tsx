@@ -175,7 +175,7 @@ export function SystemNotificationsProvider({ children }: { children: ReactNode 
       return setTimeout(() => {
         dispatch({ type: 'DISMISS', id: n.id });
       }, remaining);
-    }).filter(Boolean) as NodeJS.Timeout[];
+    }).filter(Boolean) as ReturnType<typeof setTimeout>[];
 
     return () => timers.forEach(t => clearTimeout(t));
   }, [state.notifications]);
