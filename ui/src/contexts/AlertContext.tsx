@@ -33,6 +33,10 @@ import type {
   AlertUpdateEvent,
   AlertBehavior,
   AlertPriority,
+  // v1.1 types
+  AlertDefinition,
+  AlertLifecycleStage,
+  CreateAlertDefinitionInput,
 } from '../types/alerts';
 
 import {
@@ -40,12 +44,26 @@ import {
   createAlertApi,
   updateAlertApi,
   deleteAlertApi,
+  // v1.1 API methods
+  fetchAlertDefinitions,
+  createAlertDefinition,
+  pauseAlert as pauseAlertApi,
+  resumeAlert as resumeAlertApi,
+  acknowledgeAlert as acknowledgeAlertApi,
+  dismissAlert as dismissAlertApi,
+  overrideAlert as overrideAlertApi,
 } from '../services/alertService';
 
 // State shape
 interface AlertState {
+  // Legacy alerts (v1)
   alerts: Alert[];
   aiEvaluations: Record<string, AIEvaluation>;
+
+  // v1.1 Alert Definitions
+  alertDefinitions: AlertDefinition[];
+
+  // Connection state
   connected: boolean;
   loading: boolean;
   error: string | null;
@@ -53,6 +71,7 @@ interface AlertState {
 
 // Action types
 type AlertAction =
+  // Legacy actions
   | { type: 'LOAD_ALERTS'; alerts: Alert[] }
   | { type: 'ADD_ALERT'; alert: Alert }
   | { type: 'UPDATE_ALERT'; id: string; updates: Partial<Alert> }
@@ -60,6 +79,13 @@ type AlertAction =
   | { type: 'TRIGGER_ALERT'; id: string; triggeredAt: number }
   | { type: 'CLEAR_TRIGGERED' }
   | { type: 'AI_EVALUATION'; alertId: string; evaluation: AIEvaluation }
+  // v1.1 actions
+  | { type: 'LOAD_DEFINITIONS'; definitions: AlertDefinition[] }
+  | { type: 'ADD_DEFINITION'; definition: AlertDefinition }
+  | { type: 'UPDATE_DEFINITION'; id: string; updates: Partial<AlertDefinition> }
+  | { type: 'DELETE_DEFINITION'; id: string }
+  | { type: 'SET_LIFECYCLE_STAGE'; id: string; stage: AlertLifecycleStage }
+  // Common actions
   | { type: 'SET_CONNECTED'; connected: boolean }
   | { type: 'SET_LOADING'; loading: boolean }
   | { type: 'SET_ERROR'; error: string | null };
@@ -68,6 +94,7 @@ type AlertAction =
 const initialState: AlertState = {
   alerts: [],
   aiEvaluations: {},
+  alertDefinitions: [],
   connected: false,
   loading: false,
   error: null,
@@ -141,6 +168,46 @@ function alertReducer(state: AlertState, action: AlertAction): AlertState {
         ),
       };
 
+    // v1.1 AlertDefinition actions
+    case 'LOAD_DEFINITIONS':
+      return { ...state, alertDefinitions: action.definitions, loading: false };
+
+    case 'ADD_DEFINITION':
+      return { ...state, alertDefinitions: [...state.alertDefinitions, action.definition] };
+
+    case 'UPDATE_DEFINITION':
+      return {
+        ...state,
+        alertDefinitions: state.alertDefinitions.map((d) =>
+          d.id === action.id
+            ? { ...d, ...action.updates, updatedAt: new Date().toISOString() }
+            : d
+        ),
+      };
+
+    case 'DELETE_DEFINITION':
+      return {
+        ...state,
+        alertDefinitions: state.alertDefinitions.filter((d) => d.id !== action.id),
+      };
+
+    case 'SET_LIFECYCLE_STAGE':
+      return {
+        ...state,
+        alertDefinitions: state.alertDefinitions.map((d) =>
+          d.id === action.id
+            ? {
+                ...d,
+                lifecycleStage: action.stage,
+                updatedAt: new Date().toISOString(),
+                ...(action.stage === 'accomplished' || action.stage === 'dismissed'
+                  ? { acknowledgedAt: new Date().toISOString() }
+                  : {}),
+              }
+            : d
+        ),
+      };
+
     case 'SET_CONNECTED':
       return { ...state, connected: action.connected };
 
@@ -157,23 +224,36 @@ function alertReducer(state: AlertState, action: AlertAction): AlertState {
 
 // Context value interface
 interface AlertContextValue extends AlertState {
-  // CRUD Operations
+  // Legacy CRUD Operations (v1)
   createAlert: (input: CreateAlertInput) => Alert;
   updateAlert: (input: EditAlertInput) => void;
   deleteAlert: (id: string) => void;
   toggleAlert: (id: string) => void;
 
-  // Queries
+  // Legacy Queries (v1)
   getAlert: (id: string) => Alert | undefined;
   getAlertsForSource: (sourceType: AlertSource['type'], sourceId?: string) => Alert[];
   getAlertsForStrategy: (strategyId: string) => Alert[];
   getTriggeredAlerts: () => Alert[];
   getAIEvaluation: (alertId: string) => AIEvaluation | undefined;
 
-  // Batch Operations
+  // Legacy Batch Operations (v1)
   clearTriggeredAlerts: () => void;
   importAlerts: (alerts: Alert[]) => void;
   exportAlerts: () => Alert[];
+
+  // v1.1 AlertDefinition Operations
+  createDefinition: (input: CreateAlertDefinitionInput) => Promise<AlertDefinition | null>;
+  pauseDefinition: (id: string) => Promise<void>;
+  resumeDefinition: (id: string) => Promise<void>;
+  acknowledgeDefinition: (id: string) => Promise<void>;
+  dismissDefinition: (id: string) => Promise<void>;
+  overrideDefinition: (id: string, reason: string) => Promise<void>;
+  deleteDefinition: (id: string) => Promise<void>;
+
+  // v1.1 Queries
+  getDefinition: (id: string) => AlertDefinition | undefined;
+  getDefinitionsNeedingAttention: () => AlertDefinition[];
 }
 
 // Create context
@@ -558,8 +638,122 @@ export function AlertProvider({ children }: { children: ReactNode }) {
   // Export alerts
   const exportAlerts = useCallback(() => state.alerts, [state.alerts]);
 
+  // ==================== v1.1 AlertDefinition Operations ====================
+
+  // Create definition (prompt-first)
+  const createDefinition = useCallback(async (input: CreateAlertDefinitionInput): Promise<AlertDefinition | null> => {
+    try {
+      const definition = await createAlertDefinition(input);
+      dispatch({ type: 'ADD_DEFINITION', definition });
+      return definition;
+    } catch (err) {
+      console.error('Failed to create alert definition:', err);
+      dispatch({ type: 'SET_ERROR', error: 'Failed to create alert' });
+      return null;
+    }
+  }, []);
+
+  // Pause definition
+  const pauseDefinition = useCallback(async (id: string): Promise<void> => {
+    // Optimistic update
+    dispatch({ type: 'UPDATE_DEFINITION', id, updates: { status: 'paused' } });
+    try {
+      await pauseAlertApi(id);
+    } catch (err) {
+      console.error('Failed to pause alert:', err);
+      dispatch({ type: 'UPDATE_DEFINITION', id, updates: { status: 'active' } });
+      dispatch({ type: 'SET_ERROR', error: 'Failed to pause alert' });
+    }
+  }, []);
+
+  // Resume definition
+  const resumeDefinition = useCallback(async (id: string): Promise<void> => {
+    dispatch({ type: 'UPDATE_DEFINITION', id, updates: { status: 'active' } });
+    try {
+      await resumeAlertApi(id);
+    } catch (err) {
+      console.error('Failed to resume alert:', err);
+      dispatch({ type: 'UPDATE_DEFINITION', id, updates: { status: 'paused' } });
+      dispatch({ type: 'SET_ERROR', error: 'Failed to resume alert' });
+    }
+  }, []);
+
+  // Acknowledge definition (moves to accomplished stage)
+  const acknowledgeDefinition = useCallback(async (id: string): Promise<void> => {
+    dispatch({ type: 'SET_LIFECYCLE_STAGE', id, stage: 'accomplished' });
+    try {
+      await acknowledgeAlertApi(id);
+    } catch (err) {
+      console.error('Failed to acknowledge alert:', err);
+      dispatch({ type: 'SET_LIFECYCLE_STAGE', id, stage: 'warn' }); // Revert
+      dispatch({ type: 'SET_ERROR', error: 'Failed to acknowledge alert' });
+    }
+  }, []);
+
+  // Dismiss definition
+  const dismissDefinition = useCallback(async (id: string): Promise<void> => {
+    dispatch({ type: 'SET_LIFECYCLE_STAGE', id, stage: 'dismissed' });
+    try {
+      await dismissAlertApi(id);
+    } catch (err) {
+      console.error('Failed to dismiss alert:', err);
+      dispatch({ type: 'SET_LIFECYCLE_STAGE', id, stage: 'warn' }); // Revert
+      dispatch({ type: 'SET_ERROR', error: 'Failed to dismiss alert' });
+    }
+  }, []);
+
+  // Override definition (block override with reason)
+  const overrideDefinition = useCallback(async (id: string, reason: string): Promise<void> => {
+    dispatch({
+      type: 'UPDATE_DEFINITION',
+      id,
+      updates: { lifecycleStage: 'overridden', overrideReason: reason },
+    });
+    try {
+      await overrideAlertApi(id, reason);
+    } catch (err) {
+      console.error('Failed to override alert:', err);
+      dispatch({
+        type: 'UPDATE_DEFINITION',
+        id,
+        updates: { lifecycleStage: 'warn', overrideReason: undefined },
+      });
+      dispatch({ type: 'SET_ERROR', error: 'Failed to override alert' });
+    }
+  }, []);
+
+  // Delete definition
+  const deleteDefinition = useCallback(async (id: string): Promise<void> => {
+    const definition = state.alertDefinitions.find((d) => d.id === id);
+    dispatch({ type: 'DELETE_DEFINITION', id });
+    try {
+      await deleteAlertApi(id);
+    } catch (err) {
+      console.error('Failed to delete alert definition:', err);
+      if (definition) {
+        dispatch({ type: 'ADD_DEFINITION', definition });
+      }
+      dispatch({ type: 'SET_ERROR', error: 'Failed to delete alert' });
+    }
+  }, [state.alertDefinitions]);
+
+  // Get single definition
+  const getDefinition = useCallback(
+    (id: string) => state.alertDefinitions.find((d) => d.id === id),
+    [state.alertDefinitions]
+  );
+
+  // Get definitions needing attention (update or warn stage)
+  const getDefinitionsNeedingAttention = useCallback(
+    () => state.alertDefinitions.filter(
+      (d) => d.lifecycleStage === 'update' || d.lifecycleStage === 'warn'
+    ),
+    [state.alertDefinitions]
+  );
+
   const value: AlertContextValue = {
     ...state,
+    // Legacy v1
     createAlert,
     updateAlert,
     deleteAlert,
@@ -572,6 +766,16 @@ export function AlertProvider({ children }: { children: ReactNode }) {
     clearTriggeredAlerts,
     importAlerts,
     exportAlerts,
+    // v1.1
+    createDefinition,
+    pauseDefinition,
+    resumeDefinition,
+    acknowledgeDefinition,
+    dismissDefinition,
+    overrideDefinition,
+    deleteDefinition,
+    getDefinition,
+    getDefinitionsNeedingAttention,
   };
 
   return <AlertContext.Provider value={value}>{children}</AlertContext.Provider>;
