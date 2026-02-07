@@ -16,6 +16,13 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Path aliases for shared packages */
+    "baseUrl": ".",
+    "paths": {
+      "@market-swarm/core": ["../packages/core/src/index.ts"],
+      "@market-swarm/core/*": ["../packages/core/src/*"]
+    },
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
@@ -24,5 +31,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": ["src", "../packages/core/src"]
 }

@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import fs from 'fs'
+import path from 'path'
 
 // Check if SSL certs exist (for dev server only, not needed for build)
 const hasSSLCerts = fs.existsSync('./localhost+2-key.pem') && fs.existsSync('./localhost+2.pem');
@@ -12,6 +13,11 @@ const httpsConfig = hasSSLCerts ? {
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      '@market-swarm/core': path.resolve(__dirname, '../packages/core/src'),
+    },
+  },
   server: {
     https: httpsConfig,
     proxy: {

@@ -1,0 +1,48 @@
+{
+  "name": "@market-swarm/core",
+  "version": "0.1.0",
+  "description": "Platform-agnostic core logic for Market Swarm options trading platform",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./position": {
+      "import": "./dist/position/index.js",
+      "types": "./dist/position/index.d.ts"
+    },
+    "./pricing": {
+      "import": "./dist/pricing/index.js",
+      "types": "./dist/pricing/index.d.ts"
+    },
+    "./import": {
+      "import": "./dist/import/index.js",
+      "types": "./dist/import/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3"
+  },
+  "keywords": [
+    "options",
+    "trading",
+    "risk-graph",
+    "black-scholes"
+  ],
+  "license": "UNLICENSED",
+  "private": true
+}

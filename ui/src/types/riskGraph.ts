@@ -1,9 +1,41 @@
 // types/riskGraph.ts
 // TypeScript types for Risk Graph Service
+//
+// Position types are imported from @market-swarm/core
+// API-specific types remain here
+
+// ============================================================
+// Re-export shared types from core
+// ============================================================
+
+export type {
+  PositionType,
+  PositionDirection,
+  OptionRight,
+  CostBasisType,
+  PositionLeg,
+  Position,
+  ImportSource,
+  ImportMetadata,
+} from '@market-swarm/core';
+
+export {
+  POSITION_TYPE_LABELS,
+  POSITION_TYPE_CODES,
+  POSITION_TYPE_COLORS,
+} from '@market-swarm/core';
+
+// ============================================================
+// Legacy types (for backward compatibility with existing API)
+// ============================================================
 
 export type StrategyType = 'single' | 'vertical' | 'butterfly';
 export type Side = 'call' | 'put';
 export type ChangeType = 'created' | 'debit_updated' | 'visibility_toggled' | 'edited' | 'deleted';
+
+// ============================================================
+// API Types (specific to backend communication)
+// ============================================================
 
 // Core strategy interface matching backend model
 export interface RiskGraphStrategy {
@@ -60,7 +92,9 @@ export interface RiskGraphTemplate {
   createdAt: string;
 }
 
+// ============================================================
 // Input types for creating/updating
+// ============================================================
 
 export interface CreateStrategyInput {
   symbol?: string;
@@ -120,7 +154,9 @@ export interface UseTemplateInput {
   debit?: number | null;
 }
 
+// ============================================================
 // API Response types
+// ============================================================
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -155,7 +191,9 @@ export interface ShareCodeResponse extends ApiResponse<{
   shareCode: string;
 }> {}
 
+// ============================================================
 // SSE Event types
+// ============================================================
 
 export type RiskGraphEventType = 'strategy_added' | 'strategy_updated' | 'strategy_removed';
 
@@ -165,7 +203,26 @@ export interface RiskGraphSSEEvent {
   ts: string;
 }
 
-// Legacy type compatibility (matches existing App.tsx interfaces)
+// ============================================================
+// UI-specific Position type (extends core Position)
+// ============================================================
+
+import type { Position } from '@market-swarm/core';
+
+/**
+ * RiskGraphPosition - UI-specific position with additional fields
+ *
+ * This extends the core Position type with fields needed for
+ * the risk graph UI that aren't part of the core model.
+ */
+export interface RiskGraphPosition extends Position {
+  // UI-specific fields can be added here
+  // For now, it's identical to Position
+}
+
+// ============================================================
+// Legacy type compatibility
+// ============================================================
 
 export interface LegacyRiskGraphStrategy {
   id: string;
@@ -181,7 +238,9 @@ export interface LegacyRiskGraphStrategy {
   symbol?: string;
 }
 
+// ============================================================
 // Conversion utilities
+// ============================================================
 
 export function toLegacyStrategy(s: RiskGraphStrategy): LegacyRiskGraphStrategy {
   return {
