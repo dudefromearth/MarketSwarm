@@ -101,18 +101,18 @@
 
 /* Warm - Routine (left) */
 .process-bar-phase--warm .process-bar-phase-dot {
-  background: rgba(184, 134, 11, 0.3);
+  background: color-mix(in srgb, var(--phase-warm) 30%, transparent);
 }
 
 .process-bar-phase--warm.visited .process-bar-phase-dot,
 .process-bar-phase--warm.active .process-bar-phase-dot {
-  background: #b8860b;
-  box-shadow: 0 0 6px rgba(184, 134, 11, 0.5);
+  background: var(--phase-warm);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--phase-warm) 50%, transparent);
 }
 
 .process-bar-phase--warm.visited .process-bar-phase-label,
 .process-bar-phase--warm.active .process-bar-phase-label {
-  color: rgba(184, 134, 11, 0.9);
+  color: color-mix(in srgb, var(--phase-warm) 90%, white);
 }
 
 /* Neutral - Center phases */
@@ -133,18 +133,18 @@
 
 /* Cool - Process (right) */
 .process-bar-phase--cool .process-bar-phase-dot {
-  background: rgba(74, 111, 165, 0.3);
+  background: color-mix(in srgb, var(--phase-cool) 30%, transparent);
 }
 
 .process-bar-phase--cool.visited .process-bar-phase-dot,
 .process-bar-phase--cool.active .process-bar-phase-dot {
-  background: #4a6fa5;
-  box-shadow: 0 0 6px rgba(74, 111, 165, 0.5);
+  background: var(--phase-cool);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--phase-cool) 50%, transparent);
 }
 
 .process-bar-phase--cool.visited .process-bar-phase-label,
 .process-bar-phase--cool.active .process-bar-phase-label {
-  color: rgba(74, 111, 165, 0.9);
+  color: color-mix(in srgb, var(--phase-cool) 90%, white);
 }
 
 /* ============================================

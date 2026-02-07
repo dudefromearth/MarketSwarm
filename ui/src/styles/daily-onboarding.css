@@ -118,20 +118,20 @@
 /* Phase-specific color accents (subtle) */
 /* Warm - left side (Routine) */
 .process-phase-routine .phase-number {
-  color: #b8860b;
-  border-color: rgba(184, 134, 11, 0.3);
+  color: var(--phase-warm);
+  border-color: color-mix(in srgb, var(--phase-warm) 30%, transparent);
 }
 
 /* Warm accent - Action (commitment phase) */
 .process-phase-action .phase-number {
-  color: #c4a035;
-  border-color: rgba(196, 160, 53, 0.3);
+  color: var(--phase-warm-accent);
+  border-color: color-mix(in srgb, var(--phase-warm-accent) 30%, transparent);
 }
 
 /* Cool - right side (Process) */
 .process-phase-process .phase-number {
-  color: #4a6fa5;
-  border-color: rgba(74, 111, 165, 0.3);
+  color: var(--phase-cool);
+  border-color: color-mix(in srgb, var(--phase-cool) 30%, transparent);
 }
 
 /* ============================================

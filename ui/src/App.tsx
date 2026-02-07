@@ -264,6 +264,9 @@ const STRIKE_INCREMENT: Record<string, number> = {
   'I:NDX': 50,
 };
 
+// Action phase duration - how long the "Action" phase stays highlighted after a commit
+const ACTION_PHASE_DURATION = 4000; // 4 seconds
+
 // Standard normal CDF approximation
 function normalCDF(x: number): number {
   const a1 = 0.254829592;
@@ -626,7 +629,6 @@ function App() {
   // Action phase trigger - transient/sticky state for when user commits capital
   // (saves trade, creates alert, sends to broker)
   const [actionTriggeredAt, setActionTriggeredAt] = useState<number | null>(null);
-  const ACTION_PHASE_DURATION = 4000; // 4 seconds sticky duration
 
   // Callback to trigger the action phase (called on commits)
   const triggerActionPhase = useCallback(() => {

@@ -10,20 +10,12 @@
  */
 
 import { useState, useCallback } from 'react';
+import { PROCESS_PHASES_NUMBERED } from '../constants/processPhases';
 import '../styles/daily-onboarding.css';
 
 interface DailyOnboardingProps {
   onActivate: () => void;
 }
-
-const PHASES = [
-  { id: 'routine', label: 'Routine', icon: '1' },
-  { id: 'structure', label: 'Structure', icon: '2' },
-  { id: 'selection', label: 'Selection', icon: '3' },
-  { id: 'analysis', label: 'Analysis', icon: '4' },
-  { id: 'action', label: 'Action', icon: '5' },
-  { id: 'process', label: 'Process', icon: '6' },
-];
 
 export default function DailyOnboarding({ onActivate }: DailyOnboardingProps) {
   const [fading, setFading] = useState(false);
@@ -53,13 +45,13 @@ export default function DailyOnboarding({ onActivate }: DailyOnboardingProps) {
 
         {/* Horizontal process bar */}
         <div className="daily-process-bar">
-          {PHASES.map((phase, index) => (
+          {PROCESS_PHASES_NUMBERED.map((phase, index) => (
             <div key={phase.id} className="process-phase-wrapper">
               <div className={`process-phase process-phase-${phase.id}`}>
-                <span className="phase-number">{phase.icon}</span>
+                <span className="phase-number">{phase.number}</span>
                 <span className="phase-label">{phase.label}</span>
               </div>
-              {index < PHASES.length - 1 && (
+              {index < PROCESS_PHASES_NUMBERED.length - 1 && (
                 <div className="phase-connector">
                   <span className="connector-arrow" />
                 </div>

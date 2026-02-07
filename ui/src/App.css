@@ -5,6 +5,11 @@
 :root {
   /* Drawer offset: header (~56px) + process bar (32px) + app padding (12px) */
   --drawer-top-offset: 100px;
+
+  /* Process phase colors - warm (left) to cool (right) */
+  --phase-warm: #b8860b;
+  --phase-warm-accent: #c4a035;
+  --phase-cool: #4a6fa5;
 }
 
 body {

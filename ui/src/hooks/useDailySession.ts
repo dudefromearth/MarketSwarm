@@ -6,9 +6,7 @@
  */
 
 import { useState, useCallback, useMemo, useEffect } from 'react';
-
-// Stage types (matching PathContext)
-type Stage = 'discovery' | 'analysis' | 'action' | 'reflection' | 'distillation';
+import { type Stage } from '../constants/pathContent';
 
 interface DailySessionState {
   isFirstOpenToday: boolean;
@@ -182,4 +180,4 @@ export function useDailySession() {
   };
 }
 
-export type { Stage, DailySessionState };
+export type { DailySessionState };
