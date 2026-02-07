@@ -37,7 +37,7 @@ import { useAlerts } from './contexts/AlertContext';
 import { usePath } from './contexts/PathContext';
 import { useRiskGraph } from './contexts/RiskGraphContext';
 import type { AlertType, AlertBehavior } from './types/alerts';
-import ObserverPanel from './components/ObserverPanel';
+import RoutineDrawer from './components/RoutineDrawer';
 import GexChartPanel from './components/GexChartPanel';
 import TradeRecommendationsPanel from './components/TradeRecommendationsPanel';
 import TradeTrackingPanel from './components/TradeTrackingPanel';
@@ -3080,7 +3080,19 @@ function App() {
           <span className="close-bar-label">Close</span>
         </div>
         <div className="commentary-panel-inner">
-          <ObserverPanel />
+          <RoutineDrawer
+            isOpen={!commentaryCollapsed}
+            vexy={vexy}
+            biasLfi={biasLfi}
+            marketMode={marketMode}
+            spot={spot || {}}
+            onSessionRelease={() => {
+              activateSession();
+              markStageVisited('discovery');
+              setCommentaryCollapsed(true);
+            }}
+            onCloseDrawer={() => setCommentaryCollapsed(true)}
+          />
         </div>
       </div>
 
