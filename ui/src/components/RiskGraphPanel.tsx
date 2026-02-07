@@ -12,6 +12,7 @@
 import { useRef, useMemo, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
 import PnLChart, { type PnLChartHandle, type PriceAlertType, type BackdropRenderProps } from './PnLChart';
 import RiskGraphBackdrop from './RiskGraphBackdrop';
+import DealerGravitySettings from './DealerGravitySettings';
 import {
   useRiskGraphCalculations,
   type Strategy,
@@ -187,6 +188,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   const [showVolumeProfile, setShowVolumeProfile] = useState(true);
   const [showStructuralLines, setShowStructuralLines] = useState(true);
   const [backdropOpacity, setBackdropOpacity] = useState(0.5);
+  const [showDGSettings, setShowDGSettings] = useState(false);
 
   // Expose autoFit to parent
   useImperativeHandle(ref, () => ({
@@ -472,6 +474,16 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                 onChange={(e) => setBackdropOpacity(Number(e.target.value) / 100)}
                 title={`Backdrop Opacity: ${Math.round(backdropOpacity * 100)}%`}
               />
+              <button
+                className="btn-backdrop-settings"
+                onClick={() => setShowDGSettings(true)}
+                title="Dealer Gravity Settings"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+                </svg>
+              </button>
             </div>
           )}
           {onOpenMonitor && (
@@ -1055,6 +1067,12 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                 )}
               </div>
         </div>
+
+        {/* Dealer Gravity Settings Modal */}
+        <DealerGravitySettings
+          isOpen={showDGSettings}
+          onClose={() => setShowDGSettings(false)}
+        />
     </div>
   );
 });

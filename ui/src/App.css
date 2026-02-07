@@ -2455,6 +2455,32 @@ body {
   border: none;
 }
 
+.btn-backdrop-settings {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid #444;
+  border-radius: 3px;
+  color: #888;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-backdrop-settings:hover {
+  background: rgba(147, 51, 234, 0.2);
+  border-color: #a855f7;
+  color: #a855f7;
+}
+
+.btn-backdrop-settings svg {
+  width: 14px;
+  height: 14px;
+}
+
 .chart-controls-inline {
   display: flex;
   gap: 2px;
@@ -11388,6 +11414,39 @@ body {
 .mode-btn.active {
   background: #3b82f6;
   color: white;
+}
+
+.row-size-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row-size-input {
+  width: 70px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: monospace;
+  text-align: center;
+  background: #0f0f1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #e5e5e5;
+}
+
+.row-size-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.row-size-input::-webkit-inner-spin-button,
+.row-size-input::-webkit-outer-spin-button {
+  opacity: 1;
+}
+
+.setting-hint {
+  font-size: 11px;
+  color: #64748b;
 }
 
 .indicator-settings-footer {

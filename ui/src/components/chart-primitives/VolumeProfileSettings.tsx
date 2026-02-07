@@ -5,12 +5,14 @@
 import { useState, useEffect } from 'react';
 
 export type VolumeProfileMode = 'raw' | 'tv';
+export type RowsLayoutMode = 'number_of_rows' | 'ticks_per_row';
 
 export interface VolumeProfileConfig {
   enabled: boolean;
   mode: VolumeProfileMode;   // 'raw' (VWAP) or 'tv' (TradingView distributed)
   widthPercent: number;      // % of chart width for profile scaling (0-100)
-  numBins: number;           // Number of price bins/rows (20-200)
+  rowsLayout: RowsLayoutMode; // 'number_of_rows' or 'ticks_per_row'
+  rowSize: number;           // Number of rows (if number_of_rows) or ticks per row (if ticks_per_row)
   cappingSigma: number;      // Outlier capping threshold in sigma (1-5)
   color: string;             // Base color (hex)
   transparency: number;      // 0-100
@@ -20,7 +22,8 @@ export const defaultVolumeProfileConfig: VolumeProfileConfig = {
   enabled: true,
   mode: 'tv',                // TV mode is smoother, better default
   widthPercent: 15,
-  numBins: 50,               // 50 bins is a good default balance
+  rowsLayout: 'number_of_rows',
+  rowSize: 24,               // 24 rows is a good default
   cappingSigma: 2,           // 2σ = 95.45th percentile
   color: '#9333ea',          // Purple
   transparency: 50,
@@ -124,19 +127,42 @@ export default function VolumeProfileSettings({ config, onConfigChange, onSaveDe
           </div>
         </div>
 
-        {/* Number of Bins */}
+        {/* Rows Layout */}
         <div className="setting-row">
-          <label>Number of Bins</label>
-          <div className="setting-control">
+          <label>Rows Layout</label>
+          <div className="setting-control mode-toggle">
+            <button
+              className={`mode-btn ${localConfig.rowsLayout === 'number_of_rows' ? 'active' : ''}`}
+              onClick={() => handleChange('rowsLayout', 'number_of_rows')}
+              title="Fixed number of rows across visible price range"
+            >
+              # of Rows
+            </button>
+            <button
+              className={`mode-btn ${localConfig.rowsLayout === 'ticks_per_row' ? 'active' : ''}`}
+              onClick={() => handleChange('rowsLayout', 'ticks_per_row')}
+              title="Fixed number of price ticks per row"
+            >
+              Ticks/Row
+            </button>
+          </div>
+        </div>
+
+        {/* Row Size */}
+        <div className="setting-row">
+          <label>Row Size</label>
+          <div className="setting-control row-size-control">
             <input
-              type="range"
-              min="20"
-              max="200"
-              step="10"
-              value={localConfig.numBins}
-              onChange={(e) => handleChange('numBins', parseInt(e.target.value))}
+              type="number"
+              min={localConfig.rowsLayout === 'ticks_per_row' ? 1 : 1}
+              max={localConfig.rowsLayout === 'ticks_per_row' ? 100 : 2000}
+              value={localConfig.rowSize}
+              onChange={(e) => handleChange('rowSize', parseInt(e.target.value) || 24)}
+              className="row-size-input"
             />
-            <span className="setting-value">{localConfig.numBins}</span>
+            <span className="setting-hint">
+              {localConfig.rowsLayout === 'ticks_per_row' ? 'ticks' : 'rows'}
+            </span>
           </div>
         </div>
 

@@ -25,12 +25,15 @@ export type VolumeProfilePrimitiveOptions = {
   barHeight: number;
   maxBarWidthPercent: number;  // % of chart width for profile scaling
   color: string;
+  binSize?: number;  // Price range per bin (for calculating dynamic bar height)
+  numRows?: number;  // Number of rows - bar height will be viewport_height / numRows
 };
 
 type RendererData = {
   y: number;
   volume: number;
   price: number;
+  barHeight: number;  // Dynamic bar height in pixels
 };
 
 const defaultOptions: VolumeProfilePrimitiveOptions = {
@@ -38,6 +41,8 @@ const defaultOptions: VolumeProfilePrimitiveOptions = {
   barHeight: 2,
   maxBarWidthPercent: 15,
   color: 'rgba(147, 51, 234, 0.5)',
+  binSize: undefined,
+  numRows: undefined,
 };
 
 class VolumeProfilePaneRenderer implements IPrimitivePaneRenderer {
@@ -58,24 +63,31 @@ class VolumeProfilePaneRenderer implements IPrimitivePaneRenderer {
 
       if (this._data.length === 0) return;
 
-      const { maxVolume, barHeight, maxBarWidthPercent, color } = this._options;
+      const { maxVolume, barHeight: defaultBarHeight, maxBarWidthPercent, color, numRows } = this._options;
 
       // Volume profile renders on the left side
       const leftMargin = 5;
       const actualMaxWidth = width * (maxBarWidthPercent / 100);
 
+      // Calculate bar height: if numRows is set, use viewport_height / numRows for perfect fit
+      // This ensures bars fill the viewport exactly with no gaps
+      const viewportBarHeight = numRows && numRows > 0 ? height / numRows : 0;
+
       ctx.save();
       ctx.fillStyle = color;
 
       for (const point of this._data) {
-        const { y, volume } = point;
+        const { y, volume, barHeight } = point;
         // Skip if outside visible area
         if (y < 0 || y > height) continue;
 
         const normalizedWidth = maxVolume > 0 ? volume / maxVolume : 0;
         const barWidth = normalizedWidth * actualMaxWidth;
 
-        ctx.fillRect(leftMargin, y - barHeight / 2, barWidth, barHeight);
+        // Priority: numRows-based height > binSize-based height > default
+        const effectiveBarHeight = viewportBarHeight > 0 ? viewportBarHeight : (barHeight > 0 ? barHeight : defaultBarHeight);
+
+        ctx.fillRect(leftMargin, y - effectiveBarHeight / 2, barWidth, effectiveBarHeight);
       }
 
       ctx.restore();
@@ -151,6 +163,21 @@ export class VolumeProfilePrimitive implements ISeriesPrimitive<Time> {
     if (!this._series) return [];
 
     const result: RendererData[] = [];
+    const binSize = this._options.binSize;
+
+    // Calculate bar height in pixels if binSize is provided
+    let calculatedBarHeight = 0;
+    if (binSize && binSize > 0) {
+      // Convert binSize (price units) to pixels using the series scale
+      // Get two price points separated by binSize and measure pixel distance
+      const testPrice = this._data.length > 0 ? this._data[0].price : 0;
+      const y1 = this._series.priceToCoordinate(testPrice);
+      const y2 = this._series.priceToCoordinate(testPrice + binSize);
+      if (y1 !== null && y2 !== null) {
+        // Bar height is the pixel distance for one bin (absolute value since Y is inverted)
+        calculatedBarHeight = Math.abs((y1 as number) - (y2 as number));
+      }
+    }
 
     for (const point of this._data) {
       const y = this._series.priceToCoordinate(point.price);
@@ -160,6 +187,7 @@ export class VolumeProfilePrimitive implements ISeriesPrimitive<Time> {
         y: y as number,
         volume: point.volume,
         price: point.price,
+        barHeight: calculatedBarHeight,
       });
     }
 

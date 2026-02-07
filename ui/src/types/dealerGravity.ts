@@ -88,6 +88,13 @@ export interface DGContextSnapshot {
 // ============================================================================
 
 /**
+ * Rows Layout mode for volume profile binning (TradingView style).
+ * - 'number_of_rows': Fixed count of rows across visible price range
+ * - 'ticks_per_row': Fixed number of price ticks per row
+ */
+export type RowsLayoutMode = 'number_of_rows' | 'ticks_per_row';
+
+/**
  * User's Dealer Gravity display configuration.
  */
 export interface DealerGravityConfig {
@@ -96,7 +103,10 @@ export interface DealerGravityConfig {
   enabled: boolean;
   mode: 'raw' | 'tv';
   widthPercent: number;
-  numBins: number;
+  /** Rows Layout mode: 'number_of_rows' or 'ticks_per_row' */
+  rowsLayout: RowsLayoutMode;
+  /** Row Size: number of rows (if number_of_rows) or ticks per row (if ticks_per_row) */
+  rowSize: number;
   cappingSigma: number;
   color: string;
   transparency: number;
@@ -163,19 +173,72 @@ export interface DGArtifactUpdatedEvent {
 }
 
 // ============================================================================
+// Raw API Response Types (snake_case from server)
+// ============================================================================
+
+/** Raw structures from API (snake_case) */
+export interface DGStructuresRaw {
+  volume_nodes?: number[];
+  volumeNodes?: number[];
+  volume_wells?: number[];
+  volumeWells?: number[];
+  crevasses: [number, number][];
+}
+
+/** Raw artifact meta from API (snake_case) */
+export interface DGArtifactMetaRaw {
+  spot: number | null;
+  algorithm: string;
+  normalized_scale?: number;
+  normalizedScale?: number;
+  artifact_version?: string;
+  artifactVersion?: string;
+  last_update?: string;
+  lastUpdate?: string;
+}
+
+/** Raw artifact from API (mixed case possible) */
+export interface DGArtifactRaw {
+  profile: DGProfile;
+  structures: DGStructuresRaw;
+  meta: DGArtifactMetaRaw;
+}
+
+/** Raw context snapshot from API (snake_case) */
+export interface DGContextSnapshotRaw {
+  symbol: string;
+  spot: number | null;
+  nearest_volume_node?: number | null;
+  nearestVolumeNode?: number | null;
+  nearest_volume_node_dist?: number | null;
+  nearestVolumeNodeDist?: number | null;
+  volume_well_proximity?: number | null;
+  volumeWellProximity?: number | null;
+  in_crevasse?: boolean;
+  inCrevasse?: boolean;
+  market_memory_strength?: number;
+  marketMemoryStrength?: number;
+  gamma_alignment?: 'positive' | 'negative' | null;
+  gammaAlignment?: 'positive' | 'negative' | null;
+  artifact_version?: string;
+  artifactVersion?: string;
+  timestamp: string;
+}
+
+// ============================================================================
 // API Response Types
 // ============================================================================
 
 export interface DGArtifactResponse {
   success: boolean;
-  data?: DGArtifact;
+  data?: DGArtifactRaw;
   error?: string;
   ts: number;
 }
 
 export interface DGContextResponse {
   success: boolean;
-  data?: DGContextSnapshot;
+  data?: DGContextSnapshotRaw;
   error?: string;
   ts: number;
 }

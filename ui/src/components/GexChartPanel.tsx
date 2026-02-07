@@ -99,17 +99,19 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 /**
- * Calculate Volume Profile with binning
+ * Calculate Volume Profile with binning (TradingView style)
  *
  * @param levels - Volume data at specific price levels
- * @param numBins - Number of rows/bins to create (20-200)
+ * @param rowsLayout - 'number_of_rows' or 'ticks_per_row'
+ * @param rowSize - Number of rows (if number_of_rows) or ticks per row (if ticks_per_row)
  * @returns Binned volume profile data
  */
 function calculateVolumeProfile(
   levels: VolumeProfileLevel[],
-  numBins: number
-): { levels: VolumeProfileLevel[]; maxVolume: number } {
-  if (levels.length === 0) return { levels: [], maxVolume: 0 };
+  rowsLayout: 'number_of_rows' | 'ticks_per_row',
+  rowSize: number
+): { levels: VolumeProfileLevel[]; maxVolume: number; binSize: number } {
+  if (levels.length === 0) return { levels: [], maxVolume: 0, binSize: 1 };
 
   // Find price range
   const prices = levels.map(l => l.price);
@@ -117,36 +119,51 @@ function calculateVolumeProfile(
   const maxPrice = Math.max(...prices);
   const priceRange = maxPrice - minPrice;
 
-  if (priceRange <= 0) return { levels, maxVolume: Math.max(...levels.map(l => l.volume)) };
+  if (priceRange <= 0) return { levels, maxVolume: Math.max(...levels.map(l => l.volume)), binSize: 1 };
 
-  // Clamp numBins to valid range
-  const effectiveBins = Math.max(20, Math.min(200, numBins));
+  // Calculate effective number of bins based on layout mode
+  let effectiveBins: number;
+  if (rowsLayout === 'number_of_rows') {
+    // Fixed number of rows across visible range
+    effectiveBins = Math.max(1, rowSize);
+  } else {
+    // Fixed ticks per row - calculate how many bins fit
+    const ticksPerRow = Math.max(1, rowSize);
+    effectiveBins = Math.ceil(priceRange / ticksPerRow);
+  }
+
+  // Clamp to reasonable range
+  effectiveBins = Math.max(1, Math.min(500, effectiveBins));
   const binSize = priceRange / effectiveBins;
 
-  // Bin the raw data
-  const bins: number[] = new Array(effectiveBins).fill(0);
+  // Bin the raw data - track sum and count for averaging
+  const binSums: number[] = new Array(effectiveBins).fill(0);
+  const binCounts: number[] = new Array(effectiveBins).fill(0);
 
   for (const level of levels) {
     let binIndex = Math.floor((level.price - minPrice) / binSize);
     if (binIndex >= effectiveBins) binIndex = effectiveBins - 1;
     if (binIndex < 0) binIndex = 0;
-    bins[binIndex] += level.volume;
+    binSums[binIndex] += level.volume;
+    binCounts[binIndex] += 1;
   }
 
-  // Convert back to levels
+  // Convert back to levels using AVERAGE volume per row
   const binnedLevels: VolumeProfileLevel[] = [];
   let maxVolume = 0;
 
   for (let i = 0; i < effectiveBins; i++) {
-    const volume = bins[i];
-    if (volume > 0) {
+    const count = binCounts[i];
+    if (count > 0) {
+      // Average volume = sum / count of raw bins in this row
+      const avgVolume = binSums[i] / count;
       const price = minPrice + (i + 0.5) * binSize;
-      binnedLevels.push({ price, volume });
-      maxVolume = Math.max(maxVolume, volume);
+      binnedLevels.push({ price, volume: avgVolume });
+      maxVolume = Math.max(maxVolume, avgVolume);
     }
   }
 
-  return { levels: binnedLevels, maxVolume };
+  return { levels: binnedLevels, maxVolume, binSize };
 }
 
 export default function GexChartPanel({
@@ -543,9 +560,10 @@ export default function GexChartPanel({
     }));
 
     // Step 2: Calculate volume profile - bin the data into rows
-    const { levels: rebinnedLevels, maxVolume: rebinnedMax } = calculateVolumeProfile(
+    const { levels: rebinnedLevels, maxVolume: rebinnedMax, binSize } = calculateVolumeProfile(
       cappedLevels,
-      vpConfig.numBins
+      vpConfig.rowsLayout,
+      vpConfig.rowSize
     );
 
     const vpData: VolumeProfileDataPoint[] = rebinnedLevels.map((level) => ({
@@ -560,6 +578,9 @@ export default function GexChartPanel({
       maxVolume: rebinnedMax,
       color: hexToRgba(vpConfig.color, alpha),
       maxBarWidthPercent: vpConfig.widthPercent,
+      binSize: binSize,
+      // For "number of rows" mode, pass numRows so bar height = viewport_height / numRows
+      numRows: vpConfig.rowsLayout === 'number_of_rows' ? vpConfig.rowSize : undefined,
     });
   }, [volumeProfile, vpConfig]);
 
