@@ -64,10 +64,19 @@ export async function fetchArtifact(): Promise<DGArtifact | null> {
     }
 
     // Convert snake_case to camelCase for frontend use
+    // Normalize volumeNodes: support both old format (number[]) and new format (VolumeLine[])
+    const rawNodes = data.data.structures.volume_nodes ?? data.data.structures.volumeNodes ?? [];
+    const normalizedNodes = rawNodes.map((n: number | { price: number; color?: string; weight?: number }) => {
+      if (typeof n === 'number') {
+        return { price: n, color: '#ffff00', weight: 1.5 };
+      }
+      return { price: n.price, color: n.color || '#ffff00', weight: n.weight || 1.5 };
+    });
+
     return {
       profile: data.data.profile,
       structures: {
-        volumeNodes: data.data.structures.volume_nodes ?? data.data.structures.volumeNodes ?? [],
+        volumeNodes: normalizedNodes,
         volumeWells: data.data.structures.volume_wells ?? data.data.structures.volumeWells ?? [],
         crevasses: data.data.structures.crevasses ?? [],
       },

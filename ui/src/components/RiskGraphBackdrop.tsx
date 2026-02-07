@@ -45,6 +45,15 @@ export interface VPBackdropConfig {
   transparency: number;
 }
 
+/** Default structural line colors */
+const DEFAULT_STRUCTURE_COLORS = {
+  node: '#ffff00',    // Bright yellow - volume edges/ledges
+  well: '#9333ea',    // Purple - neglect
+  crevasse: '#ef4444', // Red - structural void
+};
+
+export type StructureColors = typeof DEFAULT_STRUCTURE_COLORS;
+
 interface RiskGraphBackdropProps {
   /** Chart container dimensions */
   width: number;
@@ -76,6 +85,9 @@ interface RiskGraphBackdropProps {
 
   /** VP display config (from indicator settings) */
   vpConfig?: VPBackdropConfig;
+
+  /** Custom colors for structural lines (nodes, wells, crevasses) */
+  structureColors?: Partial<StructureColors>;
 }
 
 /**
@@ -255,8 +267,6 @@ function GexLayer({
     }
     if (maxGex === 0) return [];
 
-    // GEX bars extend from the vertical center
-    const centerY = height / 2;
     const maxBarHeight = height * (heightPercent / 100); // Max % of height each direction
 
     // Calculate bar width based on strike density
@@ -346,6 +356,7 @@ function StructuralLinesLayer({
   priceMin,
   priceMax,
   opacity = 0.6,
+  colors: customColors,
 }: {
   structures: DGStructures;
   width: number;
@@ -353,79 +364,66 @@ function StructuralLinesLayer({
   priceMin: number;
   priceMax: number;
   opacity?: number;
+  colors?: Partial<StructureColors>;
 }) {
-  const lines = useMemo(() => {
-    const result: {
-      type: 'node' | 'well' | 'crevasse';
-      x: number;
-      x2?: number;
-    }[] = [];
-
-    // Volume Nodes (yellow - concentrated attention) - vertical lines
-    for (const price of structures.volumeNodes) {
-      if (price >= priceMin && price <= priceMax) {
-        result.push({ type: 'node', x: priceToX(price, priceMin, priceMax, width) });
-      }
-    }
-
-    // Volume Wells (purple - neglect) - vertical lines
-    for (const price of structures.volumeWells) {
-      if (price >= priceMin && price <= priceMax) {
-        result.push({ type: 'well', x: priceToX(price, priceMin, priceMax, width) });
-      }
-    }
-
-    // Crevasses (red zones - extended scarcity) - vertical bands
-    for (const [start, end] of structures.crevasses) {
-      if (end >= priceMin && start <= priceMax) {
-        const clampedStart = Math.max(start, priceMin);
-        const clampedEnd = Math.min(end, priceMax);
-        result.push({
-          type: 'crevasse',
-          x: priceToX(clampedStart, priceMin, priceMax, width),
-          x2: priceToX(clampedEnd, priceMin, priceMax, width),
-        });
-      }
-    }
-
-    return result;
-  }, [structures, width, priceMin, priceMax]);
-
-  const colors = {
-    node: '#facc15',    // Yellow - concentrated attention
-    well: '#9333ea',    // Purple - neglect
-    crevasse: '#ef4444', // Red - structural void
-  };
+  // Merge custom colors with defaults (for wells and crevasses)
+  const colors = { ...DEFAULT_STRUCTURE_COLORS, ...customColors };
 
   return (
     <g className="structural-lines-layer" opacity={opacity}>
-      {lines.map((line, i) => {
-        if (line.type === 'crevasse' && line.x2 !== undefined) {
-          // Crevasse zone (vertical filled rectangle spanning full height)
-          return (
-            <rect
-              key={i}
-              x={Math.min(line.x, line.x2)}
-              y={0}
-              width={Math.abs(line.x2 - line.x)}
-              height={height}
-              fill={colors.crevasse}
-              opacity={0.15}
-            />
-          );
-        }
+      {/* Volume Wells (shaded ranges) */}
+      {structures.volumeWells.map(([start, end], i) => {
+        if (end < priceMin || start > priceMax) return null;
+        const clampedStart = Math.max(start, priceMin);
+        const clampedEnd = Math.min(end, priceMax);
+        const x1 = priceToX(clampedStart, priceMin, priceMax, width);
+        const x2 = priceToX(clampedEnd, priceMin, priceMax, width);
+        return (
+          <rect
+            key={`well-${i}`}
+            x={Math.min(x1, x2)}
+            y={0}
+            width={Math.abs(x2 - x1)}
+            height={height}
+            fill={colors.well}
+            opacity={0.2}
+          />
+        );
+      })}
 
-        // Node or Well - vertical line spanning full height
+      {/* Crevasses (red zones - extended scarcity) */}
+      {structures.crevasses.map(([start, end], i) => {
+        if (end < priceMin || start > priceMax) return null;
+        const clampedStart = Math.max(start, priceMin);
+        const clampedEnd = Math.min(end, priceMax);
+        const x1 = priceToX(clampedStart, priceMin, priceMax, width);
+        const x2 = priceToX(clampedEnd, priceMin, priceMax, width);
+        return (
+          <rect
+            key={`crevasse-${i}`}
+            x={Math.min(x1, x2)}
+            y={0}
+            width={Math.abs(x2 - x1)}
+            height={height}
+            fill={colors.crevasse}
+            opacity={0.15}
+          />
+        );
+      })}
+
+      {/* Volume Nodes (lines with individual color and weight) */}
+      {structures.volumeNodes.map((node, i) => {
+        if (node.price < priceMin || node.price > priceMax) return null;
+        const x = priceToX(node.price, priceMin, priceMax, width);
         return (
           <line
-            key={i}
-            x1={line.x}
+            key={`node-${i}`}
+            x1={x}
             y1={0}
-            x2={line.x}
+            x2={x}
             y2={height}
-            stroke={colors[line.type]}
-            strokeWidth={line.type === 'node' ? 2 : 1}
-            strokeDasharray={line.type === 'well' ? '4,4' : undefined}
+            stroke={node.color}
+            strokeWidth={node.weight}
           />
         );
       })}
@@ -457,6 +455,7 @@ export default function RiskGraphBackdrop({
   gexByStrike,
   gexConfig,
   vpConfig,
+  structureColors,
 }: RiskGraphBackdropProps) {
   const { artifact, config } = useDealerGravity();
 
@@ -556,7 +555,8 @@ export default function RiskGraphBackdrop({
           height={height}
           priceMin={priceMin}
           priceMax={priceMax}
-          opacity={effectiveOpacity}
+          opacity={opacity}
+          colors={structureColors}
         />
       )}
     </svg>

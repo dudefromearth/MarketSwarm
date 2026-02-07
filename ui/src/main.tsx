@@ -9,6 +9,7 @@ import ProfilePage from './pages/Profile.tsx'
 import WorkbenchPage from './pages/Workbench.tsx'
 import AdminPage from './pages/Admin.tsx'
 import MLLabPage from './pages/MLLab.tsx'
+import VPLineEditor from './pages/VPLineEditor.tsx'
 import { AlertProvider } from './contexts/AlertContext.tsx'
 import { SystemNotificationsProvider } from './contexts/SystemNotificationsContext.tsx'
 import { PathProvider } from './contexts/PathContext.tsx'
@@ -58,6 +59,11 @@ createRoot(document.getElementById('root')!).render(
                 } />
                 <Route path="/admin" element={<AdminPage />} />
                 <Route path="/admin/ml-lab" element={<MLLabPage />} />
+                <Route path="/admin/vp-editor" element={
+                  <TradingProviders>
+                    <VPLineEditor />
+                  </TradingProviders>
+                } />
               </Routes>
             </TimezoneProvider>
           </AuthWrapper>

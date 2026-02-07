@@ -372,6 +372,103 @@ router.get("/context", async (req, res) => {
 });
 
 // ===========================================================================
+// Structures API (VP Line Editor)
+// ===========================================================================
+
+/**
+ * POST /api/dealer-gravity/structures
+ *
+ * Save user-defined structural lines to Redis.
+ * Used by the VP Line Editor admin tool.
+ *
+ * Body: {
+ *   volume_nodes: Array<{ price: number, color: string, weight: number }> | number[],
+ *   volume_wells: [number, number][],
+ *   symbol?: string
+ * }
+ */
+router.post("/structures", async (req, res) => {
+  try {
+    const redis = getSystemRedis();
+    const { volume_nodes, volume_wells, symbol } = req.body;
+
+    if (!volume_nodes || !Array.isArray(volume_nodes)) {
+      return res.status(400).json({ success: false, error: "volume_nodes array required" });
+    }
+
+    // Load existing profile
+    const vpJson = await redis.get(VP_JSON_KEY);
+    if (!vpJson) {
+      return res.status(404).json({ success: false, error: "No volume profile found in Redis" });
+    }
+
+    const vpData = JSON.parse(vpJson);
+
+    // Normalize volume_nodes: support both old format (number[]) and new format (VolumeLine[])
+    const normalizedNodes = volume_nodes.map(n => {
+      if (typeof n === 'number') {
+        return { price: n, color: '#ffff00', weight: 1.5 };
+      }
+      return { price: Number(n.price), color: n.color || '#ffff00', weight: n.weight || 1.5 };
+    }).sort((a, b) => a.price - b.price);
+
+    // Update structures
+    vpData.structures = {
+      volume_nodes: normalizedNodes,
+      volume_wells: volume_wells || vpData.structures?.volume_wells || [],
+      crevasses: vpData.structures?.crevasses || [],
+    };
+
+    vpData.last_updated = new Date().toISOString();
+
+    // Save back to Redis
+    await redis.set(VP_JSON_KEY, JSON.stringify(vpData));
+
+    // Publish update event to trigger SSE refresh
+    const updateEvent = {
+      type: 'structures_updated',
+      symbol: symbol || 'SPX',
+      artifact_version: vpData.last_updated,
+      occurred_at: new Date().toISOString(),
+    };
+    await redis.publish('dealer_gravity_updated', JSON.stringify(updateEvent));
+
+    console.log(`[dealer-gravity] Saved structures: ${normalizedNodes.length} nodes, ${(volume_wells || []).length} wells`);
+
+    res.json({
+      success: true,
+      message: `Saved ${normalizedNodes.length} lines and ${(volume_wells || []).length} wells`,
+      data: vpData.structures,
+    });
+  } catch (err) {
+    console.error("[dealer-gravity] /structures POST error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * GET /api/dealer-gravity/structures
+ *
+ * Get current structural lines from Redis.
+ */
+router.get("/structures", async (req, res) => {
+  try {
+    const redis = getSystemRedis();
+    const vpJson = await redis.get(VP_JSON_KEY);
+
+    if (!vpJson) {
+      return res.json({ success: true, data: { volume_nodes: [], crevasses: [] } });
+    }
+
+    const vpData = JSON.parse(vpJson);
+    res.json({ success: true, data: vpData.structures || { volume_nodes: [], crevasses: [] } });
+  } catch (err) {
+    console.error("[dealer-gravity] /structures GET error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ===========================================================================
 // Configuration APIs
 // ===========================================================================
 
@@ -394,7 +491,7 @@ router.get("/configs", async (req, res) => {
     }
 
     const [rows] = await pool.execute(
-      `SELECT id, name, enabled, mode, width_percent, num_bins, capping_sigma,
+      `SELECT id, name, enabled, mode, width_percent, rows_layout, row_size, capping_sigma,
               color, transparency, show_volume_nodes, show_volume_wells,
               show_crevasses, is_default, created_at, updated_at
        FROM dealer_gravity_configs
@@ -410,7 +507,8 @@ router.get("/configs", async (req, res) => {
       enabled: !!row.enabled,
       mode: row.mode,
       widthPercent: row.width_percent,
-      numBins: row.num_bins,
+      rowsLayout: row.rows_layout || 'number_of_rows',
+      rowSize: row.row_size || 24,
       cappingSigma: parseFloat(row.capping_sigma),
       color: row.color,
       transparency: row.transparency,
@@ -452,7 +550,8 @@ router.post("/configs", async (req, res) => {
       enabled = true,
       mode = "tv",
       widthPercent = 15,
-      numBins = 50,
+      rowsLayout = "number_of_rows",
+      rowSize = 24,
       cappingSigma = 2.0,
       color = "#9333ea",
       transparency = 50,
@@ -472,16 +571,17 @@ router.post("/configs", async (req, res) => {
 
     const [result] = await pool.execute(
       `INSERT INTO dealer_gravity_configs
-       (user_id, name, enabled, mode, width_percent, num_bins, capping_sigma,
+       (user_id, name, enabled, mode, width_percent, rows_layout, row_size, capping_sigma,
         color, transparency, show_volume_nodes, show_volume_wells, show_crevasses, is_default)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId,
         name,
         enabled,
         mode,
         widthPercent,
-        numBins,
+        rowsLayout,
+        rowSize,
         cappingSigma,
         color,
         transparency,
@@ -539,7 +639,8 @@ router.patch("/configs/:id", async (req, res) => {
       enabled: "enabled",
       mode: "mode",
       widthPercent: "width_percent",
-      numBins: "num_bins",
+      rowsLayout: "rows_layout",
+      rowSize: "row_size",
       cappingSigma: "capping_sigma",
       color: "color",
       transparency: "transparency",

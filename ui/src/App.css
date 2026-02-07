@@ -4910,24 +4910,24 @@ body {
   gap: 2px;
 }
 
-.stat-label {
+.risk-graph-stats .stat-label {
   font-size: 10px;
   color: #666;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
-.stat-value {
-  font-size: 14px;
+.risk-graph-stats .stat-value {
+  font-size: 18px;
   font-weight: 600;
   color: #fff;
 }
 
-.stat-value.profit {
+.risk-graph-stats .stat-value.profit {
   color: #4ade80;
 }
 
-.stat-value.loss {
+.risk-graph-stats .stat-value.loss {
   color: #f87171;
 }
 
@@ -4936,10 +4936,6 @@ body {
   padding: 8px 12px;
   border-radius: 6px;
   border: 1px solid #333;
-}
-
-.risk-graph-stats .stat.highlight .stat-value {
-  font-size: 18px;
 }
 
 .risk-graph-stats .stat-ratio {

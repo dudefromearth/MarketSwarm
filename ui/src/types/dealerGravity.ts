@@ -28,14 +28,23 @@ export interface DGProfile {
 }
 
 /**
+ * Volume line with styling information
+ */
+export interface VolumeLine {
+  price: number;
+  color: string;
+  weight: number;
+}
+
+/**
  * Structural features detected by the artifact builder.
  * These are pre-computed - frontend just renders them.
  */
 export interface DGStructures {
   /** Price levels with concentrated market attention (friction, memory) */
-  volumeNodes: number[];
-  /** Price levels with neglect (low resistance, acceleration zones) */
-  volumeWells: number[];
+  volumeNodes: VolumeLine[];
+  /** Price levels with neglect (low resistance, acceleration zones) - shaded ranges */
+  volumeWells: [number, number][];
   /** Extended regions of persistent volume scarcity [start, end] pairs */
   crevasses: [number, number][];
 }
@@ -176,13 +185,20 @@ export interface DGArtifactUpdatedEvent {
 // Raw API Response Types (snake_case from server)
 // ============================================================================
 
+/** Raw volume line from API */
+export interface VolumeLineRaw {
+  price: number;
+  color?: string;
+  weight?: number;
+}
+
 /** Raw structures from API (snake_case) */
 export interface DGStructuresRaw {
-  volume_nodes?: number[];
-  volumeNodes?: number[];
-  volume_wells?: number[];
-  volumeWells?: number[];
-  crevasses: [number, number][];
+  volume_nodes?: (number | VolumeLineRaw)[];
+  volumeNodes?: (number | VolumeLineRaw)[];
+  volume_wells?: [number, number][];
+  volumeWells?: [number, number][];
+  crevasses?: [number, number][];
 }
 
 /** Raw artifact meta from API (snake_case) */
