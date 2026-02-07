@@ -132,8 +132,8 @@ function calculateVolumeProfile(
     effectiveBins = Math.ceil(priceRange / ticksPerRow);
   }
 
-  // Clamp to reasonable range
-  effectiveBins = Math.max(1, Math.min(500, effectiveBins));
+  // Clamp to reasonable range (allow up to 2000 for 1-pixel resolution)
+  effectiveBins = Math.max(1, Math.min(2000, effectiveBins));
   const binSize = priceRange / effectiveBins;
 
   // Bin the raw data - track sum and count for averaging

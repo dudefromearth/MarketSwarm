@@ -1385,8 +1385,8 @@ function App() {
     const spotPrice = spot?.[underlying]?.value;
     if (!spotPrice) return;
 
-    const minPrice = Math.floor(spotPrice - 300);
-    const maxPrice = Math.ceil(spotPrice + 300);
+    const minPrice = Math.floor(spotPrice - 1500);
+    const maxPrice = Math.ceil(spotPrice + 1500);
     const mode = vpConfig.mode || 'tv';
 
     const url = `${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}&mode=${mode}`;
