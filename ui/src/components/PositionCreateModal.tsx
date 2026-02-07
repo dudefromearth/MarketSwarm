@@ -60,13 +60,12 @@ const POSITION_TYPE_CATEGORIES: { label: string; types: PositionType[] }[] = [
   { label: 'Time', types: ['calendar', 'diagonal'] },
 ];
 
-// Types that default to short
+// Types that default to short (iron structures and naked premium sellers)
 const SHORT_DEFAULT_TYPES: PositionType[] = [
   'iron_fly',
   'iron_condor',
   'straddle',
   'strangle',
-  'condor',
 ];
 
 // Mini risk graph SVG paths for each position type (normalized 0-24 width, 0-12 height)
@@ -118,13 +117,13 @@ const MINI_RISK_GRAPHS: Record<PositionType, { path: string; color: string }> = 
     color: '#ef4444',
   },
   calendar: {
-    // Calendar: Curved peak
-    path: 'M0,8 Q12,0 24,8',
+    // Calendar: Tent top with convex sides, single peak
+    path: 'M0,10 Q2,4 12,2 Q22,4 24,10',
     color: '#06b6d4',
   },
   diagonal: {
-    // Diagonal: Asymmetric curved peak
-    path: 'M0,9 Q10,0 24,6',
+    // Diagonal: Tent top with convex sides, two peaks
+    path: 'M0,10 Q2,4 8,3 Q12,5 16,3 Q22,4 24,10',
     color: '#06b6d4',
   },
   custom: {
