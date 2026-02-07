@@ -138,6 +138,64 @@ function getDefaultDirection(type: PositionType): Direction {
   return SHORT_DEFAULT_TYPES.includes(type) ? 'short' : 'long';
 }
 
+// SPX/index options expire Mon, Wed, Fri
+// Returns true if the given date is an expiration day
+function isExpirationDay(date: Date): boolean {
+  const day = date.getDay();
+  return day === 1 || day === 3 || day === 5; // Mon, Wed, Fri
+}
+
+// Check if we're during market hours (9:30 AM - 4:00 PM ET)
+function isDuringMarketHours(): boolean {
+  const now = new Date();
+  // Convert to ET (approximate - doesn't handle DST perfectly)
+  const etHour = now.getUTCHours() - 5; // EST offset
+  const etMinutes = now.getUTCMinutes();
+  const totalMinutes = etHour * 60 + etMinutes;
+  // Market: 9:30 (570 min) to 16:00 (960 min)
+  return totalMinutes >= 570 && totalMinutes < 960;
+}
+
+// Get the current expiration date
+// If today is an expiration day and market is open, use today
+// Otherwise use the next expiration day
+function getCurrentExpiration(): Date {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  // If today is an expiration day and we're during market hours, use today
+  if (isExpirationDay(today) && isDuringMarketHours()) {
+    return today;
+  }
+
+  // Otherwise find the next expiration day
+  const next = new Date(today);
+  for (let i = 0; i < 7; i++) {
+    next.setDate(next.getDate() + 1);
+    if (isExpirationDay(next)) {
+      return next;
+    }
+  }
+  return next; // Fallback
+}
+
+// Get the next expiration after the current one
+function getNextExpiration(current: Date): Date {
+  const next = new Date(current);
+  for (let i = 0; i < 7; i++) {
+    next.setDate(next.getDate() + 1);
+    if (isExpirationDay(next)) {
+      return next;
+    }
+  }
+  return next; // Fallback
+}
+
+// Format date to YYYY-MM-DD
+function formatDate(date: Date): string {
+  return date.toISOString().split('T')[0];
+}
+
 // Default leg configurations for each position type
 // Direction flips all quantities (long -> short inverts signs)
 function getDefaultLegs(
@@ -214,12 +272,17 @@ function getDefaultLegs(
       ];
 
     case 'calendar':
-    case 'diagonal':
-      // For time spreads: sell near, buy far
+    case 'diagonal': {
+      // For time spreads: sell near (current exp), buy far (next exp)
+      const nearExp = expiration;
+      const farExp = formatDate(getNextExpiration(new Date(expiration + 'T00:00:00')));
+      // Diagonal uses different strikes; calendar uses same strike
+      const farStrike = positionType === 'diagonal' ? baseStrike + width : baseStrike;
       return [
-        { strike: baseStrike, expiration, right, quantity: -1 * d },
-        { strike: baseStrike, expiration, right, quantity: 1 * d },
+        { strike: baseStrike, expiration: nearExp, right, quantity: -1 * d },
+        { strike: farStrike, expiration: farExp, right, quantity: 1 * d },
       ];
+    }
 
     default:
       return [{ strike: baseStrike, expiration, right, quantity: 1 * d }];
@@ -312,12 +375,9 @@ export default function PositionCreateModal({
         })
         .catch(err => console.error('Failed to fetch symbols:', err));
 
-      // Set default expiration to next Friday
-      const today = new Date();
-      const daysUntilFriday = (5 - today.getDay() + 7) % 7 || 7;
-      const nextFriday = new Date(today);
-      nextFriday.setDate(today.getDate() + daysUntilFriday);
-      setExpiration(nextFriday.toISOString().split('T')[0]);
+      // Set default expiration to current expiration
+      const currentExp = getCurrentExpiration();
+      setExpiration(formatDate(currentExp));
 
       // Set base strike to ATM
       setBaseStrike(roundedAtm.toString());
