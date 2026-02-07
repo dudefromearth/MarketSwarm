@@ -16,6 +16,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@market-swarm/core': path.resolve(__dirname, '../packages/core/src'),
+      '@market-swarm/api-client': path.resolve(__dirname, '../packages/api-client/src'),
     },
   },
   server: {

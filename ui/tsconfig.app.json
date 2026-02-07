@@ -20,7 +20,9 @@
     "baseUrl": ".",
     "paths": {
       "@market-swarm/core": ["../packages/core/src/index.ts"],
-      "@market-swarm/core/*": ["../packages/core/src/*"]
+      "@market-swarm/core/*": ["../packages/core/src/*"],
+      "@market-swarm/api-client": ["../packages/api-client/src/index.ts"],
+      "@market-swarm/api-client/*": ["../packages/api-client/src/*"]
     },
 
     /* Linting */
@@ -31,5 +33,5 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src", "../packages/core/src"]
+  "include": ["src", "../packages/core/src", "../packages/api-client/src"]
 }
