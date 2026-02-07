@@ -10,6 +10,7 @@ import WorkbenchPage from './pages/Workbench.tsx'
 import AdminPage from './pages/Admin.tsx'
 import MLLabPage from './pages/MLLab.tsx'
 import { AlertProvider } from './contexts/AlertContext.tsx'
+import { SystemNotificationsProvider } from './contexts/SystemNotificationsContext.tsx'
 import { PathProvider } from './contexts/PathContext.tsx'
 import { TimezoneProvider } from './contexts/TimezoneContext.tsx'
 import { RiskGraphProvider } from './contexts/RiskGraphContext.tsx'
@@ -38,8 +39,9 @@ function TradingProviders({ children }: { children: React.ReactNode }) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
-      <AlertProvider>
-        <PathProvider>
+      <SystemNotificationsProvider>
+        <AlertProvider>
+          <PathProvider>
           <AuthWrapper>
             <TimezoneProvider>
               <Routes>
@@ -60,7 +62,8 @@ createRoot(document.getElementById('root')!).render(
             </TimezoneProvider>
           </AuthWrapper>
         </PathProvider>
-      </AlertProvider>
+        </AlertProvider>
+      </SystemNotificationsProvider>
     </BrowserRouter>
   </StrictMode>,
 )

@@ -1,15 +1,22 @@
 // components/NotificationCenter.tsx
-// Notification bell with badge and popup list of triggered alerts
+// System notification bell with badge and popup list
+//
+// Shows system-level alerts: connectivity, errors, process status, etc.
+// This is SEPARATE from trading alerts which are handled by AlertContext.
 
 import { useState, useRef, useEffect } from 'react';
-import { useAlerts } from '../contexts/AlertContext';
-import type { Alert } from '../types/alerts';
+import {
+  useSystemNotifications,
+  type SystemNotification,
+  type NotificationSeverity,
+  type NotificationCategory,
+} from '../contexts/SystemNotificationsContext';
 
 interface NotificationCenterProps {
   className?: string;
 }
 
-// Format time ago string
+// Format time ago
 function formatTimeAgo(timestamp: number): string {
   const seconds = Math.floor((Date.now() - timestamp) / 1000);
   if (seconds < 60) return 'just now';
@@ -20,61 +27,54 @@ function formatTimeAgo(timestamp: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-// Get alert description for display
-function getAlertDescription(alert: Alert): string {
-  switch (alert.type) {
-    case 'price':
-      return `${alert.condition} ${alert.targetValue}`;
-    case 'debit':
-      return `Debit ${alert.condition} $${alert.targetValue}`;
-    case 'profit_target':
-      return `Profit target ${alert.targetValue}%`;
-    case 'trailing_stop':
-      return 'Trailing stop triggered';
-    case 'ai_theta_gamma':
-      return 'Theta/Gamma zone exit';
-    case 'ai_sentiment':
-      return `Sentiment ${alert.direction}`;
-    case 'ai_risk_zone':
-      return `Risk zone: ${alert.zoneType}`;
-    default:
-      return alert.label || 'Alert triggered';
-  }
-}
+// Severity colors
+const SEVERITY_COLORS: Record<NotificationSeverity, string> = {
+  info: '#3b82f6',    // blue
+  success: '#22c55e', // green
+  warning: '#f59e0b', // amber
+  error: '#ef4444',   // red
+};
 
-// Get icon for alert type
-function getAlertIcon(alert: Alert): string {
-  switch (alert.type) {
-    case 'price':
-      return '📊';
-    case 'debit':
-    case 'profit_target':
-      return '💰';
-    case 'trailing_stop':
-      return '🛑';
-    case 'ai_theta_gamma':
-    case 'ai_sentiment':
-    case 'ai_risk_zone':
-      return '🤖';
-    default:
-      return '🔔';
-  }
-}
+// Category icons
+const CATEGORY_ICONS: Record<NotificationCategory, string> = {
+  connectivity: '📡',
+  api: '🔌',
+  sync: '🔄',
+  process: '⚙️',
+  validation: '⚠️',
+  system: '💻',
+};
+
+// Severity icons
+const SEVERITY_ICONS: Record<NotificationSeverity, string> = {
+  info: 'ℹ️',
+  success: '✓',
+  warning: '⚠',
+  error: '✕',
+};
 
 export default function NotificationCenter({ className = '' }: NotificationCenterProps) {
-  const { alerts, getTriggeredAlerts, clearTriggeredAlerts, updateAlert } = useAlerts();
+  const {
+    unreadCount,
+    getActive,
+    markRead,
+    markAllRead,
+    dismiss,
+    dismissAll,
+  } = useSystemNotifications();
+
   const [isOpen, setIsOpen] = useState(false);
   const [hasNewSinceOpen, setHasNewSinceOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastCountRef = useRef(0);
 
-  // Get triggered alerts sorted by time (newest first)
-  const triggeredAlerts = getTriggeredAlerts()
-    .sort((a, b) => (b.triggeredAt || 0) - (a.triggeredAt || 0));
+  // Get active (not dismissed) notifications, sorted by time
+  const activeNotifications = getActive()
+    .sort((a, b) => b.timestamp - a.timestamp);
 
-  const count = triggeredAlerts.length;
+  const count = unreadCount;
 
-  // Track new alerts arriving
+  // Track new notifications arriving
   useEffect(() => {
     if (count > lastCountRef.current && !isOpen) {
       setHasNewSinceOpen(true);
@@ -82,12 +82,17 @@ export default function NotificationCenter({ className = '' }: NotificationCente
     lastCountRef.current = count;
   }, [count, isOpen]);
 
-  // Clear "new" indicator when opening
+  // Clear "new" indicator and mark as read when opening
   useEffect(() => {
     if (isOpen) {
       setHasNewSinceOpen(false);
+      // Mark visible ones as read after a short delay
+      const timer = setTimeout(() => {
+        markAllRead();
+      }, 1000);
+      return () => clearTimeout(timer);
     }
-  }, [isOpen]);
+  }, [isOpen, markAllRead]);
 
   // Close on click outside
   useEffect(() => {
@@ -117,24 +122,48 @@ export default function NotificationCenter({ className = '' }: NotificationCente
     return () => document.removeEventListener('keydown', handleEscape);
   }, [isOpen]);
 
-  // Dismiss a single alert
-  const handleDismiss = (alert: Alert, e: React.MouseEvent) => {
+  // Dismiss a single notification
+  const handleDismiss = (notification: SystemNotification, e: React.MouseEvent) => {
     e.stopPropagation();
-    updateAlert({ id: alert.id, triggered: false });
+    dismiss(notification.id);
+  };
+
+  // Handle action button click
+  const handleAction = (notification: SystemNotification, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (notification.actionCallback) {
+      notification.actionCallback();
+    }
+    dismiss(notification.id);
   };
 
   // Dismiss all
   const handleDismissAll = () => {
-    clearTriggeredAlerts();
-    setIsOpen(false);
+    dismissAll();
   };
+
+  // Determine bell color based on highest severity
+  const hasSevereIssue = activeNotifications.some(n => n.severity === 'error');
+  const hasWarning = activeNotifications.some(n => n.severity === 'warning');
+
+  let bellColor = '#9ca3af'; // gray default
+  if (count > 0) {
+    if (hasSevereIssue) {
+      bellColor = '#ef4444'; // red
+    } else if (hasWarning) {
+      bellColor = '#f59e0b'; // amber
+    } else {
+      bellColor = '#3b82f6'; // blue
+    }
+  }
 
   return (
     <div className={`notification-center ${className}`} ref={containerRef}>
       <button
         className={`notification-bell ${count > 0 ? 'has-notifications' : ''} ${hasNewSinceOpen ? 'pulse' : ''}`}
         onClick={() => setIsOpen(!isOpen)}
-        title={count > 0 ? `${count} triggered alert${count > 1 ? 's' : ''}` : 'No alerts'}
+        title={count > 0 ? `${count} system notification${count > 1 ? 's' : ''}` : 'No notifications'}
+        style={{ color: bellColor }}
       >
         <svg
           className="bell-icon"
@@ -149,7 +178,7 @@ export default function NotificationCenter({ className = '' }: NotificationCente
           <path d="M13.73 21a2 2 0 0 1-3.46 0" />
         </svg>
         {count > 0 && (
-          <span className="notification-badge">
+          <span className="notification-badge" style={{ background: bellColor }}>
             {count > 99 ? '99+' : count}
           </span>
         )}
@@ -158,8 +187,8 @@ export default function NotificationCenter({ className = '' }: NotificationCente
       {isOpen && (
         <div className="notification-dropdown">
           <div className="notification-header">
-            <span className="notification-title">Alerts</span>
-            {count > 0 && (
+            <span className="notification-title">System Notifications</span>
+            {activeNotifications.length > 0 && (
               <button
                 className="notification-clear-all"
                 onClick={handleDismissAll}
@@ -170,34 +199,63 @@ export default function NotificationCenter({ className = '' }: NotificationCente
           </div>
 
           <div className="notification-list">
-            {triggeredAlerts.length === 0 ? (
+            {activeNotifications.length === 0 ? (
               <div className="notification-empty">
-                No triggered alerts
+                <span className="empty-icon">✓</span>
+                <span className="empty-text">All systems operational</span>
               </div>
             ) : (
-              triggeredAlerts.map((alert) => (
+              activeNotifications.map((notification) => (
                 <div
-                  key={alert.id}
-                  className="notification-item"
-                  style={{ borderLeftColor: alert.color || '#3b82f6' }}
+                  key={notification.id}
+                  className={`notification-item ${notification.read ? 'read' : 'unread'}`}
+                  style={{ borderLeftColor: SEVERITY_COLORS[notification.severity] }}
+                  onClick={() => markRead(notification.id)}
                 >
-                  <span className="notification-icon">
-                    {getAlertIcon(alert)}
-                  </span>
+                  <div className="notification-icon-col">
+                    <span className="category-icon">
+                      {CATEGORY_ICONS[notification.category]}
+                    </span>
+                    <span
+                      className={`severity-dot severity-${notification.severity}`}
+                      title={notification.severity}
+                    />
+                  </div>
+
                   <div className="notification-content">
-                    <div className="notification-label">
-                      {alert.label || getAlertDescription(alert)}
+                    <div className="notification-title-row">
+                      <span className="notification-title-text">{notification.title}</span>
+                      {!notification.read && <span className="unread-dot" />}
                     </div>
+                    <div className="notification-message">{notification.message}</div>
+                    {notification.details && (
+                      <details className="notification-details">
+                        <summary>Details</summary>
+                        <pre>{notification.details}</pre>
+                      </details>
+                    )}
                     <div className="notification-meta">
-                      <span className="notification-type">{alert.type}</span>
+                      <span className="notification-category">{notification.category}</span>
+                      {notification.source && (
+                        <span className="notification-source">{notification.source}</span>
+                      )}
                       <span className="notification-time">
-                        {alert.triggeredAt ? formatTimeAgo(alert.triggeredAt) : ''}
+                        {formatTimeAgo(notification.timestamp)}
                       </span>
                     </div>
+                    {notification.actionLabel && (
+                      <button
+                        className="notification-action"
+                        onClick={(e) => handleAction(notification, e)}
+                      >
+                        {notification.actionLabel}
+                      </button>
+                    )}
                   </div>
+
                   <button
                     className="notification-dismiss"
-                    onClick={(e) => handleDismiss(alert, e)}
+                    onClick={(e) => handleDismiss(notification, e)}
                     title="Dismiss"
                   >
                     ×
@@ -221,17 +279,12 @@ export default function NotificationCenter({ className = '' }: NotificationCente
           border: none;
           padding: 6px;
           cursor: pointer;
-          color: #9ca3af;
           transition: color 0.2s;
           position: relative;
         }
 
         .notification-bell:hover {
-          color: #e5e7eb;
-        }
-
-        .notification-bell.has-notifications {
-          color: #f59e0b;
+          filter: brightness(1.2);
         }
 
         .notification-bell.pulse .bell-icon {
@@ -254,7 +307,6 @@ export default function NotificationCenter({ className = '' }: NotificationCente
           position: absolute;
           top: 0;
           right: 0;
-          background: #ef4444;
           color: white;
           font-size: 10px;
           font-weight: 600;
@@ -272,8 +324,8 @@ export default function NotificationCenter({ className = '' }: NotificationCente
           position: absolute;
           top: calc(100% + 8px);
           right: 0;
-          width: 320px;
-          max-height: 400px;
+          width: 380px;
+          max-height: 480px;
           background: #1f2937;
           border: 1px solid #374151;
           border-radius: 8px;
@@ -288,11 +340,13 @@ export default function NotificationCenter({ className = '' }: NotificationCente
           align-items: center;
           padding: 12px 16px;
           border-bottom: 1px solid #374151;
+          background: #111827;
         }
 
         .notification-title {
           font-weight: 600;
           color: #e5e7eb;
+          font-size: 14px;
         }
 
         .notification-clear-all {
@@ -311,23 +365,36 @@ export default function NotificationCenter({ className = '' }: NotificationCente
 
         .notification-list {
           overflow-y: auto;
-          max-height: 340px;
+          max-height: 420px;
         }
 
         .notification-empty {
-          padding: 24px;
+          padding: 32px;
           text-align: center;
-          color: #6b7280;
+          color: #22c55e;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 8px;
+        }
+
+        .empty-icon {
+          font-size: 24px;
+          opacity: 0.8;
+        }
+
+        .empty-text {
           font-size: 14px;
         }
 
         .notification-item {
           display: flex;
           align-items: flex-start;
-          gap: 10px;
+          gap: 12px;
           padding: 12px 16px;
           border-bottom: 1px solid #374151;
           border-left: 3px solid;
+          cursor: pointer;
           transition: background 0.2s;
         }
 
@@ -335,36 +402,123 @@ export default function NotificationCenter({ className = '' }: NotificationCente
           background: rgba(255, 255, 255, 0.03);
         }
 
+        .notification-item.unread {
+          background: rgba(59, 130, 246, 0.05);
+        }
+
         .notification-item:last-child {
           border-bottom: none;
         }
 
-        .notification-icon {
-          font-size: 16px;
+        .notification-icon-col {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 4px;
           flex-shrink: 0;
         }
+
+        .category-icon {
+          font-size: 18px;
+        }
+
+        .severity-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+        }
+
+        .severity-dot.severity-info { background: #3b82f6; }
+        .severity-dot.severity-success { background: #22c55e; }
+        .severity-dot.severity-warning { background: #f59e0b; }
+        .severity-dot.severity-error { background: #ef4444; }
 
         .notification-content {
           flex: 1;
           min-width: 0;
         }
 
-        .notification-label {
+        .notification-title-row {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          margin-bottom: 4px;
+        }
+
+        .notification-title-text {
           color: #e5e7eb;
           font-size: 13px;
-          margin-bottom: 4px;
-          word-break: break-word;
+          font-weight: 500;
+        }
+
+        .unread-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #3b82f6;
+          flex-shrink: 0;
+        }
+
+        .notification-message {
+          color: #9ca3af;
+          font-size: 12px;
+          line-height: 1.4;
+          margin-bottom: 6px;
+        }
+
+        .notification-details {
+          margin: 8px 0;
+          font-size: 11px;
+        }
+
+        .notification-details summary {
+          cursor: pointer;
+          color: #6b7280;
+        }
+
+        .notification-details pre {
+          margin: 8px 0 0;
+          padding: 8px;
+          background: #111827;
+          border-radius: 4px;
+          font-size: 10px;
+          color: #9ca3af;
+          overflow-x: auto;
+          white-space: pre-wrap;
+          word-break: break-all;
         }
 
         .notification-meta {
           display: flex;
           gap: 8px;
-          font-size: 11px;
+          font-size: 10px;
           color: #6b7280;
         }
 
-        .notification-type {
+        .notification-category {
           text-transform: capitalize;
+          background: rgba(107, 114, 128, 0.2);
+          padding: 1px 6px;
+          border-radius: 3px;
+        }
+
+        .notification-source {
+          font-family: monospace;
+        }
+
+        .notification-action {
+          margin-top: 8px;
+          background: #3b82f6;
+          border: none;
+          color: white;
+          font-size: 11px;
+          padding: 4px 12px;
+          border-radius: 4px;
+          cursor: pointer;
+        }
+
+        .notification-action:hover {
+          background: #2563eb;
         }
 
         .notification-dismiss {
@@ -376,6 +530,12 @@ export default function NotificationCenter({ className = '' }: NotificationCente
           padding: 0 4px;
           line-height: 1;
           flex-shrink: 0;
+          opacity: 0.5;
+          transition: opacity 0.2s, color 0.2s;
+        }
+
+        .notification-item:hover .notification-dismiss {
+          opacity: 1;
         }
 
         .notification-dismiss:hover {
