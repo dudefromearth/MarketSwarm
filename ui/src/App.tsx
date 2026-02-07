@@ -1374,20 +1374,20 @@ function App() {
     setHasScrolledToAtm(false);
   }, [underlying]);
 
-  // Fetch volume profile based on spot price (±300 points) - SPX only for now
-  // Data is pre-binned in Redis at $10 granularity - just fetch and render
+  // Fetch volume profile immediately on mount - don't wait for SSE spot price
+  // Use wide default range (5500-8500) to cover any reasonable SPX price
   useEffect(() => {
     if (underlying !== 'I:SPX') {
       setVolumeProfile(null);
       return;
     }
 
-    const spotPrice = spot?.[underlying]?.value;
-    if (!spotPrice) return;
-
-    const minPrice = Math.floor(spotPrice - 1500);
-    const maxPrice = Math.ceil(spotPrice + 1500);
     const mode = vpConfig.mode || 'tv';
+
+    // Use spot price if available, otherwise use wide default range for instant load
+    const spotPrice = spot?.[underlying]?.value;
+    const minPrice = spotPrice ? Math.floor(spotPrice - 1500) : 5500;
+    const maxPrice = spotPrice ? Math.ceil(spotPrice + 1500) : 8500;
 
     const url = `${SSE_BASE}/api/models/volume_profile?min=${minPrice}&max=${maxPrice}&mode=${mode}`;
 

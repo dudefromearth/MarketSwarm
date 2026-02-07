@@ -23,7 +23,7 @@ export const defaultVolumeProfileConfig: VolumeProfileConfig = {
   mode: 'tv',                // TV mode is smoother, better default
   widthPercent: 15,
   rowsLayout: 'number_of_rows',
-  rowSize: 24,               // 24 rows is a good default
+  rowSize: 1000,             // 1000 rows for fine-grained resolution
   cappingSigma: 2,           // 2σ = 95.45th percentile
   color: '#9333ea',          // Purple
   transparency: 50,

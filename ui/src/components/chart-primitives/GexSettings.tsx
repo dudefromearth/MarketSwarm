@@ -20,7 +20,7 @@ export const defaultGexConfig: GexConfig = {
   enabled: true,
   mode: 'combined',
   widthPercent: 100,     // Now always 100% of the side panel
-  barHeight: 150,        // Bar width in pixels (20-400)
+  barHeight: 400,        // Bar width in pixels (20-400)
   callColor: '#22c55e',  // Green
   putColor: '#ef4444',   // Red
   transparency: 0,       // No longer used, kept for compatibility

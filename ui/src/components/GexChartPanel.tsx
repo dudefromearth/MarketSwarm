@@ -484,6 +484,32 @@ export default function GexChartPanel({
 
     if (chartRef.current) {
       chartRef.current.timeScale().fitContent();
+
+      // Set default price scale: 5 pixels per point
+      // This gives a comfortable view where price movements are clearly visible
+      const DEFAULT_PIXELS_PER_POINT = 5;
+      const chartHeight = containerRef.current?.clientHeight || 600;
+      const desiredPriceRange = chartHeight / DEFAULT_PIXELS_PER_POINT;
+
+      // Center on the last candle's close price
+      const lastCandle = candles[candles.length - 1];
+      const centerPrice = lastCandle?.c || (minPrice + maxPrice) / 2;
+
+      const scaledMin = centerPrice - desiredPriceRange / 2;
+      const scaledMax = centerPrice + desiredPriceRange / 2;
+
+      // Use autoscaleInfoProvider to set the initial price range
+      seriesRef.current.applyOptions({
+        autoscaleInfoProvider: () => ({
+          priceRange: {
+            minValue: scaledMin,
+            maxValue: scaledMax,
+          },
+        }),
+      });
+
+      // Trigger a re-scale to apply the new range
+      chartRef.current.priceScale('right').applyOptions({ autoScale: true });
     }
   }, [candles, chartReady]);
 
