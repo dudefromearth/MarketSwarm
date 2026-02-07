@@ -13,6 +13,7 @@ Vexy does NOT "watch the UI" — the UI explicitly asks for a Routine briefing.
 
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime, UTC
 from typing import Any, Dict, Optional
@@ -245,11 +246,12 @@ class RoutineBriefingSynthesizer:
         self.logger = logger
         self.config = config
 
-        # Read API keys from config
+        # Read API keys from config (check top-level and env dict) with env fallback
         env = config.get("env", {}) or {}
         self.openai_key = (
             config.get("OPENAI_API_KEY") or
             env.get("OPENAI_API_KEY") or
+            os.getenv("OPENAI_API_KEY") or
             ""
         )
 
