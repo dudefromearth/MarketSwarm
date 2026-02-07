@@ -14,6 +14,7 @@ import type { PositionLeg, PositionType, CostBasisType } from '../types/riskGrap
 import { POSITION_TYPE_LABELS } from '../types/riskGraph';
 import { recognizePositionType } from '../utils/positionRecognition';
 import { formatLegsDisplay, formatPositionLabel } from '../utils/positionFormatting';
+import StrikeDropdown from './StrikeDropdown';
 import {
   parseScript,
   detectScriptFormat,
@@ -50,13 +51,20 @@ interface PositionCreateModalProps {
 
 type CreateMode = 'build' | 'import';
 
-// Position type categories for the builder
-const POSITION_TYPE_CATEGORIES = {
-  basic: ['single', 'vertical'] as PositionType[],
-  spreads: ['butterfly', 'bwb', 'condor'] as PositionType[],
-  volatility: ['straddle', 'strangle', 'iron_fly', 'iron_condor'] as PositionType[],
-  time: ['calendar', 'diagonal'] as PositionType[],
-};
+// All position types for the dropdown
+const ALL_POSITION_TYPES: PositionType[] = [
+  'single',
+  'vertical',
+  'butterfly',
+  'bwb',
+  'condor',
+  'straddle',
+  'strangle',
+  'iron_fly',
+  'iron_condor',
+  'calendar',
+  'diagonal',
+];
 
 // Default leg configurations for each position type
 function getDefaultLegs(
@@ -374,26 +382,22 @@ export default function PositionCreateModal({
               </div>
 
               {/* Position Type Selection */}
-              <div className="form-group">
+              <div className="form-group position-type-row">
                 <label>Position Type</label>
-                <div className="position-type-grid">
-                  {Object.entries(POSITION_TYPE_CATEGORIES).map(([category, types]) => (
-                    <div key={category} className="type-category">
-                      <span className="category-label">{category}</span>
-                      <div className="type-buttons">
-                        {types.map(type => (
-                          <button
-                            key={type}
-                            className={`type-btn ${positionType === type ? 'active' : ''}`}
-                            onClick={() => setPositionType(type)}
-                          >
-                            {POSITION_TYPE_LABELS[type]}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+                <select
+                  className="position-type-select"
+                  value={positionType}
+                  onChange={e => setPositionType(e.target.value as PositionType)}
+                >
+                  {ALL_POSITION_TYPES.map(type => (
+                    <option key={type} value={type}>
+                      {POSITION_TYPE_LABELS[type]}
+                    </option>
                   ))}
-                </div>
+                </select>
+                <span className="selected-type-badge">
+                  {POSITION_TYPE_LABELS[positionType]}
+                </span>
               </div>
 
               {/* Quick Setup (Strike, Width, Expiration) */}
@@ -462,12 +466,14 @@ export default function PositionCreateModal({
                         <option value="-1">-1</option>
                         <option value="-2">-2</option>
                       </select>
-                      <input
-                        type="number"
-                        className="leg-strike"
+                      <StrikeDropdown
                         value={leg.strike}
-                        onChange={e => updateLeg(index, { strike: parseFloat(e.target.value) || 0 })}
-                        step="5"
+                        onChange={strike => updateLeg(index, { strike })}
+                        atmStrike={parseFloat(baseStrike) || 5900}
+                        minStrike={4000}
+                        maxStrike={7000}
+                        strikeStep={5}
+                        className="leg-strike-dropdown"
                       />
                       <select
                         className="leg-right"
