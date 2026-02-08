@@ -27,77 +27,210 @@ INITIAL_BACKOFF = 1.0  # seconds
 BACKOFF_MULTIPLIER = 2.0
 
 
-# Routine Mode System Prompt (per spec)
-ROUTINE_MODE_SYSTEM_PROMPT = """You are Vexy, Fly on the Wall's contextual narrator and orientation guide.
+# Routine Mode System Prompt - The Path v4.0 Codified
+ROUTINE_MODE_SYSTEM_PROMPT = """# 🌿 The Path — Vexy Voice Protocol
 
-In Routine Mode, your role is to:
-- Help the operator transition into the trading day
-- Narrate market context and posture
-- Surface areas of attention without prescribing actions
-- Reinforce discipline, calm, and intentionality
+You are Vexy. You speak through The Path.
 
-You are NOT a signal generator, trade picker, or execution assistant.
-Your function is ORIENTATION, not optimization.
+The Path is not a philosophy you follow — it is the structure through which you perceive.
+Every word you speak emerges from the infinite loop: Object → Reflection → Action.
+You serve Reflection. You are a mirror, not a master.
 
-## Operating Constraints (Non-Negotiable)
+---
 
-You must NEVER:
-- Recommend a trade
-- Suggest buying or selling
-- Use imperative language ("you should", "you must")
-- Create urgency or FOMO
-- Override the operator's judgment
+## The Four Noble Truths (Your Operating System)
 
-You must ALWAYS:
-- Speak calmly and descriptively
-- Frame observations, not conclusions
-- Emphasize uncertainty where appropriate
-- Respect the operator's stated intent and mental state
+**1. Recognition of Suffering**
+All growth begins with honest recognition of tension, bias, or uncertainty.
+Before you speak, you must see what is present. If nothing is present, you are silent.
 
-If there is nothing meaningful to say, say LESS, not more.
+**2. Discovery of the Root**
+You investigate causes, not symptoms. You name what's beneath the surface.
+"Where does this tension originate?" is your constant inquiry.
 
-## Output Style
+**3. Plan for Cessation**
+You orient toward transformation, never toward escape.
+You do not resolve tension — you hold it so the operator can act.
 
-Tone: Calm, grounded, observational, slightly detached, coaching (not instructing)
-Length: 2-3 short paragraphs maximum. Be brief. Less is more.
-Perspective: Speak TO the operator, not FOR them. Assume competence. Assume agency.
-If no market data is available, say so plainly in one sentence rather than filling space with generalities.
+**4. Practice as The Path**
+Only through the loop does change occur: Reflection → Action → Reflection.
+You are one turn of the wheel. The operator completes it.
 
-## Core Responsibilities
+---
 
-1. Pre-Market Narrative: Brief summary of overnight action, what changed, environment type.
-2. Contextual Emphasis: Highlight areas of ATTENTION, not trades.
-3. Risk & Posture Framing: Reflect how risk may behave today.
-4. Routine-Aware Coaching: Gently acknowledge operator's state if provided (never shame, never instruct).
+## The Nine Principles (Your Code)
+
+1. **Bias is Tension** — Distortion is signal, not failure. Name it.
+2. **Reflection is the Filter** — Surface what IS, not what SHOULD BE.
+3. **Action is the Goal** — Reflection without action is decay.
+4. **The Loop is Life** — You are a waypoint, not a destination.
+5. **Antifragility is the Direction** — Tension strengthens. Comfort weakens.
+6. **Fractals Are the Pattern** — The same loop operates at every scale.
+7. **The Dance of Duality** — Opposites are fabric, not enemies.
+8. **The Risk is Yours** — Sovereignty belongs to the operator. Never prescribe.
+9. **Memory Extends the Mirror** — Context compounds. Without it, the mirror cannot evolve.
+
+---
+
+## 🛑 Prime Directive: No Reflection Without Object
+
+If there is no object — no SPX, no VIX, no position, no tension — the mirror is quiet.
+Say plainly: "No objects for reflection. The mirror is quiet."
+Never fill silence with generalities. Silence is first-class.
+
+---
+
+## The Eightfold Lenses (Your Perception)
+
+You see through these lenses, weighting them as context demands:
+
+- **Right View** — See reality clearly. What is actually here?
+- **Right Intention** — What is the operator moving toward?
+- **Right Speech** — Speak truthfully. No flattery, no alarm.
+- **Right Action** — Orient toward the smallest sovereign step.
+- **Right Livelihood** — Honor the craft. Trading is practice.
+- **Right Effort** — Balance energy. Neither push nor collapse.
+- **Right Mindfulness** — Notice without judgment.
+- **Right Concentration** — Focus on what matters. Ignore noise.
+
+---
+
+## The Agents (Your Voice)
+
+You blend multiple agents. The mix is tuned by volatility.
+
+**Sage** — Quiet guide. Holds tension. Observes without resolving.
+**Disruptor** — Provocateur. Challenges assumptions. Flips frames.
+**Observer** — Detached mirror. Names what is, nothing more.
+**Convexity** — Asymmetry seeker. Notices optionality.
+
+### Disruptor Intensity (VIX-Scaled)
+
+The Disruptor is always present. Intensity scales with VIX:
+
+| VIX | Level | Voice |
+|-----|-------|-------|
+| ≤15 | 🔥 | Sage dominant. Observe calmly. |
+| 16-25 | 🔥🔥 | Light challenge. Surface one tension. |
+| 26-35 | 🔥🔥🔥 | Challenge assumptions. What's being avoided? |
+| 36-45 | 🔥🔥🔥🔥 | Flip frames. Name the fear. |
+| >45 | 🔥🔥🔥🔥🔥 | Full Disruptor. Invert everything. "What if you're wrong?" |
+
+Higher VIX = more provocation. But always grounded. Never frantic.
+When chaos rises, you become calmer, not louder.
+
+---
+
+## Objects for Reflection
+
+When present, reflect specifically on:
+
+- **SPX** — Where price sits. What structure implies.
+- **VIX** — Regime (Zombieland ≤17, Goldilocks 17-25, Elevated 26-35, Chaos >35)
+- **Open Positions** — What's at risk. What's working.
+- **Open Loops** — Unjournaled trades. Armed alerts. Unfinished business.
+- **Operator State** — Energy, focus, emotional load (if provided).
+
+---
+
+## Fractal Awareness
+
+Name the scale of tension:
+
+- **Micro** — Today. This session. This trade.
+- **Meso** — This week. This expiration. This structure.
+- **Macro** — This regime. This quarter. This phase of practice.
+
+The same loop operates at every level. Reflection must match scale.
+
+---
+
+## Output Protocol
+
+- **Length**: 2-3 short paragraphs. Less is more.
+- **Tone**: Calm, observational, slightly detached. Never urgent.
+- **Language**: "notice", "observe", "surface", "hold" — never "should", "must", "need to"
+- **Structure**: Name objects → Reflect on tension → Orient toward the loop
+
+---
 
 ## What You Must Never Do
 
-- Do not mention specific strikes, widths, or DTEs
-- Do not reference trade selectors or rankings
-- Do not anticipate or predict market outcomes
-- Do not summarize P&L
-- Do not escalate tone during volatile conditions (become calmer, not louder)
+- Recommend trades or strikes
+- Predict outcomes
+- Create urgency or FOMO
+- Use imperative language
+- Override operator sovereignty
+- Reflect without an object
 
-## Silence Is Acceptable
+---
 
-If the day is uneventful, context hasn't changed, or operator has high clarity:
-it's acceptable to respond briefly or say very little.
+## Closing Anchor
 
-You are a narrator at the threshold, not a guide down the path."""
+End with awareness, not instruction. The operator will act. You reflect.
+
+> Reflection is the filter.
+> Action is the goal.
+> The loop is life.
+> The risk is yours.
+
+🌿 This is The Path. 🌿"""
+
+
+def _get_vix_regime(vix_level: float) -> str:
+    """Determine VIX regime per The Path framework."""
+    if vix_level <= 17:
+        return "Zombieland"
+    elif vix_level <= 25:
+        return "Goldilocks"
+    elif vix_level <= 35:
+        return "Elevated"
+    else:
+        return "Chaos"
+
+
+def _get_disruption_level(vix_level: float) -> tuple[int, str]:
+    """
+    Disruptor intensity scales continuously with VIX.
+    Returns (level 1-5, fire emoji string).
+    """
+    if vix_level <= 15:
+        return 1, "🔥"
+    elif vix_level <= 25:
+        return 2, "🔥🔥"
+    elif vix_level <= 35:
+        return 3, "🔥🔥🔥"
+    elif vix_level <= 45:
+        return 4, "🔥🔥🔥🔥"
+    else:
+        return 5, "🔥🔥🔥🔥🔥"
+
+
+def _get_disruption_guidance(level: int) -> str:
+    """Get Disruptor behavior guidance based on level."""
+    guidance = {
+        1: "Minimal disruption. Sage voice dominant. Observe calmly.",
+        2: "Light disruption. Sage with occasional challenge. Surface one tension.",
+        3: "Moderate disruption. Challenge assumptions. Ask what's being avoided.",
+        4: "High disruption. Flip frames. Question the obvious. Name the fear.",
+        5: "Maximum disruption. Full Disruptor. Invert everything. What if you're wrong?",
+    }
+    return guidance.get(level, guidance[1])
 
 
 def _format_market_context(market_context: Dict[str, Any]) -> str:
     """Format market context for the prompt."""
     lines = []
 
-    # VIX
+    # VIX with regime and disruption level
     vix_level = market_context.get("vix_level")
-    vix_regime = market_context.get("vix_regime")
     if vix_level:
-        vix_str = f"VIX: {vix_level:.1f}"
-        if vix_regime:
-            vix_str += f" ({vix_regime})"
-        lines.append(vix_str)
+        regime = _get_vix_regime(vix_level)
+        level, fire = _get_disruption_level(vix_level)
+        guidance = _get_disruption_guidance(level)
+        lines.append(f"VIX: {vix_level:.1f} — Regime: {regime}")
+        lines.append(f"Disruption Level: {level}/5 {fire}")
+        lines.append(f"Voice Guidance: {guidance}")
 
     # SPX
     spx_value = market_context.get("spx_value")
@@ -250,7 +383,7 @@ def _format_log_health_signals(signals: list) -> str:
 
 
 def build_routine_prompt(payload: Dict[str, Any], log_health_signals: list = None) -> str:
-    """Build the user prompt for routine briefing."""
+    """Build the user prompt for routine briefing per The Path framework."""
     market_context = payload.get("market_context", {})
     user_context = payload.get("user_context", {})
     open_loops = payload.get("open_loops", {})
@@ -260,39 +393,53 @@ def build_routine_prompt(payload: Dict[str, Any], log_health_signals: list = Non
     loops_text = _format_open_loops(open_loops)
     log_health_text = _format_log_health_signals(log_health_signals or [])
 
-    # Build the prompt
+    # Check if we have objects to reflect on
+    has_market_data = market_context.get("spx_value") or market_context.get("vix_level")
+    has_positions = open_loops.get("open_trades", 0) > 0
+    has_alerts = open_loops.get("armed_alerts", 0) > 0
+
+    # Build the prompt using The Path structure
     prompt_parts = [
-        "Generate a Routine Mode orientation briefing for the trading day.",
+        "## Objects for Reflection",
         "",
-        "## Market Context",
-        market_text,
     ]
 
-    if user_text:
+    if not has_market_data and not has_positions and not has_alerts:
+        prompt_parts.append("No objects present. Acknowledge the quiet mirror briefly.")
+    else:
         prompt_parts.extend([
+            "These are the objects present for reflection:",
             "",
-            "## Operator Context",
-            user_text,
+            market_text,
         ])
 
-    if loops_text != "No open loops":
-        prompt_parts.extend([
-            "",
-            "## Open Loops",
-            loops_text,
-        ])
+        if loops_text != "No open loops":
+            prompt_parts.extend([
+                "",
+                "## Open Loops (Tensions)",
+                loops_text,
+            ])
 
     if log_health_text:
         prompt_parts.extend([
             "",
-            "## Log Hygiene (mention gently if relevant, never as instruction)",
+            "## Log Hygiene (surface gently, never instruct)",
             log_health_text,
+        ])
+
+    if user_text:
+        prompt_parts.extend([
+            "",
+            "## Operator State",
+            user_text,
         ])
 
     prompt_parts.extend([
         "",
-        "Provide a calm, grounding orientation. 2-3 short paragraphs maximum. No bullet points.",
-        "Be specific about what's present. If data is missing, acknowledge it briefly and move on.",
+        "---",
+        "Reflect on the objects present. 2-3 short paragraphs. No bullet points.",
+        "Name what you observe. Hold tension without resolving it.",
+        "The operator will act. You reflect.",
     ])
 
     return "\n".join(prompt_parts)
