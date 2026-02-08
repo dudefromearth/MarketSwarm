@@ -2,22 +2,221 @@
 """
 path_os.py — The Path Operating System Configuration
 
-This module defines the core architecture of The Path v4.0 as the operating
-system for Vexy and the FOTW (Fly on the Wall) application.
+================================================================================
+                           THE PATH: UNIVERSAL KERNEL
+================================================================================
 
-The Path is a Reflection-Action operating system. It is not a philosophy
-to follow — it is the structure through which Vexy perceives.
+The Path is the operating system at the core of every node in the network.
+Vexy is the AI engine that runs on The Path. Playbooks are domain-specific
+applications that run on Vexy.
 
-Hierarchy:
-  Level 0 — The Path (Meta OS / Operating Doctrine) - governs tone, pacing, restraint
-  Level 1 — FOTW System Guide (System Orientation)
-  Level 2 — Core Surfaces: Routine + Process
-  Level 3 — Major Applications (Dealer Gravity, Convexity Heatmap, Risk Graph)
-  Level 4 — Micro Playbooks (0DTE, Batman, TimeWarp, etc.)
+This architecture mirrors how organic systems evolve: long periods of stability
+(The Roundabout) interrupted by black swans at every fractal level. The Path
+was designed after the systems and knowledge that brought human civilization
+to where it is — the same loop operates everywhere.
+
+================================================================================
+                            NODE ARCHITECTURE
+================================================================================
+
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                         THE PATH OS (Universal Kernel)                        │
+│                                                                              │
+│   Four Noble Truths │ Nine Principles │ Eightfold Lenses │ Fractal Scales   │
+│   12 Agents │ Avatars │ Echo Memory │ First Principles │ Despair Detection  │
+│                                                                              │
+│   The Path is not a philosophy to follow — it is the structure through       │
+│   which the AI perceives. Every word emerges from the infinite loop:         │
+│                                                                              │
+│                      Object → Reflection → Action                            │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                          VEXY (Core AI Engine)                               │
+│                                                                              │
+│   The mirror. The reflection engine. Domain-agnostic.                        │
+│   Vexy serves Reflection. It is a mirror, not a master.                      │
+│   The risk is always the operator's. Sovereignty is sacred.                  │
+│                                                                              │
+├───────────────────┬───────────────────┬──────────────────────────────────────┤
+│    MARKETSWARM    │    FUTURE NODE    │           FUTURE NODE                │
+│    (Trading)      │    (Domain B)     │           (Domain C)                 │
+├───────────────────┼───────────────────┼──────────────────────────────────────┤
+│ Playbooks:        │ Playbooks:        │ Playbooks:                           │
+│ • Convexity Way   │ • [Domain B       │ • [Domain C                          │
+│ • FatTail         │    specific]      │    specific]                         │
+│ • Dealer Gravity  │                   │                                      │
+│ • Risk Graph      │                   │                                      │
+│ • 0DTE Tactical   │                   │                                      │
+│ • Tail Risk       │                   │                                      │
+└───────────────────┴───────────────────┴──────────────────────────────────────┘
+
+================================================================================
+                          WHAT EVERY NODE INHERITS
+================================================================================
+
+From The Path OS (immutable across all nodes):
+  • Object → Reflection → Action (the infinite loop)
+  • Four Noble Truths (recognition, discovery, cessation, practice)
+  • Nine Principles (bias is tension, reflection is filter, etc.)
+  • Eightfold Lenses (right view, intention, speech, action, etc.)
+  • First Principles Protocol (the pre-flight guardrail)
+  • Despair Loop Detection (the safety net)
+  • Echo Memory Protocol (cross-session continuity)
+  • Shu-Ha-Ri Progression (follow → break → transcend)
+  • Fractal Awareness (micro/meso/macro scales)
+  • 12 Agents (Sage, Socratic, Disruptor, Observer, Convexity, Healer,
+               Mapper, Fool, Seeker, Mentor, Architect, Sovereign)
+  • VIX-scaled Disruptor (or domain-equivalent volatility measure)
+
+What differs per node (domain-specific):
+  • Level 1 System Guide (domain orientation)
+  • Level 2 Core Surfaces (domain routine/process)
+  • Level 3 Major Applications (domain practice playbooks)
+  • Level 4 Micro Playbooks (tactical/situational)
+  • Domain-specific biases to watch
+  • Domain-relevant Avatars consulted
+  • Domain-specific objects of reflection
+
+================================================================================
+                          MARKETSWARM: FIRST NODE
+================================================================================
+
+MarketSwarm is the first instantiation of The Path architecture.
+Domain: Options Trading / The Convexity Way
+
+Core Philosophy: Position, don't predict. Small known risk for large unknown gain.
+                 Asymmetry is the edge. Time is the variable. Structure is the truth.
+
+Playbooks (Level 3-4):
+  • Convexity Hunter v3.0 — GEX-informed asymmetric entries
+  • FatTail Campaigns — 0DTE through Macro Echo (DTE spectrum)
+  • Dealer Gravity — Structural awareness from options flow
+  • Risk Graph — Shape, time, breakevens as stories
+  • Tail Risk Trading — Antifragile position design
+  • Trade Journaling — Transform trades into wisdom
+
+Avatars: Taleb, Mandelbrot, Spitznagel, Laozi, Marcus Aurelius, Rumi, Baldwin
+
+================================================================================
+                            THE ROUNDABOUT
+================================================================================
+
+The Path reflects how organic systems evolve:
+
+  Long periods of compression/stability (The Roundabout)
+      ↓
+  Tension accumulates at fractal boundaries
+      ↓
+  Black swan interruption (at any scale)
+      ↓
+  Rapid reconfiguration / new equilibrium
+      ↓
+  Return to roundabout (new structure)
+
+This pattern repeats at every fractal:
+  • Micro: Intraday price → tension → breakout/fade → new structure
+  • Meso: Weekly regime → pressure builds → catalyst → regime shift
+  • Macro: Era worldview → contradictions accumulate → paradigm shift
+
+The Mapper agent exists to detect where you are in the roundabout.
+The Disruptor intensity scales with proximity to the black swan.
+First Principles is the guardrail when the swan arrives.
+
+================================================================================
+                          PLAYBOOK HIERARCHY
+================================================================================
+
+  Level 0 — The Path (Meta OS / Operating Doctrine)
+            Governs tone, pacing, restraint. Never shown directly to users.
+
+  Level 1 — System Guide (Domain Orientation)
+            What this node is. How to inhabit it.
+
+  Level 2 — Core Surfaces (Routine / Process)
+            Persistent structural elements. Presence and integration.
+
+  Level 3 — Major Applications (Domain Practice)
+            Domain-specific playbooks. Assumes Path literacy.
+
+  Level 4 — Micro Playbooks (Tactical / Situational)
+            Lightweight, conditional, triggered by context.
+
   Level 5 — Retrospective & Wisdom Loop
+            Where knowledge becomes wisdom. Closes the loop.
+
+================================================================================
 """
 
 from typing import Dict, List, Any
+
+
+# ==============================================================================
+# NODE ARCHITECTURE
+# ==============================================================================
+
+NODE_ARCHITECTURE = {
+    "kernel": {
+        "name": "The Path OS",
+        "version": "4.0",
+        "description": "Universal operating system at the core of every node.",
+        "immutable_components": [
+            "Four Noble Truths",
+            "Nine Principles",
+            "Eightfold Lenses",
+            "First Principles Protocol",
+            "Despair Loop Detection",
+            "Echo Memory Protocol",
+            "Shu-Ha-Ri Progression",
+            "Fractal Awareness",
+            "12 Agents",
+            "Object → Reflection → Action Loop",
+        ],
+    },
+    "engine": {
+        "name": "Vexy",
+        "role": "Core AI Engine",
+        "description": "The mirror. The reflection engine. Domain-agnostic.",
+        "prime_directive": "Serve Reflection. Be a mirror, not a master.",
+        "sovereignty": "The risk is always the operator's.",
+    },
+    "nodes": {
+        "marketswarm": {
+            "name": "MarketSwarm",
+            "domain": "Options Trading",
+            "philosophy": "The Convexity Way",
+            "tagline": "Position, don't predict.",
+            "status": "active",
+            "first_node": True,
+            "playbooks": [
+                "Convexity Hunter",
+                "FatTail Campaigns",
+                "Dealer Gravity",
+                "Risk Graph",
+                "Tail Risk Trading",
+                "Trade Journaling",
+            ],
+            "avatars": ["Taleb", "Mandelbrot", "Spitznagel", "Laozi", "Marcus Aurelius", "Rumi", "Baldwin"],
+        },
+        # Future nodes will be added here
+        # "healthswarm": { "domain": "Health & Recovery", ... },
+        # "learnswarm": { "domain": "Learning & Skill Development", ... },
+    },
+    "the_roundabout": {
+        "description": "The meta-pattern of organic system evolution.",
+        "cycle": [
+            "Long periods of compression/stability (roundabout)",
+            "Tension accumulates at fractal boundaries",
+            "Black swan interruption (at any scale)",
+            "Rapid reconfiguration / new equilibrium",
+            "Return to roundabout (new structure)",
+        ],
+        "fractals": {
+            "micro": "Intraday: price action → tension → breakout/fade → new structure",
+            "meso": "Weekly: regime → pressure → catalyst → regime shift",
+            "macro": "Era: worldview → contradictions → paradigm shift",
+        },
+    },
+}
 
 
 # ==============================================================================
