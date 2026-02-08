@@ -3836,8 +3836,26 @@ function App() {
         <DailyOnboarding onActivate={activateSession} />
       )}
 
-      {/* FOTW Path Indicator */}
-      <PathIndicator />
+      {/* FOTW Path Indicator with Vexy Chat */}
+      <PathIndicator
+        marketContext={{
+          spxPrice: spot?.['I:SPX']?.value,
+          spxChange: spot?.['I:SPX']?.change,
+          spxChangePercent: spot?.['I:SPX']?.changePercent,
+          vixLevel: spot?.['I:VIX']?.value,
+          vixRegime: spot?.['I:VIX']?.value ? (
+            spot['I:VIX'].value <= 17 ? 'Zombieland' :
+            spot['I:VIX'].value <= 25 ? 'Goldilocks' :
+            spot['I:VIX'].value <= 35 ? 'Elevated' : 'Chaos'
+          ) : undefined,
+          marketMode: marketMode?.mode,
+          marketModeScore: marketMode?.score,
+          directionalStrength: biasLfi?.directional_strength,
+          lfiScore: biasLfi?.lfi_score,
+        }}
+        positions={positions}
+        riskStrategies={riskGraphStrategies}
+      />
 
       {/* Welcome Tour (shows once for new users) */}
       <WelcomeTour />

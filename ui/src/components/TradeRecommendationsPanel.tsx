@@ -1,5 +1,6 @@
 // ui/src/components/TradeRecommendationsPanel.tsx
-// Trade recommendations display with score breakdowns
+// Trade tracking stats display with score breakdowns
+// Note: These are historical/tracked trades for ML analysis, not trade suggestions
 
 import { useState, useCallback, memo } from 'react';
 import type { TradeRecommendation, TradeSelectorModel, VixRegime } from '../types/tradeSelector';
@@ -180,7 +181,7 @@ export default memo(function TradeRecommendationsPanel({
     return (
       <div className="trade-recommendations-panel">
         <div className="recommendations-header">
-          <h3>Trade Ideas</h3>
+          <h3>Tracking Stats</h3>
         </div>
         <div className="recommendations-loading">
           Loading recommendations...
@@ -198,7 +199,7 @@ export default memo(function TradeRecommendationsPanel({
   return (
     <div className="trade-recommendations-panel">
       <div className="recommendations-header">
-        <h3>Trade Ideas</h3>
+        <h3>Tracking Stats</h3>
         <div className="header-meta">
           <span className={getRegimeBadgeClass(model.vix_regime)}>
             {getRegimeLabel(model.vix_regime)}

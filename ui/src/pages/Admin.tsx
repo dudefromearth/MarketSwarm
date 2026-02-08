@@ -337,6 +337,12 @@ export default function AdminPage() {
             <h1>Admin Panel</h1>
           </div>
           <div className="header-nav">
+            <button className="nav-btn" onClick={() => navigate("/admin/vexy")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+              Vexy
+            </button>
             <button className="nav-btn" onClick={() => navigate("/admin/ml-lab")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M12 2L2 7l10 5 10-5-10-5z" />

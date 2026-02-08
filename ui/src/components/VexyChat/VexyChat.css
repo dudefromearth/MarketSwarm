@@ -1,0 +1,581 @@
+/**
+ * VexyChat Styles
+ *
+ * Dark theme consistent with the app
+ * Clean, minimal chat interface
+ */
+
+/* ========== Color Palette ========== */
+:root {
+  --vexy-bg: #0f0f1a;
+  --vexy-bg-secondary: #161622;
+  --vexy-bg-message: #1a1a2e;
+  --vexy-bg-user: #252538;
+  --vexy-border: #2a2a3d;
+  --vexy-text: #e5e5e5;
+  --vexy-text-muted: #a0a0b0;
+  --vexy-text-dim: #606075;
+  --vexy-accent: #6366f1;
+  --vexy-accent-dim: #4f46e5;
+  --vexy-gold: #d4a020;
+  --vexy-gold-bright: #f0c860;
+}
+
+/* ========== Main Container ========== */
+.vexy-chat-panel {
+  position: fixed;
+  bottom: 90px;
+  right: 20px;
+  width: 400px;
+  max-height: 600px;
+  height: 80vh;
+  max-height: min(600px, 80vh);
+  background: var(--vexy-bg);
+  border: 1px solid var(--vexy-border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  z-index: 1000;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(20px) scale(0.95);
+  transition: opacity 200ms ease, transform 200ms ease;
+  pointer-events: none;
+}
+
+.vexy-chat-panel.open {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+}
+
+/* ========== Header ========== */
+.vexy-chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--vexy-bg-secondary);
+  border-bottom: 1px solid var(--vexy-border);
+  flex-shrink: 0;
+}
+
+.vexy-chat-header-left {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vexy-chat-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--vexy-text);
+}
+
+.vexy-chat-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--vexy-text-dim);
+}
+
+.vexy-tier-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--vexy-accent-dim);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 500;
+  border-radius: 10px;
+  text-transform: capitalize;
+}
+
+.vexy-tier-badge.observer {
+  background: #475569;
+}
+
+.vexy-tier-badge.activator {
+  background: #0891b2;
+}
+
+.vexy-tier-badge.navigator,
+.vexy-tier-badge.coaching {
+  background: #7c3aed;
+}
+
+.vexy-tier-badge.administrator {
+  background: #dc2626;
+}
+
+.vexy-echo-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vexy-echo-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--vexy-text-dim);
+}
+
+.vexy-echo-dot.active {
+  background: #22c55e;
+}
+
+.vexy-chat-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vexy-chat-action-btn {
+  background: none;
+  border: none;
+  color: var(--vexy-text-dim);
+  font-size: 16px;
+  padding: 6px 8px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 150ms ease, background 150ms ease;
+}
+
+.vexy-chat-action-btn:hover {
+  color: var(--vexy-text);
+  background: var(--vexy-bg-message);
+}
+
+/* ========== Message Area ========== */
+.vexy-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vexy-chat-messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.vexy-chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.vexy-chat-messages::-webkit-scrollbar-thumb {
+  background: var(--vexy-border);
+  border-radius: 2px;
+}
+
+/* ========== Messages ========== */
+.vexy-message {
+  display: flex;
+  flex-direction: column;
+  max-width: 85%;
+  animation: vexy-message-in 200ms ease;
+}
+
+@keyframes vexy-message-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.vexy-message.vexy {
+  align-self: flex-start;
+}
+
+.vexy-message.user {
+  align-self: flex-end;
+}
+
+.vexy-message-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 11px;
+}
+
+.vexy-message.vexy .vexy-message-header {
+  color: var(--vexy-gold);
+}
+
+.vexy-message.user .vexy-message-header {
+  color: var(--vexy-text-dim);
+  justify-content: flex-end;
+}
+
+.vexy-message-icon {
+  font-size: 14px;
+}
+
+.vexy-message-agent-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  background: var(--vexy-bg-secondary);
+  border: 1px solid var(--vexy-border);
+  border-radius: 8px;
+  font-size: 9px;
+  color: var(--vexy-text-muted);
+  text-transform: capitalize;
+}
+
+.vexy-message-time {
+  margin-left: auto;
+  color: var(--vexy-text-dim);
+}
+
+.vexy-message-copy {
+  background: none;
+  border: none;
+  color: var(--vexy-text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 2px 6px;
+  margin-left: 8px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 150ms, background 150ms, color 150ms;
+}
+
+.vexy-message:hover .vexy-message-copy {
+  opacity: 1;
+}
+
+.vexy-message-copy:hover {
+  background: var(--vexy-bg-user);
+  color: var(--vexy-text);
+}
+
+.vexy-message-content {
+  padding: 10px 14px;
+  border-radius: 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--vexy-text);
+}
+
+.vexy-message-content.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+}
+
+.vexy-message.vexy .vexy-message-content {
+  background: var(--vexy-bg-message);
+  border-bottom-left-radius: 4px;
+}
+
+.vexy-message.user .vexy-message-content {
+  background: var(--vexy-bg-user);
+  border-bottom-right-radius: 4px;
+}
+
+.vexy-message-content p {
+  margin: 0 0 8px 0;
+}
+
+.vexy-message-content p:last-child {
+  margin-bottom: 0;
+}
+
+.vexy-message-content strong {
+  color: var(--vexy-gold-bright);
+  font-weight: 500;
+}
+
+.vexy-message-content em {
+  color: var(--vexy-text-muted);
+}
+
+/* ========== Typing Indicator ========== */
+.vexy-typing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  background: var(--vexy-bg-message);
+  border-radius: 12px;
+  border-bottom-left-radius: 4px;
+  align-self: flex-start;
+}
+
+.vexy-typing-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--vexy-gold);
+  border-radius: 50%;
+  animation: vexy-typing-bounce 1.4s infinite ease-in-out;
+}
+
+.vexy-typing-dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.vexy-typing-dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes vexy-typing-bounce {
+  0%, 80%, 100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ========== Empty State ========== */
+.vexy-chat-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+}
+
+.vexy-chat-empty-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  opacity: 0.5;
+}
+
+.vexy-chat-empty-text {
+  font-size: 13px;
+  color: var(--vexy-text-dim);
+  line-height: 1.6;
+}
+
+/* ========== Input Area ========== */
+.vexy-chat-input-area {
+  padding: 12px 16px;
+  background: var(--vexy-bg-secondary);
+  border-top: 1px solid var(--vexy-border);
+  flex-shrink: 0;
+}
+
+.vexy-chat-input-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.vexy-chat-input-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  background: var(--vexy-bg);
+  border: 1px solid var(--vexy-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  transition: border-color 150ms ease;
+}
+
+.vexy-chat-input-wrapper:focus-within {
+  border-color: var(--vexy-accent);
+}
+
+.vexy-chat-input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--vexy-text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: none;
+  max-height: 100px;
+  outline: none;
+}
+
+.vexy-chat-input::placeholder {
+  color: var(--vexy-text-dim);
+}
+
+.vexy-chat-send-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: var(--vexy-accent);
+  border: none;
+  border-radius: 8px;
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 150ms ease, transform 100ms ease;
+}
+
+.vexy-chat-send-btn:hover:not(:disabled) {
+  background: var(--vexy-accent-dim);
+}
+
+.vexy-chat-send-btn:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.vexy-chat-send-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ========== Reflection Dial ========== */
+.vexy-reflection-dial {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--vexy-border);
+}
+
+.vexy-dial-label {
+  font-size: 10px;
+  color: var(--vexy-text-dim);
+  white-space: nowrap;
+}
+
+.vexy-dial-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--vexy-border);
+  border-radius: 2px;
+  outline: none;
+}
+
+.vexy-dial-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: var(--vexy-accent);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform 100ms ease;
+}
+
+.vexy-dial-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.1);
+}
+
+.vexy-dial-value {
+  font-size: 11px;
+  color: var(--vexy-text-muted);
+  font-weight: 500;
+  min-width: 28px;
+  text-align: right;
+}
+
+/* ========== Rate Limit Warning ========== */
+.vexy-rate-limit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid rgba(234, 179, 8, 0.3);
+  border-radius: 6px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #fbbf24;
+}
+
+.vexy-rate-limit.exhausted {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #f87171;
+}
+
+/* ========== Error State ========== */
+.vexy-chat-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  margin: 8px 16px;
+  font-size: 12px;
+  color: #f87171;
+}
+
+.vexy-chat-error-retry {
+  margin-left: auto;
+  padding: 4px 10px;
+  background: none;
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 4px;
+  color: #f87171;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 150ms ease;
+}
+
+.vexy-chat-error-retry:hover {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+/* ========== Settings Menu ========== */
+.vexy-settings-menu {
+  position: absolute;
+  top: 52px;
+  right: 16px;
+  width: 180px;
+  background: var(--vexy-bg-secondary);
+  border: 1px solid var(--vexy-border);
+  border-radius: 8px;
+  padding: 4px;
+  z-index: 10;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.vexy-settings-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  color: var(--vexy-text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.vexy-settings-item:hover {
+  background: var(--vexy-bg-message);
+  color: var(--vexy-text);
+}
+
+.vexy-settings-item-icon {
+  font-size: 14px;
+}

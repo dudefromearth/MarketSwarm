@@ -8,6 +8,7 @@ import AppLayout from './components/AppLayout.tsx'
 import ProfilePage from './pages/Profile.tsx'
 import WorkbenchPage from './pages/Workbench.tsx'
 import AdminPage from './pages/Admin.tsx'
+import AdminVexyPage from './pages/AdminVexy.tsx'
 import MLLabPage from './pages/MLLab.tsx'
 import VPLineEditor from './pages/VPLineEditor.tsx'
 import { AlertProvider } from './contexts/AlertContext.tsx'
@@ -59,6 +60,7 @@ createRoot(document.getElementById('root')!).render(
                 } />
                 <Route path="/admin" element={<AdminPage />} />
                 <Route path="/admin/ml-lab" element={<MLLabPage />} />
+                <Route path="/admin/vexy" element={<AdminVexyPage />} />
                 <Route path="/admin/vp-editor" element={
                   <TradingProviders>
                     <VPLineEditor />

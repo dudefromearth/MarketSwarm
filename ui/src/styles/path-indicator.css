@@ -64,6 +64,17 @@
   }
 }
 
+/* Active state when Vexy chat is open */
+.path-avatar.chat-open {
+  opacity: 1;
+  color: rgba(180, 200, 240, 1);
+  filter: drop-shadow(-4px 2px 8px rgba(99, 102, 241, 0.3));
+}
+
+.path-avatar.chat-open:hover {
+  transform: scale(1.08) translateY(-2px);
+}
+
 /* ============================================
    Expanded Panel (from bottom-right)
    ============================================ */
