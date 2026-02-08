@@ -22,6 +22,12 @@ export default defineConfig({
   server: {
     https: httpsConfig,
     proxy: {
+      // Vexy AI service (must be before general /api)
+      '/api/vexy': {
+        target: 'http://localhost:3005',
+        changeOrigin: true,
+        secure: false,
+      },
       // Proxy API and SSE requests to the SSE Gateway
       '/api': {
         target: 'http://localhost:3001',

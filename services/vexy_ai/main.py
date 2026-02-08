@@ -25,6 +25,15 @@ from shared.setup_base import SetupBase
 # Vexy-specific modules
 from services.vexy_ai.intel.orchestrator import run as orchestrator_run
 from services.vexy_ai.intel.routine_briefing import RoutineBriefingSynthesizer
+from services.vexy_ai.intel.log_health_analyzer import (
+    store_routine_context,
+    get_routine_context,
+    get_log_health_signals_for_briefing,
+)
+from services.vexy_ai.intel.process_echo import (
+    ProcessEchoGenerator,
+    format_echoes_for_narrative,
+)
 
 # FastAPI for HTTP endpoints
 from fastapi import FastAPI, HTTPException
@@ -56,6 +65,7 @@ app.add_middleware(
 _config: Dict[str, Any] = {}
 _logger = None
 _routine_synthesizer: Optional[RoutineBriefingSynthesizer] = None
+_process_echo_generator: Optional[ProcessEchoGenerator] = None
 
 
 # ------------------------------------------------------------
@@ -97,6 +107,33 @@ class RoutineBriefingRequest(BaseModel):
     market_context: Optional[MarketContext] = None
     user_context: Optional[UserContext] = None
     open_loops: Optional[OpenLoops] = None
+    user_id: Optional[int] = None  # For fetching log health context
+
+
+# Log Health Context Models
+class LogHealthSignal(BaseModel):
+    type: str
+    severity: str
+    value: Optional[Any] = None
+    message: str
+
+
+class LogHealthEntry(BaseModel):
+    log_id: str
+    log_name: str
+    signals: List[LogHealthSignal]
+
+
+class LogHealthContextRequest(BaseModel):
+    user_id: int
+    routine_date: str
+    logs: List[LogHealthEntry]
+
+
+class LogHealthContextResponse(BaseModel):
+    success: bool
+    message: str
+    signals_count: int
 
 
 class RoutineBriefingResponse(BaseModel):
@@ -138,12 +175,122 @@ async def routine_briefing(request: RoutineBriefingRequest):
         "open_loops": request.open_loops.model_dump() if request.open_loops else {},
     }
 
-    result = _routine_synthesizer.synthesize(payload)
+    # Fetch log health signals if user_id provided
+    log_health_signals = []
+    if request.user_id:
+        log_health_signals = get_log_health_signals_for_briefing(request.user_id)
+
+    result = _routine_synthesizer.synthesize(payload, log_health_signals)
 
     if result is None:
         raise HTTPException(status_code=500, detail="Failed to generate briefing")
 
     return RoutineBriefingResponse(**result)
+
+
+@app.post("/api/vexy/context/log-health", response_model=LogHealthContextResponse)
+async def ingest_log_health_context(request: LogHealthContextRequest):
+    """
+    Ingest log health context for Routine Mode narratives.
+
+    Called by the log_health_analyzer scheduled job at 05:00 ET daily.
+    Context is stored per (user_id, routine_date) and is idempotent.
+
+    This endpoint does NOT block or modify logs - it only ingests signals
+    for Vexy to surface in Routine briefings.
+    """
+    try:
+        # Store the context
+        context = request.model_dump()
+        store_routine_context(request.user_id, request.routine_date, context)
+
+        # Count total signals
+        total_signals = sum(len(log.signals) for log in request.logs)
+
+        if _logger:
+            _logger.info(
+                f"Ingested log health context for user {request.user_id}: "
+                f"{len(request.logs)} logs, {total_signals} signals",
+                emoji="📊"
+            )
+
+        return LogHealthContextResponse(
+            success=True,
+            message=f"Stored context for {request.routine_date}",
+            signals_count=total_signals,
+        )
+    except Exception as e:
+        if _logger:
+            _logger.error(f"Failed to ingest log health context: {e}", emoji="❌")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/vexy/context/log-health/{user_id}")
+async def get_log_health_context(user_id: int, routine_date: Optional[str] = None):
+    """
+    Retrieve log health context for a user.
+
+    If routine_date is not specified, returns today's context.
+    """
+    context = get_routine_context(user_id, routine_date)
+    if not context:
+        return {"success": True, "data": None, "message": "No context available"}
+
+    return {"success": True, "data": context}
+
+
+@app.get("/api/vexy/process-echo/{user_id}")
+async def get_process_echoes(user_id: int):
+    """
+    Generate Process-Level Echo fragments for a user.
+
+    Returns narrative fragments that connect Routine observations
+    to what actually changed during the trading session.
+
+    Per spec:
+    - Maximum 1-2 echoes per session
+    - Read-only (no state changes)
+    - Returns empty if Routine wasn't opened or no meaningful deltas
+
+    Response includes:
+    - echoes: List of echo objects with type, message, confidence
+    - narrative_fragment: Pre-formatted text for inclusion in Process narrative
+    """
+    global _process_echo_generator
+
+    if _process_echo_generator is None:
+        return {
+            "success": True,
+            "echoes": [],
+            "narrative_fragment": "",
+            "message": "Echo generator not initialized"
+        }
+
+    try:
+        echoes = await _process_echo_generator.generate_echoes(user_id)
+        narrative_fragment = format_echoes_for_narrative(echoes)
+
+        if _logger and echoes:
+            _logger.info(
+                f"Generated {len(echoes)} process echo(es) for user {user_id}",
+                emoji="🔄"
+            )
+
+        return {
+            "success": True,
+            "echoes": echoes,
+            "narrative_fragment": narrative_fragment,
+            "echo_count": len(echoes),
+        }
+    except Exception as e:
+        if _logger:
+            _logger.error(f"Failed to generate process echoes: {e}", emoji="❌")
+        return {
+            "success": False,
+            "echoes": [],
+            "narrative_fragment": "",
+            "error": str(e)
+        }
 
 
 # ------------------------------------------------------------
@@ -165,7 +312,7 @@ async def run_http_server():
 # Main lifecycle
 # ------------------------------------------------------------
 async def main():
-    global _config, _logger, _routine_synthesizer
+    global _config, _logger, _routine_synthesizer, _process_echo_generator
 
     # -------------------------------------------------
     # Phase 1: bootstrap logger
@@ -188,6 +335,13 @@ async def main():
     # -------------------------------------------------
     _routine_synthesizer = RoutineBriefingSynthesizer(_config, _logger)
     _logger.info(f"Routine briefing synthesizer initialized", emoji="🌅")
+
+    # -------------------------------------------------
+    # Initialize Process Echo Generator
+    # -------------------------------------------------
+    journal_api_base = _config.get("JOURNAL_API_BASE", os.getenv("JOURNAL_API_BASE", "http://localhost:3001"))
+    _process_echo_generator = ProcessEchoGenerator(journal_api_base, _logger)
+    _logger.info(f"Process echo generator initialized", emoji="🔄")
 
     # -------------------------------------------------
     # Start threaded heartbeat (OUTSIDE asyncio)

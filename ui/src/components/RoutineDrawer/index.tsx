@@ -1,190 +1,132 @@
 /**
- * RoutineDrawer - Left-side panel for pre-market preparation
+ * RoutineDrawer v1 - An attentional container
  *
- * "Routine should feel like putting your hands on the table before you trade
- *  — grounding, familiar, and steady."
+ * "Enter this space, notice what's here, leave when you're ready."
+ *
+ * This drawer:
+ * - hosts Vexy content and Fundamental Acts
+ * - does not manage session state
+ * - does not signal readiness, progress, or completion
+ *
+ * It cannot tell you:
+ * - whether a trade will be taken
+ * - whether you are "ready"
+ * - whether preparation was "enough"
+ * - whether the routine was "completed"
+ *
+ * It is contextual, not transactional.
  */
 
+import { useState, useEffect, useRef } from 'react';
 import './RoutineDrawer.css';
-import { useRoutineState } from '../../hooks/useRoutineState';
-import { useOpenLoops } from '../../hooks/useOpenLoops';
 
-import RoutineSection from './RoutineSection';
-import StateResetSection from './StateResetSection';
-import OpenLoopsSection from './OpenLoopsSection';
-import MarketContextSection from './MarketContextSection';
-import RiskOrientationSection from './RiskOrientationSection';
-import IntentDeclarationSection from './IntentDeclarationSection';
-import BeginSessionButton from './BeginSessionButton';
-import RoutineBriefing from './RoutineBriefing';
-import ObserverPanel from '../ObserverPanel';
+import VexyRoutinePanel from './VexyRoutinePanel';
+import FundamentalActLens, { FUNDAMENTAL_ACT_PROMPTS } from './FundamentalActLens';
+import MicroPause from './MicroPause';
 
-interface SpotData {
-  [symbol: string]: {
-    value: number;
-    ts: string;
-    symbol: string;
-    prevClose?: number;
-    change?: number;
-    changePercent?: number;
-  };
-}
-
-interface MarketModeData {
-  score: number;
-  mode: 'compression' | 'transition' | 'expansion';
-  ts?: string;
-}
-
-interface BiasLfiData {
-  directional_strength: number;
-  lfi_score: number;
-  ts?: string;
-}
-
-interface VexyMessage {
-  kind: 'epoch' | 'event';
-  text: string;
-  meta: Record<string, unknown>;
-  ts: string;
-  voice: string;
-}
-
-interface VexyData {
-  epoch: VexyMessage | null;
-  event: VexyMessage | null;
+export interface MarketContext {
+  spxPrice?: number | null;
+  vixLevel?: number | null;
 }
 
 interface RoutineDrawerProps {
   isOpen: boolean;
-  vexy: VexyData | null;
-  biasLfi: BiasLfiData | null;
-  marketMode: MarketModeData | null;
-  spot: SpotData;
-  onSessionRelease: () => void;
-  onCloseDrawer: () => void;
+  onClose: () => void;
+  marketContext?: MarketContext;
 }
 
-export default function RoutineDrawer({
-  isOpen,
-  vexy,
-  biasLfi,
-  marketMode,
-  spot,
-  onSessionRelease,
-}: RoutineDrawerProps) {
-  const {
-    stateReset,
-    setStateReset,
-    riskOrientation,
-    setRiskOrientation,
-    intent,
-    setIntent,
-    sectionsExpanded,
-    toggleSection,
-    isRoutineComplete,
-  } = useRoutineState();
+export default function RoutineDrawer({ isOpen, onClose, marketContext }: RoutineDrawerProps) {
+  const [actNotes, setActNotes] = useState<Record<string, string>>({});
+  const [showPause, setShowPause] = useState(false);
+  const [pauseText, setPauseText] = useState('');
+  const wasOpenRef = useRef(false);
 
-  const openLoops = useOpenLoops();
+  // Load notes from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('routine-act-notes');
+    if (saved) {
+      try {
+        setActNotes(JSON.parse(saved));
+      } catch {
+        // Ignore
+      }
+    }
+  }, []);
 
-  const handleBeginSession = () => {
-    onSessionRelease();
+  // Micro-pause on open/close transitions
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
+      // Opening
+      setPauseText('Entering orientation.');
+      setShowPause(true);
+    } else if (!isOpen && wasOpenRef.current) {
+      // Closing
+      setPauseText('Leaving routine.');
+      setShowPause(true);
+    }
+    wasOpenRef.current = isOpen;
+  }, [isOpen]);
+
+  const handleNoteChange = (id: string, note: string) => {
+    const updated = { ...actNotes, [id]: note };
+    setActNotes(updated);
+    localStorage.setItem('routine-act-notes', JSON.stringify(updated));
+  };
+
+  const handlePauseComplete = () => {
+    setShowPause(false);
   };
 
   return (
-    <div className="routine-drawer-container">
-      <div className="routine-header">
-        <div className="routine-title">
-          <span className="routine-title-icon">🌅</span>
-          <span>Routine</span>
-        </div>
-        <div className="routine-status">
-          {isRoutineComplete && (
-            <span className="routine-complete-badge">Ready</span>
-          )}
-        </div>
-      </div>
+    <>
+      {/* Micro-pause overlay */}
+      {showPause && (
+        <MicroPause
+          text={pauseText}
+          durationMs={1200}
+          onComplete={handlePauseComplete}
+        />
+      )}
 
-      <div className="routine-sections">
-        <RoutineSection
-          title="State Reset"
-          icon="🧘"
-          expanded={sectionsExpanded.stateReset}
-          onToggle={() => toggleSection('stateReset')}
-        >
-          <StateResetSection data={stateReset} onChange={setStateReset} />
-        </RoutineSection>
-
-        <RoutineSection
-          title="Open Loops"
-          icon="🔄"
-          expanded={sectionsExpanded.openLoops}
-          onToggle={() => toggleSection('openLoops')}
-          badge={openLoops.totalCount > 0 ? openLoops.totalCount : null}
-        >
-          <OpenLoopsSection data={openLoops} />
-        </RoutineSection>
-
-        <RoutineSection
-          title="Market Context"
-          icon="📊"
-          expanded={sectionsExpanded.marketContext}
-          onToggle={() => toggleSection('marketContext')}
-        >
-          <MarketContextSection
-            spot={spot}
-            marketMode={marketMode}
-            biasLfi={biasLfi}
-            vexy={vexy}
-          />
-        </RoutineSection>
-
-        <RoutineSection
-          title="Risk Orientation"
-          icon="⚖️"
-          expanded={sectionsExpanded.riskOrientation}
-          onToggle={() => toggleSection('riskOrientation')}
-        >
-          <RiskOrientationSection data={riskOrientation} onChange={setRiskOrientation} />
-        </RoutineSection>
-
-        <RoutineSection
-          title="Intent"
-          icon="🎯"
-          expanded={sectionsExpanded.intent}
-          onToggle={() => toggleSection('intent')}
-        >
-          <IntentDeclarationSection data={intent} onChange={setIntent} />
-        </RoutineSection>
-
-        <RoutineSection
-          title="Vexy"
-          icon="💬"
-          expanded={sectionsExpanded.vexy}
-          onToggle={() => toggleSection('vexy')}
-        >
-          <RoutineBriefing
-            isOpen={isOpen}
-            spot={spot}
-            marketMode={marketMode}
-            biasLfi={biasLfi}
-            vexy={vexy}
-            stateReset={stateReset}
-            riskOrientation={riskOrientation}
-            intent={intent}
-            openLoops={openLoops}
-          />
-          <div className="routine-vexy-divider">Live Feed</div>
-          <div className="routine-vexy-embed">
-            <ObserverPanel />
+      <div className={`routine-drawer-container ${isOpen ? 'open' : ''}`}>
+        {/* Header - minimal */}
+        <div className="routine-header">
+          <div className="routine-title">
+            <span className="routine-title-icon">🌅</span>
+            <span>Routine</span>
           </div>
-        </RoutineSection>
-      </div>
+          <button
+            className="routine-close-btn"
+            onClick={onClose}
+          >
+            Close routine
+          </button>
+        </div>
 
-      <BeginSessionButton
-        isRoutineComplete={isRoutineComplete}
-        onBegin={handleBeginSession}
-      />
-    </div>
+        {/* Scrollable content - breathing space */}
+        <div className="routine-content">
+          {/* Vexy Panel - Outlet B */}
+          <VexyRoutinePanel isOpen={isOpen} marketContext={marketContext} />
+
+          {/* Spacer */}
+          <div className="routine-spacer" />
+
+          {/* Fundamental Act Lenses - just prompts, space, presence */}
+          {FUNDAMENTAL_ACT_PROMPTS.map((act, index) => (
+            <div key={act.id}>
+              <FundamentalActLens
+                id={act.id}
+                prompt={act.prompt}
+                note={actNotes[act.id] || ''}
+                onNoteChange={handleNoteChange}
+              />
+              {index < FUNDAMENTAL_ACT_PROMPTS.length - 1 && (
+                <div className="routine-spacer" />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </>
   );
 }

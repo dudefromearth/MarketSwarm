@@ -2,65 +2,25 @@
  * RoutineBriefing - Vexy's orientation narrative for Routine Mode
  *
  * Fires once when Routine drawer opens.
+ * Self-contained - fetches its own context.
  * Renders static narrative - no streaming, no live updates.
- * Vexy is stateless and deterministic.
+ *
+ * Rules:
+ * - Max 1-2 short paragraphs
+ * - No bullet points
+ * - No calls to action
+ * - No buttons (except refresh)
+ * - Silence is acceptable
  */
 
 import { useState, useEffect, useRef } from 'react';
 import { marked } from 'marked';
-import type { StateResetData, RiskOrientationData, IntentDeclarationData } from '../../hooks/useRoutineState';
-import type { OpenLoops } from '../../hooks/useOpenLoops';
+import { usePositionsContext } from '../../contexts/PositionsContext';
+import { useAlerts } from '../../contexts/AlertContext';
+import type { MarketContext } from './index';
 
 // Configure marked
 marked.setOptions({ breaks: true, gfm: true });
-
-interface SpotData {
-  [symbol: string]: {
-    value: number;
-    ts: string;
-    symbol: string;
-    prevClose?: number;
-    change?: number;
-    changePercent?: number;
-  };
-}
-
-interface MarketModeData {
-  score: number;
-  mode: 'compression' | 'transition' | 'expansion';
-  ts?: string;
-}
-
-interface BiasLfiData {
-  directional_strength: number;
-  lfi_score: number;
-  ts?: string;
-}
-
-interface VexyMessage {
-  kind: 'epoch' | 'event';
-  text: string;
-  meta: Record<string, unknown>;
-  ts: string;
-  voice: string;
-}
-
-interface VexyData {
-  epoch: VexyMessage | null;
-  event: VexyMessage | null;
-}
-
-interface RoutineBriefingProps {
-  isOpen: boolean;
-  spot: SpotData;
-  marketMode: MarketModeData | null;
-  biasLfi: BiasLfiData | null;
-  vexy: VexyData | null;
-  stateReset: StateResetData;
-  riskOrientation: RiskOrientationData;
-  intent: IntentDeclarationData;
-  openLoops: OpenLoops;
-}
 
 interface BriefingResponse {
   briefing_id: string;
@@ -70,16 +30,14 @@ interface BriefingResponse {
   model: string;
 }
 
-export default function RoutineBriefing({
-  isOpen,
-  spot,
-  marketMode,
-  biasLfi,
-  vexy,
-  stateReset,
-  intent,
-  openLoops,
-}: RoutineBriefingProps) {
+interface RoutineBriefingProps {
+  isOpen: boolean;
+  marketContext?: MarketContext;
+}
+
+export default function RoutineBriefing({ isOpen, marketContext }: RoutineBriefingProps) {
+  const { positions } = usePositionsContext();
+  const { alerts } = useAlerts();
   const [briefing, setBriefing] = useState<BriefingResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -90,41 +48,22 @@ export default function RoutineBriefing({
     setLoading(true);
     setError(null);
 
+    // Count open positions
+    const openPositions = positions.filter(p => p.status === 'open');
+    const armedAlerts = alerts.filter(a => a.enabled && !a.triggered);
+
     try {
-      // Build the request payload per spec
       const payload = {
         mode: 'routine',
         timestamp: new Date().toISOString(),
-
         market_context: {
-          globex_summary: vexy?.epoch?.text || null,
-          vix_level: spot['I:VIX']?.value || null,
-          vix_regime: marketMode?.mode || null,
-          gex_posture: biasLfi ? (
-            biasLfi.directional_strength > 0.3 ? 'bullish' :
-            biasLfi.directional_strength < -0.3 ? 'bearish' : 'balanced'
-          ) : null,
-          market_mode: marketMode?.mode || null,
-          market_mode_score: marketMode?.score || null,
-          directional_strength: biasLfi?.directional_strength || null,
-          lfi_score: biasLfi?.lfi_score || null,
-          spx_value: spot['I:SPX']?.value || null,
-          spx_change_percent: spot['I:SPX']?.changePercent || null,
+          spx_value: marketContext?.spxPrice ?? null,
+          vix_level: marketContext?.vixLevel ?? null,
         },
-
-        user_context: {
-          focus: stateReset.focus,
-          energy: stateReset.energy,
-          emotional_load: stateReset.emotionalLoad,
-          intent: intent.intent,
-          intent_note: intent.note || null,
-          free_text: stateReset.freeText || null,
-        },
-
+        user_context: {},
         open_loops: {
-          open_trades: openLoops.openTrades.length,
-          unjournaled_closes: openLoops.unjournaled.length,
-          armed_alerts: openLoops.armedAlerts.length,
+          open_trades: openPositions.length,
+          armed_alerts: armedAlerts.length,
         },
       };
 
@@ -177,6 +116,7 @@ export default function RoutineBriefing({
     return <div dangerouslySetInnerHTML={{ __html: html }} />;
   };
 
+  // Loading state
   if (loading) {
     return (
       <div className="routine-briefing">
@@ -188,6 +128,7 @@ export default function RoutineBriefing({
     );
   }
 
+  // Error state
   if (error) {
     return (
       <div className="routine-briefing">
@@ -201,14 +142,9 @@ export default function RoutineBriefing({
     );
   }
 
+  // Silence is first-class - if no briefing, render minimal
   if (!briefing) {
-    return (
-      <div className="routine-briefing">
-        <div className="routine-briefing-empty">
-          <span>Open the drawer to receive your orientation</span>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   return (

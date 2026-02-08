@@ -31,6 +31,9 @@ import PlaybookView from './components/PlaybookView';
 import AlertCreationModal, { type EditingAlertData } from './components/AlertCreationModal';
 import RiskGraphPanel from './components/RiskGraphPanel';
 import TosImportModal from './components/TosImportModal';
+import TradeImportModal from './components/TradeImportModal';
+import ImportManager from './components/ImportManager';
+import { recognizeStrategy, type ImportedTrade } from './utils/importers';
 import PositionEditModal, { type StrategyData } from './components/PositionEditModal';
 import PositionCreateModal, { type CreatedPosition } from './components/PositionCreateModal';
 import type { ParsedStrategy } from './utils/tosParser';
@@ -54,9 +57,13 @@ import MonitorPanel from './components/MonitorPanel';
 import FloatingDialog from './components/FloatingDialog';
 import DailyOnboarding from './components/DailyOnboarding';
 import ProcessBar, { type ProcessPhase } from './components/ProcessBar';
+import AlertManager, { AlertManagerTab } from './components/AlertManager';
+import AlertHeaderIcon from './components/AlertHeaderIcon';
+import AlertToastContainer from './components/AlertToastContainer';
 import { useDailySession } from './hooks/useDailySession';
 import { VolumeProfileSettings, useIndicatorSettings } from './components/chart-primitives';
 import type { TradeSelectorModel, TradeRecommendation } from './types/tradeSelector';
+import { useLogLifecycle } from './hooks/useLogLifecycle';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -421,6 +428,7 @@ function calculateStrategyTheoreticalPnL(
 function App() {
   // Shared alert context (alerts read by RiskGraphPanel, deleteAlert used by context directly)
   const {
+    alerts,
     createAlert: contextCreateAlert,
     updateAlert: contextUpdateAlert,
     getAlert: contextGetAlert,
@@ -539,6 +547,12 @@ function App() {
   // Sync status for offline indicator
   const { isOnline, hasPendingChanges, pendingCount } = useSyncStatus();
 
+  // Log lifecycle SSE - establishes user-scoped connection for real-time lifecycle events
+  // Events are dispatched globally via 'log-lifecycle' window events
+  useLogLifecycle({
+    enabled: true, // Always enabled - auth handled server-side
+  });
+
   // Feature flag: use new positions API (enable once backend is verified working)
   const USE_NEW_POSITIONS_API = true;
 
@@ -620,6 +634,8 @@ function App() {
   );
   const [tosCopied, setTosCopied] = useState(false);
   const [showTosImport, setShowTosImport] = useState(false);
+  const [showTradeImport, setShowTradeImport] = useState(false);
+  const [showImportManager, setShowImportManager] = useState(false);
   const [showPositionCreate, setShowPositionCreate] = useState(false);
   const [editingStrategy, setEditingStrategy] = useState<RiskGraphStrategy | null>(null);
 
@@ -698,6 +714,7 @@ function App() {
   const [playbookOpen, setPlaybookOpen] = useState(false);
   const [playbookSource, setPlaybookSource] = useState<'journal' | 'tradelog' | null>(null);
   const [monitorOpen, setMonitorOpen] = useState(false);
+  const [alertManagerOpen, setAlertManagerOpen] = useState(false);
   const [pendingOrderCount, setPendingOrderCount] = useState(0);
   const [openTradeCount, setOpenTradeCount] = useState(0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -839,6 +856,10 @@ function App() {
       setActivePanel('tos-import');
       return;
     }
+    if (showTradeImport) {
+      setActivePanel('trade-import');
+      return;
+    }
     if (tradeEntryOpen) {
       setActivePanel('trade-entry-modal');
       return;
@@ -875,6 +896,7 @@ function App() {
   }, [
     alertModalStrategy,
     showTosImport,
+    showTradeImport,
     tradeEntryOpen,
     tradeLogCollapsed,
     playbookOpen,
@@ -1267,6 +1289,150 @@ function App() {
   const handleLogCreated = useCallback(() => {
     setTradeRefreshTrigger(prev => prev + 1);
   }, []);
+
+  // Handle imported trades from TradeImportModal
+  const handleTradeImport = useCallback(async (trades: ImportedTrade[], targetLogId?: string) => {
+    // Use targetLogId from import modal, or fall back to selectedLog
+    const logId = targetLogId || selectedLog?.id;
+    if (!logId || trades.length === 0) return;
+
+    const platform = trades[0]?.platform || 'unknown';
+    let batchId: string | null = null;
+
+    // Step 1: Create import batch via API
+    try {
+      const batchResponse = await fetch('/api/imports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          source: platform,
+          sourceLabel: `${platform.toUpperCase()} Import`,
+          sourceMetadata: {
+            logId: logId,
+            originalCount: trades.length,
+            importedAt: new Date().toISOString(),
+          },
+        }),
+      });
+      const batchResult = await batchResponse.json();
+      if (batchResult.success) {
+        batchId = batchResult.data.id;
+      }
+    } catch (err) {
+      console.warn('[TradeImport] Failed to create import batch, falling back to legacy:', err);
+    }
+
+    // Fallback to legacy batch ID if API not available
+    if (!batchId) {
+      batchId = `import-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    }
+
+    const importTime = new Date().toISOString();
+    let successCount = 0;
+    const errors: string[] = [];
+    const importedIds: string[] = [];
+
+    for (const trade of trades) {
+      try {
+        // Use strategy recognition to properly identify the structure
+        const recognized = recognizeStrategy(trade.legs);
+
+        // Determine if this is a closing trade
+        const isClosing = trade.positionEffect === 'close';
+
+        // Map imported trade to journal API format
+        const tradeData: Record<string, unknown> = {
+          symbol: trade.symbol,
+          underlying: `I:${trade.symbol}`,
+          strategy: recognized.type === 'unknown' ? 'single' : recognized.type,
+          side: recognized.side === 'both' ? 'call' : recognized.side,
+          strike: recognized.strike,
+          width: recognized.width,
+          dte: 0, // We don't know DTE from historical imports
+          entry_price: Math.abs(trade.totalPrice / 100), // Convert cents to dollars
+          quantity: recognized.quantity,
+          notes: `Imported from ${trade.platform.toUpperCase()}${recognized.type !== 'unknown' ? ` (${recognized.direction} ${recognized.type})` : ''}`,
+          tags: ['imported', trade.platform, `batch:${batchId}`],
+          source: `import:${trade.platform}`,
+          entry_mode: 'freeform',
+          entry_time: trade.tradeDate + (trade.tradeTime ? `T${trade.tradeTime}` : 'T12:00:00'),
+          commission: trade.commission,
+          fees: trade.fees,
+          import_batch_id: batchId,
+        };
+
+        // If this is a closing trade, mark it as closed with exit info
+        if (isClosing) {
+          tradeData.exit_time = trade.tradeDate + (trade.tradeTime ? `T${trade.tradeTime}` : 'T12:00:00');
+          tradeData.exit_price = Math.abs(trade.totalPrice / 100);
+          tradeData.status = 'closed';
+        }
+
+        console.log(`[TradeImport] Recognized: ${recognized.type} ${recognized.side} @ ${recognized.strike} w=${recognized.width}, effect=${trade.positionEffect}`);
+
+        const response = await fetch('/api/trades', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify(tradeData),
+        });
+
+        const result = await response.json();
+        if (result.success) {
+          successCount++;
+          if (result.data?.id) {
+            importedIds.push(result.data.id);
+          }
+        } else {
+          errors.push(`${trade.tradeDate}: ${result.error || 'Unknown error'}`);
+        }
+      } catch (err) {
+        errors.push(`${trade.tradeDate}: ${err instanceof Error ? err.message : 'Network error'}`);
+      }
+    }
+
+    // Step 2: Update batch counts via API
+    if (batchId && !batchId.startsWith('import-')) {
+      try {
+        await fetch(`/api/imports/${batchId}/counts`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            tradeCount: successCount,
+            positionCount: 0,
+          }),
+        });
+      } catch (err) {
+        console.warn('[TradeImport] Failed to update batch counts:', err);
+      }
+    }
+
+    // Also store in localStorage for legacy support / quick access
+    if (successCount > 0) {
+      const importHistory = JSON.parse(localStorage.getItem('tradeImportHistory') || '[]');
+      importHistory.unshift({
+        batchId,
+        importTime,
+        platform,
+        count: successCount,
+        tradeIds: importedIds,
+        logId: logId,
+      });
+      // Keep only last 10 imports
+      localStorage.setItem('tradeImportHistory', JSON.stringify(importHistory.slice(0, 10)));
+    }
+
+    // Refresh the trade log
+    setTradeRefreshTrigger(prev => prev + 1);
+
+    // Log results
+    console.log(`[TradeImport] Imported ${successCount}/${trades.length} trades to log ${logId} (batch: ${batchId})`);
+    if (errors.length > 0) {
+      console.warn('[TradeImport] Errors:', errors);
+    }
+  }, [selectedLog?.id]);
 
   // Fetch monitor data for badge and MonitorPanel
   const fetchMonitorCounts = useCallback(async () => {
@@ -2445,6 +2611,7 @@ function App() {
             </>
           )}
           <NotificationCenter />
+          <AlertHeaderIcon onClick={() => setAlertManagerOpen(true)} />
           <SyncStatusIndicator />
         </div>
         <div className="header-center">
@@ -3288,16 +3455,11 @@ function App() {
         <div className="commentary-panel-inner">
           <RoutineDrawer
             isOpen={!commentaryCollapsed}
-            vexy={vexy}
-            biasLfi={biasLfi}
-            marketMode={marketMode}
-            spot={spot || {}}
-            onSessionRelease={() => {
-              activateSession();
-              markStageVisited('discovery');
-              setCommentaryCollapsed(true);
+            onClose={() => setCommentaryCollapsed(true)}
+            marketContext={{
+              spxPrice: spot?.['I:SPX']?.value ?? null,
+              vixLevel: spot?.['I:VIX']?.value ?? null,
             }}
-            onCloseDrawer={() => setCommentaryCollapsed(true)}
           />
         </div>
       </div>
@@ -3368,6 +3530,8 @@ function App() {
                       setJournalOpen(true);
                     }}
                     onOpenPlaybook={() => { setPlaybookSource('tradelog'); setPlaybookOpen(true); }}
+                    onOpenImport={() => setShowTradeImport(true)}
+                    onManageImports={() => setShowImportManager(true)}
                     selectedLogId={selectedLog?.id || null}
                     selectedLog={selectedLog}
                     onSelectLog={handleSelectLog}
@@ -3677,6 +3841,44 @@ function App() {
 
       {/* Welcome Tour (shows once for new users) */}
       <WelcomeTour />
+
+      {/* Alert Manager Bottom Tab */}
+      <AlertManagerTab
+        onClick={() => setAlertManagerOpen(true)}
+        triggeredCount={alerts.filter(a => a.triggered).length}
+      />
+
+      {/* Alert Manager Drawer */}
+      <AlertManager
+        open={alertManagerOpen}
+        onClose={() => setAlertManagerOpen(false)}
+        onCreateAlert={() => {
+          // Open alert creation with no specific strategy (chart alert)
+          setAlertModalStrategy('chart');
+          setAlertModalInitialPrice(currentSpot);
+          setAlertModalInitialCondition('below');
+          setAlertManagerOpen(false);
+        }}
+      />
+
+      {/* Alert Toast Notifications */}
+      <AlertToastContainer />
+
+      {/* Trade Import Modal */}
+      <TradeImportModal
+        isOpen={showTradeImport}
+        onClose={() => setShowTradeImport(false)}
+        onImport={handleTradeImport}
+        selectedLogId={selectedLog?.id}
+      />
+
+      {/* Import Manager Modal */}
+      <ImportManager
+        isOpen={showImportManager}
+        onClose={() => setShowImportManager(false)}
+        onImportDeleted={() => setTradeRefreshTrigger(prev => prev + 1)}
+        currentLogId={selectedLog?.id}
+      />
 
     </div>
   );
