@@ -1,88 +1,69 @@
 /**
- * useRoutineState - localStorage persistence for Routine Drawer
+ * useRoutineState - localStorage persistence for Routine Panel v1
  *
  * Manages daily-resetting state for:
- * - State Reset (focus, energy, emotional load)
- * - Risk Orientation (width, capital, optionality postures)
- * - Intent Declaration (intent type + note)
- * - Section expansion states
+ * - Personal Readiness (Day Qualities: sleep, focus, distractions, bodyState)
+ * - Friction Markers (atmospheric conditions, not problems)
+ * - Routine interaction timestamps
+ *
+ * Philosophy: Help the trader arrive, not complete tasks.
+ * No completion mechanics, no scoring, no "ready" state.
  */
 
 import { useState, useCallback, useEffect } from 'react';
 
-// Section 1: State Reset
-export interface StateResetData {
-  focus: 'low' | 'medium' | 'high' | null;
-  energy: 'low' | 'medium' | 'high' | null;
-  emotionalLoad: 'calm' | 'charged' | 'distracted' | null;
-  freeText: string;
+// Personal Readiness - Day Qualities
+export type SleepQuality = 'short' | 'adequate' | 'strong' | null;
+export type FocusQuality = 'scattered' | 'centered' | null;
+export type DistractionLevel = 'low' | 'medium' | 'high' | null;
+export type BodyState = 'tight' | 'neutral' | 'energized' | null;
+
+export interface PersonalReadinessState {
+  sleep: SleepQuality;
+  focus: FocusQuality;
+  distractions: DistractionLevel;
+  bodyState: BodyState;
 }
 
-// Section 4: Risk Orientation
-export interface RiskOrientationData {
-  widthPosture: 'narrow' | 'normal' | 'wide' | null;
-  capitalPosture: 'defensive' | 'neutral' | 'offensive' | null;
-  optionalityPosture: 'patience' | 'speed' | 'observation' | null;
+// Friction Markers - atmospheric conditions, not problems
+export interface FrictionMarkers {
+  carryover: boolean;     // "stuff from yesterday"
+  noise: boolean;         // "external interruptions"
+  tension: boolean;       // "internal pressure"
+  timePressure: boolean;  // "compressed availability"
 }
 
-// Section 5: Intent Declaration
-export type IntentType =
-  | 'observe_only'
-  | 'manage_existing'
-  | 'one_trade_max'
-  | 'full_participation'
-  | 'test_hypothesis';
-
-export interface IntentDeclarationData {
-  intent: IntentType | null;
-  note: string;
-}
-
-// Section expansion states
-export interface SectionExpandedState {
-  stateReset: boolean;
-  openLoops: boolean;
-  marketContext: boolean;
-  riskOrientation: boolean;
-  intent: boolean;
-  vexy: boolean;
+// Full routine state
+export interface RoutineState {
+  personalReadiness: PersonalReadinessState;
+  friction: FrictionMarkers;
+  routineOpenedAt: string | null;
+  orientationShownAt: string | null;
+  askVexyOpen: boolean;
 }
 
 // localStorage keys
 const STORAGE_KEYS = {
   sessionDate: 'routine-session-date',
-  stateReset: 'routine-state-reset',
-  riskOrientation: 'routine-risk-orientation',
-  intent: 'routine-intent',
-  sectionsExpanded: 'routine-sections-expanded',
+  personalReadiness: 'routine-personal-readiness',
+  friction: 'routine-friction',
+  routineOpenedAt: 'routine-opened-at',
+  orientationShownAt: 'routine-orientation-shown-at',
 };
 
 // Default values
-const DEFAULT_STATE_RESET: StateResetData = {
+const DEFAULT_PERSONAL_READINESS: PersonalReadinessState = {
+  sleep: null,
   focus: null,
-  energy: null,
-  emotionalLoad: null,
-  freeText: '',
+  distractions: null,
+  bodyState: null,
 };
 
-const DEFAULT_RISK_ORIENTATION: RiskOrientationData = {
-  widthPosture: null,
-  capitalPosture: null,
-  optionalityPosture: null,
-};
-
-const DEFAULT_INTENT: IntentDeclarationData = {
-  intent: null,
-  note: '',
-};
-
-const DEFAULT_SECTIONS_EXPANDED: SectionExpandedState = {
-  stateReset: true,
-  openLoops: false,
-  marketContext: true,
-  riskOrientation: true,
-  intent: true,
-  vexy: true,
+const DEFAULT_FRICTION: FrictionMarkers = {
+  carryover: false,
+  noise: false,
+  tension: false,
+  timePressure: false,
 };
 
 /**
@@ -126,68 +107,92 @@ function checkAndResetDaily<T>(key: string, defaultValue: T, sessionDateKey: str
   return defaultValue;
 }
 
+/**
+ * Get a string value from localStorage with daily reset
+ */
+function getStringWithDailyReset(key: string, sessionDateKey: string): string | null {
+  const today = getTodayET();
+  const storedDate = localStorage.getItem(sessionDateKey);
+
+  if (storedDate !== today) {
+    localStorage.removeItem(key);
+    return null;
+  }
+
+  return localStorage.getItem(key);
+}
+
 export function useRoutineState() {
   // Initialize state with daily reset logic
-  const [stateReset, setStateResetRaw] = useState<StateResetData>(() =>
-    checkAndResetDaily(STORAGE_KEYS.stateReset, DEFAULT_STATE_RESET, STORAGE_KEYS.sessionDate)
+  const [personalReadiness, setPersonalReadinessRaw] = useState<PersonalReadinessState>(() =>
+    checkAndResetDaily(STORAGE_KEYS.personalReadiness, DEFAULT_PERSONAL_READINESS, STORAGE_KEYS.sessionDate)
   );
 
-  const [riskOrientation, setRiskOrientationRaw] = useState<RiskOrientationData>(() =>
-    checkAndResetDaily(STORAGE_KEYS.riskOrientation, DEFAULT_RISK_ORIENTATION, STORAGE_KEYS.sessionDate)
+  const [friction, setFrictionRaw] = useState<FrictionMarkers>(() =>
+    checkAndResetDaily(STORAGE_KEYS.friction, DEFAULT_FRICTION, STORAGE_KEYS.sessionDate)
   );
 
-  const [intent, setIntentRaw] = useState<IntentDeclarationData>(() =>
-    checkAndResetDaily(STORAGE_KEYS.intent, DEFAULT_INTENT, STORAGE_KEYS.sessionDate)
+  const [routineOpenedAt, setRoutineOpenedAtRaw] = useState<string | null>(() =>
+    getStringWithDailyReset(STORAGE_KEYS.routineOpenedAt, STORAGE_KEYS.sessionDate)
   );
 
-  const [sectionsExpanded, setSectionsExpandedRaw] = useState<SectionExpandedState>(() => {
-    const stored = localStorage.getItem(STORAGE_KEYS.sectionsExpanded);
-    if (stored) {
-      try {
-        return { ...DEFAULT_SECTIONS_EXPANDED, ...JSON.parse(stored) };
-      } catch {
-        return DEFAULT_SECTIONS_EXPANDED;
-      }
-    }
-    return DEFAULT_SECTIONS_EXPANDED;
-  });
+  const [orientationShownAt, setOrientationShownAtRaw] = useState<string | null>(() =>
+    getStringWithDailyReset(STORAGE_KEYS.orientationShownAt, STORAGE_KEYS.sessionDate)
+  );
 
-  // Persist state changes to localStorage
-  const setStateReset = useCallback((update: Partial<StateResetData> | ((prev: StateResetData) => StateResetData)) => {
-    setStateResetRaw((prev) => {
+  const [askVexyOpen, setAskVexyOpen] = useState(false);
+
+  // Persist personal readiness changes
+  const setPersonalReadiness = useCallback((
+    update: Partial<PersonalReadinessState> | ((prev: PersonalReadinessState) => PersonalReadinessState)
+  ) => {
+    setPersonalReadinessRaw((prev) => {
       const next = typeof update === 'function' ? update(prev) : { ...prev, ...update };
-      localStorage.setItem(STORAGE_KEYS.stateReset, JSON.stringify(next));
+      localStorage.setItem(STORAGE_KEYS.personalReadiness, JSON.stringify(next));
       return next;
     });
   }, []);
 
-  const setRiskOrientation = useCallback((update: Partial<RiskOrientationData> | ((prev: RiskOrientationData) => RiskOrientationData)) => {
-    setRiskOrientationRaw((prev) => {
+  // Persist friction changes
+  const setFriction = useCallback((
+    update: Partial<FrictionMarkers> | ((prev: FrictionMarkers) => FrictionMarkers)
+  ) => {
+    setFrictionRaw((prev) => {
       const next = typeof update === 'function' ? update(prev) : { ...prev, ...update };
-      localStorage.setItem(STORAGE_KEYS.riskOrientation, JSON.stringify(next));
+      localStorage.setItem(STORAGE_KEYS.friction, JSON.stringify(next));
       return next;
     });
   }, []);
 
-  const setIntent = useCallback((update: Partial<IntentDeclarationData> | ((prev: IntentDeclarationData) => IntentDeclarationData)) => {
-    setIntentRaw((prev) => {
-      const next = typeof update === 'function' ? update(prev) : { ...prev, ...update };
-      localStorage.setItem(STORAGE_KEYS.intent, JSON.stringify(next));
-      return next;
-    });
+  // Toggle a specific friction marker
+  const toggleFriction = useCallback((key: keyof FrictionMarkers) => {
+    setFriction((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, [setFriction]);
+
+  // Toggle a personal readiness value (click to select, click again to deselect)
+  const togglePersonalReadiness = useCallback(<K extends keyof PersonalReadinessState>(
+    key: K,
+    value: PersonalReadinessState[K]
+  ) => {
+    setPersonalReadiness((prev) => ({
+      ...prev,
+      [key]: prev[key] === value ? null : value,
+    }));
+  }, [setPersonalReadiness]);
+
+  // Mark routine as opened
+  const markRoutineOpened = useCallback(() => {
+    const now = new Date().toISOString();
+    setRoutineOpenedAtRaw(now);
+    localStorage.setItem(STORAGE_KEYS.routineOpenedAt, now);
   }, []);
 
-  const setSectionsExpanded = useCallback((update: Partial<SectionExpandedState> | ((prev: SectionExpandedState) => SectionExpandedState)) => {
-    setSectionsExpandedRaw((prev) => {
-      const next = typeof update === 'function' ? update(prev) : { ...prev, ...update };
-      localStorage.setItem(STORAGE_KEYS.sectionsExpanded, JSON.stringify(next));
-      return next;
-    });
+  // Mark orientation as shown
+  const markOrientationShown = useCallback(() => {
+    const now = new Date().toISOString();
+    setOrientationShownAtRaw(now);
+    localStorage.setItem(STORAGE_KEYS.orientationShownAt, now);
   }, []);
-
-  const toggleSection = useCallback((section: keyof SectionExpandedState) => {
-    setSectionsExpanded((prev) => ({ ...prev, [section]: !prev[section] }));
-  }, [setSectionsExpanded]);
 
   // Check for day change on visibility change (user returns to tab)
   useEffect(() => {
@@ -199,12 +204,14 @@ export function useRoutineState() {
         if (storedDate !== today) {
           // Day changed while away - reset all
           localStorage.setItem(STORAGE_KEYS.sessionDate, today);
-          setStateResetRaw(DEFAULT_STATE_RESET);
-          setRiskOrientationRaw(DEFAULT_RISK_ORIENTATION);
-          setIntentRaw(DEFAULT_INTENT);
-          localStorage.removeItem(STORAGE_KEYS.stateReset);
-          localStorage.removeItem(STORAGE_KEYS.riskOrientation);
-          localStorage.removeItem(STORAGE_KEYS.intent);
+          setPersonalReadinessRaw(DEFAULT_PERSONAL_READINESS);
+          setFrictionRaw(DEFAULT_FRICTION);
+          setRoutineOpenedAtRaw(null);
+          setOrientationShownAtRaw(null);
+          localStorage.removeItem(STORAGE_KEYS.personalReadiness);
+          localStorage.removeItem(STORAGE_KEYS.friction);
+          localStorage.removeItem(STORAGE_KEYS.routineOpenedAt);
+          localStorage.removeItem(STORAGE_KEYS.orientationShownAt);
         }
       }
     };
@@ -213,26 +220,53 @@ export function useRoutineState() {
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, []);
 
-  // Computed: is routine complete?
-  const isRoutineComplete =
-    stateReset.focus !== null &&
-    stateReset.energy !== null &&
-    stateReset.emotionalLoad !== null &&
-    riskOrientation.widthPosture !== null &&
-    riskOrientation.capitalPosture !== null &&
-    riskOrientation.optionalityPosture !== null &&
-    intent.intent !== null;
+  // Export Day Texture for Journal integration
+  const getDayTexture = useCallback(() => {
+    const qualities: string[] = [];
+
+    if (personalReadiness.sleep) {
+      qualities.push(`Sleep: ${personalReadiness.sleep.charAt(0).toUpperCase() + personalReadiness.sleep.slice(1)}`);
+    }
+    if (personalReadiness.focus) {
+      qualities.push(`Focus: ${personalReadiness.focus.charAt(0).toUpperCase() + personalReadiness.focus.slice(1)}`);
+    }
+    if (personalReadiness.distractions) {
+      qualities.push(`Distractions: ${personalReadiness.distractions.charAt(0).toUpperCase() + personalReadiness.distractions.slice(1)}`);
+    }
+    if (personalReadiness.bodyState) {
+      qualities.push(`Body: ${personalReadiness.bodyState.charAt(0).toUpperCase() + personalReadiness.bodyState.slice(1)}`);
+    }
+
+    const frictionItems: string[] = [];
+    if (friction.carryover) frictionItems.push('Carryover');
+    if (friction.noise) frictionItems.push('Noise');
+    if (friction.tension) frictionItems.push('Tension');
+    if (friction.timePressure) frictionItems.push('Time pressure');
+
+    return {
+      qualities: qualities.join(' · '),
+      friction: frictionItems.join(' · '),
+    };
+  }, [personalReadiness, friction]);
 
   return {
-    stateReset,
-    setStateReset,
-    riskOrientation,
-    setRiskOrientation,
-    intent,
-    setIntent,
-    sectionsExpanded,
-    setSectionsExpanded,
-    toggleSection,
-    isRoutineComplete,
+    // State
+    personalReadiness,
+    friction,
+    routineOpenedAt,
+    orientationShownAt,
+    askVexyOpen,
+
+    // Setters
+    setPersonalReadiness,
+    setFriction,
+    toggleFriction,
+    togglePersonalReadiness,
+    markRoutineOpened,
+    markOrientationShown,
+    setAskVexyOpen,
+
+    // Helpers
+    getDayTexture,
   };
 }

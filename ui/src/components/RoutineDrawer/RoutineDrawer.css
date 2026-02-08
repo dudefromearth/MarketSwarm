@@ -2,8 +2,8 @@
  * RoutineDrawer v1 Styles
  *
  * Warm amber palette - calm, grounding, steady
- * No borders on attentional elements
- * Vertical rhythm > density
+ * Breathing space layout - more whitespace, fewer dividers
+ * Lens-based design - soft headers, no heavy borders
  * Space is intentional
  */
 
@@ -17,6 +17,18 @@
   --routine-text: #e8c868;
   --routine-text-muted: #d0a850;
   --routine-text-dim: #907830;
+
+  /* Brighter body copy for energy lift */
+  --routine-text-warm: #f0d878;
+
+  /* Sunrise gradient - ONLY on interior panel surface */
+  --routine-sunrise-start: #1f1c14;
+  --routine-sunrise-end: #2a2518;
+
+  /* Soft selection states */
+  --routine-chip-unselected: transparent;
+  --routine-chip-selected: rgba(212, 160, 32, 0.15);
+  --routine-chip-border-selected: rgba(212, 160, 32, 0.4);
 }
 
 /* ========== Micro-Pause Overlay ========== */
@@ -57,7 +69,11 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--routine-bg);
+  background: linear-gradient(
+    180deg,
+    var(--routine-sunrise-start) 0%,
+    var(--routine-sunrise-end) 100%
+  );
   font-family: 'SF Mono', 'Menlo', monospace;
   overflow: hidden;
   opacity: 0;
@@ -73,7 +89,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 16px 28px;
   flex-shrink: 0;
 }
 
@@ -109,7 +125,7 @@
 .routine-content {
   flex: 1;
   overflow-y: auto;
-  padding: 8px 24px 40px 24px;
+  padding: 8px 28px 48px 28px;
 }
 
 .routine-content::-webkit-scrollbar {
@@ -125,48 +141,36 @@
   border-radius: 2px;
 }
 
-/* ========== Spacer ========== */
-.routine-spacer {
-  height: 32px;
+/* ========== Domain Spacer ========== */
+.routine-domain-spacer {
+  height: 48px;
+}
+
+/* ========== Lens Header ========== */
+.routine-lens-header {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--routine-text-muted);
+  letter-spacing: 0.5px;
+  margin-bottom: 20px;
 }
 
 /* ========== Vexy Routine Panel ========== */
 .vexy-routine-panel {
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
-.vexy-routine-panel-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--routine-border);
-}
-
-.vexy-routine-panel-icon {
-  font-size: 14px;
-}
-
-.vexy-routine-panel-title {
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--routine-text-dim);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-}
-
-.vexy-routine-panel-content {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-/* ========== Routine Briefing ========== */
+/* ========== Routine Briefing (Orientation) ========== */
 .routine-briefing {
   background: var(--routine-bg-subtle);
   border-radius: 4px;
   padding: 16px;
+  margin-bottom: 12px;
+}
+
+.routine-briefing.orientation {
+  background: transparent;
+  padding: 0;
 }
 
 .routine-briefing-header {
@@ -200,9 +204,13 @@
 }
 
 .routine-briefing-content {
+  font-size: 14px;
+  color: var(--routine-text-warm);
+  line-height: 1.8;
+}
+
+.routine-briefing-content.orientation-content {
   font-size: 15px;
-  color: var(--routine-text);
-  line-height: 1.9;
 }
 
 .routine-briefing-content p {
@@ -222,19 +230,12 @@
   color: var(--routine-text-muted);
 }
 
-.routine-briefing-meta {
-  margin-top: 12px;
-  font-size: 9px;
-  color: var(--routine-text-dim);
-  text-align: right;
-}
-
 .routine-briefing-loading {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  padding: 24px;
+  padding: 16px;
   font-size: 11px;
   color: var(--routine-text-dim);
 }
@@ -248,116 +249,368 @@
   to { transform: rotate(360deg); }
 }
 
-.routine-briefing-error {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 20px;
-  font-size: 11px;
-  color: var(--routine-text-dim);
-}
-
-.routine-briefing-retry {
-  padding: 4px 8px;
-  font-size: 10px;
-  font-family: 'SF Mono', 'Menlo', monospace;
-  background: transparent;
-  border: 1px solid var(--routine-border);
-  border-radius: 3px;
-  color: var(--routine-text-muted);
-  cursor: pointer;
-  transition: border-color 200ms ease;
-}
-
-.routine-briefing-retry:hover {
-  border-color: var(--routine-text-dim);
-}
-
-/* ========== Process Echo ========== */
+/* ========== Process Echo (Quiet) ========== */
 .process-echo {
   background: var(--routine-bg-subtle);
   border-radius: 4px;
   padding: 16px;
-}
-
-.process-echo-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   margin-bottom: 12px;
 }
 
-.process-echo-icon {
-  font-size: 12px;
+.process-echo.quiet {
+  background: transparent;
+  padding: 8px 0;
+  margin-bottom: 8px;
 }
 
-.process-echo-title {
-  font-size: 9px;
-  font-weight: 600;
+.process-echo.quiet .process-echo-message {
+  font-size: 13px;
   color: var(--routine-text-dim);
-  text-transform: uppercase;
-  letter-spacing: 1px;
+  font-style: italic;
+  line-height: 1.6;
+  margin-bottom: 6px;
 }
 
-.process-echo-content {
-  font-size: 15px;
-  color: var(--routine-text);
-  line-height: 1.9;
+.process-echo.quiet .process-echo-message:last-child {
+  margin-bottom: 0;
 }
 
 .process-echo-message {
   margin-bottom: 10px;
+  font-size: 14px;
+  color: var(--routine-text);
+  line-height: 1.8;
 }
 
 .process-echo-message:last-child {
   margin-bottom: 0;
 }
 
-/* ========== Fundamental Act Lens ========== */
-.fundamental-act-lens {
-  padding: 4px 0;
+/* ========== Ask Vexy Affordance ========== */
+.ask-vexy-affordance {
+  margin-top: 8px;
 }
 
-.fundamental-act-lens-prompt {
-  font-size: 16px;
-  color: var(--routine-text-muted);
-  line-height: 1.8;
-  font-style: italic;
-}
-
-.fundamental-act-lens-note-container {
-  max-height: 0;
-  overflow: hidden;
-  opacity: 0;
-  transition: max-height 300ms ease, opacity 300ms ease, margin 300ms ease;
-  margin-top: 0;
-}
-
-.fundamental-act-lens-note-container.visible {
-  max-height: 100px;
-  opacity: 1;
-  margin-top: 12px;
-}
-
-.fundamental-act-lens-note {
-  width: 100%;
-  padding: 12px 14px;
-  font-size: 14px;
-  font-family: 'SF Mono', 'Menlo', monospace;
-  background: var(--routine-bg-subtle);
+.ask-vexy-trigger {
+  background: none;
   border: none;
-  border-radius: 4px;
-  color: var(--routine-text);
-  resize: none;
-  line-height: 1.7;
+  color: var(--routine-text-dim);
+  font-size: 12px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  cursor: pointer;
+  padding: 4px 0;
+  transition: color 200ms ease;
 }
 
-.fundamental-act-lens-note::placeholder {
+.ask-vexy-trigger:hover {
+  color: var(--routine-text-muted);
+}
+
+.ask-vexy-affordance.expanded {
+  background: var(--routine-bg-subtle);
+  border-radius: 4px;
+  padding: 12px 14px;
+}
+
+.ask-vexy-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.ask-vexy-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--routine-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.ask-vexy-close {
+  background: none;
+  border: none;
+  color: var(--routine-text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.ask-vexy-close:hover {
+  color: var(--routine-text-muted);
+}
+
+.ask-vexy-response {
+  font-size: 14px;
+  color: var(--routine-text-warm);
+  line-height: 1.7;
+  margin-bottom: 12px;
+}
+
+.ask-vexy-response p {
+  margin: 0 0 10px 0;
+}
+
+.ask-vexy-response p:last-child {
+  margin-bottom: 0;
+}
+
+.ask-vexy-error {
+  font-size: 12px;
+  color: var(--routine-text-dim);
+  margin-bottom: 10px;
+}
+
+.ask-vexy-form {
+  display: flex;
+  gap: 8px;
+}
+
+.ask-vexy-input {
+  flex: 1;
+  background: var(--routine-bg);
+  border: none;
+  border-radius: 3px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  color: var(--routine-text);
+}
+
+.ask-vexy-input::placeholder {
   color: var(--routine-text-dim);
 }
 
-.fundamental-act-lens-note:focus {
+.ask-vexy-input:focus {
   outline: none;
-  background: rgba(184, 134, 11, 0.05);
+}
+
+.ask-vexy-submit {
+  background: none;
+  border: 1px solid var(--routine-border);
+  border-radius: 3px;
+  color: var(--routine-text-muted);
+  font-size: 14px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: border-color 200ms ease;
+}
+
+.ask-vexy-submit:hover:not(:disabled) {
+  border-color: var(--routine-text-dim);
+}
+
+.ask-vexy-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ask-vexy-hint {
+  font-size: 10px;
+  color: var(--routine-text-dim);
+  margin-top: 8px;
+  opacity: 0.7;
+}
+
+/* ========== Personal Readiness ========== */
+.personal-readiness {
+  margin-bottom: 8px;
+}
+
+.personal-readiness-qualities {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.personal-readiness-friction {
+  padding-top: 8px;
+}
+
+/* ========== Day Quality Row ========== */
+.day-quality-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.day-quality-label {
+  font-size: 12px;
+  color: var(--routine-text-muted);
+  min-width: 100px;
+  flex-shrink: 0;
+  padding-top: 6px;
+}
+
+.day-quality-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ========== Day Quality Chip ========== */
+.day-quality-chip {
+  background: var(--routine-chip-unselected);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  padding: 5px 10px;
+  font-size: 12px;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  color: var(--routine-text-dim);
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.day-quality-chip:hover {
+  color: var(--routine-text-muted);
+}
+
+.day-quality-chip.selected {
+  background: var(--routine-chip-selected);
+  border-color: var(--routine-chip-border-selected);
+  color: var(--routine-text-warm);
+}
+
+.day-quality-chip.friction.selected {
+  background: rgba(180, 140, 40, 0.12);
+  border-color: rgba(180, 140, 40, 0.3);
+}
+
+/* ========== Market Readiness ========== */
+.market-readiness {
+  margin-bottom: 8px;
+}
+
+.market-readiness-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0;
+  font-size: 12px;
+  color: var(--routine-text-dim);
+}
+
+.market-readiness-error {
+  font-size: 12px;
+  color: var(--routine-text-dim);
+  padding: 12px 0;
+}
+
+/* ========== Market Lens ========== */
+.market-lens {
+  margin-bottom: 24px;
+}
+
+.market-lens-title {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--routine-text-dim);
+  margin-bottom: 10px;
+}
+
+.market-lens-content {
+  font-size: 14px;
+  color: var(--routine-text-warm);
+  line-height: 1.8;
+}
+
+.market-lens-content p {
+  margin: 0 0 10px 0;
+}
+
+.market-lens-content p:last-child {
+  margin-bottom: 0;
+}
+
+.market-lens-bullets {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+}
+
+.market-lens-bullets li {
+  font-size: 13px;
+  color: var(--routine-text-muted);
+  padding: 4px 0;
+  padding-left: 16px;
+  position: relative;
+}
+
+.market-lens-bullets li::before {
+  content: '·';
+  position: absolute;
+  left: 0;
+  color: var(--routine-text-dim);
+}
+
+/* ========== Volatility Row ========== */
+.volatility-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.vix-level {
+  font-size: 14px;
+  color: var(--routine-text-warm);
+}
+
+.vix-regime-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.vix-regime-badge.zombieland {
+  background: rgba(80, 100, 80, 0.3);
+  color: #90a090;
+}
+
+.vix-regime-badge.goldilocks {
+  background: rgba(212, 160, 32, 0.2);
+  color: var(--routine-text-muted);
+}
+
+.vix-regime-badge.elevated {
+  background: rgba(200, 140, 60, 0.25);
+  color: #c8a060;
+}
+
+.vix-regime-badge.chaos {
+  background: rgba(180, 100, 60, 0.3);
+  color: #c08050;
+}
+
+.volatility-implication {
+  font-size: 13px;
+  color: var(--routine-text-muted);
+  font-style: italic;
+}
+
+.gex-posture {
+  font-size: 13px;
+  color: var(--routine-text-muted);
+}
+
+/* ========== Waiting Anchor ========== */
+.waiting-anchor {
+  font-size: 13px;
+  font-style: italic;
+  color: var(--routine-text-dim);
+  line-height: 1.7;
+  padding-top: 16px;
+  border-top: 1px solid rgba(58, 53, 37, 0.5);
+  margin-top: 8px;
+}
+
+/* ========== Legacy styles (for backwards compatibility) ========== */
+.routine-spacer {
+  height: 32px;
 }

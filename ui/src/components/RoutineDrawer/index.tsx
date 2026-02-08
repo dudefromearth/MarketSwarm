@@ -1,28 +1,32 @@
 /**
- * RoutineDrawer v1 - An attentional container
+ * RoutineDrawer v1 - Presence-Based Panel
  *
  * "Enter this space, notice what's here, leave when you're ready."
  *
+ * Two parallel domains:
+ * - Personal Readiness: soft optional selections + friction markers
+ * - Market Readiness: read-only awareness with lens language
+ *
+ * Philosophy:
+ * - Help the trader arrive, not complete tasks
+ * - Train how to begin, not what to do
+ * - User should feel like they're "entering a space," not "reading a report"
+ *
  * This drawer:
- * - hosts Vexy content and Fundamental Acts
- * - does not manage session state
- * - does not signal readiness, progress, or completion
- *
- * It cannot tell you:
- * - whether a trade will be taken
- * - whether you are "ready"
- * - whether preparation was "enough"
- * - whether the routine was "completed"
- *
- * It is contextual, not transactional.
+ * - Cannot tell you whether a trade will be taken
+ * - Cannot tell you whether you are "ready"
+ * - Cannot tell you whether preparation was "enough"
+ * - Is contextual, not transactional
  */
 
 import { useState, useEffect, useRef } from 'react';
 import './RoutineDrawer.css';
 
 import VexyRoutinePanel from './VexyRoutinePanel';
-import FundamentalActLens, { FUNDAMENTAL_ACT_PROMPTS } from './FundamentalActLens';
+import PersonalReadiness from './PersonalReadiness';
+import MarketReadiness from './MarketReadiness';
 import MicroPause from './MicroPause';
+import { useRoutineState } from '../../hooks/useRoutineState';
 
 export interface MarketContext {
   spxPrice?: number | null;
@@ -36,22 +40,19 @@ interface RoutineDrawerProps {
 }
 
 export default function RoutineDrawer({ isOpen, onClose, marketContext }: RoutineDrawerProps) {
-  const [actNotes, setActNotes] = useState<Record<string, string>>({});
   const [showPause, setShowPause] = useState(false);
   const [pauseText, setPauseText] = useState('');
   const wasOpenRef = useRef(false);
 
-  // Load notes from localStorage
-  useEffect(() => {
-    const saved = localStorage.getItem('routine-act-notes');
-    if (saved) {
-      try {
-        setActNotes(JSON.parse(saved));
-      } catch {
-        // Ignore
-      }
-    }
-  }, []);
+  const {
+    personalReadiness,
+    friction,
+    togglePersonalReadiness,
+    toggleFriction,
+    markRoutineOpened,
+    markOrientationShown,
+    setAskVexyOpen,
+  } = useRoutineState();
 
   // Micro-pause on open/close transitions
   useEffect(() => {
@@ -59,19 +60,14 @@ export default function RoutineDrawer({ isOpen, onClose, marketContext }: Routin
       // Opening
       setPauseText('Entering orientation.');
       setShowPause(true);
+      markRoutineOpened();
     } else if (!isOpen && wasOpenRef.current) {
       // Closing
       setPauseText('Leaving routine.');
       setShowPause(true);
     }
     wasOpenRef.current = isOpen;
-  }, [isOpen]);
-
-  const handleNoteChange = (id: string, note: string) => {
-    const updated = { ...actNotes, [id]: note };
-    setActNotes(updated);
-    localStorage.setItem('routine-act-notes', JSON.stringify(updated));
-  };
+  }, [isOpen, markRoutineOpened]);
 
   const handlePauseComplete = () => {
     setShowPause(false);
@@ -105,26 +101,30 @@ export default function RoutineDrawer({ isOpen, onClose, marketContext }: Routin
 
         {/* Scrollable content - breathing space */}
         <div className="routine-content">
-          {/* Vexy Panel - Outlet B */}
-          <VexyRoutinePanel isOpen={isOpen} marketContext={marketContext} />
+          {/* Vexy Panel - Orientation + ProcessEcho + Ask Vexy */}
+          <VexyRoutinePanel
+            isOpen={isOpen}
+            marketContext={marketContext}
+            onOrientationShown={markOrientationShown}
+            onAskVexyOpenChange={setAskVexyOpen}
+          />
 
-          {/* Spacer */}
-          <div className="routine-spacer" />
+          {/* Domain separation */}
+          <div className="routine-domain-spacer" />
 
-          {/* Fundamental Act Lenses - just prompts, space, presence */}
-          {FUNDAMENTAL_ACT_PROMPTS.map((act, index) => (
-            <div key={act.id}>
-              <FundamentalActLens
-                id={act.id}
-                prompt={act.prompt}
-                note={actNotes[act.id] || ''}
-                onNoteChange={handleNoteChange}
-              />
-              {index < FUNDAMENTAL_ACT_PROMPTS.length - 1 && (
-                <div className="routine-spacer" />
-              )}
-            </div>
-          ))}
+          {/* Personal Readiness Domain */}
+          <PersonalReadiness
+            personalReadiness={personalReadiness}
+            friction={friction}
+            onToggleQuality={togglePersonalReadiness}
+            onToggleFriction={toggleFriction}
+          />
+
+          {/* Domain separation */}
+          <div className="routine-domain-spacer" />
+
+          {/* Market Readiness Domain */}
+          <MarketReadiness isOpen={isOpen} />
         </div>
       </div>
     </>

@@ -1,14 +1,15 @@
 /**
- * ProcessEcho - Process-Level Echo for Vexy Outlet B
+ * ProcessEcho - Process-Level Echo for Routine Panel
  *
- * Displays narrative fragments that connect Routine observations
- * to what actually changed during the trading session.
+ * Renders BELOW Orientation with QUIETER visual weight.
+ * Feels like a small reflective note, NOT a module.
  *
  * Per spec:
  * - Maximum 1-2 echoes per session
  * - Silence is first-class (renders nothing when no echoes)
  * - Read-only, no state changes
  * - Follows Vexy voice rules (observational, non-judgmental)
+ * - No advice, no warning language
  */
 
 import { useState, useEffect, useRef } from 'react';
@@ -80,7 +81,8 @@ export default function ProcessEcho({ isOpen }: ProcessEchoProps) {
       const data: ProcessEchoResponse = await response.json();
 
       if (data.success && data.echoes && data.echoes.length > 0) {
-        setEchoes(data.echoes);
+        // Limit to max 2 echoes as per spec
+        setEchoes(data.echoes.slice(0, 2));
       }
     } catch (err) {
       console.error('[ProcessEcho] Error:', err);
@@ -111,18 +113,12 @@ export default function ProcessEcho({ isOpen }: ProcessEchoProps) {
   }
 
   return (
-    <div className="process-echo">
-      <div className="process-echo-header">
-        <span className="process-echo-icon">🔄</span>
-        <span className="process-echo-title">Continuity</span>
-      </div>
-      <div className="process-echo-content">
-        {echoes.map((echo, idx) => (
-          <div key={`echo-${idx}`} className="process-echo-message">
-            {echo.message}
-          </div>
-        ))}
-      </div>
+    <div className="process-echo quiet">
+      {echoes.map((echo, idx) => (
+        <div key={`echo-${idx}`} className="process-echo-message">
+          {echo.message}
+        </div>
+      ))}
     </div>
   );
 }

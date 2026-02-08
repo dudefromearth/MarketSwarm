@@ -51,7 +51,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
-from datetime import date
+from datetime import date, datetime
 import uvicorn
 import redis
 import httpx
@@ -318,6 +318,78 @@ async def routine_briefing(request: RoutineBriefingRequest):
         raise HTTPException(status_code=500, detail="Failed to generate briefing")
 
     return RoutineBriefingResponse(**result)
+
+
+# ------------------------------------------------------------
+# Routine Panel v1 Endpoints
+# ------------------------------------------------------------
+class RoutineOrientationRequest(BaseModel):
+    """Request model for Routine Orientation (Mode A)."""
+    vix_level: Optional[float] = None
+    vix_regime: Optional[str] = None
+
+
+class RoutineOrientationResponse(BaseModel):
+    """Response model for Routine Orientation."""
+    orientation: Optional[str]  # None = silence is valid
+    context_phase: str
+    generated_at: str
+
+
+@app.post("/api/vexy/routine/orientation", response_model=RoutineOrientationResponse)
+async def get_routine_orientation(request: RoutineOrientationRequest):
+    """
+    Get Mode A orientation message for Routine panel.
+
+    May return null orientation (silence is valid).
+    Adapts to RoutineContextPhase (weekday/weekend/holiday, time of day).
+    """
+    from services.vexy_ai.routine_panel import (
+        RoutineOrientationGenerator,
+        get_routine_context_phase,
+    )
+
+    phase = get_routine_context_phase()
+    generator = RoutineOrientationGenerator()
+
+    orientation = generator.generate(
+        phase=phase,
+        vix_level=request.vix_level,
+        vix_regime=request.vix_regime,
+    )
+
+    return RoutineOrientationResponse(
+        orientation=orientation,
+        context_phase=phase.value,
+        generated_at=datetime.now().isoformat(),
+    )
+
+
+class MarketReadinessResponse(BaseModel):
+    """Response model for Market Readiness artifact."""
+    success: bool
+    data: Optional[Dict[str, Any]] = None
+    message: Optional[str] = None
+
+
+@app.get("/api/vexy/routine/market-readiness/{user_id}", response_model=MarketReadinessResponse)
+async def get_market_readiness(user_id: int):
+    """
+    Get cached market readiness artifact.
+
+    Generated once or infrequently, not real-time.
+    Returns read-only awareness data, not predictions.
+    Enforces lexicon constraints (no POC/VAH/VAL).
+    """
+    from services.vexy_ai.routine_panel import MarketReadinessAggregator
+
+    aggregator = MarketReadinessAggregator(logger=_logger)
+    payload = aggregator.aggregate(user_id)
+
+    return MarketReadinessResponse(
+        success=True,
+        data=payload,
+    )
 
 
 @app.post("/api/vexy/context/log-health", response_model=LogHealthContextResponse)
