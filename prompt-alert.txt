@@ -1,0 +1,179 @@
+Prompt-Driven Strategy Alerts
+
+RiskGraph Alert Type — Concept & Design
+
+⸻
+
+1. What This Alert Is
+
+A Prompt-driven Strategy Alert is a declarative alert defined entirely by a natural-language prompt.
+
+The prompt specifies:
+	•	What to watch (structure, risk shape, regime, time)
+	•	How to evaluate change (rules, thresholds, comparisons)
+	•	When it should trigger (conditions, persistence, degradation)
+	•	How it should surface (tone, intent class, delivery surface)
+
+The system does not infer intent.
+The prompt is the intent.
+
+This alert type exists exclusively within the RiskGraph domain.
+
+⸻
+
+2. Why This Exists
+
+RiskGraph represents risk geometry over time, not price action.
+
+Static alerts (price, debit, time) are insufficient for:
+	•	convexity decay
+	•	structural drift
+	•	regime mismatch
+	•	thesis erosion
+
+Prompt-driven Strategy Alerts allow traders to express:
+
+“Notify me when this structure stops behaving the way I designed it to behave.”
+
+Without converting that thought into code.
+
+⸻
+
+3. Core Constraints (Non-Negotiable)
+
+Prompt-driven alerts inherit all global alert rules:
+	•	No calls to action
+	•	No urgency language
+	•	No auto-execution
+	•	No behavior enforcement
+	•	No prescriptive interpretation
+
+Additionally:
+	•	The system may evaluate, but never reinterpret, the prompt
+	•	The alert may surface facts, never conclusions
+	•	Vexy may reference historical triggers, never synthesize meaning
+
+⸻
+
+4. Prompt Structure (Conceptual)
+
+The prompt is free-form natural language, but is parsed into four semantic zones:
+	1.	Reference State
+What “healthy” or “expected” behavior looks like
+	2.	Deviation Logic
+What constitutes meaningful drift or degradation
+	3.	Trigger Conditions
+When noticing is warranted
+	4.	Delivery Instructions
+How the alert should appear
+
+The trader does not see these zones explicitly.
+They exist to keep evaluation deterministic.
+
+⸻
+
+5. Example Prompts
+
+Example 1 — Convexity Decay
+
+“Alert me if the convexity of this structure decays materially compared to entry, even if price hasn’t moved much. Surface this calmly in the Observer and link to the Analyzer.”
+
+System interpretation (internal):
+	•	Reference: entry RiskGraph
+	•	Deviation: convexity delta exceeds tolerance
+	•	Trigger: persistent over evaluation window
+	•	Delivery: Protective, Observer, Analyzer link
+
+⸻
+
+Example 2 — Regime Mismatch
+
+“Let me know if volatility compresses enough that this strategy no longer matches the current regime.”
+
+⸻
+
+Example 3 — Time Risk Awareness
+
+“Notify me when remaining time is doing more damage to the risk shape than price movement.”
+
+⸻
+
+6. Alert Intent Class (Derived, Not Declared)
+
+The intent class (Informational / Reflective / Protective) is derived from the delivery language in the prompt.
+
+Examples:
+	•	“let me know” → Informational
+	•	“worth noticing” → Reflective
+	•	“no longer matches” → Protective
+
+The system may downgrade urgency, but never upgrade it.
+
+⸻
+
+7. Evaluation Model
+
+What the System Evaluates
+	•	RiskGraph geometry
+	•	Greeks and second-order effects
+	•	Time decay vs movement
+	•	Relative change from reference state
+
+What the System Does NOT Evaluate
+	•	Trade correctness
+	•	Optimal actions
+	•	Performance outcomes
+
+Evaluation happens server-side only.
+
+⸻
+
+8. Triggering & Surfacing
+
+When triggered:
+	•	Alert appears in Observer Panel
+	•	Calm, factual language derived from prompt
+	•	Optional link to RiskGraph or Analyzer
+	•	No modal, no interruption
+
+Example surfaced alert:
+
+“The risk shape of this structure has diverged from its original form in the way you described.”
+
+⸻
+
+9. Prompt Editing & Versioning
+	•	Prompts are versioned
+	•	Editing a prompt creates a new evaluation lineage
+	•	Historical triggers retain original prompt context
+
+This preserves learning integrity.
+
+⸻
+
+10. Failure Modes to Avoid
+	•	Auto-suggesting prompts that imply action
+	•	Converting prompts into rules the trader did not express
+	•	Normalizing language into generic warnings
+	•	Letting alerts feel like coaching
+
+If a trader feels nudged, the alert has failed.
+
+⸻
+
+11. Relationship to the Playbook
+
+Prompt-driven Strategy Alerts are personal micro-playbooks.
+
+They:
+	•	encode trader-specific wisdom
+	•	remain private
+	•	do not generalize automatically
+
+Only repeated, reviewed prompts may later inform Playbook entries — manually.
+
+⸻
+
+12. One-Line Essence
+
+Prompt-driven Strategy Alerts let traders describe, in their own words, when a strategy stops behaving like the strategy they intended to trade — and notice it without being told what to do.

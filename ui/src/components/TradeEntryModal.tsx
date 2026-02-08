@@ -1,6 +1,7 @@
 // src/components/TradeEntryModal.tsx
 import { useState, useEffect, useMemo } from 'react';
 import type { Trade } from './TradeLogPanel';
+import { useDraggable } from '../hooks/useDraggable';
 
 const JOURNAL_API = '';
 
@@ -82,6 +83,12 @@ export default function TradeEntryModal({
   // UI state
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Draggable modal
+  const { dragHandleProps, containerStyle, isDragging } = useDraggable({
+    handleSelector: '.modal-header',
+    initialCentered: true,
+  });
 
   const isEditMode = !!editTrade;
   const isClosingTrade = isEditMode && editTrade?.status === 'open';
@@ -227,6 +234,7 @@ export default function TradeEntryModal({
           const closeResponse = await fetch(`${JOURNAL_API}/api/trades/${editTrade.id}/close`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({
               exit_price: parseFloat(exitPrice),
               exit_spot: currentSpot
@@ -242,6 +250,7 @@ export default function TradeEntryModal({
           const updateResponse = await fetch(`${JOURNAL_API}/api/trades/${editTrade.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify(updates)
           });
 
@@ -265,6 +274,7 @@ export default function TradeEntryModal({
         const response = await fetch(`${JOURNAL_API}/api/orders`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify(orderData)
         });
 
@@ -306,6 +316,7 @@ export default function TradeEntryModal({
         const response = await fetch(`${JOURNAL_API}/api/trades`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify(tradeData)
         });
 
@@ -330,7 +341,8 @@ export default function TradeEntryModal({
     setSaving(true);
     try {
       const response = await fetch(`${JOURNAL_API}/api/trades/${editTrade.id}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        credentials: 'include'
       });
 
       const result = await response.json();
@@ -351,8 +363,14 @@ export default function TradeEntryModal({
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="trade-entry-modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
+      <div
+        className={`trade-entry-modal floating-modal ${isDragging ? 'is-dragging' : ''}`}
+        onClick={e => e.stopPropagation()}
+        ref={dragHandleProps.ref}
+        onMouseDown={dragHandleProps.onMouseDown}
+        style={containerStyle}
+      >
+        <div className="modal-header draggable-handle">
           <h3>{isEditMode ? 'Edit Trade' : 'New Trade'}</h3>
           <button className="modal-close" onClick={onClose}>&times;</button>
         </div>

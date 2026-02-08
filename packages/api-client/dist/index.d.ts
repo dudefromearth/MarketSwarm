@@ -33,5 +33,6 @@ export type { MutationType, EntityType, QueuedMutation, QueueStatus, SyncState, 
 export { MutationQueue } from './sync/queue.js';
 export { SyncManager } from './sync/manager.js';
 export type { StrategiesEndpoint } from './endpoints/strategies.js';
-export type { PositionsEndpoint } from './endpoints/positions.js';
+export type { PositionsEndpoint, BatchCreateResponse } from './endpoints/positions.js';
+export type { Position, PositionLeg, PositionType, PositionDirection, CostBasisType, } from '@market-swarm/core';
 //# sourceMappingURL=index.d.ts.map

@@ -76,6 +76,8 @@ export const webNetworkAdapter: NetworkAdapter = {
   async request<T>(url: string, options: RequestOptions = {}): Promise<NetworkResponse<T>> {
     const { method = 'GET', headers = {}, body, timeout = 30000, signal } = options;
 
+    console.log('[webNetworkAdapter.request]', method, url, { body, headers });
+
     // Create timeout abort controller if needed
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -98,6 +100,7 @@ export const webNetworkAdapter: NetworkAdapter = {
         },
         body: body ? JSON.stringify(body) : undefined,
         signal: combinedSignal,
+        credentials: 'include', // Send cookies for authentication
       });
 
       clearTimeout(timeoutId);
@@ -111,10 +114,12 @@ export const webNetworkAdapter: NetworkAdapter = {
       // Parse response body
       let data: T;
       const contentType = response.headers.get('content-type');
+      const rawText = await response.text();
+      console.log('[webNetworkAdapter.response]', response.status, contentType, rawText.slice(0, 200));
       if (contentType?.includes('application/json')) {
-        data = await response.json() as T;
+        data = JSON.parse(rawText) as T;
       } else {
-        data = await response.text() as unknown as T;
+        data = rawText as unknown as T;
       }
 
       return {
@@ -148,12 +153,14 @@ export const webNetworkAdapter: NetworkAdapter = {
   },
 
   createSSE(url: string, handler: SSEHandler): SSEConnection {
-    const eventSource = new EventSource(url);
+    // Include credentials to send cookies for authentication
+    const eventSource = new EventSource(url, { withCredentials: true });
 
     eventSource.onopen = () => {
       handler.onOpen?.();
     };
 
+    // Handle unnamed events (fallback)
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -162,6 +169,34 @@ export const webNetworkAdapter: NetworkAdapter = {
         handler.onMessage({ type: event.type, data: event.data });
       }
     };
+
+    // Handle named events (positions, strategies, etc.)
+    // These are sent by server with `event: eventName\ndata: ...\n\n`
+    const namedEventTypes = [
+      'connected',
+      'position_created',
+      'position_updated',
+      'position_deleted',
+      'position_batch_created',
+      'position_reordered',
+      'strategy_created',
+      'strategy_updated',
+      'strategy_deleted',
+    ];
+
+    for (const eventType of namedEventTypes) {
+      eventSource.addEventListener(eventType, (event: MessageEvent) => {
+        try {
+          const data = JSON.parse(event.data);
+          // Extract action from event type (e.g., 'position_created' -> 'created')
+          const parts = eventType.split('_');
+          const action = parts.length > 1 ? parts.slice(1).join('_') : eventType;
+          handler.onMessage({ type: eventType, data: { ...data, action } });
+        } catch {
+          handler.onMessage({ type: eventType, data: event.data });
+        }
+      });
+    }
 
     eventSource.onerror = () => {
       handler.onError?.(new Error('SSE connection error'));

@@ -5,7 +5,7 @@ import mysql.connector
 from mysql.connector import pooling
 import json
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, EquityPoint, DrawdownPoint, Symbol, Setting,
@@ -17,14 +17,16 @@ from .models_v2 import (
     Position, Leg, Fill, PositionEvent, PositionJournalEntry,
     # ML Feedback Loop models
     MLDecision, PnLEvent, DailyPerformance, MLFeatureSnapshot,
-    TrackedIdeaSnapshot, UserTradeAction, MLModel, MLExperiment
+    TrackedIdeaSnapshot, UserTradeAction, MLModel, MLExperiment,
+    # Import batch model
+    ImportBatch
 )
 
 
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 18
+    SCHEMA_VERSION = 20
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -227,6 +229,12 @@ class JournalDBv2:
 
             if current_version < 18:
                 self._migrate_to_v18(conn)
+
+            if current_version < 19:
+                self._migrate_to_v19(conn)
+
+            if current_version < 20:
+                self._migrate_to_v20(conn)
 
             conn.commit()
         finally:
@@ -1702,6 +1710,161 @@ class JournalDBv2:
         finally:
             cursor.close()
 
+    def _migrate_to_v19(self, conn):
+        """Migrate to v19: Add import_batches table and import_batch_id to related tables.
+
+        Enables reversible, auditable batch imports with clear provenance markers.
+        """
+        cursor = conn.cursor()
+        try:
+            # Create import_batches table - transactional boundary for imports
+            if not self._table_exists(conn, 'import_batches'):
+                cursor.execute("""
+                    CREATE TABLE import_batches (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+
+                        -- Source identification
+                        source VARCHAR(50) NOT NULL,
+                        source_label VARCHAR(100) DEFAULT NULL,
+                        source_metadata JSON DEFAULT NULL,
+
+                        -- Counts (denormalized for fast display)
+                        trade_count INT DEFAULT 0,
+                        position_count INT DEFAULT 0,
+
+                        -- Status
+                        status ENUM('active', 'reverted') DEFAULT 'active',
+
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        reverted_at DATETIME DEFAULT NULL,
+
+                        INDEX idx_user_status (user_id, status),
+                        INDEX idx_created (created_at)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            # Add import_batch_id to positions table
+            try:
+                cursor.execute("""
+                    ALTER TABLE positions
+                    ADD COLUMN import_batch_id VARCHAR(36) DEFAULT NULL,
+                    ADD INDEX idx_import_batch (import_batch_id),
+                    ADD CONSTRAINT fk_positions_import_batch
+                        FOREIGN KEY (import_batch_id) REFERENCES import_batches(id)
+                        ON DELETE SET NULL
+                """)
+            except Exception:
+                pass  # Column may already exist
+
+            # Add import_batch_id to trades table
+            try:
+                cursor.execute("""
+                    ALTER TABLE trades
+                    ADD COLUMN import_batch_id VARCHAR(36) DEFAULT NULL,
+                    ADD INDEX idx_trades_import_batch (import_batch_id),
+                    ADD CONSTRAINT fk_trades_import_batch
+                        FOREIGN KEY (import_batch_id) REFERENCES import_batches(id)
+                        ON DELETE SET NULL
+                """)
+            except Exception:
+                pass  # Column may already exist
+
+            # Add import_batch_id to orders table (if exists)
+            if self._table_exists(conn, 'orders'):
+                try:
+                    cursor.execute("""
+                        ALTER TABLE orders
+                        ADD COLUMN import_batch_id VARCHAR(36) DEFAULT NULL,
+                        ADD INDEX idx_orders_import_batch (import_batch_id),
+                        ADD CONSTRAINT fk_orders_import_batch
+                            FOREIGN KEY (import_batch_id) REFERENCES import_batches(id)
+                            ON DELETE SET NULL
+                    """)
+                except Exception:
+                    pass  # Column may already exist
+
+            # Add import_batch_id to trade_logs table
+            try:
+                cursor.execute("""
+                    ALTER TABLE trade_logs
+                    ADD COLUMN import_batch_id VARCHAR(36) DEFAULT NULL,
+                    ADD INDEX idx_logs_import_batch (import_batch_id),
+                    ADD CONSTRAINT fk_logs_import_batch
+                        FOREIGN KEY (import_batch_id) REFERENCES import_batches(id)
+                        ON DELETE SET NULL
+                """)
+            except Exception:
+                pass  # Column may already exist
+
+            self._set_schema_version(conn, 19)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v20(self, conn):
+        """Migrate to v20: Trade Log Lifecycle states.
+
+        Implements the Trade Log Lifecycle specification:
+        - Active: Participates in daily workflow, alerts, ML
+        - Archived: Read-only, excluded from alerts/ML by default
+        - Retired: Frozen + hidden, preserved in cold storage
+
+        Constraints:
+        - Soft cap: 5 active logs (configurable)
+        - Hard cap: 10 active logs (absolute max)
+        - Archiving requires no open positions or pending alerts
+        - Retirement requires archived state + user confirmation
+        """
+        cursor = conn.cursor()
+        try:
+            # Add lifecycle_state column to trade_logs
+            # Values: 'active', 'archived', 'retired'
+            # Replaces the simple is_active boolean
+            try:
+                cursor.execute("""
+                    ALTER TABLE trade_logs
+                    ADD COLUMN lifecycle_state ENUM('active', 'archived', 'retired') DEFAULT 'active',
+                    ADD COLUMN archived_at DATETIME DEFAULT NULL,
+                    ADD COLUMN retired_at DATETIME DEFAULT NULL,
+                    ADD COLUMN retire_scheduled_at DATETIME DEFAULT NULL,
+                    ADD COLUMN description TEXT DEFAULT NULL,
+                    ADD COLUMN ml_included TINYINT DEFAULT 1,
+                    ADD INDEX idx_logs_lifecycle (lifecycle_state)
+                """)
+            except Exception:
+                pass  # Columns may already exist
+
+            # Migrate existing is_active values to lifecycle_state
+            try:
+                cursor.execute("""
+                    UPDATE trade_logs
+                    SET lifecycle_state = CASE
+                        WHEN is_active = 1 THEN 'active'
+                        ELSE 'archived'
+                    END
+                    WHERE lifecycle_state IS NULL OR lifecycle_state = ''
+                """)
+            except Exception:
+                pass  # May fail if is_active doesn't exist
+
+            # Create user_settings table for active log limit preferences
+            if not self._table_exists(conn, 'user_log_settings'):
+                cursor.execute("""
+                    CREATE TABLE user_log_settings (
+                        user_id INT PRIMARY KEY,
+                        active_log_soft_cap INT DEFAULT 5,
+                        active_log_hard_cap INT DEFAULT 10,
+                        recommend_archive_historical TINYINT DEFAULT 1,
+                        historical_import_days_threshold INT DEFAULT 7,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 20)
+        finally:
+            cursor.close()
+
     # ==================== Trade Log CRUD ====================
 
     def create_log(self, log: TradeLog) -> TradeLog:
@@ -1807,7 +1970,7 @@ class JournalDBv2:
             conn.close()
 
     def delete_log(self, log_id: str, user_id: Optional[int] = None) -> bool:
-        """Soft delete a trade log."""
+        """Soft delete a trade log (legacy - use archive_log instead)."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
@@ -1823,6 +1986,340 @@ class JournalDBv2:
                 )
             conn.commit()
             return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Trade Log Lifecycle Management ====================
+
+    def count_active_logs(self, user_id: int) -> int:
+        """Count the number of active logs for a user."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) FROM trade_logs WHERE user_id = %s AND lifecycle_state = 'active'",
+                (user_id,)
+            )
+            return cursor.fetchone()[0]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_user_log_settings(self, user_id: int) -> Dict[str, Any]:
+        """Get user's log settings (caps, preferences)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM user_log_settings WHERE user_id = %s",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return self._row_to_dict(cursor, row)
+            # Return defaults if no settings exist
+            return {
+                'user_id': user_id,
+                'active_log_soft_cap': 5,
+                'active_log_hard_cap': 10,
+                'recommend_archive_historical': True,
+                'historical_import_days_threshold': 7,
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def can_activate_log(self, user_id: int) -> tuple:
+        """Check if user can activate another log. Returns (can_activate, reason)."""
+        settings = self.get_user_log_settings(user_id)
+        active_count = self.count_active_logs(user_id)
+
+        hard_cap = settings.get('active_log_hard_cap', 10)
+        soft_cap = settings.get('active_log_soft_cap', 5)
+
+        if active_count >= hard_cap:
+            return False, f"Maximum of {hard_cap} active logs reached. Archive a log to continue."
+
+        if active_count >= soft_cap:
+            return True, f"You have {active_count} active logs. Consider archiving older logs."
+
+        return True, None
+
+    def archive_log(self, log_id: str, user_id: int) -> Dict[str, Any]:
+        """Archive a trade log.
+
+        Preconditions:
+        - Log must be active
+        - Log must have no open positions
+        - Log must have no pending alerts requiring live evaluation
+
+        Returns: { success: bool, error?: str }
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Check log exists and is active
+            cursor.execute(
+                "SELECT id, lifecycle_state FROM trade_logs WHERE id = %s AND user_id = %s",
+                (log_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {'success': False, 'error': 'Log not found'}
+
+            if row[1] != 'active':
+                return {'success': False, 'error': f'Log is already {row[1]}'}
+
+            # Check for open positions
+            cursor.execute(
+                "SELECT COUNT(*) FROM trades WHERE log_id = %s AND status = 'open'",
+                (log_id,)
+            )
+            open_count = cursor.fetchone()[0]
+            if open_count > 0:
+                return {
+                    'success': False,
+                    'error': f'Cannot archive: {open_count} open position(s). Close them first.',
+                    'open_positions': open_count
+                }
+
+            # Check for pending alerts
+            cursor.execute("""
+                SELECT COUNT(*) FROM alerts
+                WHERE log_id = %s AND is_active = 1 AND triggered = 0
+            """, (log_id,))
+            pending_alerts = cursor.fetchone()[0]
+            if pending_alerts > 0:
+                return {
+                    'success': False,
+                    'error': f'Cannot archive: {pending_alerts} pending alert(s). Pause or delete them first.',
+                    'pending_alerts': pending_alerts
+                }
+
+            # Archive the log
+            now = datetime.utcnow().isoformat()
+            cursor.execute("""
+                UPDATE trade_logs
+                SET lifecycle_state = 'archived',
+                    is_active = 0,
+                    archived_at = %s,
+                    ml_included = 0,
+                    updated_at = %s
+                WHERE id = %s
+            """, (now, now, log_id))
+            conn.commit()
+
+            return {'success': True, 'archived_at': now}
+        finally:
+            cursor.close()
+            conn.close()
+
+    def reactivate_log(self, log_id: str, user_id: int) -> Dict[str, Any]:
+        """Reactivate an archived log.
+
+        Checks active log limit before reactivating.
+        Returns: { success: bool, error?: str, warning?: str }
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Check can activate
+            can_activate, reason = self.can_activate_log(user_id)
+            if not can_activate:
+                return {'success': False, 'error': reason}
+
+            # Check log exists and is archived
+            cursor.execute(
+                "SELECT id, lifecycle_state FROM trade_logs WHERE id = %s AND user_id = %s",
+                (log_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {'success': False, 'error': 'Log not found'}
+
+            if row[1] == 'active':
+                return {'success': False, 'error': 'Log is already active'}
+
+            if row[1] == 'retired':
+                return {'success': False, 'error': 'Retired logs cannot be reactivated'}
+
+            # Reactivate the log
+            now = datetime.utcnow().isoformat()
+            cursor.execute("""
+                UPDATE trade_logs
+                SET lifecycle_state = 'active',
+                    is_active = 1,
+                    archived_at = NULL,
+                    ml_included = 1,
+                    updated_at = %s
+                WHERE id = %s
+            """, (now, log_id))
+            conn.commit()
+
+            result = {'success': True, 'reactivated_at': now}
+            if reason:  # Soft cap warning
+                result['warning'] = reason
+            return result
+        finally:
+            cursor.close()
+            conn.close()
+
+    def schedule_retirement(self, log_id: str, user_id: int, grace_days: int = 7) -> Dict[str, Any]:
+        """Schedule a log for retirement after a grace period.
+
+        Preconditions:
+        - Log must be archived
+
+        Returns: { success: bool, scheduled_at?: str, retire_at?: str, error?: str }
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Check log exists and is archived
+            cursor.execute(
+                "SELECT id, lifecycle_state FROM trade_logs WHERE id = %s AND user_id = %s",
+                (log_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {'success': False, 'error': 'Log not found'}
+
+            if row[1] != 'archived':
+                return {'success': False, 'error': 'Log must be archived before retiring'}
+
+            # Schedule retirement
+            now = datetime.utcnow()
+            retire_at = now + timedelta(days=grace_days)
+
+            cursor.execute("""
+                UPDATE trade_logs
+                SET retire_scheduled_at = %s, updated_at = %s
+                WHERE id = %s
+            """, (retire_at.isoformat(), now.isoformat(), log_id))
+            conn.commit()
+
+            return {
+                'success': True,
+                'scheduled_at': now.isoformat(),
+                'retire_at': retire_at.isoformat(),
+                'grace_days': grace_days
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def cancel_retirement(self, log_id: str, user_id: int) -> Dict[str, Any]:
+        """Cancel a scheduled retirement."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT id, retire_scheduled_at FROM trade_logs WHERE id = %s AND user_id = %s",
+                (log_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {'success': False, 'error': 'Log not found'}
+
+            if not row[1]:
+                return {'success': False, 'error': 'No retirement scheduled'}
+
+            cursor.execute("""
+                UPDATE trade_logs
+                SET retire_scheduled_at = NULL, updated_at = %s
+                WHERE id = %s
+            """, (datetime.utcnow().isoformat(), log_id))
+            conn.commit()
+
+            return {'success': True}
+        finally:
+            cursor.close()
+            conn.close()
+
+    def retire_log(self, log_id: str, user_id: int, force: bool = False) -> Dict[str, Any]:
+        """Permanently retire a log (frozen + hidden).
+
+        Preconditions:
+        - Log must be archived
+        - If not force, retirement must be scheduled and grace period expired
+
+        Returns: { success: bool, error?: str }
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT id, lifecycle_state, retire_scheduled_at FROM trade_logs WHERE id = %s AND user_id = %s",
+                (log_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {'success': False, 'error': 'Log not found'}
+
+            if row[1] == 'retired':
+                return {'success': False, 'error': 'Log is already retired'}
+
+            if row[1] != 'archived':
+                return {'success': False, 'error': 'Log must be archived before retiring'}
+
+            # Check grace period unless forced
+            if not force:
+                if not row[2]:
+                    return {'success': False, 'error': 'Retirement not scheduled. Use schedule_retirement first.'}
+
+                scheduled = datetime.fromisoformat(row[2].replace('Z', '+00:00') if isinstance(row[2], str) else row[2].isoformat())
+                if datetime.utcnow() < scheduled:
+                    return {'success': False, 'error': f'Grace period not expired. Scheduled for {row[2]}'}
+
+            # Retire the log
+            now = datetime.utcnow().isoformat()
+            cursor.execute("""
+                UPDATE trade_logs
+                SET lifecycle_state = 'retired',
+                    is_active = 0,
+                    retired_at = %s,
+                    ml_included = 0,
+                    updated_at = %s
+                WHERE id = %s
+            """, (now, now, log_id))
+            conn.commit()
+
+            return {'success': True, 'retired_at': now}
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_logs_by_state(
+        self,
+        user_id: int,
+        states: Optional[List[str]] = None,
+        include_retired: bool = False
+    ) -> List[TradeLog]:
+        """List trade logs filtered by lifecycle state."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if states is None:
+                states = ['active', 'archived']
+                if include_retired:
+                    states.append('retired')
+
+            placeholders = ', '.join(['%s'] * len(states))
+            query = f"""
+                SELECT * FROM trade_logs
+                WHERE user_id = %s AND lifecycle_state IN ({placeholders})
+                ORDER BY
+                    CASE lifecycle_state
+                        WHEN 'active' THEN 0
+                        WHEN 'archived' THEN 1
+                        WHEN 'retired' THEN 2
+                    END,
+                    updated_at DESC
+            """
+            cursor.execute(query, [user_id] + states)
+            rows = cursor.fetchall()
+            return [TradeLog.from_dict(self._row_to_dict(cursor, row)) for row in rows]
         finally:
             cursor.close()
             conn.close()
@@ -5658,6 +6155,424 @@ class JournalDBv2:
             cursor.execute("DELETE FROM idempotency_keys WHERE expires_at < NOW()")
             conn.commit()
             return cursor.rowcount
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== Import Batches CRUD ====================
+
+    def create_import_batch(self, batch: ImportBatch) -> ImportBatch:
+        """Create a new import batch."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = batch.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO import_batches ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return batch
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_import_batch(self, batch_id: str, user_id: Optional[int] = None) -> Optional[ImportBatch]:
+        """Get a single import batch by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            if user_id is not None:
+                cursor.execute(
+                    "SELECT * FROM import_batches WHERE id = %s AND user_id = %s",
+                    (batch_id, user_id)
+                )
+            else:
+                cursor.execute(
+                    "SELECT * FROM import_batches WHERE id = %s",
+                    (batch_id,)
+                )
+            row = cursor.fetchone()
+            if row:
+                return ImportBatch.from_dict(self._row_to_dict(cursor, row))
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_import_batches(
+        self,
+        user_id: int,
+        status: Optional[str] = None,
+        log_id: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[ImportBatch]:
+        """List import batches for a user with optional filters."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM import_batches WHERE user_id = %s"
+            params: List[Any] = [user_id]
+
+            if status:
+                query += " AND status = %s"
+                params.append(status)
+
+            # Note: log_id filter would require joining with trades table
+            # For now, we filter by batch status only
+
+            query += " ORDER BY created_at DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [ImportBatch.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_import_batch_counts(
+        self,
+        batch_id: str,
+        trade_count: int = 0,
+        position_count: int = 0
+    ) -> bool:
+        """Update the counts on an import batch."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """UPDATE import_batches
+                   SET trade_count = %s, position_count = %s
+                   WHERE id = %s""",
+                (trade_count, position_count, batch_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def revert_import_batch(self, batch_id: str, user_id: int) -> dict:
+        """Revert an import batch - soft-delete all associated trades and positions.
+
+        Returns a summary of what was reverted:
+        {
+            'success': bool,
+            'trades_reverted': int,
+            'positions_reverted': int,
+            'error': Optional[str]
+        }
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Verify batch exists and belongs to user
+            cursor.execute(
+                "SELECT id, status FROM import_batches WHERE id = %s AND user_id = %s",
+                (batch_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return {'success': False, 'error': 'Batch not found'}
+
+            if row[1] == 'reverted':
+                return {'success': False, 'error': 'Batch already reverted'}
+
+            # Soft-delete trades by marking status = 'reverted' or similar
+            # For now, we'll hard-delete trades associated with this batch
+            cursor.execute(
+                "DELETE FROM trades WHERE import_batch_id = %s",
+                (batch_id,)
+            )
+            trades_deleted = cursor.rowcount
+
+            # Delete positions associated with this batch
+            cursor.execute(
+                "DELETE FROM positions WHERE import_batch_id = %s",
+                (batch_id,)
+            )
+            positions_deleted = cursor.rowcount
+
+            # Mark batch as reverted
+            cursor.execute(
+                """UPDATE import_batches
+                   SET status = 'reverted', reverted_at = NOW()
+                   WHERE id = %s""",
+                (batch_id,)
+            )
+
+            conn.commit()
+            return {
+                'success': True,
+                'trades_reverted': trades_deleted,
+                'positions_reverted': positions_deleted
+            }
+        except Exception as e:
+            conn.rollback()
+            return {'success': False, 'error': str(e)}
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_import_batch_trades(self, batch_id: str, user_id: int) -> List[Trade]:
+        """Get all trades associated with an import batch."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT t.* FROM trades t
+                   JOIN import_batches b ON t.import_batch_id = b.id
+                   WHERE b.id = %s AND b.user_id = %s
+                   ORDER BY t.entry_time DESC""",
+                (batch_id, user_id)
+            )
+            rows = cursor.fetchall()
+            return [Trade.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_import_recommendation(
+        self,
+        user_id: int,
+        target_log_id: str,
+        import_date_range: tuple  # (earliest_date, latest_date) as ISO strings
+    ) -> Dict[str, Any]:
+        """Analyze an import and recommend whether to create an archived log.
+
+        Recommendation triggers (from spec):
+        1. Import date range is entirely historical (> 7 days before today)
+        2. Import date range does not overlap with trades in selected active log
+        3. User selects "Historical / Backfill" import mode (handled by caller)
+        4. Import confidence is below threshold (handled by caller)
+
+        Returns:
+        {
+            'recommend_archived': bool,
+            'reason': str | None,
+            'target_log_state': str,  # 'active', 'archived', 'retired'
+            'overlap_trades': int,    # count of overlapping trades in date range
+        }
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            settings = self.get_user_log_settings(user_id)
+            threshold_days = settings.get('historical_import_days_threshold', 7)
+            recommend_enabled = settings.get('recommend_archive_historical', True)
+
+            earliest_date, latest_date = import_date_range
+
+            # Parse dates
+            earliest = datetime.fromisoformat(earliest_date.replace('Z', '+00:00')) if earliest_date else None
+            latest = datetime.fromisoformat(latest_date.replace('Z', '+00:00')) if latest_date else None
+            today = datetime.utcnow()
+
+            result = {
+                'recommend_archived': False,
+                'reason': None,
+                'target_log_state': 'active',
+                'overlap_trades': 0
+            }
+
+            if not recommend_enabled:
+                return result
+
+            # Get target log state
+            cursor.execute(
+                "SELECT lifecycle_state FROM trade_logs WHERE id = %s AND user_id = %s",
+                (target_log_id, user_id)
+            )
+            row = cursor.fetchone()
+            if row:
+                result['target_log_state'] = row[0]
+
+            # Check 1: Is import entirely historical?
+            if latest and (today - latest).days > threshold_days:
+                result['recommend_archived'] = True
+                result['reason'] = f"This import is entirely historical (more than {threshold_days} days old)."
+                return result
+
+            # Check 2: Does import overlap with existing trades in target log?
+            if earliest and latest:
+                cursor.execute("""
+                    SELECT COUNT(*) FROM trades
+                    WHERE log_id = %s AND entry_time >= %s AND entry_time <= %s
+                """, (target_log_id, earliest_date, latest_date))
+                overlap_count = cursor.fetchone()[0]
+                result['overlap_trades'] = overlap_count
+
+                if overlap_count == 0:
+                    # No overlap - might be historical data for a different period
+                    cursor.execute(
+                        "SELECT MIN(entry_time), MAX(entry_time) FROM trades WHERE log_id = %s",
+                        (target_log_id,)
+                    )
+                    range_row = cursor.fetchone()
+                    if range_row and range_row[0]:
+                        log_earliest = datetime.fromisoformat(range_row[0].replace('Z', '+00:00'))
+                        log_latest = datetime.fromisoformat(range_row[1].replace('Z', '+00:00'))
+
+                        # If import is entirely before or after existing trades
+                        if latest < log_earliest or earliest > log_latest:
+                            result['recommend_archived'] = True
+                            result['reason'] = "This import doesn't overlap with trades in the selected log."
+
+            return result
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_logs_for_import_selection(self, user_id: int) -> List[Dict[str, Any]]:
+        """Get logs suitable for import targeting with metadata for selection UI.
+
+        Returns list of dicts with:
+        - id, name, description
+        - lifecycle_state, retire_scheduled_at
+        - open_position_count
+        - ml_included
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    l.id, l.name, l.description, l.lifecycle_state, l.ml_included,
+                    l.retire_scheduled_at,
+                    COALESCE(t.open_count, 0) as open_position_count,
+                    COALESCE(t.total_count, 0) as total_trade_count
+                FROM trade_logs l
+                LEFT JOIN (
+                    SELECT
+                        log_id,
+                        COUNT(*) as total_count,
+                        SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count
+                    FROM trades
+                    GROUP BY log_id
+                ) t ON l.id = t.log_id
+                WHERE l.user_id = %s AND l.lifecycle_state != 'retired'
+                ORDER BY
+                    CASE l.lifecycle_state WHEN 'active' THEN 0 ELSE 1 END,
+                    l.updated_at DESC
+            """, (user_id,))
+
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'description': row[2],
+                    'lifecycleState': row[3],
+                    'mlIncluded': bool(row[4]),
+                    'retireScheduledAt': row[5].isoformat() if row[5] else None,
+                    'openPositionCount': row[6],
+                    'totalTradeCount': row[7],
+                })
+            return result
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_users_with_logs(self) -> List[int]:
+        """Get all user IDs that have trade logs.
+
+        Used by Vexy scheduled jobs to know which users to analyze.
+        Returns distinct user_ids from trade_logs table.
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT DISTINCT user_id
+                FROM trade_logs
+                WHERE lifecycle_state != 'retired'
+                ORDER BY user_id
+            """)
+            return [row[0] for row in cursor.fetchall()]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_logs_health_metrics(self, user_id: int) -> List[Dict[str, Any]]:
+        """Get log health metrics for a user.
+
+        Returns data for each active/archived log:
+        - log_id, log_name, lifecycle_state
+        - total_trades, open_trades, pending_alerts
+        - ml_included
+        - created_at, last_trade_at, last_import_at
+        - retire_scheduled_at
+
+        Used by Vexy's log_health_analyzer scheduled job.
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    l.id,
+                    l.name,
+                    l.lifecycle_state,
+                    l.ml_included,
+                    l.created_at,
+                    l.retire_scheduled_at,
+                    COALESCE(t.total_trades, 0) as total_trades,
+                    COALESCE(t.open_trades, 0) as open_trades,
+                    COALESCE(a.pending_alerts, 0) as pending_alerts,
+                    t.last_trade_at,
+                    i.last_import_at
+                FROM trade_logs l
+                LEFT JOIN (
+                    SELECT
+                        log_id,
+                        COUNT(*) as total_trades,
+                        SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_trades,
+                        MAX(entry_time) as last_trade_at
+                    FROM trades
+                    GROUP BY log_id
+                ) t ON l.id = t.log_id
+                LEFT JOIN (
+                    SELECT
+                        log_id,
+                        COUNT(*) as pending_alerts
+                    FROM alerts
+                    WHERE status = 'pending'
+                    GROUP BY log_id
+                ) a ON l.id = a.log_id
+                LEFT JOIN (
+                    SELECT
+                        log_id,
+                        MAX(created_at) as last_import_at
+                    FROM import_batches
+                    WHERE status = 'completed'
+                    GROUP BY log_id
+                ) i ON l.id = i.log_id
+                WHERE l.user_id = %s AND l.lifecycle_state != 'retired'
+                ORDER BY l.lifecycle_state, l.name
+            """, (user_id,))
+
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                result.append({
+                    'id': row[0],
+                    'name': row[1],
+                    'lifecycle_state': row[2],
+                    'ml_included': bool(row[3]),
+                    'created_at': row[4].isoformat() if row[4] else None,
+                    'retire_scheduled_at': row[5].isoformat() if row[5] else None,
+                    'total_trades': row[6],
+                    'open_trades': row[7],
+                    'pending_alerts': row[8],
+                    'last_trade_at': row[9].isoformat() if row[9] else None,
+                    'last_import_at': row[10].isoformat() if row[10] else None,
+                })
+            return result
         finally:
             cursor.close()
             conn.close()

@@ -30,6 +30,22 @@
   background: #111;
 }
 
+.alert-modal-header.draggable-handle {
+  cursor: grab;
+}
+
+.alert-modal.is-dragging .alert-modal-header.draggable-handle {
+  cursor: grabbing;
+}
+
+.alert-modal.floating-modal {
+  z-index: 2001;
+}
+
+.alert-modal.is-dragging {
+  user-select: none;
+}
+
 .alert-modal-header h3 {
   margin: 0;
   font-size: 16px;

@@ -178,7 +178,7 @@ RULES:
             self.mode = "chat"
             self.api_key = self.xai_key
             self.api_base = "https://api.x.ai/v1"
-            self.model = "grok-beta"
+            self.model = "grok-3"
         elif self.openai_key:
             # Use OpenAI chat completions
             self.mode = "chat"

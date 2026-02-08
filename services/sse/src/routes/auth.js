@@ -8,6 +8,7 @@ import {
   getCurrentUser,
   setSessionCookie,
   clearSessionCookie,
+  getAuthConfig,
 } from "../auth.js";
 import { upsertUserFromWpToken, getUserProfile, updateUserTimezone, getLeaderboardSettings, updateLeaderboardSettings } from "../db/userStore.js";
 import { isDbAvailable } from "../db/index.js";
@@ -35,6 +36,21 @@ router.get("/me", (req, res) => {
  */
 router.get("/sso", async (req, res) => {
   const { sso, next = "/" } = req.query;
+  const env = getAuthConfig();
+
+  // PUBLIC_MODE: Create dev session without SSO verification
+  if (env.PUBLIC_MODE) {
+    const devUser = {
+      sub: "dev-user",
+      email: "dev@localhost",
+      name: "Dev User",
+      iss: "dev",
+    };
+    const sessionJwt = issueAppSession(devUser);
+    setSessionCookie(res, sessionJwt, req);
+    console.log("[auth] PUBLIC_MODE: Created dev session");
+    return res.redirect(302, next);
+  }
 
   if (!sso) {
     return res.status(400).json({ detail: "Missing sso parameter" });

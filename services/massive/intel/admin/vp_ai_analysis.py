@@ -63,59 +63,47 @@ def get_anthropic_api_key() -> str:
 ANTHROPIC_API_KEY = get_anthropic_api_key()
 
 # Analysis prompt using Dealer Gravity lexicon
-ANALYSIS_PROMPT = """You are an expert in Dealer Gravity analysis - a methodology for understanding market structure through volume distribution patterns.
-
-IMPORTANT: You must use ONLY the Dealer Gravity lexicon. NEVER use traditional Volume Profile terminology.
-
-## Dealer Gravity Lexicon (Use These Terms)
-
-- **Volume Node**: A price level where market participation concentrated. Represents attention, friction, and market memory. These are levels where price tends to slow down or consolidate.
-
-- **Volume Well**: A price level with absence of engagement. Represents neglect and low resistance. Price tends to move quickly through these zones.
-
-- **Crevasse**: An extended region of persistent volume scarcity. These are structural voids where convex outcomes emerge - price can traverse rapidly through these zones.
-
-- **Market Memory**: The persistent topology revealed by volume across long horizons. Areas of historical significance that may act as future reference points.
-
-## BANNED TERMS (Never Use)
-- POC (Point of Control)
-- VAH / VAL (Value Area High/Low)
-- Value Area
-- HVN / LVN (High/Low Volume Nodes)
-- Any Auction Market Theory terminology
+ANALYSIS_PROMPT = """You are an expert in Dealer Gravity analysis - identifying market structure through volume distribution patterns.
 
 ## Your Task
 
-Analyze the SPX Volume Profile chart provided. The chart shows:
-- Left panels: RAW (close price) and TV Smoothed (microbin distributed) volume profiles
-- Right panels: Top 20 volume levels ranked by concentration
+Look at this SPX Volume Profile chart. Identify ALL the **transition edges** - price levels where volume changes significantly from high to low or low to high.
 
-Identify and return:
+These transition edges represent:
+- **Institutional battle zones** - Where large players have stacked orders
+- **Order flow imbalances** - Sharp volume changes show where pressure shifts
+- **Natural support/resistance** - Price reacts at these boundaries
 
-1. **Volume Nodes** (3-5 key levels): Price levels with the highest concentration of market attention. Look for the longest horizontal bars in the profile.
+## What To Look For
 
-2. **Volume Wells** (2-4 levels): Price levels with notably low volume relative to surrounding areas. These appear as gaps or thin areas in the profile.
+1. **Volume Edges** - Every price where volume transitions sharply:
+   - Where a volume cluster STARTS (volume rising from low)
+   - Where a volume cluster ENDS (volume dropping off)
+   - Both sides of valleys/cracks in the profile
+   - Any clear demarcation between high and low volume
 
-3. **Crevasses** (1-3 ranges): Extended regions of persistent low volume. These are contiguous zones where the profile shows sustained thinness.
+2. **Crevasses** - Deep cracks/valleys in the profile:
+   - Extended low-volume regions between clusters
+   - "Air pockets" where price can move quickly
+   - Return as [start_price, end_price] ranges
 
-4. **Market Memory Assessment**: Brief description of the overall structure - where is the persistent memory concentrated? Are there distinct regimes?
+## Output Format
 
-5. **Current Context**: Given that SPX is currently trading around $6,000-6,900, what structures are most relevant for current price action?
+Return JSON with ALL edges you can see (aim for 20-40 edges in a typical range):
 
-Return your analysis as JSON in this exact format:
 ```json
 {
-  "volume_nodes": [price1, price2, price3],
-  "volume_wells": [price1, price2],
-  "crevasses": [[start1, end1], [start2, end2]],
-  "market_memory_strength": 0.0 to 1.0,
-  "bias": "bullish" | "bearish" | "neutral",
-  "analysis": "Your detailed analysis text here",
-  "current_relevance": "Analysis of structures relevant to current price"
+  "volume_nodes": [6250, 6280, 6310, 6340, ...],
+  "crevasses": [[6500, 6545], [6720, 6755], ...],
+  "analysis": "Brief description of the structure"
 }
 ```
 
-Be precise with price levels - use whole dollar amounts for SPX (e.g., 6000, not 6000.50).
+IMPORTANT:
+- List EVERY transition edge you can see, not just the major ones
+- Use whole dollar amounts for SPX
+- Be thorough - if you can see a transition, include it
+- Edges are NOT peaks - they're the boundaries where volume changes
 """
 
 

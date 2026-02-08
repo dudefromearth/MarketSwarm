@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import '../styles/alert-modal.css';
 import type { AlertType, AlertCondition, AlertBehavior, SupportType } from '../types/alerts';
 import ButterflyEntryAlertCreator from './ButterflyEntryAlertCreator';
+import { useDraggable } from '../hooks/useDraggable';
 
 // Alert types supported by this modal UI (subset of all AlertType)
 type SupportedAlertType = 'price' | 'debit' | 'profit_target' | 'trailing_stop' | 'ai_theta_gamma' | 'butterfly_entry' | 'butterfly_profit_mgmt';
@@ -82,6 +83,12 @@ export default function AlertCreationModal({
   const [color, setColor] = useState(ALERT_COLORS[5]); // Blue default
   const [behavior, setBehavior] = useState<AlertBehavior>('once_only');
   const [minProfitThreshold, setMinProfitThreshold] = useState('50');
+
+  // Draggable modal
+  const { dragHandleProps, containerStyle, isDragging } = useDraggable({
+    handleSelector: '.alert-modal-header',
+    initialCentered: true,
+  });
 
   // Supported types/conditions for this modal UI
   const isSupportedType = (t: AlertType): t is SupportedAlertType =>
@@ -175,8 +182,13 @@ export default function AlertCreationModal({
 
   return (
     <div className="alert-modal-backdrop" onClick={handleBackdropClick}>
-      <div className="alert-modal">
-        <div className="alert-modal-header">
+      <div
+        className={`alert-modal floating-modal ${isDragging ? 'is-dragging' : ''}`}
+        ref={dragHandleProps.ref}
+        onMouseDown={dragHandleProps.onMouseDown}
+        style={containerStyle}
+      >
+        <div className="alert-modal-header draggable-handle">
           <h3>{isEditing ? 'Edit Alert' : 'Create Alert'}</h3>
           <span className="alert-modal-strategy">{strategyLabel}</span>
           <button className="alert-modal-close" onClick={onClose}>&times;</button>

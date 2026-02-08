@@ -15,14 +15,23 @@ export interface TradeLog {
   constraints: string | null;
   regime_assumptions: string | null;
   notes: string | null;
+  description: string | null;
   is_active: number;
   total_trades: number;
   open_trades: number;
+  open_positions?: number;
   closed_trades: number;
   total_pnl: number;
   total_pnl_dollars: number;
   created_at: string;
   updated_at: string;
+  // Lifecycle fields
+  lifecycle_state: 'active' | 'archived' | 'retired';
+  archived_at: string | null;
+  retired_at: string | null;
+  retire_scheduled_at: string | null;
+  ml_included: number;
+  pending_alerts?: number;
 }
 
 interface LogSelectorProps {

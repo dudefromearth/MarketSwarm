@@ -11,12 +11,14 @@ import { loadConfig, getFallbackConfig, getConfig } from "./config.js";
 import { initRedis, closeRedis } from "./redis.js";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
 import { setConfig as setKeyConfig } from "./keys.js";
-import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, subscribeAlertsPubSub, subscribeRiskGraphPubSub, subscribeTradeLogPubSub, subscribeDealerGravityPubSub, subscribePositionsPubSub, stopPolling, getClientStats } from "./routes/sse.js";
+import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, subscribeAlertsPubSub, subscribeRiskGraphPubSub, subscribeTradeLogPubSub, subscribeDealerGravityPubSub, subscribePositionsPubSub, subscribeLogLifecyclePubSub, stopPolling, getClientStats } from "./routes/sse.js";
 import modelsRoutes from "./routes/models.js";
 import authRoutes from "./routes/auth.js";
 import adminRoutes, { startActivityTracking, stopActivityTracking } from "./routes/admin.js";
 import dealerGravityRoutes from "./routes/dealerGravity.js";
 import positionsRoutes from "./routes/positions.js";
+import aiRoutes from "./routes/ai.js";
+import importsRoutes from "./routes/imports.js";
 import { authMiddleware, logAuthConfig } from "./auth.js";
 import { initDb, closeDb } from "./db/index.js";
 
@@ -66,6 +68,8 @@ app.use("/sse", sseRoutes);
 app.use("/api/models", modelsRoutes);
 app.use("/api/dealer-gravity", dealerGravityRoutes);
 app.use("/api/positions", positionsRoutes);
+app.use("/api/ai", aiRoutes);
+app.use("/api/imports", importsRoutes);
 
 // Proxy journal endpoints to journal service (port 3002)
 // This handles /api/logs/*, /api/trades/*, /api/playbooks/*, /api/journals/*
@@ -224,6 +228,7 @@ async function main() {
   subscribeTradeLogPubSub();
   subscribeDealerGravityPubSub();
   subscribePositionsPubSub();
+  subscribeLogLifecyclePubSub();
 
   // Start server
   const port = config.env.SSE_PORT;

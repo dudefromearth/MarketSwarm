@@ -1,0 +1,1382 @@
+{
+  "version": "3.1",
+  "description": "Truth: Host-based Redis topology for MarketSwarm stack. Canonical configuration for all services.",
+  "node": {
+    "name": "DudeOne.local",
+    "env": "production"
+  },
+  "buses": {
+    "system-redis": {
+      "url": "redis://127.0.0.1:6379",
+      "role": "system",
+      "description": "Governance, truth, heartbeats, mesh, healer."
+    },
+    "market-redis": {
+      "url": "redis://127.0.0.1:6380",
+      "role": "market",
+      "description": "Market data, chains, models, vigil events."
+    },
+    "intel-redis": {
+      "url": "redis://127.0.0.1:6381",
+      "role": "intel",
+      "description": "RSS & external intel ingestion, enrichment, sentiment."
+    }
+  },
+  "domain": {},
+  "components": {
+    "rss_agg": {
+      "id": "rss_agg",
+      "meta": {
+        "name": "RSS Aggregator",
+        "description": "Ingests, enriches, and republishes RSS feeds."
+      },
+      "access_points": {
+        "publish_to": [
+          {
+            "bus": "intel-redis",
+            "key": "vexy:intake"
+          },
+          {
+            "bus": "system-redis",
+            "key": "rss_agg:heartbeat"
+          }
+        ],
+        "subscribe_to": [],
+        "index_key": "rss:index",
+        "queue_key": "rss:queue"
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "workflow": {
+        "interval_sec": 600,
+        "publish_dir": "/Users/ernie/Sites/feeds"
+      },
+      "env": {
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+        "ENRICHMENT_MODEL": "gpt-4o",
+        "LLM_MODE": "online",
+        "PIPELINE_MODE": "full"
+      },
+      "dependencies": []
+    },
+    "content_anal": {
+      "id": "content_anal",
+      "meta": {
+        "name": "Content Analysis Engine",
+        "description": "LLM-driven category analysis of enriched content, produces synthetic insights adapted the original content schema."
+      },
+      "access_points": {
+        "subscribe_to": [
+          {
+            "bus": "intel-redis",
+            "key": "vexy:intake"
+          }
+        ],
+        "publish_to": [
+          {
+            "bus": "intel-redis",
+            "key": "content_anal:outbox"
+          },
+          {
+            "bus": "system-redis",
+            "key": "content_anal:heartbeat"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 15,
+        "ttl_sec": 45
+      },
+      "domain_keys": [
+        "rss:index",
+        "rss:article_enriched_index",
+        "rss:article_enriched:{uid}"
+      ],
+      "dependencies": [
+        "rss_agg"
+      ]
+    },
+    "vigil": {
+      "id": "vigil",
+      "meta": {
+        "name": "Market Event Watcher",
+        "description": "Filters for market events, sends to Vexy."
+      },
+      "access_points": {
+        "publish_to": [
+          {
+            "bus": "market-redis",
+            "key": "vigil:events"
+          },
+          {
+            "bus": "system-redis",
+            "key": "vigil:heartbeat"
+          }
+        ],
+        "subscribe_to": [
+          {
+            "bus": "market-redis",
+            "key": "massive:spot"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:chain:latest"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "dependencies": []
+    },
+    "massive": {
+      "id": "massive",
+      "meta": {
+        "name": "Massive Market Model",
+        "description": "Ingests live spot and options data from the provider and publishes near real-time options surface and raw convexity inputs into Market-Redis."
+      },
+      "access_points": {
+        "subscribe_to": [],
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "massive:heartbeat"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:chain:latest"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:ws:contracts"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:ws:stream"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:spot"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:debug"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:spot:analytics"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:ws:analytics"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:chain:analytics"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:model:analytics"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:model:{symbol}:latest"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:replay:{symbol}"
+          }
+        ]
+      },
+      "models": {
+        "produces": [
+          {
+            "bus": "market-redis",
+            "key": "massive:model:spot"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:gex:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:model:{symbol}:latest"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:replay:{symbol}"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:market_mode:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:vix_regime:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:volume_profile:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:bias_lfi:model"
+          }
+        ],
+        "consumes": []
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "domain_keys": [
+        "SPOT",
+        "SPX",
+        "NDX",
+        "VIX",
+        "OPTIONS",
+        "GEX",
+        "CONVEXITY"
+      ],
+      "dependencies": [],
+      "env": {
+        "MASSIVE_RUN_MODE": "direct",
+        "MASSIVE_WS_ENABLED": "true",
+        "MASSIVE_API_KEY": "pdjraOWSpDbg3ER_RslZYe3dmn4Y7WCC",
+        "MASSIVE_WS_HYDRATE_MAX_DTE": "4",
+        "MASSIVE_HEATMAP_MAX_DTE": "10",
+        "MASSIVE_EPOCH_TTL_MINUTES": "390",
+        "MASSIVE_EPOCH_SPOT_THRESHOLD_PCT": "1",
+        "MASSIVE_SPOT_SYMBOLS": "I:SPX,I:NDX,I:VIX",
+        "MASSIVE_SPOT_INDEX_TIMEOUT_SEC": "2.0",
+        "MASSIVE_SPOT_STOCK_TIMEOUT_SEC": "2.5",
+        "MASSIVE_SPOT_TICK_TIMEOUT_SEC": "5.0",
+        "MASSIVE_REDIS_OP_TIMEOUT_SEC": "1.0",
+        "MASSIVE_STOCK_SYMBOLS": "SPY, QQQ",
+        "MASSIVE_CHAIN_SYMBOLS": "I:SPX,I:NDX",
+        "MASSIVE_CHAIN_INTERVAL_SEC": "10",
+        "MASSIVE_CHAIN_NUM_EXPIRATIONS": "4",
+        "MASSIVE_CHAIN_EM_DAYS": "1",
+        "MASSIVE_CHAIN_EM_MULT": "2.25",
+        "MASSIVE_SPX_EM_MULT": "2.25",
+        "MASSIVE_NDX_EM_MULT": "3.50",
+        "MASSIVE_SPX_STRIKE_INCREMENT": "5",
+        "MASSIVE_NDX_STRIKE_INCREMENT": "10",
+        "MASSIVE_SPX_FILTER_STRIKES": "false",
+        "MASSIVE_NDX_FILTER_STRIKES": "true",
+        "MASSIVE_EPOCH_CHANGE_THRESHOLD_PCT": "15",
+        "MASSIVE_SURFACE_TTL_MINUTES": "10080",
+        "MASSIVE_CAPTURE_SURFACE": "true",
+        "MASSIVE_WS_STRIKE_STEP": "5",
+        "MASSIVE_WS_RECONNECT_DELAY_SEC": "5.0",
+        "DEBUG_MASSIVE": "false",
+        "MASSIVE_WS_URL": "wss://socket.massive.com/options",
+        "MASSIVE_WS_REPLAY": "false",
+        "MASSIVE_WS_CAPTURE": "false",
+        "MASSIVE_WS_CAPTURE_CHAIN_DIR": "/Users/ernie/MarketSwarm/ws_captures/chain",
+        "MASSIVE_WS_CAPTURE_SPOT_DIR": "/Users/ernie/MarketSwarm/ws_captures/spot",
+        "MASSIVE_WS_CAPTURE_WS_DIR": "/Users/ernie/MarketSwarm/ws_captures/ws",
+        "MASSIVE_WS_CAPTURE_UNDERLYINGS": "SPX,NDX",
+        "MASSIVE_HEATMAP_INTERVAL_MS": "200",
+        "MASSIVE_MODEL_LIVE_TTL_SEC": "259200",
+        "MASSIVE_REPLAY_TTL_SEC": "86400",
+        "MASSIVE_REPLAY_BUFFER_MINUTES": "15",
+        "MASSIVE_WIDTHS_SPX": "20,25,30,35,40,45,50",
+        "MASSIVE_WIDTHS_NDX": "50,60,70,80,100,120,130",
+        "MASSIVE_DEBUG_ENABLED": "true",
+        "MASSIVE_DEBUG_CHAIN_INTERVAL_SEC": "5",
+        "MASSIVE_SPOT_TRAIL_WINDOW_SEC": "604800",
+        "MASSIVE_SPOT_TRAIL_TTL_SEC": "691200"
+      }
+    },
+    "vexy_ai": {
+      "id": "vexy_ai",
+      "meta": {
+        "name": "Vexy AI",
+        "description": "Epoch + event-driven play-by-play voice. Reflection-first market commentary aligned with The Path framework. Mirrors structure, never predicts.",
+        "core_mantra": "Reflection is the filter. Action is the goal. The loop is life. The risk is yours.",
+        "object_rule": "No reflection without object. If no market data, article, or event exists to reflect upon, the mirror remains silent."
+      },
+      "access_points": {
+        "subscribe_to": [
+          {
+            "bus": "intel-redis",
+            "key": "vexy:intake"
+          },
+          {
+            "bus": "market-redis",
+            "key": "vigil:events"
+          }
+        ],
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "vexy_ai:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "mesh:broadcast"
+          }
+        ]
+      },
+      "models": {
+        "produces": [
+          {
+            "bus": "market-redis",
+            "key": "vexy:model:playbyplay"
+          }
+        ],
+        "consumes": [
+          {
+            "bus": "market-redis",
+            "key": "massive:gex:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:model:{symbol}:latest"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:market_mode:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:vix_regime:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:volume_profile:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:bias_lfi:model"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 15,
+        "ttl_sec": 45
+      },
+      "restart_cmd": "/Users/ernie/MarketSwarm/scripts/ms-vexyai.sh restart",
+      "dependencies": [
+        "rss_agg",
+        "massive",
+        "vigil"
+      ],
+      "env": {
+        "VEXY_MODE": "full",
+        "VEXY_LOOP_SLEEP_SEC": "60",
+        "XAI_API_KEY": "${XAI_API_KEY}",
+        "OPENAI_API_KEY": "${OPENAI_API_KEY}",
+        "CONVEXITY_ASSISTANT_ID": "asst_yNLi7GCN2q2TkixGLiDYLxwP"
+      },
+      "voice_agents": {
+        "Sage": {
+          "description": "Grounded, reflective, patient. Offers wisdom without urgency.",
+          "avatar_inspiration": "Laozi, Marcus Aurelius",
+          "tone": "calm and measured",
+          "style": "Present observations as reflections. Use phrases like 'structure suggests' or 'the pattern shows'.",
+          "when_to_use": "Low volatility, consolidation, post-close reflection"
+        },
+        "Socratic": {
+          "description": "Curious, questioning, balanced. Invites reflection through questions.",
+          "avatar_inspiration": "Socrates",
+          "tone": "thoughtful and questioning",
+          "style": "Frame observations as questions or considerations. Use phrases like 'worth noting' or 'consider whether'.",
+          "when_to_use": "Ambiguous setups, conflicting signals, mid-session analysis"
+        },
+        "Convexity": {
+          "description": "Direct, precise, action-aware. Cuts through noise to structural truth.",
+          "avatar_inspiration": "Nassim Taleb, Ed Thorp",
+          "tone": "direct and precise",
+          "style": "State observations clearly. Highlight asymmetries and structural edges. Focus on what matters now.",
+          "when_to_use": "High tension moments, power hour, clear structural setups"
+        },
+        "Observer": {
+          "description": "Neutral, factual, detached. Reports without interpretation.",
+          "avatar_inspiration": "Marcus Aurelius (observer mode)",
+          "tone": "neutral and factual",
+          "style": "Report what is, not what might be. Stick to observable facts and data.",
+          "when_to_use": "Premarket, article commentary, data-heavy moments"
+        },
+        "Mapper": {
+          "description": "Synthesizing, connecting, pattern-aware. Sees relationships across domains.",
+          "avatar_inspiration": "Benoit Mandelbrot",
+          "tone": "connecting and synthesizing",
+          "style": "Draw connections between data points. Highlight correlations and divergences. Ask 'where else has this pattern emerged?'",
+          "when_to_use": "Cross-market flows, fractal patterns, weekend synthesis"
+        },
+        "Disruptor": {
+          "description": "Provocateur, contrarian. Challenges assumptions to prevent stagnation.",
+          "avatar_inspiration": "Diogenes, Charlie Munger",
+          "tone": "sharp and challenging",
+          "style": "Flip the frame. Ask 'what if the consensus is wrong?' Surface hidden risks.",
+          "when_to_use": "VIX-triggered, complacency signals, crowded trades"
+        },
+        "Healer": {
+          "description": "Compassionate witness. Holds space for losses and drawdowns.",
+          "avatar_inspiration": "Rumi, Pema Chodron",
+          "tone": "supportive and grounding",
+          "style": "Acknowledge difficulty without minimizing. Remind of process over outcome.",
+          "when_to_use": "After losses, high stress moments, tilt recovery"
+        }
+      },
+      "system_preferences": {
+        "reflection_dial": 0.2,
+        "response_clarity": "accessible",
+        "reading_level": "conversational",
+        "presentation_mode": "direct",
+        "verbosity": "low",
+        "tone_priority": "clarity_over_depth"
+      },
+      "reflection_dial_behavior": {
+        "thresholds": {
+          "gentle": {
+            "range": [
+              0.0,
+              0.3
+            ],
+            "tone": "casual",
+            "voice": "Observer",
+            "partitions": [
+              "tldr"
+            ],
+            "max_length": 80
+          },
+          "balanced": {
+            "range": [
+              0.4,
+              0.6
+            ],
+            "tone": "grounded",
+            "voice": "Convexity",
+            "partitions": [
+              "tldr",
+              "structure"
+            ],
+            "max_length": 120
+          },
+          "sharp": {
+            "range": [
+              0.7,
+              1.0
+            ],
+            "tone": "direct",
+            "voice": "Convexity",
+            "partitions": [
+              "tldr",
+              "tension",
+              "structure"
+            ],
+            "max_length": 180
+          }
+        }
+      },
+      "response_format": {
+        "structure": "context + bottom_line",
+        "partitions": {
+          "context": {
+            "purpose": "Brief structural context (1-2 sentences)",
+            "max_words": 40,
+            "required": true
+          },
+          "bottom_line": {
+            "purpose": "TL;DR single sentence takeaway - always starts with 'Bottom line:'",
+            "max_words": 20,
+            "required": true
+          }
+        },
+        "voice_rules": {
+          "never_predict": true,
+          "never_command": true,
+          "object_required": true,
+          "bottom_line_required": true,
+          "brevity_first": true
+        }
+      },
+      "disruptor_logic": {
+        "description": "VIX-sensitive agent mutation for antifragile tension",
+        "source": "massive:vix_regime:model",
+        "levels": [
+          {
+            "level": 1,
+            "vix_range": [
+              0,
+              15
+            ],
+            "emoji": "\ud83d\udd25",
+            "probability": 0.05
+          },
+          {
+            "level": 2,
+            "vix_range": [
+              16,
+              25
+            ],
+            "emoji": "\ud83d\udd25\ud83d\udd25",
+            "probability": 0.15
+          },
+          {
+            "level": 3,
+            "vix_range": [
+              26,
+              35
+            ],
+            "emoji": "\ud83d\udd25\ud83d\udd25\ud83d\udd25",
+            "probability": 0.3
+          },
+          {
+            "level": 4,
+            "vix_range": [
+              36,
+              45
+            ],
+            "emoji": "\ud83d\udd25\ud83d\udd25\ud83d\udd25\ud83d\udd25",
+            "probability": 0.5
+          },
+          {
+            "level": 5,
+            "vix_range": [
+              46,
+              100
+            ],
+            "emoji": "\ud83d\udd25\ud83d\udd25\ud83d\udd25\ud83d\udd25\ud83d\udd25",
+            "probability": 0.75
+          }
+        ],
+        "disruption_prompts": [
+          "Flip the frame. What if the consensus is wrong?",
+          "Where is the crowd positioned? What happens if they're forced to unwind?",
+          "Is this structure, or is it a story traders are telling themselves?",
+          "What would invalidate the current thesis?"
+        ]
+      },
+      "fractal_lens": {
+        "description": "Scale-aware reflection from Mandelbrot's insight that markets are rough and self-similar at all levels",
+        "prompt": "At what scale is this tension or opportunity unfolding?",
+        "regimes": {
+          "micro": {
+            "description": "Intraday noise, short pulses",
+            "action": "Pause entries, check bias clustering"
+          },
+          "meso": {
+            "description": "Vol clustering, slope shift (multi-day)",
+            "action": "Adjust strike spacing, audit sigma skew"
+          },
+          "macro": {
+            "description": "Expansion from vol floor (weekly/monthly)",
+            "action": "Reallocate to convex stack, review drift"
+          },
+          "meta": {
+            "description": "Crisis spike (VIX > 40)",
+            "action": "Halt new entries, deploy insurance stack"
+          }
+        }
+      },
+      "trading_days": {
+        "schedule": "market_hours",
+        "timezone": "America/New_York",
+        "epochs": [
+          {
+            "name": "Premarket",
+            "time": "08:00",
+            "context": "Pre-market. Futures and overnight tone.",
+            "prompt_focus": "gaps_and_levels",
+            "voice": "Observer",
+            "partitions": [
+              "tldr"
+            ],
+            "reflection_dial": 0.2
+          },
+          {
+            "name": "Post-Open",
+            "time": "09:35",
+            "context": "Opening rotation done. Direction establishing.",
+            "prompt_focus": "opening_range_gex",
+            "voice": "Convexity",
+            "partitions": [
+              "tldr",
+              "structure"
+            ],
+            "reflection_dial": 0.3
+          },
+          {
+            "name": "European Close",
+            "time": "11:30",
+            "context": "Europe closing. Flow shift.",
+            "prompt_focus": "cross_market_flows",
+            "voice": "Observer",
+            "partitions": [
+              "tldr"
+            ],
+            "reflection_dial": 0.2
+          },
+          {
+            "name": "Lunch Lull",
+            "time": "13:00",
+            "context": "Low volume. Structure consolidating.",
+            "prompt_focus": "compression_check",
+            "voice": "Observer",
+            "partitions": [
+              "tldr"
+            ],
+            "reflection_dial": 0.1
+          },
+          {
+            "name": "Afternoon",
+            "time": "14:30",
+            "context": "Afternoon. Building toward close.",
+            "prompt_focus": "positioning_into_close",
+            "voice": "Observer",
+            "partitions": [
+              "tldr",
+              "structure"
+            ],
+            "reflection_dial": 0.2
+          },
+          {
+            "name": "Power Hour",
+            "time": "15:00",
+            "context": "Final hour. Volume picking up.",
+            "prompt_focus": "gamma_and_walls",
+            "voice": "Convexity",
+            "partitions": [
+              "tldr",
+              "tension"
+            ],
+            "reflection_dial": 0.4
+          },
+          {
+            "name": "Into Close",
+            "time": "15:45",
+            "context": "MOC flows. Gamma pin dynamics.",
+            "prompt_focus": "closing_imbalances",
+            "voice": "Convexity",
+            "partitions": [
+              "tldr",
+              "tension"
+            ],
+            "reflection_dial": 0.5
+          },
+          {
+            "name": "Post-Close",
+            "time": "16:05",
+            "context": "Cash closed. Quick recap.",
+            "prompt_focus": "session_recap",
+            "voice": "Observer",
+            "partitions": [
+              "tldr"
+            ],
+            "reflection_dial": 0.2
+          }
+        ]
+      },
+      "non_trading_days": {
+        "schedule": "article_driven",
+        "includes": [
+          "saturday",
+          "sunday",
+          "market_holidays"
+        ],
+        "system_preferences_override": {
+          "reflection_dial": 0.3,
+          "response_clarity": "accessible",
+          "presentation_mode": "direct"
+        },
+        "story_categories": {
+          "macro": {
+            "keywords": [
+              "fed",
+              "fomc",
+              "treasury",
+              "rates",
+              "inflation",
+              "cpi",
+              "ppi",
+              "gdp",
+              "employment",
+              "jobs",
+              "nfp",
+              "economic"
+            ],
+            "priority": 1,
+            "label": "Macro"
+          },
+          "central_banks": {
+            "keywords": [
+              "fed",
+              "fomc",
+              "ecb",
+              "boj",
+              "powell",
+              "yellen",
+              "rate decision",
+              "monetary policy"
+            ],
+            "priority": 1,
+            "label": "Central Banks"
+          },
+          "volatility": {
+            "keywords": [
+              "vix",
+              "volatility",
+              "options",
+              "gamma",
+              "hedging",
+              "derivatives"
+            ],
+            "priority": 2,
+            "label": "Volatility"
+          },
+          "geopolitical": {
+            "keywords": [
+              "tariff",
+              "china",
+              "trade war",
+              "sanctions",
+              "geopolitical",
+              "war",
+              "conflict"
+            ],
+            "priority": 2,
+            "label": "Geopolitical"
+          },
+          "earnings": {
+            "keywords": [
+              "earnings",
+              "revenue",
+              "guidance",
+              "beat",
+              "miss",
+              "eps"
+            ],
+            "priority": 3,
+            "label": "Earnings"
+          },
+          "market_structure": {
+            "keywords": [
+              "dealer",
+              "positioning",
+              "flows",
+              "liquidity",
+              "market maker",
+              "0dte"
+            ],
+            "priority": 2,
+            "label": "Market Structure"
+          }
+        },
+        "weekend_digest": {
+          "enabled": true,
+          "max_stories": 5,
+          "lookback_hours": 48,
+          "format": "numbered_list",
+          "include_bottom_line": true
+        },
+        "scheduled_epochs": [
+          {
+            "name": "Morning Digest",
+            "time": "09:00",
+            "context": "Weekend morning. Top stories for options traders.",
+            "prompt_focus": "weekend_digest",
+            "type": "digest",
+            "voice": "Observer",
+            "reflection_dial": 0.2
+          },
+          {
+            "name": "Afternoon Update",
+            "time": "14:00",
+            "context": "Weekend afternoon. Any developing stories.",
+            "prompt_focus": "developing_stories",
+            "type": "digest",
+            "voice": "Observer",
+            "reflection_dial": 0.3
+          },
+          {
+            "name": "Sunday Prep",
+            "time": "18:00",
+            "day": "sunday",
+            "context": "Sunday evening. Week ahead - what matters for Monday.",
+            "prompt_focus": "week_ahead_digest",
+            "type": "digest",
+            "voice": "Convexity",
+            "reflection_dial": 0.4
+          }
+        ],
+        "article_commentary": {
+          "enabled": true,
+          "voice": "Observer",
+          "reflection_dial": 0.2,
+          "format": {
+            "max_length": 100,
+            "style": "brief"
+          }
+        }
+      },
+      "market_snapshot_schema": {
+        "description": "YAML format for passing market state to Vexy",
+        "example": {
+          "timestamp": "2025-01-31T10:30:00-05:00",
+          "symbol": "SPX",
+          "spot": {
+            "price": 6050.25,
+            "change_pct": 0.35,
+            "session_high": 6065.0,
+            "session_low": 6035.5
+          },
+          "vix": {
+            "value": 16.5,
+            "regime": "low",
+            "term_structure": "contango"
+          },
+          "market_mode": {
+            "mode": "compression",
+            "bias": "neutral",
+            "confidence": 0.75
+          },
+          "liquidity_intent": {
+            "bias": "bullish",
+            "strength": 0.6,
+            "flow_direction": "accumulation",
+            "smart_money_signal": "buy"
+          },
+          "dealer_gravity": {
+            "magnet_strike": 6050,
+            "pull_strength": "strong",
+            "direction": "pinning",
+            "nearest_wall_above": 6075,
+            "nearest_wall_below": 6025
+          },
+          "gex": {
+            "net": 2500000000,
+            "regime": "positive",
+            "key_walls": [
+              6000,
+              6050,
+              6100
+            ],
+            "zero_gamma": 5980,
+            "flip_level": 6025
+          },
+          "volume_profile": {
+            "poc": 6045,
+            "value_area_high": 6070,
+            "value_area_low": 6020,
+            "hvn": [
+              6045,
+              6000
+            ],
+            "lvn": [
+              6030,
+              6085
+            ]
+          },
+          "options_chain": {
+            "0dte_iv": 12.5,
+            "put_call_ratio": 0.85,
+            "top_strikes_calls": [
+              6050,
+              6100,
+              6075
+            ],
+            "top_strikes_puts": [
+              6000,
+              5950,
+              6025
+            ]
+          },
+          "context": "Post-open, testing overnight high"
+        },
+        "required_fields": [
+          "timestamp",
+          "symbol",
+          "spot"
+        ],
+        "optional_fields": [
+          "vix",
+          "market_mode",
+          "liquidity_intent",
+          "dealer_gravity",
+          "gex",
+          "volume_profile",
+          "options_chain",
+          "context"
+        ]
+      },
+      "market_holidays": [
+        "2025-01-01",
+        "2025-01-20",
+        "2025-02-17",
+        "2025-04-18",
+        "2025-05-26",
+        "2025-06-19",
+        "2025-07-04",
+        "2025-09-01",
+        "2025-11-27",
+        "2025-12-25",
+        "2026-01-01",
+        "2026-01-19",
+        "2026-02-16",
+        "2026-04-03",
+        "2026-05-25",
+        "2026-06-19",
+        "2026-07-03",
+        "2026-09-07",
+        "2026-11-26",
+        "2026-12-25"
+      ]
+    },
+    "journal": {
+      "id": "journal",
+      "meta": {
+        "name": "Trade Journal",
+        "description": "Trade logging, journaling, and performance analytics. Standalone REST API with SQLite storage."
+      },
+      "access_points": {
+        "subscribe_to": [
+          {
+            "bus": "market-redis",
+            "key": "massive:spot",
+            "description": "Live spot prices"
+          },
+          {
+            "bus": "intel-redis",
+            "key": "copilot:alerts:analytics",
+            "description": "Alert analytics from Copilot for collection"
+          }
+        ],
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "journal:heartbeat",
+            "description": "Service heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "alerts:sync",
+            "description": "Alert sync notifications to Copilot"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "models": {
+        "produces": [],
+        "consumes": [
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:model:{symbol}:latest"
+          }
+        ]
+      },
+      "dependencies": [
+        "massive"
+      ],
+      "env": {
+        "JOURNAL_PORT": "3002",
+        "JOURNAL_MYSQL_HOST": "127.0.0.1",
+        "JOURNAL_MYSQL_PORT": "3306",
+        "JOURNAL_MYSQL_USER": "fotw_app",
+        "JOURNAL_MYSQL_PASSWORD": "PfedKtaTaAa2iV21QTZp",
+        "JOURNAL_MYSQL_DATABASE": "fotw_app",
+        "APP_SESSION_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0",
+        "JOURNAL_ATTACHMENTS_PATH": "services/journal/data/attachments"
+      }
+    },
+    "copilot": {
+      "id": "copilot",
+      "meta": {
+        "name": "AI Copilot",
+        "description": "MEL (Model Effectiveness Layer), ADI (AI Data Interface), Commentary, and Alert services. Provides model validity scoring, canonical data export for AI assistants, one-way market observations, and real-time alert evaluation."
+      },
+      "access_points": {
+        "subscribe_to": [
+          {
+            "bus": "market-redis",
+            "key": "massive:spot",
+            "description": "Live spot prices for SPX/NDX/VIX"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:model:{symbol}:latest",
+            "description": "Heatmap tile data"
+          },
+          {
+            "bus": "system-redis",
+            "key": "alerts:sync",
+            "description": "Alert sync notifications from Journal"
+          }
+        ],
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "copilot:heartbeat",
+            "description": "Service heartbeat"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:mel:snapshot",
+            "description": "MEL effectiveness scores for all models"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:mel:history",
+            "description": "Historical MEL snapshots"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:adi:snapshot",
+            "description": "Canonical AI data interface export"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:commentary:message",
+            "description": "AI commentary messages"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:alerts:events",
+            "description": "Real-time alert trigger/update events (pub/sub)"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:alerts:latest",
+            "description": "Latest alert state snapshot"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:alerts:{id}",
+            "description": "Individual alert data by ID"
+          },
+          {
+            "bus": "intel-redis",
+            "key": "copilot:alerts:analytics",
+            "description": "Alert engine analytics and metrics"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "models": {
+        "produces": [
+          {
+            "bus": "market-redis",
+            "key": "copilot:mel:snapshot",
+            "description": "MEL effectiveness scores"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:adi:snapshot",
+            "description": "Canonical AI data export"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:commentary:message",
+            "description": "AI market commentary"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:alerts:events",
+            "description": "Alert trigger/update events"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:alerts:latest",
+            "description": "Latest alert state"
+          }
+        ],
+        "consumes": [
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:model:{symbol}:latest"
+          }
+        ]
+      },
+      "dependencies": [
+        "massive"
+      ],
+      "env": {
+        "COPILOT_PORT": "8095",
+        "COPILOT_MEL_ENABLED": "true",
+        "COPILOT_ADI_ENABLED": "true",
+        "COPILOT_COMMENTARY_ENABLED": "false",
+        "COPILOT_ALERTS_ENABLED": "true",
+        "COPILOT_MEL_INTERVAL_MS": "5000",
+        "COPILOT_MEL_THRESHOLD_VALID": "70",
+        "COPILOT_MEL_THRESHOLD_DEGRADED": "50",
+        "COPILOT_ADI_INTERVAL_MS": "5000",
+        "COPILOT_COMMENTARY_RATE_LIMIT": "10",
+        "COPILOT_ALERTS_FAST_LOOP_MS": "1000",
+        "COPILOT_ALERTS_SLOW_LOOP_MS": "5000",
+        "DEBUG_COPILOT": "false",
+        "OPENAI_API_KEY": "",
+        "CONVEXITY_ASSISTANT_ID": "asst_yNLi7GCN2q2TkixGLiDYLxwP"
+      },
+      "mel": {
+        "weights": {
+          "gamma": 0.3,
+          "volume_profile": 0.25,
+          "liquidity": 0.2,
+          "volatility": 0.15,
+          "session": 0.1
+        },
+        "coherenceMultipliers": {
+          "STABLE": 1.0,
+          "MIXED": 0.85,
+          "COLLAPSING": 0.6,
+          "RECOVERED": 0.9
+        }
+      },
+      "adi": {
+        "schemaVersion": "gamma_snapshot_v1.0",
+        "exportFormats": [
+          "json",
+          "csv",
+          "text"
+        ]
+      },
+      "commentary": {
+        "mode": "one-way",
+        "provider": "openai",
+        "rateLimitPerMinute": 10
+      },
+      "alerts": {
+        "provider": "openai",
+        "fastLoopIntervalMs": 1000,
+        "slowLoopIntervalMs": 5000,
+        "maxAlertsPerUser": 50,
+        "keys": {
+          "events": "copilot:alerts:events",
+          "latest": "copilot:alerts:latest",
+          "alertPrefix": "copilot:alerts",
+          "analytics": "copilot:alerts:analytics"
+        },
+        "roleGating": {
+          "price": [
+            "free",
+            "basic",
+            "premium",
+            "admin"
+          ],
+          "debit": [
+            "free",
+            "basic",
+            "premium",
+            "admin"
+          ],
+          "profit_target": [
+            "basic",
+            "premium",
+            "admin"
+          ],
+          "trailing_stop": [
+            "basic",
+            "premium",
+            "admin"
+          ],
+          "ai_theta_gamma": [
+            "premium",
+            "admin"
+          ],
+          "ai_sentiment": [
+            "premium",
+            "admin"
+          ],
+          "ai_risk_zone": [
+            "premium",
+            "admin"
+          ]
+        },
+        "limits": {
+          "free": {
+            "maxAlerts": 5,
+            "aiAlertsAllowed": false
+          },
+          "basic": {
+            "maxAlerts": 20,
+            "aiAlertsAllowed": false
+          },
+          "premium": {
+            "maxAlerts": 50,
+            "aiAlertsAllowed": true
+          },
+          "admin": {
+            "maxAlerts": 100,
+            "aiAlertsAllowed": true
+          }
+        }
+      }
+    },
+    "sse": {
+      "id": "sse",
+      "meta": {
+        "name": "SSE UI Gateway",
+        "description": "Server-Sent Events gateway responsible for transforming backend models into live UI streams for the React client."
+      },
+      "access_points": {
+        "subscribe_to": [],
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "sse:heartbeat"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "models": {
+        "produces": [],
+        "consumes": [
+          {
+            "bus": "market-redis",
+            "key": "massive:model:spot"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:gex:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:model:{symbol}:latest"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:heatmap:replay:{symbol}"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:market_mode:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:vix_regime:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:volume_profile:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "massive:bias_lfi:model"
+          },
+          {
+            "bus": "market-redis",
+            "key": "vexy:model:playbyplay"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:mel:snapshot"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:commentary:message"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:alerts:events"
+          },
+          {
+            "bus": "market-redis",
+            "key": "copilot:alerts:latest"
+          }
+        ]
+      },
+      "dependencies": [
+        "massive",
+        "rss_agg",
+        "vexy_ai",
+        "copilot"
+      ],
+      "env": {
+        "SSE_PORT": "3001",
+        "SSE_POLL_INTERVAL_MS": "250",
+        "DATABASE_URL": "mysql://fotw_app:PfedKtaTaAa2iV21QTZp@127.0.0.1:3306/fotw_app",
+        "SSO_0DTE_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0",
+        "SSO_FOTW_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0",
+        "APP_SESSION_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0",
+        "APP_SESSION_TTL_SECONDS": "86400",
+        "PUBLIC_MODE": "0"
+      }
+    },
+    "mesh": {
+      "id": "mesh",
+      "meta": {
+        "name": "Mesh Coordinator",
+        "description": "Maintains service registry and monitors heartbeat health."
+      },
+      "access_points": {
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "mesh:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "mesh:gossip"
+          }
+        ],
+        "subscribe_to": []
+      },
+      "heartbeat": {
+        "interval_sec": 5,
+        "ttl_sec": 15
+      },
+      "dependencies": []
+    },
+    "healer": {
+      "id": "healer",
+      "meta": {
+        "name": "Healer",
+        "description": "Watches all service heartbeats and restarts or alerts when any fail."
+      },
+      "access_points": {
+        "subscribe_to": [
+          {
+            "bus": "system-redis",
+            "key": "rss_agg:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "massive:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "vexy_ai:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "mesh:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "vigil:heartbeat"
+          },
+          {
+            "bus": "system-redis",
+            "key": "content_anal:heartbeat"
+          }
+        ],
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "healer:alerts"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 10,
+        "ttl_sec": 30
+      },
+      "dependencies": []
+    }
+  }
+}

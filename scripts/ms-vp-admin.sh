@@ -21,6 +21,7 @@ BUILD_SCRIPT="$ROOT/services/massive/intel/admin/vp_build_profile.py"
 export SYSTEM_REDIS_URL="${SYSTEM_REDIS_URL:-redis://127.0.0.1:6379}"
 export MARKET_REDIS_URL="${MARKET_REDIS_URL:-redis://127.0.0.1:6380}"
 export POLYGON_API_KEY="${POLYGON_API_KEY:-YOUR_KEY_HERE}"
+export ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY:-}"
 
 # Default config
 VP_TICKER="${VP_TICKER:-SPY}"     # underlying ETF to download
@@ -123,6 +124,8 @@ run_build() {
   read -rp "Enter ticker [${VP_TICKER}]: " TICK
   read -rp "Enter JSON file name (relative to $VP_DATA_DIR): " FILE
   read -rp "Publish mode raw|tv|both|none [${VP_PUBLISH_MODE}]: " PMODE
+  read -rp "Price range min (empty for all, e.g. 5800): " PRICE_MIN
+  read -rp "Price range max (empty for all, e.g. 6200): " PRICE_MAX
 
   TICK="${TICK:-$VP_TICKER}"
   PMODE="${PMODE:-$VP_PUBLISH_MODE}"
@@ -172,6 +175,14 @@ run_build() {
   fi
   if [[ -n "$INTERACTIVE" ]]; then
     CMD+=(--interactive)
+  fi
+
+  # Add price range filters if specified
+  if [[ -n "$PRICE_MIN" ]]; then
+    CMD+=(--price-min "$PRICE_MIN")
+  fi
+  if [[ -n "$PRICE_MAX" ]]; then
+    CMD+=(--price-max "$PRICE_MAX")
   fi
 
   exec "${CMD[@]}"
@@ -228,6 +239,14 @@ menu() {
 }
 
 ###############################################
+# Direct CLI mode - pass args straight to Python
+###############################################
+run_direct() {
+  cd "$ROOT"
+  exec "$VENV_PY" "$BUILD_SCRIPT" "$@"
+}
+
+###############################################
 # Entry
 ###############################################
 if [[ $# -gt 0 ]]; then
@@ -236,14 +255,22 @@ if [[ $# -gt 0 ]]; then
     build)      run_build ;;
     visualize)  run_build "viz" ;;
     analyze)    run_build "viz" "interactive" ;;
+    --ticker|--file|--publish|--price-min|--price-max|--top-nodes|--visualize|--ai-analyze)
+      # Direct CLI mode - pass all args to Python script
+      run_direct "$@"
+      ;;
     *)
       echo "Usage: $0 [download|build|visualize|analyze]"
+      echo "       $0 --ticker SPY --file <path> --publish tv [--price-min N] [--price-max N]"
       echo ""
-      echo "Commands:"
+      echo "Interactive commands:"
       echo "  download   - Download 1-min history from Polygon"
       echo "  build      - Build volume profile and publish to Redis"
       echo "  visualize  - Build with matplotlib visualization"
       echo "  analyze    - Build with visualization + interactive structure editor"
+      echo ""
+      echo "Direct CLI (passes args to Python script):"
+      echo "  --ticker SPY --file data/vp/spy_history.json --publish tv --price-min 6500 --price-max 7000"
       exit 1
       ;;
   esac

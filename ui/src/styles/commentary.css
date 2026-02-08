@@ -11,8 +11,9 @@
   border-radius: 8px;
   font-family: 'SF Mono', 'Menlo', monospace;
   height: 100%;
+  width: 100%;
   min-height: 200px;
-  max-height: 400px;
+  /* No max-height - fill the drawer */
 }
 
 .commentary-panel-collapsed {

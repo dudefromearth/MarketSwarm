@@ -74,6 +74,7 @@ export const webNetworkAdapter = {
                 },
                 body: body ? JSON.stringify(body) : undefined,
                 signal: combinedSignal,
+                credentials: 'include', // Send cookies for authentication
             });
             clearTimeout(timeoutId);
             // Parse response headers
@@ -117,10 +118,12 @@ export const webNetworkAdapter = {
         };
     },
     createSSE(url, handler) {
-        const eventSource = new EventSource(url);
+        // Include credentials to send cookies for authentication
+        const eventSource = new EventSource(url, { withCredentials: true });
         eventSource.onopen = () => {
             handler.onOpen?.();
         };
+        // Handle unnamed events (fallback)
         eventSource.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
@@ -130,6 +133,33 @@ export const webNetworkAdapter = {
                 handler.onMessage({ type: event.type, data: event.data });
             }
         };
+        // Handle named events (positions, strategies, etc.)
+        // These are sent by server with `event: eventName\ndata: ...\n\n`
+        const namedEventTypes = [
+            'connected',
+            'position_created',
+            'position_updated',
+            'position_deleted',
+            'position_batch_created',
+            'position_reordered',
+            'strategy_created',
+            'strategy_updated',
+            'strategy_deleted',
+        ];
+        for (const eventType of namedEventTypes) {
+            eventSource.addEventListener(eventType, (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    // Extract action from event type (e.g., 'position_created' -> 'created')
+                    const parts = eventType.split('_');
+                    const action = parts.length > 1 ? parts.slice(1).join('_') : eventType;
+                    handler.onMessage({ type: eventType, data: { ...data, action } });
+                }
+                catch {
+                    handler.onMessage({ type: eventType, data: event.data });
+                }
+            });
+        }
         eventSource.onerror = () => {
             handler.onError?.(new Error('SSE connection error'));
         };

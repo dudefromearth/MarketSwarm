@@ -180,6 +180,15 @@ export class KeyResolver {
     return `${prefix}:*`;
   }
 
+  // Risk Graph - user-scoped channels for real-time sync
+  riskGraphChannel(userId) {
+    return `risk_graph_updates:${userId}`;
+  }
+
+  riskGraphPattern() {
+    return "risk_graph_updates:*";
+  }
+
   // Debug: log all resolved keys
   logKeys() {
     console.log("[keys] Resolved key patterns from config:");

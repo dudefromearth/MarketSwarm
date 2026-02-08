@@ -11,7 +11,7 @@
 
 import { useState } from 'react';
 import { useDealerGravity } from '../contexts/DealerGravityContext';
-import type { DealerGravityConfigUpdate, GexPanelConfigUpdate } from '../types/dealerGravity';
+import type { DealerGravityConfigUpdate, GexPanelConfigUpdate, RowsLayoutMode } from '../types/dealerGravity';
 
 interface DealerGravitySettingsProps {
   isOpen: boolean;
@@ -56,6 +56,8 @@ export default function DealerGravitySettings({ isOpen, onClose }: DealerGravity
         enabled: true,
         mode: 'tv',
         widthPercent: 15,
+        rowsLayout: 'number_of_rows',
+        rowSize: 24,
         cappingSigma: 2.0,
         color: '#9333ea',
         transparency: 50,
@@ -114,6 +116,36 @@ export default function DealerGravitySettings({ isOpen, onClose }: DealerGravity
                     <option value="tv">TV (Smoothed)</option>
                     <option value="raw">Raw</option>
                   </select>
+                </div>
+
+                <div className="setting-row">
+                  <label>Rows Layout</label>
+                  <select
+                    value={config?.rowsLayout ?? 'number_of_rows'}
+                    onChange={(e) => handleDGUpdate({ rowsLayout: e.target.value as RowsLayoutMode })}
+                    disabled={saving}
+                  >
+                    <option value="number_of_rows">Number of Rows</option>
+                    <option value="ticks_per_row">Ticks per Row</option>
+                  </select>
+                </div>
+
+                <div className="setting-row">
+                  <label>
+                    Row Size
+                    <span className="setting-hint-inline">
+                      {config?.rowsLayout === 'ticks_per_row' ? '(ticks)' : '(rows)'}
+                    </span>
+                  </label>
+                  <input
+                    type="number"
+                    min={config?.rowsLayout === 'ticks_per_row' ? 1 : 10}
+                    max={config?.rowsLayout === 'ticks_per_row' ? 100 : 200}
+                    value={config?.rowSize ?? 24}
+                    onChange={(e) => handleDGUpdate({ rowSize: parseInt(e.target.value) || 24 })}
+                    disabled={saving}
+                    className="setting-number-input"
+                  />
                 </div>
 
                 <div className="setting-row">
@@ -281,6 +313,81 @@ export default function DealerGravitySettings({ isOpen, onClose }: DealerGravity
         .dg-settings-modal {
           max-width: 480px;
           width: 90%;
+          background: #1a1a1a;
+          border: 1px solid #333;
+          border-radius: 8px;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+        }
+
+        .dg-settings-modal .modal-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 16px 20px;
+          border-bottom: 1px solid #333;
+        }
+
+        .dg-settings-modal .modal-header h2 {
+          margin: 0;
+          font-size: 16px;
+          font-weight: 600;
+          color: #fff;
+        }
+
+        .dg-settings-modal .modal-close {
+          background: none;
+          border: none;
+          color: #888;
+          font-size: 24px;
+          cursor: pointer;
+          padding: 0;
+          line-height: 1;
+        }
+
+        .dg-settings-modal .modal-close:hover {
+          color: #fff;
+        }
+
+        .dg-settings-modal .modal-body {
+          padding: 20px;
+          max-height: 60vh;
+          overflow-y: auto;
+        }
+
+        .dg-settings-modal .modal-footer {
+          display: flex;
+          justify-content: flex-end;
+          gap: 12px;
+          padding: 16px 20px;
+          border-top: 1px solid #333;
+        }
+
+        .dg-settings-modal .btn-primary {
+          background: #3b82f6;
+          color: #fff;
+          border: none;
+          padding: 8px 16px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 13px;
+        }
+
+        .dg-settings-modal .btn-primary:hover {
+          background: #2563eb;
+        }
+
+        .dg-settings-modal .btn-secondary {
+          background: #333;
+          color: #fff;
+          border: none;
+          padding: 8px 16px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 13px;
+        }
+
+        .dg-settings-modal .btn-secondary:hover {
+          background: #444;
         }
 
         .settings-section {
@@ -345,6 +452,28 @@ export default function DealerGravitySettings({ isOpen, onClose }: DealerGravity
           font-size: 11px;
           color: var(--text-muted, #666);
           margin-left: auto;
+        }
+
+        .setting-hint-inline {
+          font-size: 11px;
+          color: var(--text-muted, #666);
+          margin-left: 4px;
+        }
+
+        .setting-number-input {
+          width: 70px;
+          background: var(--input-bg, #1a1a1a);
+          color: var(--text-primary, #fff);
+          border: 1px solid var(--border-color, #333);
+          border-radius: 4px;
+          padding: 4px 8px;
+          font-size: 13px;
+          text-align: center;
+        }
+
+        .setting-number-input::-webkit-inner-spin-button,
+        .setting-number-input::-webkit-outer-spin-button {
+          opacity: 1;
         }
 
         .loading-state {

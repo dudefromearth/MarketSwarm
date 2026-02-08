@@ -1,0 +1,375 @@
+ Trade Selector ML Lab - Technical Specification                                                                                     
+                                                                                                                                      
+  System Overview                                                                                                                     
+                                                                                                                                      
+  The ML Lab is a learning system that improves Trade Selector's scoring over time by:                                                
+  1. Logging every decision with features + scores for reproducibility                                                                
+  2. Tracking P&L outcomes to label what worked vs. what didn't                                                                       
+  3. Running A/B experiments to safely test new models                                                                                
+  4. Circuit breakers to protect against runaway losses                                                                               
+                                                                                                                                      
+  Currently in Shadow Mode - ML scores are logged but don't affect rankings (weight = 0%).                                            
+                                                                                                                                      
+  ---                                                                                                                                 
+  API Base URL                                                                                                                        
+                                                                                                                                      
+  /api/internal/ml/                                                                                                                   
+                                                                                                                                      
+  ---                                                                                                                                 
+  Core Entities                                                                                                                       
+                                                                                                                                      
+  1. ML Decision (Immutable Audit Log)                                                                                                
+                                                                                                                                      
+  Every scored idea gets a decision record.                                                                                           
+                                                                                                                                      
+  interface MLDecision {                                                                                                              
+    id: number;                                                                                                                       
+    idea_id: string;                                                                                                                  
+    decision_time: string;  // ISO timestamp                                                                                          
+                                                                                                                                      
+    // Model identification                                                                                                           
+    model_id: number | null;                                                                                                          
+    model_version: number | null;                                                                                                     
+    selector_params_version: number;                                                                                                  
+    feature_snapshot_id: number | null;                                                                                               
+                                                                                                                                      
+    // Scores                                                                                                                         
+    original_score: number;   // Rule-based (0-100)                                                                                   
+    ml_score: number | null;  // ML contribution (0-100)                                                                              
+    final_score: number;      // Blended score                                                                                        
+                                                                                                                                      
+    // Experiment tracking                                                                                                            
+    experiment_id: number | null;                                                                                                     
+    experiment_arm: 'champion' | 'challenger' | null;                                                                                 
+                                                                                                                                      
+    // Lifecycle                                                                                                                      
+    action_taken: 'ranked' | 'presented' | 'traded' | 'dismissed';                                                                    
+  }                                                                                                                                   
+                                                                                                                                      
+  2. ML Model (Registry)                                                                                                              
+                                                                                                                                      
+  Versioned models with performance metrics.                                                                                          
+                                                                                                                                      
+  interface MLModel {                                                                                                                 
+    id: number;                                                                                                                       
+    model_name: string;                                                                                                               
+    model_version: number;                                                                                                            
+    model_type: string;  // 'gradient_boost', 'ensemble'                                                                              
+    feature_set_version: string;  // e.g., 'v1.0'                                                                                     
+                                                                                                                                      
+    // Performance                                                                                                                    
+    train_auc: number | null;                                                                                                         
+    val_auc: number | null;                                                                                                           
+    train_samples: number | null;                                                                                                     
+    val_samples: number | null;                                                                                                       
+                                                                                                                                      
+    // Calibration (Brier scores per profit tier)                                                                                     
+    brier_tier_0: number | null;  // Big loss                                                                                         
+    brier_tier_1: number | null;  // Small loss                                                                                       
+    brier_tier_2: number | null;  // Small win                                                                                        
+    brier_tier_3: number | null;  // Big win                                                                                          
+                                                                                                                                      
+    // Top-k utility                                                                                                                  
+    top_10_avg_pnl: number | null;                                                                                                    
+    top_20_avg_pnl: number | null;                                                                                                    
+                                                                                                                                      
+    // Regime (optional)                                                                                                              
+    regime: string | null;  // 'chaos', 'goldilocks_1', etc.                                                                          
+                                                                                                                                      
+    // Deployment                                                                                                                     
+    status: 'training' | 'validating' | 'champion' | 'challenger' | 'retired';                                                        
+    deployed_at: string | null;                                                                                                       
+    retired_at: string | null;                                                                                                        
+    created_at: string;                                                                                                               
+  }                                                                                                                                   
+                                                                                                                                      
+  3. ML Experiment (A/B Testing)                                                                                                      
+                                                                                                                                      
+  Compare champion vs challenger models.                                                                                              
+                                                                                                                                      
+  interface MLExperiment {                                                                                                            
+    id: number;                                                                                                                       
+    experiment_name: string;                                                                                                          
+    description: string | null;                                                                                                       
+                                                                                                                                      
+    champion_model_id: number;                                                                                                        
+    challenger_model_id: number;                                                                                                      
+    traffic_split: number;  // 0.10 = 10% to challenger                                                                               
+                                                                                                                                      
+    // Stopping rules                                                                                                                 
+    max_duration_days: number;                                                                                                        
+    min_samples_per_arm: number;                                                                                                      
+    early_stop_threshold: number;  // p-value                                                                                         
+                                                                                                                                      
+    // State                                                                                                                          
+    status: 'running' | 'concluded' | 'aborted';                                                                                      
+    started_at: string;                                                                                                               
+    ended_at: string | null;                                                                                                          
+                                                                                                                                      
+    // Results                                                                                                                        
+    champion_samples: number;                                                                                                         
+    challenger_samples: number;                                                                                                       
+    champion_win_rate: number | null;                                                                                                 
+    challenger_win_rate: number | null;                                                                                               
+    champion_avg_rar: number | null;  // Risk-adjusted return                                                                         
+    challenger_avg_rar: number | null;                                                                                                
+    p_value: number | null;                                                                                                           
+    winner: 'champion' | 'challenger' | 'no_difference' | null;                                                                       
+  }                                                                                                                                   
+                                                                                                                                      
+  4. P&L Event (Append-Only Ledger)                                                                                                   
+                                                                                                                                      
+  Tracks every P&L change for equity curve reconstruction.                                                                            
+                                                                                                                                      
+  interface PnLEvent {                                                                                                                
+    id: number;                                                                                                                       
+    event_time: string;                                                                                                               
+    idea_id: string;                                                                                                                  
+    trade_id: string | null;                                                                                                          
+    strategy_id: string | null;                                                                                                       
+                                                                                                                                      
+    pnl_delta: number;  // Delta, not cumulative                                                                                      
+    fees: number;                                                                                                                     
+    slippage: number;                                                                                                                 
+                                                                                                                                      
+    underlying_price: number;                                                                                                         
+    event_type: 'mark' | 'fill' | 'settlement' | 'adjustment';                                                                        
+  }                                                                                                                                   
+                                                                                                                                      
+  5. Daily Performance (Materialized View)                                                                                            
+                                                                                                                                      
+  Aggregated daily metrics.                                                                                                           
+                                                                                                                                      
+  interface DailyPerformance {                                                                                                        
+    id: number;                                                                                                                       
+    date: string;  // YYYY-MM-DD                                                                                                      
+                                                                                                                                      
+    net_pnl: number;                                                                                                                  
+    gross_pnl: number;                                                                                                                
+    total_fees: number;                                                                                                               
+                                                                                                                                      
+    high_water_pnl: number;                                                                                                           
+    max_drawdown: number;                                                                                                             
+    drawdown_pct: number | null;                                                                                                      
+                                                                                                                                      
+    trade_count: number;                                                                                                              
+    win_count: number;                                                                                                                
+    loss_count: number;                                                                                                               
+                                                                                                                                      
+    primary_model_id: number | null;                                                                                                  
+    ml_contribution_pct: number | null;  // % decisions using ML                                                                      
+  }                                                                                                                                   
+                                                                                                                                      
+  6. Circuit Breaker Status                                                                                                           
+                                                                                                                                      
+  Safety rails state.                                                                                                                 
+                                                                                                                                      
+  interface CircuitBreakerStatus {                                                                                                    
+    daily_pnl: number;                                                                                                                
+    daily_trades: number;                                                                                                             
+    high_water: number;                                                                                                               
+    avg_slippage: number;                                                                                                             
+    regime_confidence: number;                                                                                                        
+    ml_enabled: boolean;                                                                                                              
+                                                                                                                                      
+    limits: {                                                                                                                         
+      max_daily_loss: number;      // $5000 default                                                                                   
+      max_drawdown_pct: number;    // 20% default                                                                                     
+      max_orders_per_second: number;                                                                                                  
+      slippage_threshold: number;                                                                                                     
+      min_confidence: number;                                                                                                         
+    };                                                                                                                                
+  }                                                                                                                                   
+                                                                                                                                      
+  interface BreakerCheckResult {                                                                                                      
+    allow_trade: boolean;                                                                                                             
+    action: 'allow' | 'rules_only' | 'block_all';                                                                                     
+    triggered_breakers: Array<{                                                                                                       
+      name: string;                                                                                                                   
+      triggered: boolean;                                                                                                             
+      severity: 'warning' | 'critical';                                                                                               
+      message: string;                                                                                                                
+      threshold: number | null;                                                                                                       
+      current_value: number | null;                                                                                                   
+    }>;                                                                                                                               
+    checked_at: string;                                                                                                               
+  }                                                                                                                                   
+                                                                                                                                      
+  ---                                                                                                                                 
+  API Endpoints                                                                                                                       
+                                                                                                                                      
+  Decisions                                                                                                                           
+  ┌────────┬────────────────────────┬────────────────────────────────────────┐                                                        
+  │ Method │        Endpoint        │              Description               │                                                        
+  ├────────┼────────────────────────┼────────────────────────────────────────┤                                                        
+  │ GET    │ /decisions             │ List decisions (paginated, filterable) │                                                        
+  ├────────┼────────────────────────┼────────────────────────────────────────┤                                                        
+  │ GET    │ /decisions/{id}        │ Get single decision                    │                                                        
+  ├────────┼────────────────────────┼────────────────────────────────────────┤                                                        
+  │ POST   │ /decisions             │ Log new decision (internal)            │                                                        
+  ├────────┼────────────────────────┼────────────────────────────────────────┤                                                        
+  │ PATCH  │ /decisions/{id}/action │ Update action_taken                    │                                                        
+  └────────┴────────────────────────┴────────────────────────────────────────┘                                                        
+  Query params for list: idea_id, experiment_id, action_taken, start_date, end_date, limit, offset                                    
+                                                                                                                                      
+  Models                                                                                                                              
+  ┌────────┬─────────────────────┬───────────────────────────────┐                                                                    
+  │ Method │      Endpoint       │          Description          │                                                                    
+  ├────────┼─────────────────────┼───────────────────────────────┤                                                                    
+  │ GET    │ /models             │ List all models               │                                                                    
+  ├────────┼─────────────────────┼───────────────────────────────┤                                                                    
+  │ GET    │ /models/{id}        │ Get model details             │                                                                    
+  ├────────┼─────────────────────┼───────────────────────────────┤                                                                    
+  │ GET    │ /models/champion    │ Get current champion          │                                                                    
+  ├────────┼─────────────────────┼───────────────────────────────┤                                                                    
+  │ POST   │ /models             │ Register new model            │                                                                    
+  ├────────┼─────────────────────┼───────────────────────────────┤                                                                    
+  │ POST   │ /models/{id}/deploy │ Deploy as champion/challenger │                                                                    
+  ├────────┼─────────────────────┼───────────────────────────────┤                                                                    
+  │ POST   │ /models/{id}/retire │ Retire model                  │                                                                    
+  └────────┴─────────────────────┴───────────────────────────────┘                                                                    
+  Experiments                                                                                                                         
+  ┌────────┬────────────────────────────┬─────────────────────────────┐                                                               
+  │ Method │          Endpoint          │         Description         │                                                               
+  ├────────┼────────────────────────────┼─────────────────────────────┤                                                               
+  │ GET    │ /experiments               │ List experiments            │                                                               
+  ├────────┼────────────────────────────┼─────────────────────────────┤                                                               
+  │ GET    │ /experiments/{id}          │ Get experiment with results │                                                               
+  ├────────┼────────────────────────────┼─────────────────────────────┤                                                               
+  │ POST   │ /experiments               │ Create new experiment       │                                                               
+  ├────────┼────────────────────────────┼─────────────────────────────┤                                                               
+  │ POST   │ /experiments/{id}/evaluate │ Compute current metrics     │                                                               
+  ├────────┼────────────────────────────┼─────────────────────────────┤                                                               
+  │ POST   │ /experiments/{id}/conclude │ End and declare winner      │                                                               
+  ├────────┼────────────────────────────┼─────────────────────────────┤                                                               
+  │ POST   │ /experiments/{id}/abort    │ Abort experiment            │                                                               
+  └────────┴────────────────────────────┴─────────────────────────────┘                                                               
+  P&L & Performance                                                                                                                   
+  ┌────────┬────────────────────────────────┬─────────────────────────────┐                                                           
+  │ Method │            Endpoint            │         Description         │                                                           
+  ├────────┼────────────────────────────────┼─────────────────────────────┤                                                           
+  │ GET    │ /pnl-events                    │ List P&L events             │                                                           
+  ├────────┼────────────────────────────────┼─────────────────────────────┤                                                           
+  │ POST   │ /pnl-events                    │ Record P&L event (internal) │                                                           
+  ├────────┼────────────────────────────────┼─────────────────────────────┤                                                           
+  │ GET    │ /equity-curve                  │ Get equity curve points     │                                                           
+  ├────────┼────────────────────────────────┼─────────────────────────────┤                                                           
+  │ GET    │ /daily-performance             │ List daily summaries        │                                                           
+  ├────────┼────────────────────────────────┼─────────────────────────────┤                                                           
+  │ POST   │ /daily-performance/materialize │ Rebuild daily aggregates    │                                                           
+  └────────┴────────────────────────────────┴─────────────────────────────┘                                                           
+  Circuit Breakers                                                                                                                    
+  ┌────────┬──────────────────────────────┬──────────────────────────┐                                                                
+  │ Method │           Endpoint           │       Description        │                                                                
+  ├────────┼──────────────────────────────┼──────────────────────────┤                                                                
+  │ GET    │ /circuit-breakers            │ Get current status       │                                                                
+  ├────────┼──────────────────────────────┼──────────────────────────┤                                                                
+  │ POST   │ /circuit-breakers/check      │ Run all breaker checks   │                                                                
+  ├────────┼──────────────────────────────┼──────────────────────────┤                                                                
+  │ POST   │ /circuit-breakers/disable-ml │ Kill switch - disable ML │                                                                
+  ├────────┼──────────────────────────────┼──────────────────────────┤                                                                
+  │ POST   │ /circuit-breakers/enable-ml  │ Re-enable ML             │                                                                
+  └────────┴──────────────────────────────┴──────────────────────────┘                                                                
+  ---                                                                                                                                 
+  UI Panels to Build                                                                                                                  
+                                                                                                                                      
+  1. Dashboard Overview                                                                                                               
+                                                                                                                                      
+  - Current champion model with key metrics                                                                                           
+  - Today's P&L / drawdown status                                                                                                     
+  - Circuit breaker status (green/yellow/red indicators)                                                                              
+  - Active experiment summary                                                                                                         
+  - ML weight slider (shadow → conservative → moderate → aggressive)                                                                  
+                                                                                                                                      
+  2. Equity Curve Chart                                                                                                               
+                                                                                                                                      
+  - Line chart of cumulative P&L over time                                                                                            
+  - High water mark line                                                                                                              
+  - Drawdown shading                                                                                                                  
+  - Filter by date range, model, experiment arm                                                                                       
+                                                                                                                                      
+  3. Decision Explorer                                                                                                                
+                                                                                                                                      
+  - Table of ML decisions with columns: time, idea_id, original_score, ml_score, final_score, action                                  
+  - Click to expand: show feature snapshot, model used                                                                                
+  - Filter by: date range, experiment, action_taken                                                                                   
+  - Score distribution histogram                                                                                                      
+                                                                                                                                      
+  4. Model Registry                                                                                                                   
+                                                                                                                                      
+  - List of all models with status badges                                                                                             
+  - Performance comparison table (AUC, Brier, top-k utility)                                                                          
+  - Deploy/retire buttons                                                                                                             
+  - Feature importance chart for selected model                                                                                       
+                                                                                                                                      
+  5. Experiment Manager                                                                                                               
+                                                                                                                                      
+  - List of experiments with status                                                                                                   
+  - Create new experiment form                                                                                                        
+  - Live comparison: champion vs challenger metrics                                                                                   
+  - Statistical significance indicator (p-value)                                                                                      
+  - Conclude/abort buttons                                                                                                            
+                                                                                                                                      
+  6. Circuit Breaker Control Panel                                                                                                    
+                                                                                                                                      
+  - Live status of all breakers                                                                                                       
+  - Current values vs thresholds (progress bars)                                                                                      
+  - Big red "Disable ML" button                                                                                                       
+  - History of breaker triggers                                                                                                       
+                                                                                                                                      
+  7. Daily Performance Table                                                                                                          
+                                                                                                                                      
+  - Calendar view or table of daily metrics                                                                                           
+  - Win rate, P&L, trade count, drawdown                                                                                              
+  - Sparklines for trends                                                                                                             
+  - Model attribution column                                                                                                          
+                                                                                                                                      
+  ---                                                                                                                                 
+  Configuration Constants                                                                                                             
+                                                                                                                                      
+  // Score blending weights                                                                                                           
+  const ML_WEIGHTS = {                                                                                                                
+    shadow: 0.0,        // ML logged, not used                                                                                        
+    conservative: 0.10, // 10% ML                                                                                                     
+    moderate: 0.30,     // 30% ML                                                                                                     
+    aggressive: 0.50,   // 50% ML                                                                                                     
+  };                                                                                                                                  
+                                                                                                                                      
+  // Profit tier labels                                                                                                               
+  const PROFIT_TIERS = {                                                                                                              
+    0: 'Big Loss (< -50%)',                                                                                                           
+    1: 'Small Loss (-50% to 0%)',                                                                                                     
+    2: 'Small Win (0% to +100%)',                                                                                                     
+    3: 'Big Win (> +100%)',                                                                                                           
+  };                                                                                                                                  
+                                                                                                                                      
+  // VIX regimes                                                                                                                      
+  const VIX_REGIMES = ['chaos', 'goldilocks_2', 'goldilocks_1', 'zombieland'];                                                        
+                                                                                                                                      
+  // Circuit breaker defaults                                                                                                         
+  const CIRCUIT_BREAKER_DEFAULTS = {                                                                                                  
+    max_daily_loss: 5000,                                                                                                             
+    max_drawdown_pct: 0.20,                                                                                                           
+    max_orders_per_second: 10,                                                                                                        
+    slippage_anomaly_threshold: 2.0,                                                                                                  
+    min_regime_confidence: 0.6,                                                                                                       
+  };                                                                                                                                  
+                                                                                                                                      
+  ---                                                                                                                                 
+  Data Flow                                                                                                                           
+                                                                                                                                      
+  Trade Selector generates idea                                                                                                       
+          ↓                                                                                                                           
+  Feature Extractor captures market state                                                                                             
+          ↓                                                                                                                           
+  Inference Engine scores (fast path <5ms)                                                                                            
+          ↓                                                                                                                           
+  Decision Logger writes to ml_decisions                                                                                              
+          ↓                                                                                                                           
+  User trades or dismisses                                                                                                            
+          ↓                                                                                                                           
+  P&L Ledger records outcome events                                                                                                   
+          ↓                                                                                                                           
+  Training Pipeline learns from outcomes                                                                                              
+          ↓                                                                                                                           
+  New model deployed via Experiment 

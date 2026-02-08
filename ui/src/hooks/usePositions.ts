@@ -88,20 +88,32 @@ export function usePositions(): UsePositionsResult {
 
   const sseConnectionRef = useRef<SSEConnection | null>(null);
 
+  // Debug: log whenever positions changes
+  useEffect(() => {
+    console.log('[usePositions] positions state changed:', positions.length, 'positions', positions.map(p => p.id));
+  }, [positions]);
+
   // Fetch positions from server
   const fetchPositions = useCallback(async () => {
     if (!client) return;
 
+    console.log('[usePositions] fetchPositions called');
+    console.trace('[usePositions] fetchPositions stack trace');
+
     try {
       setLoading(true);
       const response = await client.positions.list();
+      console.log('[usePositions] fetchPositions response:', response);
       if (response.success && response.data) {
+        console.log('[usePositions] fetchPositions setting positions:', response.data.length);
         setPositions(response.data);
         setError(null);
       } else {
+        console.error('[usePositions] fetchPositions error:', response.error);
         setError(response.error ?? 'Failed to fetch positions');
       }
     } catch (err) {
+      console.error('[usePositions] fetchPositions exception:', err);
       setError(err instanceof Error ? err.message : 'Failed to fetch positions');
     } finally {
       setLoading(false);
@@ -110,7 +122,9 @@ export function usePositions(): UsePositionsResult {
 
   // Handle SSE events for real-time sync
   const handleSSEEvent = useCallback((event: SSEEvent) => {
-    const data = event as unknown as {
+    // SSE event has { type, data } structure - extract the data payload
+    const payload = (event as { type: string; data: unknown }).data;
+    const data = payload as {
       action?: string;
       position?: Position;
       ids?: string[];
@@ -167,6 +181,8 @@ export function usePositions(): UsePositionsResult {
   useEffect(() => {
     if (!client) return;
 
+    console.log('[usePositions] Init effect running - fetching positions and connecting SSE');
+
     fetchPositions();
 
     // Subscribe to position updates via SSE
@@ -174,6 +190,7 @@ export function usePositions(): UsePositionsResult {
     setConnected(true);
 
     return () => {
+      console.log('[usePositions] Init effect cleanup - closing SSE');
       sseConnectionRef.current?.close();
       setConnected(false);
     };
@@ -183,6 +200,8 @@ export function usePositions(): UsePositionsResult {
 
   const addPosition = useCallback(async (input: CreatePositionInput): Promise<Position> => {
     if (!client) throw new Error('Client not initialized');
+
+    console.log('[usePositions] addPosition called with:', input);
 
     // Create optimistic position
     const optimisticId = `optimistic_${Date.now()}`;
@@ -207,10 +226,13 @@ export function usePositions(): UsePositionsResult {
       updatedAt: new Date().toISOString(),
     };
 
+    console.log('[usePositions] Optimistic position:', optimisticPosition);
+
     // Optimistic update
     setPositions(prev => [...prev, optimisticPosition]);
 
     try {
+      console.log('[usePositions] Calling API to create position...');
       const response = await client.positions.create({
         symbol: input.symbol ?? 'SPX',
         positionType: input.positionType,
@@ -223,9 +245,14 @@ export function usePositions(): UsePositionsResult {
         label: input.label,
       });
 
+      console.log('[usePositions] API response:', response);
+
       if (!response.success || !response.data) {
+        console.error('[usePositions] API error:', response.error);
         throw new Error(response.error ?? 'Failed to create position');
       }
+
+      console.log('[usePositions] Position created successfully:', response.data);
 
       // Replace optimistic with real
       setPositions(prev =>
@@ -234,6 +261,7 @@ export function usePositions(): UsePositionsResult {
 
       return response.data;
     } catch (err) {
+      console.error('[usePositions] Error creating position:', err);
       // Rollback optimistic update
       setPositions(prev => prev.filter(p => p.id !== optimisticId));
       throw err;

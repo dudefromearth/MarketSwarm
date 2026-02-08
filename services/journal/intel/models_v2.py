@@ -10,7 +10,13 @@ import uuid
 
 @dataclass
 class TradeLog:
-    """A trade log container with immutable starting parameters."""
+    """A trade log container with immutable starting parameters.
+
+    Lifecycle States:
+    - active: Participates in daily workflow, alerts, ML
+    - archived: Read-only, excluded from alerts/ML by default
+    - retired: Frozen + hidden, preserved in cold storage
+    """
     id: str
     name: str
     user_id: int  # Foreign key to users.id
@@ -22,12 +28,20 @@ class TradeLog:
 
     # Metadata
     intent: Optional[str] = None  # why this log exists
+    description: Optional[str] = None  # human-readable purpose
     constraints: Optional[str] = None  # JSON: position limits, etc.
     regime_assumptions: Optional[str] = None  # market context
     notes: Optional[str] = None
 
-    # Status
-    is_active: int = 1  # soft delete
+    # Lifecycle State (replaces is_active)
+    lifecycle_state: str = 'active'  # 'active', 'archived', 'retired'
+    is_active: int = 1  # legacy field, derived from lifecycle_state
+    archived_at: Optional[str] = None
+    retired_at: Optional[str] = None
+    retire_scheduled_at: Optional[str] = None  # 7-day grace period
+
+    # ML/Alert inclusion (can override defaults for archived logs)
+    ml_included: int = 1  # whether to include in ML training
 
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
@@ -39,12 +53,25 @@ class TradeLog:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
-        return asdict(self)
+        d = asdict(self)
+        # Sync is_active with lifecycle_state for backwards compatibility
+        d['is_active'] = 1 if self.lifecycle_state == 'active' else 0
+        return d
 
     @classmethod
     def from_dict(cls, d: dict) -> 'TradeLog':
         """Create from dictionary (e.g., from database row)."""
         d = dict(d)
+        # Handle datetime conversions
+        for field_name in ['archived_at', 'retired_at', 'retire_scheduled_at', 'created_at', 'updated_at']:
+            if isinstance(d.get(field_name), datetime):
+                d[field_name] = d[field_name].isoformat()
+        # Default lifecycle_state based on is_active if not present
+        if 'lifecycle_state' not in d or d.get('lifecycle_state') is None:
+            d['lifecycle_state'] = 'active' if d.get('is_active', 1) else 'archived'
+        # Remove unknown fields
+        known_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        d = {k: v for k, v in d.items() if k in known_fields}
         return cls(**d)
 
     def to_api_dict(self) -> dict:
@@ -53,7 +80,25 @@ class TradeLog:
         d['starting_capital_dollars'] = d['starting_capital'] / 100
         if d['risk_per_trade']:
             d['risk_per_trade_dollars'] = d['risk_per_trade'] / 100
+        # Add computed fields
+        d['is_read_only'] = self.lifecycle_state != 'active'
+        d['can_receive_imports'] = self.lifecycle_state != 'retired'
         return d
+
+    def can_archive(self) -> tuple[bool, Optional[str]]:
+        """Check if this log can be archived. Returns (can_archive, reason)."""
+        if self.lifecycle_state != 'active':
+            return False, f"Log is already {self.lifecycle_state}"
+        # Note: Caller must check for open positions and pending alerts
+        return True, None
+
+    def can_retire(self) -> tuple[bool, Optional[str]]:
+        """Check if this log can be retired. Returns (can_retire, reason)."""
+        if self.lifecycle_state == 'retired':
+            return False, "Log is already retired"
+        if self.lifecycle_state != 'archived':
+            return False, "Log must be archived before retiring"
+        return True, None
 
 
 @dataclass
@@ -1499,6 +1544,88 @@ class RiskGraphTemplate:
 
 
 # =============================================================================
+# Import Batches - Reversible Import Provenance
+# =============================================================================
+
+@dataclass
+class ImportBatch:
+    """A transactional boundary for imported trades/positions.
+
+    All imported entities carry a nullable import_batch_id that links
+    to this table. Manual trades have import_batch_id = NULL.
+
+    Reverting a batch soft-deletes all associated entities without
+    affecting manual trades or user-created data.
+    """
+    id: str
+    user_id: int
+
+    # Source identification
+    source: str  # 'broker_csv', 'tos_export', 'ml_backfill', 'simulator', 'custom'
+    source_label: Optional[str] = None  # Human-readable label
+    source_metadata: Optional[dict] = None  # File name, broker, date range, etc.
+
+    # Counts (denormalized for fast display)
+    trade_count: int = 0
+    position_count: int = 0
+
+    # Status
+    status: str = 'active'  # 'active' or 'reverted'
+
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    reverted_at: Optional[str] = None
+
+    @staticmethod
+    def new_id() -> str:
+        """Generate a new batch ID."""
+        return str(uuid.uuid4())
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage."""
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'source': self.source,
+            'source_label': self.source_label,
+            'source_metadata': json.dumps(self.source_metadata) if self.source_metadata else None,
+            'trade_count': self.trade_count,
+            'position_count': self.position_count,
+            'status': self.status,
+            'created_at': self.created_at,
+            'reverted_at': self.reverted_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'ImportBatch':
+        """Create from dictionary (e.g., from database row)."""
+        d = dict(d)
+        # Parse JSON fields
+        if isinstance(d.get('source_metadata'), str):
+            d['source_metadata'] = json.loads(d['source_metadata']) if d['source_metadata'] else None
+        # Convert datetime to ISO string
+        if isinstance(d.get('created_at'), datetime):
+            d['created_at'] = d['created_at'].isoformat()
+        if isinstance(d.get('reverted_at'), datetime):
+            d['reverted_at'] = d['reverted_at'].isoformat()
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        """Convert to API response format."""
+        return {
+            'id': self.id,
+            'userId': self.user_id,
+            'source': self.source,
+            'sourceLabel': self.source_label,
+            'sourceMetadata': self.source_metadata,
+            'tradeCount': self.trade_count,
+            'positionCount': self.position_count,
+            'status': self.status,
+            'createdAt': self.created_at,
+            'revertedAt': self.reverted_at,
+        }
+
+
+# =============================================================================
 # TradeLog Service Layer - Normalized Position Model
 # =============================================================================
 
@@ -2169,7 +2296,8 @@ class MLModel:
     # Feature set version this model was trained on
     feature_set_version: str = 'v1.0'
 
-    # Model artifacts (stored as bytes in DB, not in dataclass)
+    # Model artifacts
+    model_blob: Optional[bytes] = None  # Serialized model (only loaded when needed)
     feature_list: Optional[List[str]] = None
     hyperparameters: Optional[dict] = None
 
@@ -2229,11 +2357,12 @@ class MLModel:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> 'MLModel':
+    def from_dict(cls, d: dict, include_blob: bool = False) -> 'MLModel':
         """Create from dictionary (e.g., from database row)."""
         d = dict(d)
-        # Remove model_blob - not stored in dataclass (too large)
-        d.pop('model_blob', None)
+        # Keep model_blob if requested, otherwise remove (too large for normal use)
+        if not include_blob:
+            d.pop('model_blob', None)
         if isinstance(d.get('feature_list'), str):
             d['feature_list'] = json.loads(d['feature_list']) if d['feature_list'] else []
         if isinstance(d.get('hyperparameters'), str):
@@ -2248,8 +2377,9 @@ class MLModel:
 
     def to_api_dict(self, include_blob: bool = False) -> dict:
         """Convert to API response format."""
-        # Note: model_blob is not included as it's too large and not stored in this dataclass
-        return {
+        import base64
+
+        result = {
             'id': self.id,
             'modelName': self.model_name,
             'modelVersion': self.model_version,
@@ -2279,6 +2409,12 @@ class MLModel:
             'retiredAt': self.retired_at,
             'createdAt': self.created_at,
         }
+
+        # Include model blob as base64 if requested and available
+        if include_blob and self.model_blob:
+            result['modelBlob'] = base64.b64encode(self.model_blob).decode('utf-8')
+
+        return result
 
 
 @dataclass

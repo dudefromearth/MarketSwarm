@@ -90,25 +90,33 @@ export function createPositionsEndpoint(
     },
 
     async create(input: CreatePositionInput): Promise<ApiResponse<Position>> {
+      console.log('[positions.create] Called with:', input);
+      console.log('[positions.create] Endpoint:', endpoint);
       try {
+        console.log('[positions.create] Making request...');
         const response = await network.request<PositionResponse>(endpoint, {
           method: 'POST',
           headers: getHeaders(),
           body: input,
         });
 
+        console.log('[positions.create] Response:', response);
+
         if (!response.ok || !response.data.success || !response.data.data) {
+          console.error('[positions.create] Request failed:', response.data.error);
           return {
             success: false,
             error: response.data.error ?? 'Failed to create position',
           };
         }
 
+        console.log('[positions.create] Success:', response.data.data);
         return {
           success: true,
           data: response.data.data,
         };
       } catch (err) {
+        console.error('[positions.create] Exception:', err);
         return {
           success: false,
           error: err instanceof Error ? err.message : 'Network error',

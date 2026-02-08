@@ -139,6 +139,218 @@ def create_standardized_bins(buckets: Dict[int, float]) -> Dict[str, float]:
     return standardized
 
 
+def auto_detect_structures(
+    bins: Dict[int, float],
+    top_n_nodes: int = 10,
+    min_crevasse_width: int = 5,
+    price_min: int | None = None,
+    price_max: int | None = None,
+) -> Dict[str, Any]:
+    """
+    Automatically detect structural elements from volume profile.
+
+    Args:
+        bins: Price -> Volume mapping (TV smoothed preferred)
+        top_n_nodes: Number of top volume nodes to detect
+        min_crevasse_width: Minimum width (in price points) for crevasse detection
+        price_min: Optional minimum price to filter detection range
+        price_max: Optional maximum price to filter detection range
+
+    Returns:
+        {
+            "volume_nodes": [price1, price2, ...],  # Top N volume peaks
+            "volume_wells": [price1, price2, ...],  # Local minima between peaks
+            "crevasses": [[start, end], ...],       # Extended low-volume regions
+        }
+    """
+    if not bins:
+        return {"volume_nodes": [], "volume_wells": [], "crevasses": []}
+
+    # Filter bins by price range if specified
+    if price_min is not None or price_max is not None:
+        filtered_bins = {}
+        for p, v in bins.items():
+            if price_min is not None and p < price_min:
+                continue
+            if price_max is not None and p > price_max:
+                continue
+            filtered_bins[p] = v
+        bins = filtered_bins
+        if price_min and price_max:
+            log("struct", "🔍", f"Filtering detection to price range: ${price_min:,} - ${price_max:,}")
+
+    # Get prices with actual volume, sorted by price
+    prices_with_vol = sorted([(p, v) for p, v in bins.items() if v > 0], key=lambda x: x[0])
+
+    if not prices_with_vol:
+        return {"volume_nodes": [], "volume_wells": [], "crevasses": []}
+
+    # Calculate volume statistics
+    volumes = [v for _, v in prices_with_vol]
+    max_vol = max(volumes)
+    mean_vol = sum(volumes) / len(volumes)
+    price_list = [p for p, _ in prices_with_vol]
+    vol_list = [v for _, v in prices_with_vol]
+
+    # --- Volume Nodes: Find TRANSITION POINTS where volume changes significantly ---
+    # These are the boundaries between high and low volume areas:
+    # - Where volume starts rising (bottom edge of a cluster)
+    # - Where volume drops off (top edge before a valley)
+    # - Both sides of deep cracks/crevasses
+
+    # Light smoothing to reduce noise but preserve edges
+    smoothed = []
+    window = 2
+    for i in range(len(vol_list)):
+        start = max(0, i - window)
+        end = min(len(vol_list), i + window + 1)
+        smoothed.append(sum(vol_list[start:end]) / (end - start))
+
+    # Calculate the gradient (rate of change) at each point
+    gradients = []
+    for i in range(1, len(smoothed) - 1):
+        # Gradient = difference between neighbors
+        grad = smoothed[i + 1] - smoothed[i - 1]
+        gradients.append((price_list[i], grad, smoothed[i]))
+
+    # Find significant gradient changes (transitions)
+    # A transition occurs where the gradient is large (steep change in volume)
+    edge_candidates = []
+    grad_values = [abs(g[1]) for g in gradients]
+    if grad_values:
+        avg_grad = sum(grad_values) / len(grad_values)
+        grad_threshold = avg_grad * 0.8  # Lower threshold to catch more transitions
+
+        for i, (price, grad, vol) in enumerate(gradients):
+            abs_grad = abs(grad)
+            if abs_grad > grad_threshold:
+                # Score by gradient magnitude relative to max volume
+                score = abs_grad / max_vol if max_vol > 0 else 0
+                edge_candidates.append((price, vol, score, 'rising' if grad > 0 else 'falling'))
+
+    # Also find inflection points (where gradient changes direction significantly)
+    for i in range(1, len(gradients) - 1):
+        prev_grad = gradients[i - 1][1]
+        curr_grad = gradients[i][1]
+
+        # Inflection: gradient changes sign or magnitude changes sharply
+        if (prev_grad > 0 and curr_grad < 0) or (prev_grad < 0 and curr_grad > 0):
+            # Sign change - this is a local max or min
+            price = gradients[i][0]
+            vol = gradients[i][2]
+            score = abs(prev_grad - curr_grad) / max_vol if max_vol > 0 else 0
+            if score > 0.002:  # Lower minimum significance
+                edge_candidates.append((price, vol, score * 2, 'inflection'))  # Boost inflection points
+
+    # Sort by score and take top N, with minimum spacing
+    edge_candidates.sort(key=lambda x: x[2], reverse=True)
+
+    volume_nodes = []
+    min_spacing = 5  # Reduced spacing to catch more edges
+    for price, vol, score, edge_type in edge_candidates:
+        too_close = any(abs(price - existing) < min_spacing for existing in volume_nodes)
+        if not too_close:
+            volume_nodes.append(price)
+            if len(volume_nodes) >= top_n_nodes:
+                break
+
+    volume_nodes.sort()  # Sort by price for display
+
+    # --- Volume Wells: Local minima (thin areas) between ledges ---
+    volume_wells = []
+    threshold = mean_vol * 0.3  # Wells are significantly below average
+
+    # Find local minima
+    for i in range(2, len(smoothed) - 2):
+        current = smoothed[i]
+        if current < smoothed[i-1] and current < smoothed[i+1]:
+            if current < threshold:
+                price = price_list[i]
+                # Not too close to existing wells
+                too_close = any(abs(price - existing) < 15 for existing in volume_wells)
+                if not too_close:
+                    volume_wells.append(price)
+
+    volume_wells.sort()
+    volume_wells = volume_wells[:10]  # Limit to top 10
+
+    # --- Crevasses: Deep cracks in the volume profile ---
+    # Find areas where volume drops sharply - these are the "air pockets" between volume clusters
+    crevasses = []
+
+    # Method 1: Find valleys - local minima that are significantly below neighbors
+    for i in range(5, len(smoothed) - 5):
+        current = smoothed[i]
+
+        # Look at volume on both sides
+        left_max = max(smoothed[max(0, i-10):i]) if i > 0 else current
+        right_max = max(smoothed[i+1:min(len(smoothed), i+11)]) if i < len(smoothed)-1 else current
+
+        # It's a crevasse if current is much lower than both sides
+        left_ratio = current / left_max if left_max > 0 else 1
+        right_ratio = current / right_max if right_max > 0 else 1
+
+        # Must be below 50% of BOTH sides to be a true crack
+        if left_ratio < 0.5 and right_ratio < 0.5:
+            price = price_list[i]
+            depth = 1 - max(left_ratio, right_ratio)  # How deep is the crack
+
+            # Check if this extends an existing crevasse
+            if crevasses and price - crevasses[-1][1] <= 5:
+                crevasses[-1][1] = price
+                crevasses[-1].append(depth) if len(crevasses[-1]) == 2 else None
+            else:
+                crevasses.append([price, price])
+
+    # Method 2: Find extended low-volume regions
+    low_threshold = mean_vol * 0.35  # More sensitive threshold
+    in_crevasse = False
+    crevasse_start = 0
+
+    for i, (price, vol) in enumerate(prices_with_vol):
+        if vol < low_threshold:
+            if not in_crevasse:
+                in_crevasse = True
+                crevasse_start = price
+        else:
+            if in_crevasse:
+                crevasse_end = prices_with_vol[i-1][0] if i > 0 else price
+                width = crevasse_end - crevasse_start
+                if width >= 2:  # Lower minimum width
+                    # Check if overlaps with existing crevasse
+                    merged = False
+                    for j, existing in enumerate(crevasses):
+                        cs, ce = existing[0], existing[1]
+                        if not (crevasse_end < cs - 3 or crevasse_start > ce + 3):
+                            crevasses[j] = [min(cs, crevasse_start), max(ce, crevasse_end)]
+                            merged = True
+                            break
+                    if not merged:
+                        crevasses.append([crevasse_start, crevasse_end])
+                in_crevasse = False
+
+    # Handle crevasse at end
+    if in_crevasse:
+        crevasse_end = prices_with_vol[-1][0]
+        width = crevasse_end - crevasse_start
+        if width >= 2:
+            crevasses.append([crevasse_start, crevasse_end])
+
+    # Clean up crevasses - keep only [start, end] pairs
+    crevasses = [[c[0], c[1]] for c in crevasses]
+
+    # Sort crevasses by start price
+    crevasses.sort(key=lambda x: x[0])
+
+    log("struct", "🔍", f"Auto-detected: {len(volume_nodes)} nodes, {len(volume_wells)} wells, {len(crevasses)} crevasses")
+
+    return {
+        "volume_nodes": volume_nodes,
+        "volume_wells": volume_wells,
+        "crevasses": crevasses,
+    }
+
+
 def save_to_system_redis(obj: Dict[str, Any]) -> None:
     out = dict(obj)
 
@@ -160,6 +372,76 @@ def save_to_system_redis(obj: Dict[str, Any]) -> None:
 def publish_to_market(obj: Dict[str, Any]) -> None:
     rds_market().publish(MARKET_CHANNEL, json.dumps(obj))
     log("redis", "📡", f"Published profile to MARKET_REDIS ({MARKET_CHANNEL})")
+
+
+def generate_ai_chart(
+    bins_tv: Dict[int, float],
+    synthetic: str,
+    save_path: str,
+    price_min: int | None = None,
+    price_max: int | None = None,
+) -> str | None:
+    """
+    Generate a focused, high-detail chart for AI visual analysis.
+    Shows just the volume profile in a single panel, zoomed to the price range.
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        log("viz", "⚠️", "matplotlib not available")
+        return None
+
+    if not bins_tv:
+        log("viz", "⚠️", "No TV data for AI chart")
+        return None
+
+    # Filter to price range
+    if price_min is not None or price_max is not None:
+        filtered_bins = {}
+        for p, v in bins_tv.items():
+            if price_min is not None and p < price_min:
+                continue
+            if price_max is not None and p > price_max:
+                continue
+            filtered_bins[p] = v
+        bins_tv = filtered_bins
+
+    if not bins_tv:
+        log("viz", "⚠️", "No data in price range")
+        return None
+
+    # Sort by price
+    prices = sorted(bins_tv.keys())
+    volumes = [bins_tv[p] for p in prices]
+    max_vol = max(volumes) if volumes else 1
+    norm_volumes = [v / max_vol for v in volumes]
+
+    # Create a large, detailed chart
+    fig, ax = plt.subplots(figsize=(20, 12))
+
+    # Horizontal bar chart (price on Y-axis, volume on X-axis)
+    ax.barh(prices, norm_volumes, height=1, color='#3b82f6', alpha=0.8)
+
+    ax.set_xlabel('Normalized Volume', fontsize=12)
+    ax.set_ylabel('Price', fontsize=12)
+    ax.set_title(f'{synthetic} Volume Profile - AI Analysis Range', fontsize=14)
+    ax.grid(True, alpha=0.3, axis='x')
+
+    # Add price labels on Y-axis at regular intervals
+    price_range = max(prices) - min(prices)
+    tick_interval = max(10, price_range // 30)  # Aim for ~30 ticks
+    ax.set_yticks([p for p in prices if p % tick_interval == 0])
+
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        log("viz", "📊", f"AI analysis chart saved to: {save_path}")
+        plt.close()
+        return save_path
+    else:
+        plt.show()
+        return None
 
 
 def visualize_profile(
@@ -478,6 +760,24 @@ def parse_args() -> argparse.Namespace:
         default="claude-sonnet-4-20250514",
         help="Claude model for AI analysis (default: claude-sonnet-4-20250514)",
     )
+    ap.add_argument(
+        "--top-nodes",
+        type=int,
+        default=10,
+        help="Number of top volume nodes to auto-detect (default: 10)",
+    )
+    ap.add_argument(
+        "--price-min",
+        type=int,
+        default=None,
+        help="Minimum price for structure detection (e.g., 5800)",
+    )
+    ap.add_argument(
+        "--price-max",
+        type=int,
+        default=None,
+        help="Maximum price for structure detection (e.g., 6200)",
+    )
 
     return ap.parse_args()
 
@@ -532,22 +832,32 @@ def main() -> None:
 
     # Visualization for structural analysis (shows both RAW and TV)
     chart_path = args.save_chart
-    if args.visualize or args.save_chart or args.ai_analyze:
-        # If AI analysis requested but no save path, use temp file
-        if args.ai_analyze and not chart_path:
-            import tempfile
-            chart_path = tempfile.mktemp(suffix=".png")
+    if args.visualize or args.save_chart:
         visualize_profile(bins_raw, bins_tv, synthetic, save_path=chart_path)
 
-    # AI Analysis
+    # AI Analysis - uses focused chart when price range specified
     ai_structures = None
     if args.ai_analyze:
         if not HAS_AI_ANALYSIS:
             log("ai", "⚠️", "AI analysis module not available")
-        elif not chart_path:
-            log("ai", "⚠️", "No chart available for AI analysis")
         else:
-            ai_result = analyze_chart_with_claude(chart_path, model=args.ai_model)
+            import tempfile
+
+            # Generate focused chart for AI analysis
+            if args.price_min or args.price_max:
+                # Use focused chart for the specified price range
+                ai_chart_path = tempfile.mktemp(suffix="_ai_focused.png")
+                generate_ai_chart(
+                    bins_tv, synthetic, ai_chart_path,
+                    price_min=args.price_min, price_max=args.price_max
+                )
+            else:
+                # Use full chart
+                ai_chart_path = chart_path or tempfile.mktemp(suffix=".png")
+                if not chart_path:
+                    visualize_profile(bins_raw, bins_tv, synthetic, save_path=ai_chart_path)
+
+            ai_result = analyze_chart_with_claude(ai_chart_path, model=args.ai_model)
             if ai_result:
                 print_ai_analysis(ai_result)
                 ai_structures = {
@@ -559,9 +869,9 @@ def main() -> None:
                 # Generate chart with AI structures overlaid
                 if chart_path:
                     base, ext = chart_path.rsplit('.', 1) if '.' in chart_path else (chart_path, 'png')
-                    ai_chart_path = f"{base}_ai_structures.{ext}"
+                    overlay_chart_path = f"{base}_ai_structures.{ext}"
                     print("\nGenerating chart with AI structure overlays...")
-                    visualize_profile(bins_raw, bins_tv, synthetic, save_path=ai_chart_path, structures=ai_structures)
+                    visualize_profile(bins_raw, bins_tv, synthetic, save_path=overlay_chart_path, structures=ai_structures)
 
     # Interactive structure editor
     structures = None
@@ -599,6 +909,19 @@ def main() -> None:
             print("\nGenerating chart with user structure overlays...")
             visualize_profile(bins_raw, bins_tv, synthetic, save_path=struct_chart_path, structures=structures)
 
+    # Auto-detect structures if none defined (neither AI nor interactive)
+    if not structures and not ai_structures:
+        log("struct", "🔍", "Auto-detecting structural elements from volume profile...")
+        structures = auto_detect_structures(
+            bins_tv,
+            top_n_nodes=args.top_nodes,
+            price_min=args.price_min,
+            price_max=args.price_max,
+        )
+    elif ai_structures and not structures:
+        # Use AI structures if no interactive refinement
+        structures = ai_structures
+
     out = {
         "symbol": ticker,
         "synthetic_symbol": synthetic,
@@ -612,10 +935,10 @@ def main() -> None:
         "buckets_tv": bins_tv,
     }
 
-    # Add structures if defined
+    # Add structures (always - either auto-detected, AI, or user-defined)
     if structures:
         out["structures"] = structures
-        log("struct", "🏗️", f"Added structures: {len(structures['volume_nodes'])} nodes, "
+        log("struct", "🏗️", f"Structures: {len(structures['volume_nodes'])} nodes, "
             f"{len(structures['volume_wells'])} wells, {len(structures['crevasses'])} crevasses")
 
     save_to_system_redis(out)

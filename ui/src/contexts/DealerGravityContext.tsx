@@ -109,7 +109,8 @@ const DEFAULT_DG_CONFIG: DealerGravityConfig = {
   enabled: true,
   mode: 'tv',
   widthPercent: 15,
-  numBins: 50,
+  rowsLayout: 'number_of_rows',
+  rowSize: 24,  // Default: 24 rows in visible range
   cappingSigma: 2.0,
   color: '#9333ea',
   transparency: 50,

@@ -2,6 +2,7 @@
 import { useState, useEffect, Component, type ReactNode } from 'react';
 import type { Trade, TradeEvent } from './TradeLogPanel';
 import { useTimezone } from '../contexts/TimezoneContext';
+import { useDraggable } from '../hooks/useDraggable';
 
 const JOURNAL_API = '';
 
@@ -70,6 +71,12 @@ export default function TradeDetailModal({
   const [events, setEvents] = useState<TradeEvent[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Draggable modal
+  const { dragHandleProps, containerStyle, isDragging } = useDraggable({
+    handleSelector: '.modal-header',
+    initialCentered: true,
+  });
 
   // Adjustment form
   const [adjPrice, setAdjPrice] = useState('');
@@ -262,8 +269,14 @@ export default function TradeDetailModal({
   return (
     <TradeDetailErrorBoundary onClose={onClose}>
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content trade-detail-modal" onClick={e => e.stopPropagation()}>
-        <div className="modal-header">
+      <div
+        className={`modal-content trade-detail-modal floating-modal ${isDragging ? 'is-dragging' : ''}`}
+        onClick={e => e.stopPropagation()}
+        ref={dragHandleProps.ref}
+        onMouseDown={dragHandleProps.onMouseDown}
+        style={containerStyle}
+      >
+        <div className="modal-header draggable-handle">
           <h2>Trade Detail</h2>
           <button className="modal-close" onClick={onClose}>&times;</button>
         </div>

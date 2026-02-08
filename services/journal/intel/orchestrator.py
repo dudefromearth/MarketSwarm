@@ -108,25 +108,63 @@ class JournalOrchestrator:
     # ==================== Trade Log Endpoints ====================
 
     async def list_logs(self, request: web.Request) -> web.Response:
-        """GET /api/logs - List trade logs for authenticated user."""
+        """GET /api/logs - List trade logs for authenticated user.
+
+        Query params:
+        - state: Filter by lifecycle state (active, archived, retired, or comma-separated)
+        - include_retired: Include retired logs (default: false)
+        - include_inactive: Legacy param, treated as include archived+retired
+        """
         try:
             # Get authenticated user (optional - returns all if no auth)
             user = await self.auth.get_request_user(request)
             user_id = user['id'] if user else None
 
+            # Parse lifecycle state filter
+            state_param = request.query.get('state', '')
+            include_retired = request.query.get('include_retired', 'false') == 'true'
             include_inactive = request.query.get('include_inactive', 'false') == 'true'
-            logs = self.db.list_logs(user_id=user_id, include_inactive=include_inactive)
+
+            if state_param:
+                # Explicit state filter
+                states = [s.strip() for s in state_param.split(',')]
+            elif include_inactive:
+                # Legacy: include_inactive means all states except retired (unless also retired)
+                states = ['active', 'archived']
+                if include_retired:
+                    states.append('retired')
+            else:
+                # Default: only active logs
+                states = ['active', 'archived'] if include_retired else ['active']
+
+            # Use new lifecycle-aware method if user_id available
+            if user_id:
+                logs = self.db.list_logs_by_state(user_id, states, include_retired)
+            else:
+                logs = self.db.list_logs(user_id=user_id, include_inactive=include_inactive)
 
             # Get summaries for each log
             log_data = []
             for log in logs:
                 summary = self.db.get_log_summary(log.id, user_id)
-                log_data.append(summary)
+                # Add lifecycle info to summary
+                if summary:
+                    summary['lifecycle_state'] = log.lifecycle_state
+                    summary['archived_at'] = log.archived_at
+                    summary['retired_at'] = log.retired_at
+                    summary['retire_scheduled_at'] = log.retire_scheduled_at
+                    summary['is_read_only'] = log.lifecycle_state != 'active'
+                    summary['ml_included'] = bool(log.ml_included)
+                    log_data.append(summary)
+
+            # Include active log count for UI
+            active_count = sum(1 for log in logs if log.lifecycle_state == 'active')
 
             return self._json_response({
                 'success': True,
                 'data': log_data,
-                'count': len(log_data)
+                'count': len(log_data),
+                'active_count': active_count
             })
         except Exception as e:
             self.logger.error(f"list_logs error: {e}")
@@ -224,7 +262,7 @@ class JournalOrchestrator:
             return self._error_response(str(e), 500)
 
     async def delete_log(self, request: web.Request) -> web.Response:
-        """DELETE /api/logs/:id - Soft delete a trade log."""
+        """DELETE /api/logs/:id - Soft delete a trade log (legacy, use archive instead)."""
         try:
             log_id = request.match_info['id']
             deleted = self.db.delete_log(log_id)
@@ -241,6 +279,304 @@ class JournalOrchestrator:
         except Exception as e:
             self.logger.error(f"delete_log error: {e}")
             return self._error_response(str(e), 500)
+
+    # ==================== Trade Log Lifecycle Management ====================
+
+    async def archive_log(self, request: web.Request) -> web.Response:
+        """POST /api/logs/:id/archive - Archive a trade log.
+
+        Preconditions:
+        - Log must be active
+        - Log must have no open positions
+        - Log must have no pending alerts
+        """
+        try:
+            user = await require_auth(request, self.auth)
+            if isinstance(user, web.Response):
+                return user
+
+            log_id = request.match_info['id']
+            result = self.db.archive_log(log_id, user['id'])
+
+            if not result.get('success'):
+                status = 400
+                if 'open position' in result.get('error', '').lower():
+                    status = 409  # Conflict
+                return self._json_response(result, status, request)
+
+            self.logger.info(f"Archived trade log {log_id}", emoji="📦")
+
+            # Publish lifecycle event for SSE
+            await self._publish_lifecycle_event(user['id'], 'archived', {
+                'log_id': log_id,
+                'lifecycle_state': 'archived',
+                'archived_at': result.get('archived_at'),
+                'ml_included': False
+            })
+
+            return self._json_response({
+                'success': True,
+                'message': 'Trade log archived',
+                'archived_at': result.get('archived_at')
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"archive_log error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def reactivate_log(self, request: web.Request) -> web.Response:
+        """POST /api/logs/:id/reactivate - Reactivate an archived log.
+
+        Checks active log limit before reactivating.
+        """
+        try:
+            user = await require_auth(request, self.auth)
+            if isinstance(user, web.Response):
+                return user
+
+            log_id = request.match_info['id']
+            result = self.db.reactivate_log(log_id, user['id'])
+
+            if not result.get('success'):
+                return self._json_response(result, 400, request)
+
+            self.logger.info(f"Reactivated trade log {log_id}", emoji="♻️")
+
+            # Publish lifecycle event for SSE
+            active_count = result.get('active_count', 0)
+            cap_state = 'hard_warning' if active_count >= 10 else ('soft_warning' if active_count >= 5 else 'ok')
+            await self._publish_lifecycle_event(user['id'], 'reactivated', {
+                'log_id': log_id,
+                'lifecycle_state': 'active',
+                'reactivated_at': result.get('reactivated_at'),
+                'active_log_count': active_count,
+                'cap_state': cap_state
+            })
+
+            response = {
+                'success': True,
+                'message': 'Trade log reactivated',
+                'reactivated_at': result.get('reactivated_at')
+            }
+            if result.get('warning'):
+                response['warning'] = result['warning']
+
+            return self._json_response(response, request=request)
+        except Exception as e:
+            self.logger.error(f"reactivate_log error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def schedule_retire_log(self, request: web.Request) -> web.Response:
+        """POST /api/logs/:id/retire - Schedule a log for permanent retirement.
+
+        Optionally accepts:
+        - grace_days: Number of days before retirement (default: 7)
+        - force: If true, retire immediately (requires confirmation)
+        - confirm_name: Log name for immediate retirement confirmation
+        """
+        try:
+            user = await require_auth(request, self.auth)
+            if isinstance(user, web.Response):
+                return user
+
+            log_id = request.match_info['id']
+            body = await request.json() if request.body_exists else {}
+
+            force = body.get('force', False)
+            grace_days = int(body.get('grace_days', 7))
+
+            if force:
+                # Immediate retirement requires name confirmation
+                confirm_name = body.get('confirm_name', '')
+                log = self.db.get_log(log_id, user['id'])
+                if not log:
+                    return self._error_response('Log not found', 404, request)
+
+                if confirm_name != log.name:
+                    return self._error_response(
+                        'To retire immediately, type the log name to confirm',
+                        400, request
+                    )
+
+                result = self.db.retire_log(log_id, user['id'], force=True)
+            else:
+                result = self.db.schedule_retirement(log_id, user['id'], grace_days)
+
+            if not result.get('success'):
+                return self._json_response(result, 400, request)
+
+            if force:
+                self.logger.info(f"Permanently retired trade log {log_id}", emoji="🗄️")
+                await self._publish_lifecycle_event(user['id'], 'retired', {
+                    'log_id': log_id,
+                    'retired_at': result.get('retired_at')
+                })
+            else:
+                self.logger.info(f"Scheduled retirement for trade log {log_id} in {grace_days} days", emoji="⏳")
+                await self._publish_lifecycle_event(user['id'], 'retire_scheduled', {
+                    'log_id': log_id,
+                    'retire_scheduled_at': result.get('retire_at'),
+                    'grace_days_remaining': grace_days
+                })
+
+            return self._json_response({
+                'success': True,
+                **result
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"schedule_retire_log error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def cancel_retire_log(self, request: web.Request) -> web.Response:
+        """DELETE /api/logs/:id/retire - Cancel a scheduled retirement."""
+        try:
+            user = await require_auth(request, self.auth)
+            if isinstance(user, web.Response):
+                return user
+
+            log_id = request.match_info['id']
+            result = self.db.cancel_retirement(log_id, user['id'])
+
+            if not result.get('success'):
+                return self._json_response(result, 400, request)
+
+            self.logger.info(f"Cancelled retirement for trade log {log_id}", emoji="✅")
+            await self._publish_lifecycle_event(user['id'], 'retire_cancelled', {
+                'log_id': log_id,
+                'lifecycle_state': 'archived'
+            })
+
+            return self._json_response({
+                'success': True,
+                'message': 'Retirement cancelled'
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"cancel_retire_log error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_logs_for_import(self, request: web.Request) -> web.Response:
+        """GET /api/logs/for-import - Get logs suitable for import targeting.
+
+        Returns logs with metadata for import selection UI:
+        - Active logs first, then archived
+        - Includes open position count, ML status
+        - Excludes retired logs
+        """
+        try:
+            user = await require_auth(request, self.auth)
+            if isinstance(user, web.Response):
+                return user
+
+            logs = self.db.get_logs_for_import_selection(user['id'])
+
+            return self._json_response({
+                'success': True,
+                'data': logs
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"get_logs_for_import error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_import_recommendation(self, request: web.Request) -> web.Response:
+        """POST /api/logs/import-recommendation - Get recommendation for import targeting.
+
+        Body:
+        - target_log_id: Selected log ID
+        - earliest_date: Earliest date in import (ISO string)
+        - latest_date: Latest date in import (ISO string)
+
+        Returns recommendation on whether to create an archived log instead.
+        """
+        try:
+            user = await require_auth(request, self.auth)
+            if isinstance(user, web.Response):
+                return user
+
+            body = await request.json()
+            target_log_id = body.get('target_log_id')
+            earliest_date = body.get('earliest_date')
+            latest_date = body.get('latest_date')
+
+            if not target_log_id:
+                return self._error_response('target_log_id is required', 400, request)
+
+            result = self.db.get_import_recommendation(
+                user['id'],
+                target_log_id,
+                (earliest_date, latest_date)
+            )
+
+            return self._json_response({
+                'success': True,
+                **result
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"get_import_recommendation error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_users_with_logs(self, request: web.Request) -> web.Response:
+        """GET /api/users/with-logs - Get all user IDs that have trade logs.
+
+        Used by Vexy's scheduled jobs to know which users to analyze.
+        Internal endpoint, restricted to localhost.
+        """
+        try:
+            # Restrict to internal access only
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            user_ids = self.db.get_users_with_logs()
+
+            return self._json_response({
+                'success': True,
+                'user_ids': user_ids,
+                'count': len(user_ids)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"get_users_with_logs error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def get_logs_health_metrics(self, request: web.Request) -> web.Response:
+        """GET /api/logs/health - Get log health metrics for a user.
+
+        Query params:
+        - user_id: Required. User ID to get metrics for.
+
+        Returns health metrics for each log including:
+        - Activity timestamps (last trade, last import)
+        - Trade counts (total, open)
+        - Alert counts (pending)
+        - ML inclusion status
+        - Lifecycle state
+
+        Used by Vexy's log_health_analyzer scheduled job.
+        Internal endpoint, restricted to localhost.
+        """
+        try:
+            # Restrict to internal access only
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            user_id = request.query.get('user_id')
+            if not user_id:
+                return self._error_response('user_id is required', 400, request)
+
+            try:
+                user_id = int(user_id)
+            except ValueError:
+                return self._error_response('user_id must be an integer', 400, request)
+
+            logs = self.db.get_logs_health_metrics(user_id)
+
+            return self._json_response({
+                'success': True,
+                'data': logs,
+                'count': len(logs)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"get_logs_health_metrics error: {e}")
+            return self._error_response(str(e), 500, request)
 
     # ==================== Trade Endpoints (Log-Scoped) ====================
 
@@ -4601,6 +4937,38 @@ class JournalOrchestrator:
         except Exception as e:
             self.logger.error(f"Failed to publish trade log event: {e}")
 
+    async def _publish_lifecycle_event(
+        self,
+        user_id: int,
+        event_type: str,
+        payload: dict
+    ):
+        """Publish a log lifecycle event to Redis pub/sub for SSE broadcasting.
+
+        Events follow the format:
+        {
+            "type": "log.lifecycle.archived",
+            "timestamp": "2026-03-02T14:22:11Z",
+            "user_id": 123,
+            "payload": { "log_id": "uuid", ... }
+        }
+        """
+        try:
+            redis_conn = await self._get_redis()
+            channel = "log_lifecycle_updates"
+
+            message = {
+                'type': f"log.lifecycle.{event_type}",
+                'timestamp': datetime.utcnow().isoformat() + 'Z',
+                'user_id': user_id,
+                'payload': payload,
+            }
+            await redis_conn.publish(channel, json.dumps(message))
+            self.logger.debug(f"Published lifecycle event: {event_type} for user {user_id}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to publish lifecycle event: {e}")
+
     def _check_idempotency(self, request: web.Request, user_id: int):
         """Check idempotency key and return cached response if exists."""
         key = request.headers.get('Idempotency-Key')
@@ -5835,6 +6203,18 @@ class JournalOrchestrator:
         app.router.add_post('/api/logs', self.create_log)
         app.router.add_put('/api/logs/{id}', self.update_log)
         app.router.add_delete('/api/logs/{id}', self.delete_log)
+
+        # Trade Log Lifecycle Management
+        app.router.add_post('/api/logs/{id}/archive', self.archive_log)
+        app.router.add_post('/api/logs/{id}/reactivate', self.reactivate_log)
+        app.router.add_post('/api/logs/{id}/retire', self.schedule_retire_log)
+        app.router.add_delete('/api/logs/{id}/retire', self.cancel_retire_log)
+        app.router.add_get('/api/logs/for-import', self.get_logs_for_import)
+        app.router.add_post('/api/logs/import-recommendation', self.get_import_recommendation)
+
+        # User/Log health endpoints (for Vexy context feed)
+        app.router.add_get('/api/users/with-logs', self.get_users_with_logs)
+        app.router.add_get('/api/logs/health', self.get_logs_health_metrics)
 
         # Log-scoped trades (v2)
         app.router.add_get('/api/logs/{logId}/trades', self.list_trades)

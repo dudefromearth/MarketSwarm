@@ -1,0 +1,19 @@
+{
+  "buses": {
+    "system-redis": { "url": "redis://127.0.0.1:6379" },
+    "market-redis": { "url": "redis://127.0.0.1:6380" }
+  },
+  "components": {
+    "sse": {
+      "meta": { "name": "SSE Gateway" },
+      "heartbeat": { "interval_sec": 5, "ttl_sec": 15 },
+      "env": {
+        "SSE_PORT": "3001",
+        "SSO_0DTE_SECRET": "YOUR_SECRET_HERE",
+        "SSO_FOTW_SECRET": "",
+        "APP_SESSION_SECRET": "local-dev-secret-change-me",
+        "DATABASE_URL": ""
+      }
+    }
+  }
+}

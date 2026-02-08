@@ -83,13 +83,24 @@ export interface TradeReflectionContext {
   symbol?: string;
 }
 
+interface ImportBatch {
+  batchId: string;
+  importTime: string;
+  platform: string;
+  count: number;
+  tradeIds: string[];
+  logId: string;
+}
+
 interface TradeLogPanelProps {
   onOpenTradeEntry: (logId: string) => void;
   onEditTrade: (trade: Trade) => void;
   onViewReporting: (logId: string) => void;
   onManageLogs: () => void;
-onOpenJournal: (context?: TradeReflectionContext) => void;
+  onOpenJournal: (context?: TradeReflectionContext) => void;
   onOpenPlaybook: () => void;
+  onOpenImport?: () => void;  // Opens the smart import modal
+  onManageImports?: () => void;  // Opens the import manager
   selectedLogId: string | null;
   selectedLog: TradeLog | null;
   onSelectLog: (log: TradeLog) => void;
@@ -107,6 +118,8 @@ export default function TradeLogPanel({
   onManageLogs,
   onOpenJournal,
   onOpenPlaybook,
+  onOpenImport,
+  onManageImports,
   selectedLogId,
   selectedLog,
   onSelectLog,
@@ -132,6 +145,64 @@ export default function TradeLogPanel({
   // Counts
   const [openCount, setOpenCount] = useState(0);
   const [closedCount, setClosedCount] = useState(0);
+
+  // Import undo state
+  const [showImportHistory, setShowImportHistory] = useState(false);
+  const [importHistory, setImportHistory] = useState<ImportBatch[]>([]);
+  const [undoing, setUndoing] = useState(false);
+
+  // Load import history from localStorage
+  useEffect(() => {
+    const history = JSON.parse(localStorage.getItem('tradeImportHistory') || '[]');
+    setImportHistory(history);
+  }, [refreshTrigger]);
+
+  // Undo an import batch
+  const handleUndoImport = async (batch: ImportBatch) => {
+    if (!confirm(`Undo import of ${batch.count} trades from ${batch.platform}? This will delete all trades from this import.`)) {
+      return;
+    }
+
+    setUndoing(true);
+    setError(null);
+
+    let deletedCount = 0;
+    const errors: string[] = [];
+
+    for (const tradeId of batch.tradeIds) {
+      try {
+        const response = await fetch(`${JOURNAL_API}/api/trades/${tradeId}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+        const result = await response.json();
+        if (result.success) {
+          deletedCount++;
+        } else {
+          errors.push(result.error || 'Unknown error');
+        }
+      } catch (err) {
+        errors.push(err instanceof Error ? err.message : 'Network error');
+      }
+    }
+
+    // Remove batch from history
+    const updatedHistory = importHistory.filter(b => b.batchId !== batch.batchId);
+    localStorage.setItem('tradeImportHistory', JSON.stringify(updatedHistory));
+    setImportHistory(updatedHistory);
+
+    setUndoing(false);
+    setShowImportHistory(false);
+
+    if (deletedCount > 0) {
+      fetchTrades();
+    }
+
+    if (errors.length > 0) {
+      console.warn('[UndoImport] Errors:', errors);
+      setError(`Deleted ${deletedCount}/${batch.count} trades. Some errors occurred.`);
+    }
+  };
 
   const fetchTrades = useCallback(async () => {
     if (!selectedLogId) {
@@ -274,38 +345,6 @@ export default function TradeLogPanel({
       console.error('Export error:', err);
       setError('Failed to export trades');
     }
-  };
-
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !selectedLogId) return;
-
-    const formData = new FormData();
-    formData.append('file', file);
-
-    try {
-      const response = await fetch(
-        `${JOURNAL_API}/api/logs/${selectedLogId}/import`,
-        {
-          method: 'POST',
-          body: formData,
-        }
-      );
-
-      const result = await response.json();
-
-      if (result.success) {
-        fetchTrades();
-      } else {
-        setError(result.error || 'Failed to import trades');
-      }
-    } catch (err) {
-      console.error('Import error:', err);
-      setError('Failed to import trades');
-    }
-
-    // Reset file input
-    e.target.value = '';
   };
 
   useEffect(() => {
@@ -463,16 +502,61 @@ export default function TradeLogPanel({
           >
             + Add Trade
           </button>
-          <label className="btn-tool btn-tool-label" title="Import trades">
+          <button
+            className="btn-tool"
+            onClick={onOpenImport}
+            disabled={!selectedLogId || !onOpenImport}
+            title="Import trades from broker export"
+          >
             Import
-            <input
-              type="file"
-              accept=".csv,.xlsx,.xls"
-              onChange={handleImport}
+          </button>
+          {onManageImports && (
+            <button
+              className="btn-tool"
+              onClick={onManageImports}
               disabled={!selectedLogId}
-              style={{ display: 'none' }}
-            />
-          </label>
+              title="Manage import history"
+            >
+              Imports
+            </button>
+          )}
+          {importHistory.length > 0 && (
+            <div className="import-history-wrapper">
+              <button
+                className="btn-tool btn-undo-import"
+                onClick={() => setShowImportHistory(!showImportHistory)}
+                title="Undo recent imports"
+              >
+                Undo
+              </button>
+              {showImportHistory && (
+                <div className="import-history-dropdown">
+                  <div className="import-history-header">Recent Imports</div>
+                  {importHistory
+                    .filter(b => b.logId === selectedLogId)
+                    .slice(0, 5)
+                    .map(batch => (
+                      <div
+                        key={batch.batchId}
+                        className="import-history-item"
+                        onClick={() => !undoing && handleUndoImport(batch)}
+                      >
+                        <div className="import-info">
+                          <span className="import-platform">{batch.platform.toUpperCase()}</span>
+                          <span className="import-count">{batch.count} trades</span>
+                        </div>
+                        <div className="import-time">
+                          {new Date(batch.importTime).toLocaleDateString()}
+                        </div>
+                      </div>
+                    ))}
+                  {importHistory.filter(b => b.logId === selectedLogId).length === 0 && (
+                    <div className="import-history-empty">No imports for this log</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           <span className="tools-separator" />
           <span className="tools-label">Export:</span>
           <button

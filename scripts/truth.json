@@ -2,8 +2,8 @@
   "version": "3.1",
   "description": "Truth: Host-based Redis topology for MarketSwarm stack. Canonical configuration for all services.",
   "node": {
-    "name": "DudeOne.local",
-    "env": "production"
+    "name": "marketswarm-local",
+    "env": "dev"
   },
   "buses": {
     "system-redis": {
@@ -289,7 +289,9 @@
         "MASSIVE_DEBUG_ENABLED": "true",
         "MASSIVE_DEBUG_CHAIN_INTERVAL_SEC": "5",
         "MASSIVE_SPOT_TRAIL_WINDOW_SEC": "604800",
-        "MASSIVE_SPOT_TRAIL_TTL_SEC": "691200"
+        "MASSIVE_SPOT_TRAIL_TTL_SEC": "691200",
+        "MASSIVE_SELECTOR_ML_ENABLED": "true",
+        "MASSIVE_SELECTOR_ML_WEIGHT": "0.3"
       }
     },
     "vexy_ai": {

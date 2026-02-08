@@ -23,6 +23,7 @@ const clients = {
   risk_graph: new Map(), // userId -> Set of clients
   trade_log: new Map(), // userId -> Set of clients
   positions: new Map(), // userId -> Set of clients
+  logs: new Map(), // userId -> Set of clients (lifecycle events)
   dealer_gravity: new Set(), // Dealer Gravity artifact updates
   all: new Set(),
 };
@@ -430,6 +431,35 @@ router.get("/dealer-gravity", (req, res) => {
 
   req.on("close", () => {
     clients.dealer_gravity.delete(res);
+  });
+});
+
+// GET /sse/logs - User-scoped log lifecycle events
+// Receives events when logs are archived, reactivated, retired, etc.
+router.get("/logs", (req, res) => {
+  const user = getCurrentUser(req);
+  if (!user?.wp?.id) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+
+  const userId = String(user.wp.id);
+  sseHeaders(res);
+
+  // Track this client for user-scoped broadcasting
+  if (!clients.logs.has(userId)) {
+    clients.logs.set(userId, new Set());
+  }
+  clients.logs.get(userId).add(res);
+
+  sendEvent(res, "connected", { channel: "logs", userId, ts: Date.now() });
+
+  req.on("close", () => {
+    clients.logs.get(userId)?.delete(res);
+    // Clean up empty user entry
+    if (clients.logs.get(userId)?.size === 0) {
+      clients.logs.delete(userId);
+    }
   });
 });
 
@@ -1026,6 +1056,50 @@ export function subscribePositionsPubSub() {
         }
       } catch (err) {
         console.error("[sse] positions:updates parse error:", err.message);
+      }
+    }
+  });
+}
+
+// Subscribe to log_lifecycle_updates pub/sub for user-scoped lifecycle events
+// Events: log.lifecycle.archived, log.lifecycle.reactivated, log.lifecycle.retire_scheduled,
+//         log.lifecycle.retire_cancelled, log.lifecycle.retired
+export function subscribeLogLifecyclePubSub() {
+  const sub = getMarketRedisSub();
+  const channel = "log_lifecycle_updates";
+
+  sub.subscribe(channel, (err) => {
+    if (err) {
+      console.error(`[sse] Failed to subscribe to ${channel}:`, err.message);
+    } else {
+      console.log(`[sse] Subscribed to ${channel}`);
+    }
+  });
+
+  sub.on("message", (ch, message) => {
+    if (ch === channel) {
+      try {
+        const event = JSON.parse(message);
+        // Event format: { type, timestamp, user_id, payload }
+        // Types: log.lifecycle.archived, log.lifecycle.reactivated, etc.
+
+        const userId = String(event.user_id);
+        const eventType = event.type || "log.lifecycle.updated";
+
+        // Broadcast only to this user's connected clients
+        const userClients = clients.logs.get(userId);
+        if (userClients && userClients.size > 0) {
+          console.log(`[sse] Broadcasting ${eventType} to ${userClients.size} clients for user ${userId}`);
+          for (const client of userClients) {
+            try {
+              sendEvent(client, eventType, event);
+            } catch (err) {
+              userClients.delete(client);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[sse] log_lifecycle_updates parse error:", err.message);
       }
     }
   });

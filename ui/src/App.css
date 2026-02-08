@@ -6223,6 +6223,82 @@ body {
   margin: 0 4px;
 }
 
+/* Import History Dropdown */
+.import-history-wrapper {
+  position: relative;
+}
+
+.btn-undo-import {
+  color: #f87171 !important;
+}
+
+.import-history-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 6px;
+  min-width: 220px;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.import-history-header {
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #9ca3af;
+  text-transform: uppercase;
+  border-bottom: 1px solid #333;
+}
+
+.import-history-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid #222;
+  transition: background 0.15s;
+}
+
+.import-history-item:last-child {
+  border-bottom: none;
+}
+
+.import-history-item:hover {
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.import-info {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+.import-platform {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.import-count {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.import-time {
+  font-size: 10px;
+  color: #666;
+}
+
+.import-history-empty {
+  padding: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: #666;
+}
+
 .trade-log-filters select {
   background: #1a1a1a;
   border: 1px solid #333;
@@ -8426,6 +8502,280 @@ body {
   border-radius: 4px;
   font-size: 12px;
   margin: 16px 0;
+}
+
+/* Log Manager - Lifecycle Management */
+.log-manager-modal {
+  width: 650px;
+}
+
+.log-list {
+  max-height: 400px;
+}
+
+.log-filter-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #1e293b;
+  align-items: center;
+}
+
+.filter-tab {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #64748b;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.filter-tab:hover {
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+.filter-tab.active {
+  background: #1e3a5f;
+  border-color: #2563eb;
+  color: #60a5fa;
+}
+
+.cap-warning {
+  margin-left: auto;
+  font-size: 10px;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.log-list-item {
+  flex-direction: column;
+  gap: 8px;
+}
+
+.log-list-item.archived {
+  opacity: 0.8;
+  background: rgba(100, 116, 139, 0.05);
+}
+
+.log-list-item.archived:hover {
+  background: rgba(100, 116, 139, 0.1);
+}
+
+/* Lifecycle Badges */
+.lifecycle-badge {
+  font-size: 9px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.lifecycle-badge.active {
+  background: rgba(34, 197, 94, 0.15);
+  color: #4ade80;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.lifecycle-badge.archived {
+  background: rgba(100, 116, 139, 0.15);
+  color: #94a3b8;
+  border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+.lifecycle-badge.retiring {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  animation: pulse-retiring 2s ease-in-out infinite;
+}
+
+@keyframes pulse-retiring {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.lifecycle-badge.retired {
+  background: rgba(100, 100, 100, 0.15);
+  color: #666;
+  border: 1px solid rgba(100, 100, 100, 0.3);
+}
+
+/* Log Item Meta Row */
+.log-item-meta {
+  display: flex;
+  gap: 8px;
+  margin-left: 24px;
+}
+
+.log-meta-tag {
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(100, 116, 139, 0.1);
+  color: #64748b;
+}
+
+.log-meta-tag.open {
+  background: rgba(251, 191, 36, 0.1);
+  color: #fbbf24;
+}
+
+.log-meta-tag.ml-excluded {
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+}
+
+.log-meta-tag.read-only {
+  background: rgba(100, 116, 139, 0.1);
+  color: #94a3b8;
+}
+
+/* Retiring state - locked interaction */
+.log-list-item.retiring {
+  opacity: 0.7;
+  background: rgba(239, 68, 68, 0.05);
+  border-left: 2px solid #dc2626;
+}
+
+.log-list-item.retiring:hover {
+  background: rgba(239, 68, 68, 0.08);
+}
+
+/* Empty state improvements */
+.log-list-empty {
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.log-list-empty .empty-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #e2e8f0;
+  margin-bottom: 8px;
+}
+
+.log-list-empty .empty-hint {
+  font-size: 12px;
+  color: #64748b;
+  line-height: 1.5;
+  max-width: 280px;
+  margin: 0 auto;
+}
+
+/* Lifecycle Action Buttons */
+.log-item-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.btn-lifecycle {
+  background: transparent;
+  border: 1px solid #475569;
+  color: #64748b;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-lifecycle:hover:not(:disabled) {
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+.btn-lifecycle:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-lifecycle.archive:hover:not(:disabled) {
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.btn-lifecycle.reactivate {
+  border-color: #22c55e;
+  color: #4ade80;
+}
+
+.btn-lifecycle.reactivate:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.btn-lifecycle.retire {
+  border-color: #dc2626;
+  color: #f87171;
+}
+
+.btn-lifecycle.retire:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.btn-lifecycle.cancel-retire {
+  border-color: #3b82f6;
+  color: #60a5fa;
+}
+
+.btn-lifecycle.cancel-retire:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.btn-lifecycle.cancel {
+  padding: 4px 8px;
+  border-color: #475569;
+}
+
+/* Retire Confirmation */
+.retire-confirm {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.retire-confirm-input {
+  background: #0f172a;
+  border: 1px solid #475569;
+  color: #e2e8f0;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  width: 140px;
+}
+
+.retire-confirm-input:focus {
+  outline: none;
+  border-color: #dc2626;
+}
+
+.btn-lifecycle.retire-confirm-btn {
+  border-color: #dc2626;
+  color: #f87171;
+}
+
+.btn-lifecycle.retire-confirm-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.15);
+}
+
+.btn-create-log:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #1e293b;
+  border-color: #475569;
+  color: #64748b;
 }
 
 /* Trade Detail Modal */
