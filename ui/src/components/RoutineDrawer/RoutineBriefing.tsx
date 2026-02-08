@@ -19,6 +19,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+import { API, type RoutineContextPhase } from '../../config/api';
 import type { MarketContext } from './index';
 
 // Configure marked
@@ -26,7 +28,7 @@ marked.setOptions({ breaks: true, gfm: true });
 
 interface OrientationResponse {
   orientation: string | null;  // null = silence
-  context_phase: string;
+  context_phase: RoutineContextPhase;
   generated_at: string;
 }
 
@@ -59,7 +61,7 @@ export default function RoutineBriefing({
         vix_level: marketContext?.vixLevel ?? null,
       };
 
-      const response = await fetch('/api/vexy/routine/orientation', {
+      const response = await fetch(API.vexy.orientation, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -213,9 +215,9 @@ export default function RoutineBriefing({
     return null;
   }
 
-  // Render narrative as markdown
+  // Render narrative as sanitized markdown
   const renderNarrative = (text: string) => {
-    const html = marked.parse(text) as string;
+    const html = DOMPurify.sanitize(marked.parse(text) as string);
     return <div dangerouslySetInnerHTML={{ __html: html }} />;
   };
 

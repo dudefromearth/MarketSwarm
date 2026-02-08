@@ -21,10 +21,12 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { marked } from 'marked';
+import DOMPurify from 'dompurify';
+import { API, type RoutineContextPhase } from '../../config/api';
 
 interface AskVexyAffordanceProps {
   isOpen: boolean;
-  contextPhase?: string;
+  contextPhase?: RoutineContextPhase;
   onOpenChange?: (isOpen: boolean) => void;
 }
 
@@ -94,7 +96,7 @@ export default function AskVexyAffordance({
         constraints: { no_trade_advice: true },
       };
 
-      const res = await fetch('/api/vexy/chat', {
+      const res = await fetch(API.vexy.chat, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -127,9 +129,9 @@ export default function AskVexyAffordance({
     }
   };
 
-  // Render response as markdown
+  // Render response as sanitized markdown
   const renderResponse = (text: string) => {
-    const html = marked.parse(text) as string;
+    const html = DOMPurify.sanitize(marked.parse(text) as string);
     return <div dangerouslySetInnerHTML={{ __html: html }} />;
   };
 

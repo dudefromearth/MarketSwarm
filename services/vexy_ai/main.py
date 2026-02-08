@@ -187,10 +187,6 @@ class ChatContext(BaseModel):
     # Current UI state
     ui: Optional[Dict[str, Any]] = None
 
-    # Legacy fields (for backwards compatibility)
-    active_panel: Optional[str] = None
-    current_position: Optional[Dict[str, Any]] = None
-
 
 class VexyChatRequest(BaseModel):
     """Request model for Vexy chat endpoint."""
@@ -426,7 +422,7 @@ async def ingest_log_health_context(request: LogHealthContextRequest):
     except Exception as e:
         if _logger:
             _logger.error(f"Failed to ingest log health context: {e}", emoji="❌")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to store log health context")
 
 
 @app.get("/api/vexy/context/log-health/{user_id}")
@@ -526,8 +522,10 @@ def _check_rate_limit(user_id: int, tier: str) -> tuple[bool, int]:
 
         remaining = max(0, limit - current_count)
         return remaining > 0, remaining
-    except Exception:
-        # Redis error, allow request
+    except Exception as e:
+        # Redis error - log but allow request (fail-open)
+        if _logger:
+            _logger.warn(f"Redis rate limit check failed: {e}", emoji="⚠️")
         return True, limit
 
 
@@ -542,8 +540,10 @@ def _increment_usage(user_id: int) -> None:
         key = f"vexy_chat:{user_id}:{date.today().isoformat()}"
         _redis_client.incr(key)
         _redis_client.expire(key, 86400 * 2)  # 2 day TTL
-    except Exception:
-        pass  # Silently ignore Redis errors
+    except Exception as e:
+        # Log Redis errors but don't fail the request
+        if _logger:
+            _logger.warn(f"Redis usage increment failed: {e}", emoji="⚠️")
 
 
 def _build_chat_system_prompt(tier: str, user_id: int, user_message: str = "") -> str:

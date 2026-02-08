@@ -15,10 +15,11 @@
  */
 
 import { useState, useEffect } from 'react';
+import { API, type VixRegime, type RoutineContextPhase } from '../../config/api';
 
 interface MarketReadinessPayload {
   generated_at: string;
-  context_phase: string;
+  context_phase: RoutineContextPhase;
   carrying: {
     globex_summary: string;
     euro_note: string | null;
@@ -26,7 +27,7 @@ interface MarketReadinessPayload {
   };
   volatility: {
     vix_level: number | null;
-    regime: 'zombieland' | 'goldilocks' | 'elevated' | 'chaos' | null;
+    regime: VixRegime | null;
     implication: string | null;
   };
   topology: {
@@ -85,9 +86,9 @@ export default function MarketReadiness({ isOpen }: MarketReadinessProps) {
           waiting_anchor: "Today is a waiting day until an entry event appears (or doesn't). Waiting is part of the edge.",
         };
 
-        // Try to fetch from API, fall back to mock
+        // Fetch from API
         try {
-          const response = await fetch('/api/vexy/routine/market-readiness/1', {
+          const response = await fetch(API.vexy.marketReadiness(1), {
             credentials: 'include',
           });
 
@@ -98,10 +99,11 @@ export default function MarketReadiness({ isOpen }: MarketReadinessProps) {
               return;
             }
           }
-        } catch {
-          // API not available, use mock
+        } catch (err) {
+          console.error('[MarketReadiness] API fetch failed:', err);
         }
 
+        // Fall back to mock data if API unavailable
         setPayload(mockPayload);
       } catch (err) {
         console.error('[MarketReadiness] Error:', err);

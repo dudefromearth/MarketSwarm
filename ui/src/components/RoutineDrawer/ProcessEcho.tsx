@@ -13,6 +13,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { API } from '../../config/api';
 
 interface ProcessEchoData {
   type: 'process_echo';
@@ -47,7 +48,7 @@ export default function ProcessEcho({ isOpen }: ProcessEchoProps) {
   useEffect(() => {
     const fetchUserId = async () => {
       try {
-        const response = await fetch('/api/auth/me', { credentials: 'include' });
+        const response = await fetch(API.auth.me, { credentials: 'include' });
         if (response.ok) {
           const data = await response.json();
           // The wp.id is the WordPress user ID
@@ -69,7 +70,7 @@ export default function ProcessEcho({ isOpen }: ProcessEchoProps) {
     setLoading(true);
 
     try {
-      const response = await fetch(`/api/vexy/process-echo/${userId}`, {
+      const response = await fetch(API.vexy.processEcho(userId), {
         credentials: 'include',
       });
 
