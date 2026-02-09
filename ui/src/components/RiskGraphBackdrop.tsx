@@ -507,11 +507,11 @@ export default function RiskGraphBackdrop({
       }}
     >
       {/* Volume Profile Layer - vertical bars from bottom */}
-      {showVolumeProfile && profile && (() => {
+      {showVolumeProfile && profile?.bins && (() => {
         console.log('[RiskGraphBackdrop] Rendering VP layer:', {
           binsLength: profile.bins?.length,
           priceRange: [priceMin, priceMax],
-          profileRange: [profile.min, profile.min + profile.bins.length * profile.step],
+          profileRange: [profile.min, profile.min + (profile.bins?.length ?? 0) * profile.step],
           vpHeightPercent,
           opacity,
         });
