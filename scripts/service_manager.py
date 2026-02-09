@@ -1016,6 +1016,238 @@ def create_web_app():
         SERVICES = load_services_from_truth()
         return {"success": True, "services": list(SERVICES.keys())}
 
+    # =========================================================
+    # DEPLOYMENT ENDPOINTS
+    # =========================================================
+
+    @app.get("/api/deploy/status")
+    def api_deploy_status():
+        """Get current git status and deployment info."""
+        import subprocess
+
+        result = {
+            "repo_path": str(ROOT),
+            "current_branch": None,
+            "current_commit": None,
+            "has_changes": False,
+            "behind_remote": False,
+            "last_pull": None,
+        }
+
+        try:
+            # Get current branch
+            branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=ROOT, capture_output=True, text=True
+            )
+            result["current_branch"] = branch.stdout.strip() if branch.returncode == 0 else None
+
+            # Get current commit
+            commit = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=ROOT, capture_output=True, text=True
+            )
+            result["current_commit"] = commit.stdout.strip() if commit.returncode == 0 else None
+
+            # Check for local changes
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=ROOT, capture_output=True, text=True
+            )
+            result["has_changes"] = bool(status.stdout.strip()) if status.returncode == 0 else False
+
+            # Fetch and check if behind
+            subprocess.run(["git", "fetch", "--quiet"], cwd=ROOT, capture_output=True)
+            behind = subprocess.run(
+                ["git", "rev-list", "--count", "HEAD..origin/main"],
+                cwd=ROOT, capture_output=True, text=True
+            )
+            if behind.returncode == 0:
+                count = int(behind.stdout.strip() or "0")
+                result["behind_remote"] = count > 0
+                result["commits_behind"] = count
+
+        except Exception as e:
+            result["error"] = str(e)
+
+        return result
+
+    @app.post("/api/deploy/pull")
+    def api_deploy_pull():
+        """Pull latest code from origin/main."""
+        import subprocess
+
+        try:
+            # Get commit before pull
+            before = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=ROOT, capture_output=True, text=True
+            )
+            before_commit = before.stdout.strip() if before.returncode == 0 else "unknown"
+
+            # Pull
+            pull = subprocess.run(
+                ["git", "pull", "origin", "main"],
+                cwd=ROOT, capture_output=True, text=True
+            )
+
+            if pull.returncode != 0:
+                return {
+                    "success": False,
+                    "error": pull.stderr or "Git pull failed",
+                    "output": pull.stdout,
+                }
+
+            # Get commit after pull
+            after = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                cwd=ROOT, capture_output=True, text=True
+            )
+            after_commit = after.stdout.strip() if after.returncode == 0 else "unknown"
+
+            # Get changelog if commits changed
+            changelog = []
+            if before_commit != after_commit:
+                log = subprocess.run(
+                    ["git", "log", "--oneline", f"{before_commit}..{after_commit}"],
+                    cwd=ROOT, capture_output=True, text=True
+                )
+                if log.returncode == 0:
+                    changelog = [line for line in log.stdout.strip().split("\n") if line]
+
+            return {
+                "success": True,
+                "before_commit": before_commit,
+                "after_commit": after_commit,
+                "updated": before_commit != after_commit,
+                "changelog": changelog,
+                "output": pull.stdout,
+            }
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @app.post("/api/deploy/restart-all")
+    def api_deploy_restart_all():
+        """Restart all services (used after deploy)."""
+        manager = ServiceManager()
+
+        # Stop all
+        stop_results = manager.stop_all()
+
+        # Brief pause
+        import time
+        time.sleep(2)
+
+        # Start all
+        start_results = manager.start_all()
+
+        return {
+            "success": True,
+            "stopped": stop_results,
+            "started": start_results,
+        }
+
+    @app.post("/api/deploy/full")
+    def api_deploy_full(body: dict = None):
+        """
+        Full deployment: pull code, restart services.
+
+        Options in body:
+        - restart_services: bool (default True)
+        - sync_nginx: bool (default False)
+        - nginx_host: str (default "MiniThree")
+        """
+        import subprocess
+        import time
+
+        options = body or {}
+        restart_services = options.get("restart_services", True)
+        sync_nginx = options.get("sync_nginx", False)
+        nginx_host = options.get("nginx_host", "MiniThree")
+
+        results = {
+            "pull": None,
+            "restart": None,
+            "nginx": None,
+            "success": True,
+        }
+
+        # Step 1: Pull
+        pull_result = api_deploy_pull()
+        results["pull"] = pull_result
+        if not pull_result.get("success"):
+            results["success"] = False
+            return results
+
+        # Step 2: Restart services
+        if restart_services:
+            manager = ServiceManager()
+            stop_results = manager.stop_all()
+            time.sleep(2)
+            start_results = manager.start_all()
+            results["restart"] = {
+                "stopped": stop_results,
+                "started": start_results,
+            }
+
+        # Step 3: Sync Nginx (optional)
+        if sync_nginx:
+            try:
+                nginx_conf = ROOT / "deploy" / "marketswarm-https.conf"
+                if nginx_conf.exists():
+                    # SCP to nginx host
+                    scp = subprocess.run(
+                        ["scp", str(nginx_conf), f"{nginx_host}:/tmp/marketswarm-https.conf"],
+                        capture_output=True, text=True
+                    )
+                    if scp.returncode == 0:
+                        # SSH to test and reload
+                        ssh = subprocess.run(
+                            ["ssh", nginx_host,
+                             "sudo cp /tmp/marketswarm-https.conf /etc/nginx/sites-available/marketswarm.conf && "
+                             "sudo nginx -t && sudo systemctl reload nginx"],
+                            capture_output=True, text=True
+                        )
+                        results["nginx"] = {
+                            "success": ssh.returncode == 0,
+                            "output": ssh.stdout,
+                            "error": ssh.stderr if ssh.returncode != 0 else None,
+                        }
+                    else:
+                        results["nginx"] = {"success": False, "error": scp.stderr}
+                else:
+                    results["nginx"] = {"success": False, "error": "Nginx config not found"}
+            except Exception as e:
+                results["nginx"] = {"success": False, "error": str(e)}
+
+        return results
+
+    @app.get("/api/deploy/changelog")
+    def api_deploy_changelog(count: int = 20):
+        """Get recent git commits."""
+        import subprocess
+
+        try:
+            log = subprocess.run(
+                ["git", "log", f"-{count}", "--oneline", "--decorate"],
+                cwd=ROOT, capture_output=True, text=True
+            )
+            if log.returncode == 0:
+                commits = []
+                for line in log.stdout.strip().split("\n"):
+                    if line:
+                        parts = line.split(" ", 1)
+                        commits.append({
+                            "hash": parts[0],
+                            "message": parts[1] if len(parts) > 1 else "",
+                        })
+                return {"success": True, "commits": commits}
+            else:
+                return {"success": False, "error": log.stderr}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     @app.get("/api/analytics")
     def api_analytics():
         """Get analytics from all instrumented services."""

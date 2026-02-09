@@ -232,6 +232,67 @@
             </div>
         </div>
 
+        <!-- Deploy Section -->
+        <div class="deploy-section">
+            <div class="panel-header">
+                <h2>Deployment</h2>
+                <div class="panel-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="refreshDeployStatus()">Refresh</button>
+                </div>
+            </div>
+
+            <div class="deploy-status-bar">
+                <div id="deploy-status" class="deploy-status">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Loading...</span>
+                </div>
+                <div id="deploy-commit" class="deploy-commit"></div>
+            </div>
+
+            <div class="deploy-grid">
+                <!-- Git Status -->
+                <div class="deploy-card">
+                    <h4>Git Status</h4>
+                    <div id="deploy-git-status" class="deploy-git-status">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Actions -->
+                <div class="deploy-card">
+                    <h4>Actions</h4>
+                    <div class="deploy-actions">
+                        <button id="deploy-pull-btn" class="btn btn-primary" onclick="deployPull()">
+                            Pull Latest
+                        </button>
+                        <button id="deploy-restart-btn" class="btn btn-warning" onclick="deployRestartAll()">
+                            Restart All Services
+                        </button>
+                        <button id="deploy-full-btn" class="btn btn-success" onclick="deployFull()">
+                            Full Deploy
+                        </button>
+                        <label class="deploy-option">
+                            <input type="checkbox" id="deploy-sync-nginx"> Sync Nginx to MiniThree
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Recent Commits -->
+                <div class="deploy-card wide">
+                    <h4>Recent Commits</h4>
+                    <div id="deploy-changelog" class="deploy-changelog">
+                        <div class="loading">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Deploy Log -->
+            <div id="deploy-log-container" class="deploy-log-container hidden">
+                <h4>Deploy Log</h4>
+                <pre id="deploy-log" class="deploy-log"></pre>
+            </div>
+        </div>
+
         <footer>
             <span id="last-update">Last update: never</span>
             <span id="repo-path" title="Node repository path">Repo: discovering...</span>

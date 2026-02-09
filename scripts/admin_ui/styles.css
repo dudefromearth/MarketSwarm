@@ -1905,3 +1905,189 @@ footer {
     background: rgba(239, 68, 68, 0.2);
     color: #ef4444;
 }
+
+/* ============================================================
+   Deploy Section
+   ============================================================ */
+
+.deploy-section {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 16px;
+}
+
+.deploy-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    margin-bottom: 16px;
+    padding: 10px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+
+.deploy-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.deploy-commit {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.deploy-commit code {
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+}
+
+.deploy-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.deploy-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+}
+
+.deploy-card.wide {
+    grid-column: span 2;
+}
+
+.deploy-card h4 {
+    margin: 0 0 12px 0;
+    font-size: 13px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.deploy-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.deploy-actions .btn {
+    width: 100%;
+    justify-content: center;
+}
+
+.deploy-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 8px 0;
+}
+
+.deploy-option input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+}
+
+.git-info {
+    font-size: 13px;
+}
+
+.git-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.git-row:last-child {
+    border-bottom: none;
+}
+
+.git-label {
+    color: var(--text-muted);
+}
+
+.git-row .warning {
+    color: var(--warning);
+}
+
+.changelog-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.changelog-item {
+    display: flex;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 12px;
+}
+
+.changelog-item:last-child {
+    border-bottom: none;
+}
+
+.commit-hash {
+    background: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 11px;
+    color: var(--primary);
+    flex-shrink: 0;
+}
+
+.commit-message {
+    color: var(--text-secondary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.deploy-log-container {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px;
+    margin-top: 16px;
+}
+
+.deploy-log-container h4 {
+    margin: 0 0 10px 0;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+.deploy-log {
+    background: #0d1117;
+    color: #c9d1d9;
+    padding: 12px;
+    border-radius: 4px;
+    font-family: monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    max-height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.btn-warning {
+    background: var(--warning);
+    color: #000;
+}
+
+.btn-warning:hover {
+    background: #eab308;
+}

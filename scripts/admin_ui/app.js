@@ -1692,3 +1692,263 @@ async function toggleML() {
         console.error('Toggle ML error:', err);
     }
 }
+
+// ============================================================
+// Deployment
+// ============================================================
+
+let deployStatus = null;
+
+async function refreshDeployStatus() {
+    try {
+        const [status, changelog] = await Promise.all([
+            fetch(`${API_BASE}/api/deploy/status`).then(r => r.json()),
+            fetch(`${API_BASE}/api/deploy/changelog?count=10`).then(r => r.json()),
+        ]);
+
+        deployStatus = status;
+        renderDeployStatus(status);
+        renderDeployChangelog(changelog);
+    } catch (err) {
+        console.error('Deploy status error:', err);
+        const statusEl = document.getElementById('deploy-status');
+        if (statusEl) {
+            statusEl.innerHTML = '<span class="status-dot error"></span><span class="status-text">Error loading status</span>';
+        }
+    }
+}
+
+function renderDeployStatus(status) {
+    const statusEl = document.getElementById('deploy-status');
+    const commitEl = document.getElementById('deploy-commit');
+    const gitStatusEl = document.getElementById('deploy-git-status');
+
+    if (!statusEl) return;
+
+    if (status.error) {
+        statusEl.innerHTML = `<span class="status-dot error"></span><span class="status-text">Error: ${status.error}</span>`;
+        return;
+    }
+
+    // Status indicator
+    let statusClass = 'ok';
+    let statusText = 'Up to date';
+
+    if (status.behind_remote) {
+        statusClass = 'warning';
+        statusText = `${status.commits_behind} commit(s) behind`;
+    }
+    if (status.has_changes) {
+        statusClass = 'warning';
+        statusText = 'Local changes detected';
+    }
+
+    statusEl.innerHTML = `<span class="status-dot ${statusClass}"></span><span class="status-text">${statusText}</span>`;
+
+    // Current commit
+    if (commitEl) {
+        commitEl.innerHTML = `
+            <span class="commit-info">
+                <strong>${status.current_branch || 'unknown'}</strong> @
+                <code>${status.current_commit || 'unknown'}</code>
+            </span>
+        `;
+    }
+
+    // Git status details
+    if (gitStatusEl) {
+        gitStatusEl.innerHTML = `
+            <div class="git-info">
+                <div class="git-row"><span class="git-label">Branch:</span> <span>${status.current_branch || '—'}</span></div>
+                <div class="git-row"><span class="git-label">Commit:</span> <code>${status.current_commit || '—'}</code></div>
+                <div class="git-row"><span class="git-label">Local changes:</span> <span class="${status.has_changes ? 'warning' : ''}">${status.has_changes ? 'Yes' : 'None'}</span></div>
+                <div class="git-row"><span class="git-label">Behind remote:</span> <span class="${status.behind_remote ? 'warning' : ''}">${status.behind_remote ? status.commits_behind + ' commits' : 'Up to date'}</span></div>
+            </div>
+        `;
+    }
+}
+
+function renderDeployChangelog(data) {
+    const container = document.getElementById('deploy-changelog');
+    if (!container) return;
+
+    if (!data.success || !data.commits || data.commits.length === 0) {
+        container.innerHTML = '<div class="empty">No commits found</div>';
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="changelog-list">
+            ${data.commits.map(c => `
+                <div class="changelog-item">
+                    <code class="commit-hash">${c.hash}</code>
+                    <span class="commit-message">${escapeHtml(c.message)}</span>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function showDeployLog(message, append = false) {
+    const container = document.getElementById('deploy-log-container');
+    const log = document.getElementById('deploy-log');
+
+    if (!container || !log) return;
+
+    container.classList.remove('hidden');
+
+    if (append) {
+        log.textContent += message + '\n';
+    } else {
+        log.textContent = message + '\n';
+    }
+
+    // Scroll to bottom
+    log.scrollTop = log.scrollHeight;
+}
+
+async function deployPull() {
+    const btn = document.getElementById('deploy-pull-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Pulling...';
+    }
+
+    showDeployLog('Starting git pull...');
+
+    try {
+        const response = await fetch(`${API_BASE}/api/deploy/pull`, { method: 'POST' });
+        const result = await response.json();
+
+        if (result.success) {
+            if (result.updated) {
+                showDeployLog(`Updated: ${result.before_commit} → ${result.after_commit}`, true);
+                if (result.changelog && result.changelog.length > 0) {
+                    showDeployLog('\nChanges:', true);
+                    result.changelog.forEach(c => showDeployLog('  ' + c, true));
+                }
+            } else {
+                showDeployLog('Already up to date.', true);
+            }
+        } else {
+            showDeployLog('Pull failed: ' + (result.error || 'Unknown error'), true);
+        }
+
+        await refreshDeployStatus();
+    } catch (err) {
+        showDeployLog('Error: ' + err.message, true);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Pull Latest';
+        }
+    }
+}
+
+async function deployRestartAll() {
+    const btn = document.getElementById('deploy-restart-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Restarting...';
+    }
+
+    showDeployLog('Restarting all services...');
+
+    try {
+        const response = await fetch(`${API_BASE}/api/deploy/restart-all`, { method: 'POST' });
+        const result = await response.json();
+
+        if (result.success) {
+            showDeployLog('Services restarted successfully.', true);
+            showDeployLog('\nStopped: ' + JSON.stringify(result.stopped), true);
+            showDeployLog('Started: ' + JSON.stringify(result.started), true);
+        } else {
+            showDeployLog('Restart failed: ' + (result.error || 'Unknown error'), true);
+        }
+
+        // Refresh service status
+        await fetchStatus();
+    } catch (err) {
+        showDeployLog('Error: ' + err.message, true);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Restart All Services';
+        }
+    }
+}
+
+async function deployFull() {
+    const btn = document.getElementById('deploy-full-btn');
+    const syncNginxCheckbox = document.getElementById('deploy-sync-nginx');
+    const syncNginx = syncNginxCheckbox ? syncNginxCheckbox.checked : false;
+
+    if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Deploying...';
+    }
+
+    showDeployLog('Starting full deployment...');
+    showDeployLog('Options: restart=true, nginx=' + syncNginx);
+
+    try {
+        const response = await fetch(`${API_BASE}/api/deploy/full`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                restart_services: true,
+                sync_nginx: syncNginx,
+                nginx_host: 'MiniThree',
+            }),
+        });
+        const result = await response.json();
+
+        // Pull result
+        if (result.pull) {
+            if (result.pull.updated) {
+                showDeployLog(`\n✓ Pull: ${result.pull.before_commit} → ${result.pull.after_commit}`, true);
+            } else {
+                showDeployLog('\n✓ Pull: Already up to date', true);
+            }
+        }
+
+        // Restart result
+        if (result.restart) {
+            showDeployLog('✓ Services restarted', true);
+        }
+
+        // Nginx result
+        if (result.nginx) {
+            if (result.nginx.success) {
+                showDeployLog('✓ Nginx synced and reloaded', true);
+            } else {
+                showDeployLog('✗ Nginx sync failed: ' + result.nginx.error, true);
+            }
+        }
+
+        showDeployLog('\nDeployment complete!', true);
+
+        await Promise.all([
+            refreshDeployStatus(),
+            fetchStatus(),
+        ]);
+    } catch (err) {
+        showDeployLog('Error: ' + err.message, true);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Full Deploy';
+        }
+    }
+}
+
+// Initialize deploy status after page load
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(refreshDeployStatus, 1000);
+});
