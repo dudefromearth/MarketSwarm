@@ -12,8 +12,35 @@
 import { Router } from "express";
 import { getPool, isDbAvailable } from "../db/index.js";
 import { getSystemRedis } from "../redis.js";
+import { getUserProfile, upsertUserFromWpToken } from "../db/userStore.js";
 
 const router = Router();
+
+// Resolve WordPress user ID → internal DB user ID for all position routes.
+// Auto-creates the user record for early customers who pre-date the users table.
+router.use(async (req, res, next) => {
+  const wp = req.user?.wp;
+  if (!wp?.issuer || !wp?.id) return next();
+
+  try {
+    let profile = await getUserProfile(wp.issuer, wp.id);
+    if (!profile) {
+      profile = await upsertUserFromWpToken({
+        iss: wp.issuer,
+        sub: wp.id,
+        email: wp.email || "",
+        name: wp.name || "",
+        roles: wp.roles || [],
+      });
+    }
+    if (profile?.id) {
+      req.dbUserId = profile.id;
+    }
+  } catch (e) {
+    console.error("[positions] Failed to resolve user ID:", e.message);
+  }
+  next();
+});
 
 // Redis pub/sub channel for position updates
 const POSITIONS_PUBSUB_CHANNEL = "positions:updates";
@@ -116,7 +143,7 @@ router.get("/", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });
@@ -180,7 +207,7 @@ router.get("/:id", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
     const positionId = parseInt(req.params.id);
 
     if (!userId) {
@@ -242,7 +269,7 @@ router.post("/", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });
@@ -362,7 +389,7 @@ router.patch("/:id", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
     const positionId = parseInt(req.params.id);
     const expectedVersion = req.headers["if-match"]
       ? parseInt(req.headers["if-match"])
@@ -494,7 +521,7 @@ router.delete("/:id", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
     const positionId = parseInt(req.params.id);
 
     if (!userId) {
@@ -546,7 +573,7 @@ router.post("/batch", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });
@@ -668,7 +695,7 @@ router.patch("/reorder", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });

@@ -13,8 +13,34 @@
 import { Router } from "express";
 import { getPool, isDbAvailable } from "../db/index.js";
 import { v4 as uuidv4 } from "uuid";
+import { getUserProfile, upsertUserFromWpToken } from "../db/userStore.js";
 
 const router = Router();
+
+// Resolve WordPress user ID → internal DB user ID for all import routes.
+router.use(async (req, res, next) => {
+  const wp = req.user?.wp;
+  if (!wp?.issuer || !wp?.id) return next();
+
+  try {
+    let profile = await getUserProfile(wp.issuer, wp.id);
+    if (!profile) {
+      profile = await upsertUserFromWpToken({
+        iss: wp.issuer,
+        sub: wp.id,
+        email: wp.email || "",
+        name: wp.name || "",
+        roles: wp.roles || [],
+      });
+    }
+    if (profile?.id) {
+      req.dbUserId = profile.id;
+    }
+  } catch (e) {
+    console.error("[imports] Failed to resolve user ID:", e.message);
+  }
+  next();
+});
 
 /**
  * Transform database row to API response format
@@ -64,7 +90,7 @@ router.get("/", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });
@@ -116,7 +142,7 @@ router.get("/:id", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
     const batchId = req.params.id;
 
     if (!userId) {
@@ -161,7 +187,7 @@ router.post("/", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });
@@ -215,7 +241,7 @@ router.patch("/:id/counts", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
     const batchId = req.params.id;
 
     if (!userId) {
@@ -267,7 +293,7 @@ router.post("/:id/revert", async (req, res) => {
   const conn = await pool.getConnection();
 
   try {
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
     const batchId = req.params.id;
 
     if (!userId) {
@@ -351,7 +377,7 @@ router.get("/:id/trades", async (req, res) => {
 
   try {
     const pool = getPool();
-    const userId = req.user?.wp?.id;
+    const userId = req.dbUserId;
     const batchId = req.params.id;
 
     if (!userId) {
