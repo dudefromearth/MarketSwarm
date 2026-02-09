@@ -45,6 +45,7 @@ import { useSyncStatus } from './contexts/ApiClientContext';
 import { positionsToStrategies, riskGraphStrategyToPosition } from './utils/positionBridge';
 import { recognizePositionType, strategyToLegs } from './utils/positionRecognition';
 import SyncStatusIndicator from './components/SyncStatusIndicator';
+import VersionIndicator from './components/VersionIndicator';
 import NotificationCenter from './components/NotificationCenter';
 import type { AlertType, AlertBehavior } from './types/alerts';
 import RoutineDrawer from './components/RoutineDrawer';
@@ -2613,6 +2614,7 @@ function App() {
           <NotificationCenter />
           <AlertHeaderIcon onClick={() => setAlertManagerOpen(true)} />
           <SyncStatusIndicator />
+          <VersionIndicator />
         </div>
         <div className="header-center">
           <div className="underlying-selector">

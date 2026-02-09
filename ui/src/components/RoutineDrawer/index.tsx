@@ -21,6 +21,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import './RoutineDrawer.css';
+import WhatsNew from '../WhatsNew';
 
 import VexyRoutinePanel from './VexyRoutinePanel';
 import PersonalReadiness from './PersonalReadiness';
@@ -90,6 +91,7 @@ export default function RoutineDrawer({ isOpen, onClose, marketContext }: Routin
           <div className="routine-title">
             <span className="routine-title-icon">🌅</span>
             <span>Routine</span>
+            <WhatsNew area="routine" />
           </div>
           <button
             className="routine-close-btn"

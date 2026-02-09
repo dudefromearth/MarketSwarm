@@ -5,6 +5,7 @@ import { useAuth } from '../AuthWrapper';
 import JournalCalendar from './JournalCalendar';
 import JournalEntryEditor from './JournalEntryEditor';
 import type { TradeReflectionContext } from './TradeLogPanel';
+import WhatsNew from './WhatsNew';
 import '../styles/journal.css';
 
 interface JournalViewProps {
@@ -219,6 +220,7 @@ export default function JournalView({ onClose, onOpenPlaybook, tradeContext }: J
           </button>
         </div>
         <div className="journal-header-actions">
+          <WhatsNew area="journal" />
           {onOpenPlaybook && (
             <button
               className={`btn-playbook-link ${!isAdmin ? 'disabled' : ''}`}

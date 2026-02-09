@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+import WhatsNew from './WhatsNew';
 import {
   createChart,
   ColorType,
@@ -655,6 +656,7 @@ export default function GexChartPanel({
       <div className="gex-chart-header">
         <h3>Dealer Gravity</h3>
         <div className="gex-chart-header-controls">
+          <WhatsNew area="dealer-gravity" />
           <div className="gex-chart-tf-selector">
             {(['5m', '10m', '15m'] as Timeframe[]).map((tf) => (
               <button

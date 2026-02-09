@@ -1,0 +1,66 @@
+{
+  "versions": [
+    {
+      "version": "0.9.4",
+      "date": "2026-02-09",
+      "entries": [
+        {
+          "id": "094-1",
+          "area": "risk-graph",
+          "title": "Dealer Gravity backdrop controls",
+          "description": "Toggle Volume Profile, GEX, and structural lines from the Risk Graph header.",
+          "type": "feature"
+        },
+        {
+          "id": "094-2",
+          "area": "risk-graph",
+          "title": "Volume profile crash fix",
+          "description": "Fixed a crash when volume profile bins data was undefined.",
+          "type": "fix"
+        },
+        {
+          "id": "094-3",
+          "area": "risk-graph",
+          "title": "Positions no longer disappear",
+          "description": "Fixed Risk Graph positions vanishing due to broken optimistic updates.",
+          "type": "fix"
+        },
+        {
+          "id": "094-4",
+          "area": "dealer-gravity",
+          "title": "VP Editor restricted to admins",
+          "description": "Volume Profile Editor is now admin-only, with a link from the Admin panel.",
+          "type": "change"
+        },
+        {
+          "id": "094-5",
+          "area": "general",
+          "title": "HTTP/2 and SSE reliability",
+          "description": "Enabled HTTP/2 for all connections and fixed Risk Graph SSE disconnect fallback.",
+          "type": "fix"
+        },
+        {
+          "id": "094-6",
+          "area": "routine",
+          "title": "Routine drawer improvements",
+          "description": "Routine panel now loads faster with improved state management.",
+          "type": "enhancement"
+        },
+        {
+          "id": "094-7",
+          "area": "journal",
+          "title": "Journal view enhancements",
+          "description": "Improved journal entry editor with better trade reflection context.",
+          "type": "enhancement"
+        },
+        {
+          "id": "094-8",
+          "area": "process",
+          "title": "Process bar stability",
+          "description": "Process bar state now persists correctly across page refreshes.",
+          "type": "fix"
+        }
+      ]
+    }
+  ]
+}
