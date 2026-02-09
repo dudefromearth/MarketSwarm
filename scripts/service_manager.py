@@ -449,7 +449,12 @@ class ServiceManager:
         # Build environment
         env = os.environ.copy()
         env.update(COMMON_ENV)
-        env.update(config.env)
+        # Skip ${VAR} template references — let setup_base resolve them
+        # from Redis truth instead of injecting unresolved literals
+        for k, v in config.env.items():
+            if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+                continue
+            env[k] = v
         env["SERVICE_ID"] = name
         if extra_env:
             env.update(extra_env)
