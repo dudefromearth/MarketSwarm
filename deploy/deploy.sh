@@ -20,6 +20,8 @@ MARKETSWARM_DIR="${MARKETSWARM_DIR:-/Users/ernie/MarketSwarm}"
 NGINX_HOST="${NGINX_HOST:-MiniThree}"
 NGINX_CONF_PATH="${NGINX_CONF_PATH:-/etc/nginx/sites-available/marketswarm.conf}"
 LOG_FILE="${MARKETSWARM_DIR}/deploy/deploy.log"
+NODE_ADMIN_PORT="${NODE_ADMIN_PORT:-8099}"
+NODE_ADMIN_URL="http://localhost:${NODE_ADMIN_PORT}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -169,18 +171,57 @@ REMOTE_SCRIPT
 }
 
 restart_services() {
-    header "Restarting Services"
+    header "Restarting Services via Node Admin"
 
-    cd "$MARKETSWARM_DIR"
+    # Check if Node Admin is running
+    if ! curl -s "${NODE_ADMIN_URL}/api/health" > /dev/null 2>&1; then
+        warn "Node Admin not responding on port ${NODE_ADMIN_PORT}"
+        warn "Start it with: python scripts/service_manager.py"
+        warn "Falling back to direct restart..."
+        restart_services_direct
+        return
+    fi
+
+    log "Using Node Admin API at ${NODE_ADMIN_URL}"
 
     for service in "${SERVICES[@]}"; do
         log "Restarting $service..."
 
-        # Check if service has a .pids file (running)
+        # Stop service
+        local stop_result=$(curl -s -X POST "${NODE_ADMIN_URL}/api/services/${service}/stop" 2>/dev/null)
+
+        # Wait a moment
+        sleep 2
+
+        # Start service
+        local start_result=$(curl -s -X POST "${NODE_ADMIN_URL}/api/services/${service}/start" \
+            -H "Content-Type: application/json" \
+            -d '{}' 2>/dev/null)
+
+        if echo "$start_result" | grep -q '"success":\s*true\|"running":\s*true'; then
+            success "$service restarted"
+        else
+            warn "$service may have issues: $start_result"
+        fi
+
+        sleep 1
+    done
+
+    echo ""
+    log "Waiting for services to initialize..."
+    sleep 5
+}
+
+restart_services_direct() {
+    # Fallback: direct process management (when Node Admin is not running)
+    cd "$MARKETSWARM_DIR"
+
+    for service in "${SERVICES[@]}"; do
+        log "Restarting $service (direct)..."
+
         local pid_file=".pids/${service}.started"
 
         if [[ -f "$pid_file" ]]; then
-            # Try to stop gracefully
             local pid=$(cat "$pid_file" 2>/dev/null | head -1)
             if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
                 kill "$pid" 2>/dev/null || true
@@ -188,7 +229,6 @@ restart_services() {
             fi
         fi
 
-        # Start service in background
         case "$service" in
             journal)
                 nohup python services/journal/main.py >> logs/journal.log 2>&1 &
@@ -202,40 +242,55 @@ restart_services() {
             copilot)
                 nohup python services/copilot/main.py >> logs/copilot.log 2>&1 &
                 ;;
-            *)
-                warn "Unknown service: $service"
-                continue
-                ;;
         esac
 
         sleep 1
         success "$service started"
     done
 
-    echo ""
-    log "Waiting for services to initialize..."
     sleep 5
 }
 
 check_status() {
     header "Service Status"
 
-    cd "$MARKETSWARM_DIR"
+    # Try Node Admin first
+    if curl -s "${NODE_ADMIN_URL}/api/health" > /dev/null 2>&1; then
+        log "Querying Node Admin at ${NODE_ADMIN_URL}"
+        echo ""
 
-    for service in "${SERVICES[@]}"; do
-        local pid_file=".pids/${service}.started"
+        # Get all services status
+        local services_json=$(curl -s "${NODE_ADMIN_URL}/api/services" 2>/dev/null)
 
-        if [[ -f "$pid_file" ]]; then
-            local pid=$(cat "$pid_file" 2>/dev/null | head -1)
-            if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-                success "$service (PID: $pid)"
+        for service in "${SERVICES[@]}"; do
+            local status=$(echo "$services_json" | grep -o "\"${service}\"[^}]*" | head -1)
+            if echo "$status" | grep -q '"running":\s*true'; then
+                local port=$(echo "$status" | grep -o '"port":[0-9]*' | grep -o '[0-9]*')
+                success "$service (running${port:+, port $port})"
             else
-                warn "$service (stale PID file)"
+                warn "$service (not running)"
             fi
-        else
-            warn "$service (not running)"
-        fi
-    done
+        done
+    else
+        # Fallback to PID files
+        warn "Node Admin not available, checking PID files..."
+        cd "$MARKETSWARM_DIR"
+
+        for service in "${SERVICES[@]}"; do
+            local pid_file=".pids/${service}.started"
+
+            if [[ -f "$pid_file" ]]; then
+                local pid=$(cat "$pid_file" 2>/dev/null | head -1)
+                if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+                    success "$service (PID: $pid)"
+                else
+                    warn "$service (stale PID file)"
+                fi
+            else
+                warn "$service (not running)"
+            fi
+        done
+    fi
 
     # Check Nginx on remote
     echo ""
