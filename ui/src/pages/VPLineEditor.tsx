@@ -13,6 +13,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useAuth } from '../AuthWrapper';
 
 interface VPData {
   bins: number[];
@@ -54,6 +55,29 @@ const TICKERS = [
 ];
 
 export default function VPLineEditor() {
+  const { isAdmin, isLoading: authLoading } = useAuth();
+
+  if (authLoading) {
+    return (
+      <div style={{ padding: 40, color: '#e2e8f0', background: '#0a0a12', minHeight: '100vh', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+        Loading...
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div style={{ padding: 40, color: '#e2e8f0', background: '#0a0a12', minHeight: '100vh', fontFamily: 'system-ui, -apple-system, sans-serif' }}>
+        <h2 style={{ color: '#ef4444' }}>Access Denied</h2>
+        <p>VP Line Editor is restricted to administrators.</p>
+      </div>
+    );
+  }
+
+  return <VPLineEditorInner />;
+}
+
+function VPLineEditorInner() {
   // Ticker selection
   const [selectedTicker, setSelectedTicker] = useState('SPX');
 

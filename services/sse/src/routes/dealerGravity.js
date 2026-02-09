@@ -21,6 +21,7 @@
 import { Router } from "express";
 import { getSystemRedis, getMarketRedis } from "../redis.js";
 import { getPool, isDbAvailable } from "../db/index.js";
+import { requireAdmin } from "./admin.js";
 
 const router = Router();
 
@@ -389,7 +390,7 @@ router.get("/context", async (req, res) => {
  *   symbol?: string
  * }
  */
-router.post("/structures", async (req, res) => {
+router.post("/structures", requireAdmin, async (req, res) => {
   try {
     const redis = getSystemRedis();
     const { volume_nodes, volume_wells, symbol } = req.body;
@@ -458,7 +459,7 @@ router.post("/structures", async (req, res) => {
  * Read the full volume profile from local system-redis and forward it
  * to the production Node Admin for deployment.
  */
-router.post("/deploy", async (req, res) => {
+router.post("/deploy", requireAdmin, async (req, res) => {
   try {
     const redis = getSystemRedis();
 
