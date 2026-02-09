@@ -28,6 +28,7 @@ from .ingestor import ingest_feeds
 FEEDS_JSON_PATH = Path(__file__).parent.parent / "schema" / "feeds.json"
 from .canonical_fetcher import canonical_fetcher_run_once
 from .article_enricher import enrich_articles_lifo
+from .tier3_enricher import init_from_config as init_enricher
 from .publisher import generate_all_feeds
 from .stats import generate_stats
 
@@ -154,6 +155,9 @@ def _debug_ledger_state(r: redis.Redis) -> None:
 # Synchronous pipeline core (runs in a thread)
 # -------------------------------------------------------------------
 def _run_pipeline_forever(config: Dict[str, Any]) -> None:
+    # Initialize tier3 enricher with config (API keys from Truth)
+    init_enricher(config)
+
     # Get workflow config
     workflow = config.get("workflow", {})
     publish_dir = workflow.get("publish_dir")

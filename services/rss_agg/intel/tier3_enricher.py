@@ -23,15 +23,28 @@ from openai import OpenAI
 # LLM Client (lazy initialization)
 # ------------------------------------------------------------
 _client = None
+_config = {}
+
+
+def init_from_config(config):
+    """Store config for later client initialization."""
+    global _config
+    _config = config
 
 
 def get_client():
     """Get OpenAI client, initializing lazily on first use."""
     global _client
     if _client is None:
-        api_key = os.getenv("OPENAI_API_KEY")
+        env = _config.get("env", {}) or {}
+        api_key = (
+            _config.get("OPENAI_API_KEY") or
+            env.get("OPENAI_API_KEY") or
+            os.getenv("OPENAI_API_KEY") or
+            ""
+        )
         if not api_key:
-            raise RuntimeError("OPENAI_API_KEY environment variable not set")
+            raise RuntimeError("OPENAI_API_KEY not found in config or environment")
         _client = OpenAI(api_key=api_key)
     return _client
 
@@ -130,7 +143,8 @@ def fallback_metadata(raw_text: str, title: str, fallback_image: str = "") -> di
 # MAIN CALL — never crashes
 # ------------------------------------------------------------
 def generate_tier3_metadata(raw_text: str, title: str, fallback_image: str = "") -> dict:
-    LLM_MODE = os.getenv("LLM_MODE", "online").lower()
+    env = _config.get("env", {}) or {}
+    LLM_MODE = (_config.get("LLM_MODE") or env.get("LLM_MODE") or os.getenv("LLM_MODE", "online")).lower()
 
     if LLM_MODE == "offline":
         log("info", "OFF", "LLM_MODE=offline → using static fallback")
@@ -139,8 +153,9 @@ def generate_tier3_metadata(raw_text: str, title: str, fallback_image: str = "")
     try:
         content = f"TITLE:\n{title}\n\nMARKDOWN ARTICLE CONTENT:\n{raw_text}\n\nFALLBACK IMAGE:\n{fallback_image}"
 
+        model = _config.get("ENRICHMENT_MODEL") or env.get("ENRICHMENT_MODEL") or os.getenv("ENRICHMENT_MODEL", "gpt-4o")
         response = get_client().chat.completions.create(
-            model=os.getenv("ENRICHMENT_MODEL", "gpt-4o"),
+            model=model,
             messages=[
                 {"role": "system", "content": TIER3_PROMPT},
                 {"role": "user",   "content": content}
@@ -169,7 +184,7 @@ def generate_tier3_metadata(raw_text: str, title: str, fallback_image: str = "")
         # Add provenance (success path)
         data["generated_ts"] = time.time()
         data["enrichment_source"] = "llm-success"
-        data["enrichment_model"] = os.getenv("ENRICHMENT_MODEL", "gpt-4o")
+        data["enrichment_model"] = model
         data["enriched_at"] = datetime.utcnow().isoformat() + "Z"
 
         log("info", "SUCCESS", "LLM enrichment succeeded")
