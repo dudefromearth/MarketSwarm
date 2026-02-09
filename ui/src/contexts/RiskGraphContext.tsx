@@ -171,7 +171,7 @@ export function RiskGraphProvider({ children }: RiskGraphProviderProps) {
     // Set up SSE subscription
     sseRef.current = riskGraphService.subscribeToRiskGraphStream(
       handleSSEEvent,
-      () => setConnected(true),
+      () => { setConnected(true); fetchStrategies(); },
       () => setConnected(false)
     );
 
@@ -186,6 +186,17 @@ export function RiskGraphProvider({ children }: RiskGraphProviderProps) {
       saveLocalStrategies(localStrategies);
     }
   }, [localStrategies]);
+
+  // Keep localStrategies synced from server as a hot fallback.
+  // Without this, SSE disconnect causes strategies memo to return
+  // stale/empty localStrategies (cleared after migration).
+  useEffect(() => {
+    if (USE_SERVER_RISK_GRAPH && connected) {
+      const legacy = serverStrategies.map(toLegacyStrategy);
+      setLocalStrategies(legacy);
+      saveLocalStrategies(legacy);
+    }
+  }, [serverStrategies, connected]);
 
   // Operations
 
