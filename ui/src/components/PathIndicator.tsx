@@ -23,6 +23,11 @@ import VexyChat from './VexyChat';
 import { getTierFromRoles, type UserTier } from '../contexts/VexyChatContext';
 import { useVexyContext, type VexyMarketContext } from '../hooks/useVexyContext';
 
+interface UserProfile {
+  display_name?: string;
+  is_admin?: boolean;
+}
+
 interface PathIndicatorProps {
   marketContext?: VexyMarketContext;
   positions?: any[];
@@ -30,6 +35,7 @@ interface PathIndicatorProps {
   openTrades?: any[];
   closedTrades?: any[];
   riskStrategies?: any[];
+  userProfile?: UserProfile | null;
 }
 
 export default function PathIndicator({
@@ -39,6 +45,7 @@ export default function PathIndicator({
   openTrades,
   closedTrades,
   riskStrategies,
+  userProfile,
 }: PathIndicatorProps) {
   const {
     indicatorVisible,
@@ -164,6 +171,10 @@ export default function PathIndicator({
         onClose={handleClose}
         userTier={userTier}
         context={vexyContext}
+        userProfile={userProfile ? {
+          display_name: userProfile.display_name,
+          is_admin: userProfile.is_admin || isAdmin,
+        } : undefined}
       />
     </>
   );

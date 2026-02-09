@@ -77,11 +77,16 @@ PLAYBOOKS: List[Playbook] = [
         keywords=["convexity", "asymmetric", "payoff", "hunting", "optionality"],
     ),
     Playbook(
-        name="0DTE Tactical",
+        name="Tactical 0DTE",
         scope="Strategy",
-        description="Same-day expiration structure and risk framing",
+        description="Complete object-first framework for Zero DTE execution with volatility-adjusted structure selection, sovereign sizing, and trade management",
         min_tier="navigator",
-        keywords=["0dte", "zero dte", "same day", "expiration", "intraday"],
+        keywords=[
+            "0dte", "zero dte", "same day", "expiration", "intraday",
+            "butterfly", "otm fly", "vix width", "sovereign risk unit", "sru",
+            "batman", "time warp", "big-ass fly", "gamma scalp",
+            "trailing stop", "tent", "debit", "width",
+        ],
     ),
     Playbook(
         name="Batman Structure",

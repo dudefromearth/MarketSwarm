@@ -19,6 +19,12 @@ interface MarketContext {
   marketMode?: string | null;
 }
 
+interface UserProfile {
+  display_name?: string;
+  user_id?: number;
+  is_admin?: boolean;
+}
+
 interface ChatResponse {
   response: string;
   agent?: string;
@@ -30,6 +36,7 @@ interface ChatResponse {
 interface UseVexyChatOptions {
   userTier?: UserTier;
   marketContext?: MarketContext;
+  userProfile?: UserProfile;
 }
 
 interface UseVexyChatReturn {
@@ -43,7 +50,7 @@ interface UseVexyChatReturn {
 }
 
 export function useVexyChat(options: UseVexyChatOptions = {}): UseVexyChatReturn {
-  const { marketContext } = options;
+  const { marketContext, userProfile } = options;
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -83,6 +90,7 @@ export function useVexyChat(options: UseVexyChatOptions = {}): UseVexyChatReturn
           context: {
             market_data: marketContext,
           },
+          user_profile: userProfile,
         }),
       });
 
@@ -117,7 +125,7 @@ export function useVexyChat(options: UseVexyChatOptions = {}): UseVexyChatReturn
       setIsLoading(false);
       abortControllerRef.current = null;
     }
-  }, [marketContext]);
+  }, [marketContext, userProfile]);
 
   const clearMessages = useCallback(() => {
     setMessages([]);

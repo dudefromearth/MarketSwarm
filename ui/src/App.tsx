@@ -3854,7 +3854,9 @@ function App() {
           lfiScore: biasLfi?.lfi_score,
         }}
         positions={positions}
+        trades={monitorTrades}
         riskStrategies={riskGraphStrategies}
+        userProfile={userProfile}
       />
 
       {/* Welcome Tour (shows once for new users) */}

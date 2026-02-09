@@ -18,11 +18,167 @@ import ChatInput from './ChatInput';
 import TierBadge, { type UserTier } from './TierBadge';
 import { type VexyFullContext, formatContextForApi } from '../../hooks/useVexyContext';
 
+interface UserProfile {
+  display_name?: string;
+  user_id?: number;
+  is_admin?: boolean;
+}
+
 interface VexyChatProps {
   isOpen: boolean;
   onClose: () => void;
   userTier?: UserTier;
   context?: VexyFullContext;
+  userProfile?: UserProfile;
+}
+
+/**
+ * Format context data for clipboard (readable by external AI chatbots)
+ */
+function formatContextForClipboard(
+  context: VexyFullContext | undefined,
+  userProfile: UserProfile | undefined
+): string {
+  const lines: string[] = [];
+  const timestamp = new Date().toLocaleString('en-US', {
+    timeZone: 'America/New_York',
+    dateStyle: 'short',
+    timeStyle: 'short',
+  });
+
+  lines.push(`# FOTW Trading Context (${timestamp} ET)`);
+  lines.push('');
+
+  // User
+  if (userProfile?.display_name) {
+    lines.push(`## Trader: ${userProfile.display_name}`);
+    lines.push('');
+  }
+
+  // Market
+  if (context?.market) {
+    const m = context.market;
+    const marketParts: string[] = [];
+
+    if (m.spxPrice) {
+      let spxStr = `SPX: ${m.spxPrice.toFixed(2)}`;
+      if (m.spxChangePercent) spxStr += ` (${m.spxChangePercent >= 0 ? '+' : ''}${m.spxChangePercent.toFixed(2)}%)`;
+      marketParts.push(spxStr);
+    }
+    if (m.vixLevel) {
+      let vixStr = `VIX: ${m.vixLevel.toFixed(1)}`;
+      if (m.vixRegime) vixStr += ` (${m.vixRegime})`;
+      marketParts.push(vixStr);
+    }
+    if (m.marketMode) {
+      marketParts.push(`Mode: ${m.marketMode}`);
+    }
+    if (m.directionalStrength !== null && m.directionalStrength !== undefined) {
+      const bias = m.directionalStrength > 0.3 ? 'Bullish' :
+                   m.directionalStrength < -0.3 ? 'Bearish' : 'Neutral';
+      marketParts.push(`Bias: ${bias}`);
+    }
+
+    if (marketParts.length > 0) {
+      lines.push('## Market Context');
+      lines.push(marketParts.join(' | '));
+      lines.push('');
+    }
+  }
+
+  // Positions
+  if (context?.positions && context.positions.length > 0) {
+    lines.push('## Open Positions');
+    for (const pos of context.positions.slice(0, 10)) {
+      let posLine = `- ${pos.type || 'Position'}`;
+      if (pos.direction) posLine += ` (${pos.direction})`;
+      if (pos.symbol) posLine += ` ${pos.symbol}`;
+      if (pos.strikes && pos.strikes.length > 0) {
+        posLine += ` @ ${pos.strikes.slice(0, 3).join('/')}`;
+      }
+      if (pos.daysToExpiry !== undefined) posLine += ` [${pos.daysToExpiry}d]`;
+      if (pos.pnl !== undefined) {
+        posLine += `: $${pos.pnl >= 0 ? '+' : ''}${pos.pnl.toFixed(0)}`;
+        if (pos.pnlPercent !== undefined) {
+          posLine += ` (${pos.pnlPercent >= 0 ? '+' : ''}${pos.pnlPercent.toFixed(1)}%)`;
+        }
+      }
+      lines.push(posLine);
+    }
+    lines.push('');
+  }
+
+  // Trading Activity
+  if (context?.trading) {
+    const t = context.trading;
+    const tradeParts: string[] = [];
+
+    if (t.openTrades) tradeParts.push(`Open: ${t.openTrades}`);
+    if (t.closedTrades) tradeParts.push(`Closed: ${t.closedTrades}`);
+    if (t.todayTrades) tradeParts.push(`Today: ${t.todayTrades}`);
+    if (t.winRate !== undefined) {
+      const wr = t.winRate <= 1 ? (t.winRate * 100).toFixed(0) : t.winRate.toFixed(0);
+      tradeParts.push(`Win Rate: ${wr}%`);
+    }
+    if (t.todayPnl !== undefined) {
+      tradeParts.push(`Today P&L: $${t.todayPnl >= 0 ? '+' : ''}${t.todayPnl.toFixed(0)}`);
+    }
+    if (t.weekPnl !== undefined) {
+      tradeParts.push(`Week P&L: $${t.weekPnl >= 0 ? '+' : ''}${t.weekPnl.toFixed(0)}`);
+    }
+
+    if (tradeParts.length > 0) {
+      lines.push('## Trading Activity');
+      lines.push(tradeParts.join(' | '));
+      lines.push('');
+    }
+  }
+
+  // Risk Graph
+  if (context?.risk && context.risk.strategiesOnGraph) {
+    const r = context.risk;
+    const riskParts: string[] = [];
+
+    riskParts.push(`Strategies: ${r.strategiesOnGraph}`);
+    if (r.totalMaxProfit !== undefined) {
+      riskParts.push(`Max Profit: $${r.totalMaxProfit >= 0 ? '+' : ''}${r.totalMaxProfit.toFixed(0)}`);
+    }
+    if (r.totalMaxLoss !== undefined) {
+      riskParts.push(`Max Loss: $${r.totalMaxLoss.toFixed(0)}`);
+    }
+    if (r.breakevenPoints && r.breakevenPoints.length > 0) {
+      riskParts.push(`Breakevens: ${r.breakevenPoints.slice(0, 3).join(', ')}`);
+    }
+
+    lines.push('## Risk Graph');
+    lines.push(riskParts.join(' | '));
+    lines.push('');
+  }
+
+  // Alerts
+  if (context?.alerts && (context.alerts.armed > 0 || context.alerts.triggered > 0)) {
+    const a = context.alerts;
+    const alertParts: string[] = [];
+
+    if (a.armed) alertParts.push(`Armed: ${a.armed}`);
+    if (a.triggered) alertParts.push(`Triggered: ${a.triggered}`);
+
+    lines.push('## Alerts');
+    lines.push(alertParts.join(' | '));
+
+    if (a.recentTriggers && a.recentTriggers.length > 0) {
+      for (const trigger of a.recentTriggers.slice(0, 3)) {
+        lines.push(`- ${trigger.type}: ${trigger.message} (${trigger.triggeredAt})`);
+      }
+    }
+    lines.push('');
+  }
+
+  // Footer
+  lines.push('---');
+  lines.push('*Context from FOTW MarketSwarm*');
+
+  return lines.join('\n');
 }
 
 // Tier configuration for client-side
@@ -69,6 +225,7 @@ export default function VexyChat({
   onClose,
   userTier = 'observer',
   context,
+  userProfile,
 }: VexyChatProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -76,6 +233,7 @@ export default function VexyChat({
   const [reflectionDial, setReflectionDial] = useState(0.6);
   const [remainingMessages, setRemainingMessages] = useState<number | undefined>(undefined);
   const [showSettings, setShowSettings] = useState(false);
+  const [copied, setCopied] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const tierConfig = TIER_CONFIG[userTier] || TIER_CONFIG.observer;
@@ -119,6 +277,7 @@ export default function VexyChat({
           message: content,
           reflection_dial: reflectionDial,
           context: context ? formatContextForApi(context) : {},
+          user_profile: userProfile,
         }),
       });
 
@@ -149,12 +308,34 @@ export default function VexyChat({
     } finally {
       setIsLoading(false);
     }
-  }, [reflectionDial, context]);
+  }, [reflectionDial, context, userProfile]);
 
   const clearHistory = useCallback(() => {
     setMessages([]);
     setShowSettings(false);
   }, []);
+
+  const copyContext = useCallback(async () => {
+    const contextText = formatContextForClipboard(context, userProfile);
+    try {
+      await navigator.clipboard.writeText(contextText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      // Fallback for older browsers or restricted contexts
+      const textarea = document.createElement('textarea');
+      textarea.value = contextText;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+    setShowSettings(false);
+  }, [context, userProfile]);
 
   const handleReflectionDialChange = useCallback((value: number) => {
     // Clamp to tier's max
@@ -209,6 +390,10 @@ export default function VexyChat({
         {/* Settings dropdown */}
         {showSettings && (
           <div className="vexy-settings-menu" onClick={(e) => e.stopPropagation()}>
+            <button className="vexy-settings-item" onClick={copyContext}>
+              <span className="vexy-settings-item-icon">{copied ? '✓' : '📋'}</span>
+              {copied ? 'Copied!' : 'Copy context'}
+            </button>
             <button className="vexy-settings-item" onClick={clearHistory}>
               <span className="vexy-settings-item-icon">🗑️</span>
               Clear history
