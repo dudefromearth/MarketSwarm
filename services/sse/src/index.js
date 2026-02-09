@@ -74,7 +74,7 @@ app.use("/api/imports", importsRoutes);
 // Proxy journal endpoints to journal service (port 3002)
 // This handles /api/logs/*, /api/trades/*, /api/playbooks/*, /api/journals/*
 const JOURNAL_SERVICE = "http://localhost:3002";
-const journalPaths = ["/api/logs", "/api/trades", "/api/playbooks", "/api/journals", "/api/leaderboard", "/api/orders", "/api/alerts", "/api/symbols", "/api/tags", "/api/settings", "/api/journal", "/api/playbook", "/api/risk-graph", "/api/journal_entries"];
+const journalPaths = ["/api/logs", "/api/trades", "/api/playbooks", "/api/journals", "/api/leaderboard", "/api/orders", "/api/alerts", "/api/symbols", "/api/tags", "/api/settings", "/api/journal", "/api/playbook", "/api/risk-graph", "/api/journal_entries", "/api/users", "/api/analytics", "/api/prompt-alerts", "/api/internal"];
 
 journalPaths.forEach(path => {
   app.use(path, async (req, res) => {

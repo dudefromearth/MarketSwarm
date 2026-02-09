@@ -1148,14 +1148,94 @@ def create_web_app():
             "started": start_results,
         }
 
+    # SSH options for reliable MiniThree connections
+    SSH_OPTS = ["-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]
+
+    def _sync_nginx(nginx_host: str = "MiniThree") -> dict:
+        """Copy Nginx config to remote host, test, and reload."""
+        import subprocess
+
+        nginx_conf = ROOT / "deploy" / "marketswarm-https.conf"
+        if not nginx_conf.exists():
+            return {"success": False, "error": "Nginx config not found"}
+
+        try:
+            # SCP config to remote host
+            scp = subprocess.run(
+                ["scp"] + SSH_OPTS + [str(nginx_conf), f"{nginx_host}:/tmp/marketswarm-https.conf"],
+                capture_output=True, text=True, timeout=30
+            )
+            if scp.returncode != 0:
+                return {"success": False, "error": f"SCP failed: {scp.stderr}"}
+
+            # SSH: copy to sites-available, test config, reload
+            ssh = subprocess.run(
+                ["ssh"] + SSH_OPTS + [nginx_host,
+                 "sudo cp /tmp/marketswarm-https.conf /etc/nginx/sites-available/marketswarm.conf && "
+                 "sudo nginx -t && sudo systemctl reload nginx"],
+                capture_output=True, text=True, timeout=30
+            )
+            return {
+                "success": ssh.returncode == 0,
+                "output": ssh.stdout,
+                "error": ssh.stderr if ssh.returncode != 0 else None,
+            }
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "SSH/SCP timed out (30s)"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def _check_service_health() -> dict:
+        """Hit health/status endpoints on each service to verify they're responding."""
+        import requests
+
+        health_endpoints = {
+            "sse_gateway": "http://127.0.0.1:3001/api/health",
+            "journal": "http://127.0.0.1:3002/api/health",
+            "vexy_ai": "http://127.0.0.1:3005/api/vexy/health",
+            "copilot": "http://127.0.0.1:8095/health",
+        }
+
+        results = {}
+        for name, url in health_endpoints.items():
+            try:
+                resp = requests.get(url, timeout=5)
+                results[name] = {
+                    "healthy": resp.ok,
+                    "status_code": resp.status_code,
+                    "url": url,
+                }
+            except requests.exceptions.ConnectionError:
+                results[name] = {"healthy": False, "error": "Connection refused", "url": url}
+            except requests.exceptions.Timeout:
+                results[name] = {"healthy": False, "error": "Timeout", "url": url}
+            except Exception as e:
+                results[name] = {"healthy": False, "error": str(e), "url": url}
+
+        results["all_healthy"] = all(r.get("healthy", False) for r in results.values())
+        return results
+
+    @app.get("/api/deploy/health")
+    def api_deploy_health():
+        """Check health of all production services."""
+        return _check_service_health()
+
+    @app.post("/api/deploy/nginx")
+    def api_deploy_nginx(body: dict = None):
+        """Sync Nginx config to production (MiniThree)."""
+        options = body or {}
+        nginx_host = options.get("nginx_host", "MiniThree")
+        return _sync_nginx(nginx_host)
+
     @app.post("/api/deploy/full")
     def api_deploy_full(body: dict = None):
         """
-        Full deployment: pull code, restart services.
+        Full deployment: pull code, restart services, sync nginx, health check.
 
         Options in body:
         - restart_services: bool (default True)
-        - sync_nginx: bool (default False)
+        - sync_nginx: bool (default True)
+        - health_check: bool (default True)
         - nginx_host: str (default "MiniThree")
         """
         import subprocess
@@ -1163,25 +1243,33 @@ def create_web_app():
 
         options = body or {}
         restart_services = options.get("restart_services", True)
-        sync_nginx = options.get("sync_nginx", False)
+        sync_nginx = options.get("sync_nginx", True)
+        health_check = options.get("health_check", True)
         nginx_host = options.get("nginx_host", "MiniThree")
 
+        steps = []
         results = {
             "pull": None,
             "restart": None,
             "nginx": None,
+            "health": None,
             "success": True,
+            "steps": steps,
         }
 
         # Step 1: Pull
+        steps.append({"step": "pull", "status": "running"})
         pull_result = api_deploy_pull()
         results["pull"] = pull_result
         if not pull_result.get("success"):
+            steps[-1]["status"] = "failed"
             results["success"] = False
             return results
+        steps[-1]["status"] = "done"
 
         # Step 2: Restart services
         if restart_services:
+            steps.append({"step": "restart", "status": "running"})
             manager = ServiceManager()
             stop_results = manager.stop_all()
             time.sleep(2)
@@ -1190,36 +1278,26 @@ def create_web_app():
                 "stopped": stop_results,
                 "started": start_results,
             }
+            steps[-1]["status"] = "done"
 
-        # Step 3: Sync Nginx (optional)
+        # Step 3: Sync Nginx
         if sync_nginx:
-            try:
-                nginx_conf = ROOT / "deploy" / "marketswarm-https.conf"
-                if nginx_conf.exists():
-                    # SCP to nginx host
-                    scp = subprocess.run(
-                        ["scp", str(nginx_conf), f"{nginx_host}:/tmp/marketswarm-https.conf"],
-                        capture_output=True, text=True
-                    )
-                    if scp.returncode == 0:
-                        # SSH to test and reload
-                        ssh = subprocess.run(
-                            ["ssh", nginx_host,
-                             "sudo cp /tmp/marketswarm-https.conf /etc/nginx/sites-available/marketswarm.conf && "
-                             "sudo nginx -t && sudo systemctl reload nginx"],
-                            capture_output=True, text=True
-                        )
-                        results["nginx"] = {
-                            "success": ssh.returncode == 0,
-                            "output": ssh.stdout,
-                            "error": ssh.stderr if ssh.returncode != 0 else None,
-                        }
-                    else:
-                        results["nginx"] = {"success": False, "error": scp.stderr}
-                else:
-                    results["nginx"] = {"success": False, "error": "Nginx config not found"}
-            except Exception as e:
-                results["nginx"] = {"success": False, "error": str(e)}
+            steps.append({"step": "nginx", "status": "running"})
+            nginx_result = _sync_nginx(nginx_host)
+            results["nginx"] = nginx_result
+            if not nginx_result.get("success"):
+                steps[-1]["status"] = "failed"
+                # Nginx failure is non-fatal — services are already running
+            else:
+                steps[-1]["status"] = "done"
+
+        # Step 4: Health check (wait a moment for services to finish starting)
+        if health_check:
+            steps.append({"step": "health", "status": "running"})
+            time.sleep(5)
+            health_result = _check_service_health()
+            results["health"] = health_result
+            steps[-1]["status"] = "done" if health_result.get("all_healthy") else "warning"
 
         return results
 
