@@ -1301,6 +1301,48 @@ def create_web_app():
 
         return results
 
+    @app.post("/api/deploy/volume-profile")
+    def api_deploy_volume_profile(body: dict = None):
+        """
+        Receive a volume profile payload and write it to local system-redis.
+        Called by the dev SSE Gateway to push VP data to production.
+        """
+        import json
+        import redis
+        from datetime import datetime, timezone
+
+        if not body or "vp_data" not in body:
+            return {"success": False, "error": "Missing vp_data in request body"}
+
+        vp_data = body["vp_data"]
+
+        # Validate required fields
+        for field in ("bin_size", "min_price", "max_price"):
+            if field not in vp_data:
+                return {"success": False, "error": f"Missing required field: {field}"}
+
+        try:
+            r = redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+            vp_json = json.dumps(vp_data)
+            r.set("massive:volume_profile", vp_json)
+
+            # Publish update event so SSE clients refresh
+            event = json.dumps({
+                "type": "volume_profile_deployed",
+                "source": "vp_editor",
+                "occurred_at": datetime.now(timezone.utc).isoformat(),
+            })
+            r.publish("dealer_gravity_updated", event)
+
+            return {
+                "success": True,
+                "message": "Volume profile deployed to production Redis",
+                "deployed_at": datetime.now(timezone.utc).isoformat(),
+                "data_size": len(vp_json),
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     @app.get("/api/deploy/changelog")
     def api_deploy_changelog(count: int = 20):
         """Get recent git commits."""

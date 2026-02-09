@@ -24,6 +24,8 @@ import { getPool, isDbAvailable } from "../db/index.js";
 
 const router = Router();
 
+const PROD_NODE_ADMIN_URL = process.env.PROD_NODE_ADMIN_URL || "http://192.168.1.11:8099";
+
 // Redis keys - using existing massive volume profile data
 // VP Admin stores JSON string at massive:volume_profile
 const VP_JSON_KEY = "massive:volume_profile";
@@ -442,6 +444,79 @@ router.post("/structures", async (req, res) => {
     });
   } catch (err) {
     console.error("[dealer-gravity] /structures POST error:", err.message);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ===========================================================================
+// Deploy to Production
+// ===========================================================================
+
+/**
+ * POST /api/dealer-gravity/deploy
+ *
+ * Read the full volume profile from local system-redis and forward it
+ * to the production Node Admin for deployment.
+ */
+router.post("/deploy", async (req, res) => {
+  try {
+    const redis = getSystemRedis();
+
+    // Read full VP data from local Redis
+    const vpJson = await redis.get(VP_JSON_KEY);
+    if (!vpJson) {
+      return res.status(404).json({
+        success: false,
+        error: "No volume profile found in local Redis. Save from VP Editor first.",
+      });
+    }
+
+    const vpData = JSON.parse(vpJson);
+
+    // Build summary for response
+    const structures = vpData.structures || {};
+    const nodeCount = (structures.volume_nodes || []).length;
+    const wellCount = (structures.volume_wells || []).length;
+    const binCount = vpData.bin_count || Object.keys(vpData.buckets_tv || vpData.buckets_raw || {}).length;
+
+    // Forward to production Node Admin
+    let prodResponse;
+    try {
+      const prodRes = await fetch(`${PROD_NODE_ADMIN_URL}/api/deploy/volume-profile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ vp_data: vpData }),
+      });
+      prodResponse = await prodRes.json();
+
+      if (!prodRes.ok || !prodResponse.success) {
+        return res.status(502).json({
+          success: false,
+          error: `Production Node Admin rejected deploy: ${prodResponse.error || prodRes.statusText}`,
+        });
+      }
+    } catch (fetchErr) {
+      return res.status(502).json({
+        success: false,
+        error: `Cannot reach production Node Admin at ${PROD_NODE_ADMIN_URL}: ${fetchErr.message}`,
+      });
+    }
+
+    console.log(`[dealer-gravity] Deployed VP to prod: ${binCount} bins, ${nodeCount} nodes, ${wellCount} wells`);
+
+    res.json({
+      success: true,
+      message: "Volume profile deployed to production",
+      summary: {
+        bin_count: binCount,
+        node_count: nodeCount,
+        well_count: wellCount,
+        data_size: vpJson.length,
+      },
+      production: prodResponse,
+    });
+  } catch (err) {
+    console.error("[dealer-gravity] /deploy error:", err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

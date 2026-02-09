@@ -62,6 +62,8 @@ export default function VPLineEditor() {
   const [structures, setStructures] = useState<Structures>({ volume_nodes: [], volume_wells: [] });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [deploying, setDeploying] = useState(false);
+  const [showDeployConfirm, setShowDeployConfirm] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   // View state
@@ -426,6 +428,30 @@ export default function VPLineEditor() {
     }
   }, []);
 
+  // Deploy to production
+  const handleDeploy = useCallback(async () => {
+    setShowDeployConfirm(false);
+    setDeploying(true);
+    setMessage('Deploying to production...');
+
+    try {
+      const res = await fetch(`${API_BASE}/deploy`, { method: 'POST' });
+      const result = await res.json();
+
+      if (result.success) {
+        const s = result.summary;
+        setMessage(`Deployed to prod: ${s.node_count} nodes, ${s.well_count} wells, ${s.bin_count} bins (${(s.data_size / 1024).toFixed(1)} KB)`);
+      } else {
+        setMessage(`Deploy failed: ${result.error}`);
+      }
+    } catch (err) {
+      console.error('Deploy failed:', err);
+      setMessage('Deploy failed - check console');
+    } finally {
+      setDeploying(false);
+    }
+  }, []);
+
   // Reset view
   const handleResetView = useCallback(() => {
     const ticker = TICKERS.find(t => t.value === selectedTicker);
@@ -495,6 +521,22 @@ export default function VPLineEditor() {
           }}
         >
           {saving ? 'Saving...' : 'Save to Redis'}
+        </button>
+
+        <button
+          onClick={() => setShowDeployConfirm(true)}
+          disabled={deploying}
+          style={{
+            padding: '8px 16px',
+            background: '#f59e0b',
+            color: '#000',
+            border: 'none',
+            borderRadius: 4,
+            cursor: deploying ? 'wait' : 'pointer',
+            fontWeight: 'bold',
+          }}
+        >
+          {deploying ? 'Deploying...' : 'Deploy to Prod'}
         </button>
 
         <button
@@ -892,6 +934,69 @@ export default function VPLineEditor() {
           </div>
         )}
       </div>
+
+      {/* Deploy Confirmation Modal */}
+      {showDeployConfirm && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.7)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+        }}>
+          <div style={{
+            background: '#1e1e2e',
+            border: '1px solid #f59e0b',
+            borderRadius: 8,
+            padding: 24,
+            maxWidth: 420,
+            width: '90%',
+          }}>
+            <h3 style={{ margin: '0 0 12px', color: '#f59e0b' }}>Deploy to Production</h3>
+            <p style={{ margin: '0 0 8px', color: '#e2e8f0' }}>
+              Push the current volume profile to DudeOne (production)?
+            </p>
+            <div style={{ margin: '12px 0', padding: 12, background: '#0a0a12', borderRadius: 4, fontSize: 13 }}>
+              <div><strong>Volume Nodes:</strong> {structures.volume_nodes.length}</div>
+              <div><strong>Volume Wells:</strong> {structures.volume_wells.length}</div>
+              <div style={{ marginTop: 4, color: '#9ca3af' }}>
+                Data will be read from local Redis and forwarded to production.
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
+              <button
+                onClick={() => setShowDeployConfirm(false)}
+                style={{
+                  padding: '8px 16px',
+                  background: '#374151',
+                  color: '#e2e8f0',
+                  border: 'none',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeploy}
+                style={{
+                  padding: '8px 16px',
+                  background: '#f59e0b',
+                  color: '#000',
+                  border: 'none',
+                  borderRadius: 4,
+                  cursor: 'pointer',
+                  fontWeight: 'bold',
+                }}
+              >
+                Deploy
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
