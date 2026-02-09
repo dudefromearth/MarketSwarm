@@ -9,6 +9,7 @@
  * - Resets fetch flag when `shouldFetch` becomes false (allows re-fetch on next open)
  * - Provides loading state and refetch capability
  * - Handles errors gracefully
+ * - Supports AbortController for cleanup on unmount or close
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
@@ -31,7 +32,7 @@ interface UseSingleFetchResult<T> {
 
 export function useSingleFetch<T>(
   shouldFetch: boolean,
-  fetchFn: () => Promise<T>,
+  fetchFn: (signal: AbortSignal) => Promise<T>,
   options: UseSingleFetchOptions = {}
 ): UseSingleFetchResult<T> {
   const { logErrors = true } = options;
@@ -43,25 +44,46 @@ export function useSingleFetch<T>(
   const hasFetchedRef = useRef(false);
   const wasTrueRef = useRef(false);
   const fetchFnRef = useRef(fetchFn);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Keep fetchFn ref updated
   fetchFnRef.current = fetchFn;
 
   const doFetch = useCallback(async () => {
+    // Abort any in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Create new abort controller
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setLoading(true);
     setError(null);
 
     try {
-      const result = await fetchFnRef.current();
-      setData(result);
+      const result = await fetchFnRef.current(controller.signal);
+      // Only update state if not aborted
+      if (!controller.signal.aborted) {
+        setData(result);
+      }
     } catch (err) {
+      // Ignore abort errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        return;
+      }
       const message = err instanceof Error ? err.message : 'Fetch failed';
-      setError(message);
+      if (!controller.signal.aborted) {
+        setError(message);
+      }
       if (logErrors) {
         console.error('[useSingleFetch] Error:', err);
       }
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) {
+        setLoading(false);
+      }
     }
   }, [logErrors]);
 
@@ -74,12 +96,26 @@ export function useSingleFetch<T>(
     wasTrueRef.current = shouldFetch;
   }, [shouldFetch, doFetch]);
 
-  // Reset fetch flag when shouldFetch becomes false
+  // Reset fetch flag and abort when shouldFetch becomes false
   useEffect(() => {
     if (!shouldFetch) {
       hasFetchedRef.current = false;
+      // Abort any in-flight request when closing
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
     }
   }, [shouldFetch]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   const refetch = useCallback(() => {
     hasFetchedRef.current = false;

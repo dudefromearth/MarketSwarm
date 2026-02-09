@@ -373,6 +373,17 @@
         "OPENAI_API_KEY": "${OPENAI_API_KEY}",
         "CONVEXITY_ASSISTANT_ID": "asst_yNLi7GCN2q2TkixGLiDYLxwP"
       },
+      "capabilities": [
+        "ml",
+        "routine",
+        "playbook",
+        "journal",
+        "chat",
+        "commentary",
+        "health_monitor",
+        "healer",
+        "mesh"
+      ],
       "voice_agents": {
         "Sage": {
           "description": "Grounded, reflective, patient. Offers wisdom without urgency.",

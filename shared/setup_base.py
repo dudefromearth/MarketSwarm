@@ -39,6 +39,7 @@ class SetupBase:
         "disruptor_logic",
         "fractal_lens",
         "market_snapshot_schema",
+        "capabilities",
         # future extensions:
         # "tiles",
         # "campaigns",

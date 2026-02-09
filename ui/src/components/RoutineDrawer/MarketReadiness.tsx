@@ -14,8 +14,9 @@
  * Critical: Never answers "when". Reinforces waiting as success.
  */
 
-import { useState, useEffect } from 'react';
+import { useCallback } from 'react';
 import { API, type VixRegime, type RoutineContextPhase } from '../../config/api';
+import { useSingleFetch } from '../../hooks/useSingleFetch';
 
 interface MarketReadinessPayload {
   generated_at: string;
@@ -50,71 +51,59 @@ const VIX_REGIME_LABELS: Record<string, string> = {
   chaos: 'Chaos',
 };
 
+// Default mock payload for fallback
+const MOCK_PAYLOAD: MarketReadinessPayload = {
+  generated_at: new Date().toISOString(),
+  context_phase: 'weekday_premarket',
+  carrying: {
+    globex_summary: 'Overnight session showed range-bound action. ES held above 5980 through Asia.',
+    euro_note: 'Euro session saw a test of the 6000 level with rejection.',
+    macro_events: [],
+  },
+  volatility: {
+    vix_level: 14.5,
+    regime: 'goldilocks',
+    implication: 'Balanced conditions for patient waiting.',
+  },
+  topology: {
+    structure_synopsis: 'Volume Nodes at 5980, 6020. Volume Well between 5990-6010.',
+    gex_posture: 'Positive gamma above 6000',
+    key_levels: [5980, 5990, 6010, 6020],
+  },
+  waiting_anchor: "Today is a waiting day until an entry event appears (or doesn't). Waiting is part of the edge.",
+};
+
 export default function MarketReadiness({ isOpen }: MarketReadinessProps) {
-  const [payload, setPayload] = useState<MarketReadinessPayload | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Fetch market readiness with fallback to mock data
+  const fetchMarketReadiness = useCallback(async (signal: AbortSignal): Promise<MarketReadinessPayload> => {
+    try {
+      const response = await fetch(API.vexy.marketReadiness(1), {
+        credentials: 'include',
+        signal,
+      });
 
-  useEffect(() => {
-    if (!isOpen) return;
-
-    const fetchMarketReadiness = async () => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        // For now, use a mock payload
-        // In production: const response = await fetch('/api/vexy/routine/market-readiness/1');
-        const mockPayload: MarketReadinessPayload = {
-          generated_at: new Date().toISOString(),
-          context_phase: 'weekday_premarket',
-          carrying: {
-            globex_summary: 'Overnight session showed range-bound action. ES held above 5980 through Asia.',
-            euro_note: 'Euro session saw a test of the 6000 level with rejection.',
-            macro_events: [],
-          },
-          volatility: {
-            vix_level: 14.5,
-            regime: 'goldilocks',
-            implication: 'Balanced conditions for patient waiting.',
-          },
-          topology: {
-            structure_synopsis: 'Volume Nodes at 5980, 6020. Volume Well between 5990-6010.',
-            gex_posture: 'Positive gamma above 6000',
-            key_levels: [5980, 5990, 6010, 6020],
-          },
-          waiting_anchor: "Today is a waiting day until an entry event appears (or doesn't). Waiting is part of the edge.",
-        };
-
-        // Fetch from API
-        try {
-          const response = await fetch(API.vexy.marketReadiness(1), {
-            credentials: 'include',
-          });
-
-          if (response.ok) {
-            const data = await response.json();
-            if (data.success && data.data) {
-              setPayload(data.data);
-              return;
-            }
-          }
-        } catch (err) {
-          console.error('[MarketReadiness] API fetch failed:', err);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success && data.data) {
+          return data.data;
         }
-
-        // Fall back to mock data if API unavailable
-        setPayload(mockPayload);
-      } catch (err) {
-        console.error('[MarketReadiness] Error:', err);
-        setError('Unable to load market context');
-      } finally {
-        setLoading(false);
       }
-    };
+    } catch (err) {
+      // Re-throw abort errors to be handled by useSingleFetch
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw err;
+      }
+      console.error('[MarketReadiness] API fetch failed:', err);
+    }
 
-    fetchMarketReadiness();
-  }, [isOpen]);
+    // Fall back to mock data if API unavailable
+    return MOCK_PAYLOAD;
+  }, []);
+
+  const { data: payload, loading, error } = useSingleFetch(
+    isOpen,
+    fetchMarketReadiness
+  );
 
   if (loading) {
     return (
