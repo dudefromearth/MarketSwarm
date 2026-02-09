@@ -216,42 +216,25 @@ export function RiskGraphProvider({ children }: RiskGraphProviderProps) {
       return newStrategy;
     }
 
-    // Server mode with optimistic update
-    setServerStrategies(prev => [...prev, {
-      ...newStrategy,
-      userId: 0,
+    // Server mode — wait for real server ID, then add to state.
+    // SSE duplicate check will prevent double-add since IDs match.
+    const created = await riskGraphService.createStrategy({
+      symbol: input.symbol ?? 'SPX',
       underlying: input.symbol ? `I:${input.symbol}` : 'I:SPX',
-      sortOrder: 0,
-      color: null,
-      label: null,
-      isActive: true,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    } as RiskGraphStrategy]);
-
-    try {
-      const created = await riskGraphService.createStrategy({
-        symbol: input.symbol ?? 'SPX',
-        underlying: input.symbol ? `I:${input.symbol}` : 'I:SPX',
-        strategy: input.strategy,
-        side: input.side,
-        strike: input.strike,
-        width: input.width || null,
-        dte: input.dte,
-        expiration: input.expiration,
-        debit: input.debit,
-        addedAt: newStrategy.addedAt,
-      });
-      // SSE will update the state, but update immediately for responsiveness
-      setServerStrategies(prev =>
-        prev.map(s => s.id === newStrategy.id ? created : s)
-      );
-      return toLegacyStrategy(created);
-    } catch (err) {
-      // Rollback on failure
-      setServerStrategies(prev => prev.filter(s => s.id !== newStrategy.id));
-      throw err;
-    }
+      strategy: input.strategy,
+      side: input.side,
+      strike: input.strike,
+      width: input.width || null,
+      dte: input.dte,
+      expiration: input.expiration,
+      debit: input.debit,
+      addedAt: newStrategy.addedAt,
+    });
+    setServerStrategies(prev => {
+      if (prev.some(s => s.id === created.id)) return prev;
+      return [...prev, created];
+    });
+    return toLegacyStrategy(created);
   }, [connected]);
 
   const removeStrategy = useCallback(async (id: string): Promise<void> => {
