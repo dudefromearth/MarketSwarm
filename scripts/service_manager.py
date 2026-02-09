@@ -1331,13 +1331,24 @@ def create_web_app():
             vp_json = json.dumps(vp_data)
             r.set("massive:volume_profile", vp_json)
 
-            # Publish update event so SSE clients refresh
+            # Clear precomputed artifact so /artifact reads fresh VP data
+            r.delete("dealer_gravity:artifact:spx")
+            r.delete("dealer_gravity:context:spx")
+
+            # Publish update event on both system-redis and market-redis
+            # so SSE clients (subscribed on market-redis) get notified
             event = json.dumps({
                 "type": "volume_profile_deployed",
                 "source": "vp_editor",
                 "occurred_at": datetime.now(timezone.utc).isoformat(),
             })
             r.publish("dealer_gravity_updated", event)
+            try:
+                mr = redis.Redis(host="127.0.0.1", port=6380, decode_responses=True)
+                mr.publish("dealer_gravity_updated", event)
+                mr.close()
+            except Exception:
+                pass  # market-redis notification is best-effort
 
             return {
                 "success": True,
