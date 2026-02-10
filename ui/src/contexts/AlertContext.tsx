@@ -23,6 +23,8 @@ import {
   type ReactNode,
 } from 'react';
 
+import { subscribeAlertSSE } from '../services/alertSSEManager';
+
 import type {
   Alert,
   CreateAlertInput,
@@ -267,16 +269,7 @@ const DEFAULT_COLOR = '#3b82f6'; // blue
 // Provider component
 export function AlertProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(alertReducer, initialState);
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  // Store event listener refs for proper cleanup
-  const listenersRef = useRef<{
-    triggered: ((e: MessageEvent) => void) | null;
-    updated: ((e: MessageEvent) => void) | null;
-    evaluation: ((e: MessageEvent) => void) | null;
-  }>({ triggered: null, updated: null, evaluation: null });
 
   // Load alerts from API on mount
   useEffect(() => {
@@ -322,125 +315,63 @@ export function AlertProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // SSE connection for real-time updates
+  // SSE connection for real-time updates (shared with AlgoAlertContext)
   useEffect(() => {
-    const connect = () => {
-      // Close existing connection and remove listeners
-      if (eventSourceRef.current) {
-        if (listenersRef.current.triggered) {
-          eventSourceRef.current.removeEventListener('alert_triggered', listenersRef.current.triggered);
-        }
-        if (listenersRef.current.updated) {
-          eventSourceRef.current.removeEventListener('alert_updated', listenersRef.current.updated);
-        }
-        if (listenersRef.current.evaluation) {
-          eventSourceRef.current.removeEventListener('ai_evaluation', listenersRef.current.evaluation);
-        }
-        eventSourceRef.current.close();
-      }
+    const unsubscribe = subscribeAlertSSE(
+      {
+        alert_triggered: (event: MessageEvent) => {
+          try {
+            const data: AlertTriggerEvent = JSON.parse(event.data);
+            dispatch({ type: 'TRIGGER_ALERT', id: data.alertId, triggeredAt: data.triggeredAt });
+            playAlertSound();
 
-      const es = new EventSource('/sse/alerts', { withCredentials: true });
-
-      es.onopen = () => {
+            if (data.aiReasoning !== undefined) {
+              dispatch({
+                type: 'AI_EVALUATION',
+                alertId: data.alertId,
+                evaluation: {
+                  alertId: data.alertId,
+                  timestamp: data.triggeredAt,
+                  provider: 'openai',
+                  model: 'gpt-4o',
+                  shouldTrigger: true,
+                  confidence: data.aiConfidence || 0,
+                  reasoning: data.aiReasoning,
+                  latencyMs: 0,
+                },
+              });
+            }
+          } catch (err) {
+            console.error('Failed to parse alert_triggered event:', err);
+          }
+        },
+        alert_updated: (event: MessageEvent) => {
+          try {
+            const data: AlertUpdateEvent = JSON.parse(event.data);
+            dispatch({ type: 'UPDATE_ALERT', id: data.alertId, updates: data.updates });
+          } catch (err) {
+            console.error('Failed to parse alert_updated event:', err);
+          }
+        },
+        ai_evaluation: (event: MessageEvent) => {
+          try {
+            const evaluation: AIEvaluation = JSON.parse(event.data);
+            dispatch({ type: 'AI_EVALUATION', alertId: evaluation.alertId, evaluation });
+          } catch (err) {
+            console.error('Failed to parse ai_evaluation event:', err);
+          }
+        },
+      },
+      () => {
         dispatch({ type: 'SET_CONNECTED', connected: true });
         dispatch({ type: 'SET_ERROR', error: null });
-      };
-
-      es.onerror = () => {
+      },
+      () => {
         dispatch({ type: 'SET_CONNECTED', connected: false });
-        es.close();
+      },
+    );
 
-        // Reconnect after delay
-        if (reconnectTimeoutRef.current) {
-          clearTimeout(reconnectTimeoutRef.current);
-        }
-        reconnectTimeoutRef.current = window.setTimeout(connect, 5000);
-      };
-
-      // Alert triggered event handler
-      const handleTriggered = (event: MessageEvent) => {
-        try {
-          const data: AlertTriggerEvent = JSON.parse(event.data);
-          dispatch({ type: 'TRIGGER_ALERT', id: data.alertId, triggeredAt: data.triggeredAt });
-
-          // Play notification sound
-          playAlertSound();
-
-          // If AI reasoning included, store it
-          if (data.aiReasoning !== undefined) {
-            dispatch({
-              type: 'AI_EVALUATION',
-              alertId: data.alertId,
-              evaluation: {
-                alertId: data.alertId,
-                timestamp: data.triggeredAt,
-                provider: 'openai',
-                model: 'gpt-4o',
-                shouldTrigger: true,
-                confidence: data.aiConfidence || 0,
-                reasoning: data.aiReasoning,
-                latencyMs: 0,
-              },
-            });
-          }
-        } catch (err) {
-          console.error('Failed to parse alert_triggered event:', err);
-        }
-      };
-
-      // Alert updated event handler
-      const handleUpdated = (event: MessageEvent) => {
-        try {
-          const data: AlertUpdateEvent = JSON.parse(event.data);
-          dispatch({ type: 'UPDATE_ALERT', id: data.alertId, updates: data.updates });
-        } catch (err) {
-          console.error('Failed to parse alert_updated event:', err);
-        }
-      };
-
-      // AI evaluation event handler
-      const handleEvaluation = (event: MessageEvent) => {
-        try {
-          const evaluation: AIEvaluation = JSON.parse(event.data);
-          dispatch({ type: 'AI_EVALUATION', alertId: evaluation.alertId, evaluation });
-        } catch (err) {
-          console.error('Failed to parse ai_evaluation event:', err);
-        }
-      };
-
-      // Store refs for cleanup
-      listenersRef.current = {
-        triggered: handleTriggered,
-        updated: handleUpdated,
-        evaluation: handleEvaluation,
-      };
-
-      es.addEventListener('alert_triggered', handleTriggered);
-      es.addEventListener('alert_updated', handleUpdated);
-      es.addEventListener('ai_evaluation', handleEvaluation);
-
-      eventSourceRef.current = es;
-    };
-
-    connect();
-
-    return () => {
-      if (eventSourceRef.current) {
-        if (listenersRef.current.triggered) {
-          eventSourceRef.current.removeEventListener('alert_triggered', listenersRef.current.triggered);
-        }
-        if (listenersRef.current.updated) {
-          eventSourceRef.current.removeEventListener('alert_updated', listenersRef.current.updated);
-        }
-        if (listenersRef.current.evaluation) {
-          eventSourceRef.current.removeEventListener('ai_evaluation', listenersRef.current.evaluation);
-        }
-        eventSourceRef.current.close();
-      }
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-    };
+    return unsubscribe;
   }, [playAlertSound]);
 
   // Create alert (calls API, updates local state on success)

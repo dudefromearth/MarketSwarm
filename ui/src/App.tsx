@@ -1731,6 +1731,14 @@ function App() {
         window.dispatchEvent(new CustomEvent('trade-selector-update', { detail: data }));
       } catch {}
     });
+
+    // Dealer gravity artifact updates — relay to DealerGravityContext via window event
+    es.addEventListener('dealer_gravity_artifact_updated', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        window.dispatchEvent(new CustomEvent('dealer-gravity-artifact-updated', { detail: data }));
+      } catch {}
+    });
     };
 
     // Start connection

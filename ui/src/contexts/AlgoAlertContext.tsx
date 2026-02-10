@@ -10,9 +10,9 @@ import {
   useReducer,
   useCallback,
   useEffect,
-  useRef,
   type ReactNode,
 } from 'react';
+import { subscribeAlertSSE } from '../services/alertSSEManager';
 import type {
   AlgoAlert,
   AlgoProposal,
@@ -147,8 +147,6 @@ const AlgoAlertContext = createContext<AlgoAlertContextValue | null>(null);
 
 export function AlgoAlertProvider({ children }: { children: ReactNode }) {
   const [state, dispatch] = useReducer(algoAlertReducer, initialState);
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const reconnectTimeoutRef = useRef<number | null>(null);
 
   // Load initial data
   const loadAlerts = useCallback(async () => {
@@ -175,125 +173,92 @@ export function AlgoAlertProvider({ children }: { children: ReactNode }) {
     loadProposals();
   }, [loadAlerts, loadProposals]);
 
-  // SSE subscription for real-time updates
+  // SSE subscription for real-time updates (shared with AlertContext)
   useEffect(() => {
-    const connect = () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
-
-      const es = new EventSource('/sse/alerts', { withCredentials: true });
-
-      es.onopen = () => dispatch({ type: 'SET_CONNECTED', connected: true });
-
-      es.onerror = () => {
-        dispatch({ type: 'SET_CONNECTED', connected: false });
-        es.close();
-        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-        reconnectTimeoutRef.current = window.setTimeout(connect, 5000);
-      };
-
-      // Algo alert proposal event
-      es.addEventListener('algo_alert_proposal', (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.data) {
-            const proposal: AlgoProposal = {
-              id: data.data.proposalId,
-              algoAlertId: data.data.algoAlertId,
-              userId: 0,
-              type: data.data.type,
-              status: 'pending',
-              suggestedPosition: data.data.suggestedPosition,
-              reasoning: data.data.reasoning,
-              filterResults: [],
-              structuralAlignmentScore: data.data.structuralAlignmentScore || 0,
-              createdAt: new Date().toISOString(),
-              expiresAt: data.data.expiresAt,
-            };
-            dispatch({ type: 'ADD_PROPOSAL', proposal });
+    const unsubscribe = subscribeAlertSSE(
+      {
+        algo_alert_proposal: (event: MessageEvent) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.data) {
+              const proposal: AlgoProposal = {
+                id: data.data.proposalId,
+                algoAlertId: data.data.algoAlertId,
+                userId: 0,
+                type: data.data.type,
+                status: 'pending',
+                suggestedPosition: data.data.suggestedPosition,
+                reasoning: data.data.reasoning,
+                filterResults: [],
+                structuralAlignmentScore: data.data.structuralAlignmentScore || 0,
+                createdAt: new Date().toISOString(),
+                expiresAt: data.data.expiresAt,
+              };
+              dispatch({ type: 'ADD_PROPOSAL', proposal });
+            }
+          } catch (e) {
+            console.error('Parse algo_alert_proposal error:', e);
           }
-        } catch (e) {
-          console.error('Parse algo_alert_proposal error:', e);
-        }
-      });
-
-      // Algo alert evaluation event (filter state update)
-      es.addEventListener('algo_alert_evaluation', (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.data) {
-            const evalData = data.data as AlgoAlertEvaluationEvent;
-            dispatch({
-              type: 'SET_FILTER_STATE',
-              alertId: evalData.algoAlertId,
-              filterResults: evalData.filterResults,
-            });
-
-            // Update alert status if changed
-            if (evalData.status) {
+        },
+        algo_alert_evaluation: (event: MessageEvent) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.data) {
+              const evalData = data.data as AlgoAlertEvaluationEvent;
+              dispatch({
+                type: 'SET_FILTER_STATE',
+                alertId: evalData.algoAlertId,
+                filterResults: evalData.filterResults,
+              });
+              if (evalData.status) {
+                dispatch({
+                  type: 'UPDATE_ALERT',
+                  id: evalData.algoAlertId,
+                  updates: {
+                    status: evalData.status as AlgoAlert['status'],
+                    frozenReason: evalData.frozenReason,
+                  },
+                });
+              }
+            }
+          } catch (e) {
+            console.error('Parse algo_alert_evaluation error:', e);
+          }
+        },
+        algo_alert_frozen: (event: MessageEvent) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.data) {
               dispatch({
                 type: 'UPDATE_ALERT',
-                id: evalData.algoAlertId,
-                updates: {
-                  status: evalData.status as AlgoAlert['status'],
-                  frozenReason: evalData.frozenReason,
-                },
+                id: data.data.algoAlertId,
+                updates: { status: 'frozen', frozenReason: data.data.reason },
               });
             }
+          } catch (e) {
+            console.error('Parse algo_alert_frozen error:', e);
           }
-        } catch (e) {
-          console.error('Parse algo_alert_evaluation error:', e);
-        }
-      });
-
-      // Algo alert frozen
-      es.addEventListener('algo_alert_frozen', (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.data) {
-            dispatch({
-              type: 'UPDATE_ALERT',
-              id: data.data.algoAlertId,
-              updates: {
-                status: 'frozen',
-                frozenReason: data.data.reason,
-              },
-            });
+        },
+        algo_alert_resumed: (event: MessageEvent) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.data) {
+              dispatch({
+                type: 'UPDATE_ALERT',
+                id: data.data.algoAlertId,
+                updates: { status: 'active', frozenReason: undefined },
+              });
+            }
+          } catch (e) {
+            console.error('Parse algo_alert_resumed error:', e);
           }
-        } catch (e) {
-          console.error('Parse algo_alert_frozen error:', e);
-        }
-      });
+        },
+      },
+      () => dispatch({ type: 'SET_CONNECTED', connected: true }),
+      () => dispatch({ type: 'SET_CONNECTED', connected: false }),
+    );
 
-      // Algo alert resumed
-      es.addEventListener('algo_alert_resumed', (event: MessageEvent) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.data) {
-            dispatch({
-              type: 'UPDATE_ALERT',
-              id: data.data.algoAlertId,
-              updates: {
-                status: 'active',
-                frozenReason: undefined,
-              },
-            });
-          }
-        } catch (e) {
-          console.error('Parse algo_alert_resumed error:', e);
-        }
-      });
-
-      eventSourceRef.current = es;
-    };
-
-    connect();
-
-    return () => {
-      if (eventSourceRef.current) eventSourceRef.current.close();
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-    };
+    return unsubscribe;
   }, []);
 
   // CRUD operations

@@ -22,7 +22,6 @@ import React, {
   useEffect,
   useCallback,
   useMemo,
-  useRef,
 } from 'react';
 
 import type {
@@ -48,7 +47,6 @@ import {
   updateGexConfig as apiUpdateGexConfig,
   analyzeChart as apiAnalyzeChart,
   fetchAnalysisHistory,
-  subscribeToDealerGravity,
 } from '../services/dealerGravityService';
 
 // ============================================================================
@@ -157,8 +155,7 @@ export function DealerGravityProvider({ children }: DealerGravityProviderProps) 
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Refs for cleanup
-  const subscriptionRef = useRef<{ close: () => void } | null>(null);
+  // No subscription ref needed — /sse/all relays dealer gravity events via window
 
   // ============================================================================
   // Derived State
@@ -335,13 +332,13 @@ export function DealerGravityProvider({ children }: DealerGravityProviderProps) 
   // Initial Load & SSE Subscription
   // ============================================================================
 
+  // Initial data load
   useEffect(() => {
     let mounted = true;
 
     async function init() {
       setLoading(true);
 
-      // Load all data in parallel
       const [artifactResult, contextResult] = await Promise.all([
         fetchArtifact(),
         fetchContext(),
@@ -354,31 +351,30 @@ export function DealerGravityProvider({ children }: DealerGravityProviderProps) 
       if (artifactResult) setArtifact(artifactResult);
       if (contextResult) setContextSnapshot(contextResult);
       setLoading(false);
-
-      // Subscribe to SSE updates
-      subscriptionRef.current = subscribeToDealerGravity(
-        (event) => {
-          console.log('[DG] Artifact updated:', event.artifactVersion);
-          // Refetch artifact and context when version changes
-          refreshArtifact();
-          refreshContext();
-        },
-        () => {
-          if (mounted) setConnected(true);
-        },
-        () => {
-          if (mounted) setConnected(false);
-        }
-      );
+      setConnected(true); // /sse/all handles the connection
     }
 
     init();
 
     return () => {
       mounted = false;
-      subscriptionRef.current?.close();
     };
-  }, [refreshArtifact, refreshContext, refreshConfigs, refreshAnalysisHistory]);
+  }, [refreshConfigs, refreshAnalysisHistory]);
+
+  // Listen for dealer gravity artifact updates relayed from /sse/all via App.tsx
+  useEffect(() => {
+    const handleDGUpdate = (e: Event) => {
+      const data = (e as CustomEvent).detail;
+      console.log('[DG] Artifact updated:', data?.artifact_version ?? data?.artifactVersion);
+      refreshArtifact();
+      refreshContext();
+    };
+
+    window.addEventListener('dealer-gravity-artifact-updated', handleDGUpdate);
+    return () => {
+      window.removeEventListener('dealer-gravity-artifact-updated', handleDGUpdate);
+    };
+  }, [refreshArtifact, refreshContext]);
 
   // ============================================================================
   // Context Value
