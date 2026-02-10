@@ -1482,25 +1482,23 @@ export function useRiskGraphCalculations({
     const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
     const volatility = Math.max(5, adjustedVix) / 100; // Convert VIX to decimal (e.g., 20 -> 0.20)
 
-    // Time to expiration
-    // Use nullish coalescing (??) instead of || to preserve 0 DTE
-    const baseDte = visibleStrategies[0]?.dte ?? 30;
+    // Time to expiration — compute dynamically from expiration date string
+    // This ensures the curve always reflects actual time remaining, not a stale DTE snapshot
+    const primaryExpiration = visibleStrategies[0]?.expiration;
 
-    // For 0DTE, calculate actual hours remaining until market close (4pm ET)
-    // This ensures the theoretical curve matches real market conditions
+    // Compute actual fractional days until 4pm ET on the expiration date
     const now = new Date();
-    const etOffset = -5; // ET is UTC-5 (approximate, ignores DST)
-    const utcHours = now.getUTCHours() + now.getUTCMinutes() / 60;
-    const etHours = (utcHours + etOffset + 24) % 24;
-    const marketCloseHour = 16; // 4pm ET
-    const hoursUntilClose = Math.max(0.5, marketCloseHour - etHours); // Min 30 min
-
-    // Base time in days:
-    // - 0DTE: actual hours until close converted to days
-    // - Non-0DTE: full DTE days
-    const baseTimeDays = baseDte === 0
-      ? hoursUntilClose / 24
-      : baseDte;
+    let baseTimeDays: number;
+    if (primaryExpiration) {
+      // Parse expiration date with 4pm ET close (approximate UTC-5)
+      const expClose = new Date(primaryExpiration + 'T16:00:00-05:00');
+      const diffMs = expClose.getTime() - now.getTime();
+      baseTimeDays = Math.max(0.001, diffMs / (1000 * 60 * 60 * 24));
+    } else {
+      // Fallback to static dte if no expiration string
+      const baseDte = visibleStrategies[0]?.dte ?? 30;
+      baseTimeDays = baseDte === 0 ? 0.02 : baseDte; // 0DTE fallback ≈ 30 min
+    }
 
     // Apply time offset from simulation slider
     const timeOffsetDays = timeMachineEnabled ? simTimeOffsetHours / 24 : 0;
@@ -1512,8 +1510,8 @@ export function useRiskGraphCalculations({
 
     // Price range calculation
     // Always calculate for a wide range regardless of time to expiration
-    // Use the ORIGINAL DTE (not time-adjusted) for sigma calculation to maintain consistent range
-    const baseDteForRange = visibleStrategies[0]?.dte ?? 30;
+    // Use the base (unadjusted) time for sigma calculation to maintain consistent range
+    const baseDteForRange = Math.ceil(baseTimeDays);
     const sigma1Day = spotPrice * (adjustedVix / 100) / Math.sqrt(252);
     const sigmaPadding = sigma1Day * Math.sqrt(Math.max(baseDteForRange, 7)) * 3; // Use at least 7 days for range calc
     const strategyPadding = strikeRange * 2;

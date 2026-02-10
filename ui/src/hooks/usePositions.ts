@@ -213,7 +213,12 @@ export function usePositions(): UsePositionsResult {
       direction: input.direction,
       legs: input.legs,
       primaryExpiration: input.legs[0]?.expiration ?? new Date().toISOString().split('T')[0],
-      dte: 0,
+      dte: (() => {
+        const exp = input.legs[0]?.expiration;
+        if (!exp) return 0;
+        const expClose = new Date(exp + 'T16:00:00-05:00');
+        return Math.max(0, Math.ceil((expClose.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+      })(),
       costBasis: input.costBasis ?? null,
       costBasisType: input.costBasisType ?? 'debit',
       visible: input.visible ?? true,

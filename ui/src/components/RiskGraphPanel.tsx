@@ -436,29 +436,30 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   };
 
   // Calculate time machine limits based on ACTUAL hours remaining until expiration
+  // Compute dynamically from expiration date to avoid stale DTE snapshots
   const visibleStrategies = strategies.filter(s => s.visible);
-  const minDTE = visibleStrategies.length > 0
-    ? Math.min(...visibleStrategies.map(s => s.dte))
-    : 1;
-
-  // Calculate actual hours remaining until expiration
-  // Market closes at 4pm ET (16:00)
   const now = new Date();
-  const etOffset = -5; // ET is UTC-5 (or -4 during DST, but we'll approximate)
-  const utcHours = now.getUTCHours() + now.getUTCMinutes() / 60;
-  const etHours = (utcHours + etOffset + 24) % 24;
-  const marketCloseHour = 16; // 4pm ET
-  const hoursUntilTodayClose = Math.max(0, marketCloseHour - etHours);
 
-  // Total hours remaining until expiration:
-  // - 0DTE: hours until today's close
-  // - 1+ DTE: (DTE days * 24) + hours until today's close
-  // But for simplicity, we treat each DTE as a full trading session
-  // 0DTE = hours until close today
-  // 1DTE = 24 + hours until close (next day's full session + today's remainder)
-  const actualHoursRemaining = minDTE === 0
-    ? Math.max(0.5, hoursUntilTodayClose) // 0DTE: actual hours until close (min 30 min to avoid 0)
-    : (minDTE * 24);                       // Non-0DTE: full days for simplicity
+  // Find the earliest expiration across visible strategies and compute hours remaining
+  const expirations = visibleStrategies
+    .map(s => s.expiration)
+    .filter((e): e is string => !!e);
+
+  let actualHoursRemaining: number;
+  if (expirations.length > 0) {
+    // Parse expiration dates with 4pm ET close, find the minimum
+    const hoursPerExpiration = expirations.map(exp => {
+      const expClose = new Date(exp + 'T16:00:00-05:00');
+      return (expClose.getTime() - now.getTime()) / (1000 * 60 * 60);
+    });
+    actualHoursRemaining = Math.max(0.5, Math.min(...hoursPerExpiration));
+  } else {
+    // Fallback: use static dte
+    const minDTE = visibleStrategies.length > 0
+      ? Math.min(...visibleStrategies.map(s => s.dte))
+      : 1;
+    actualHoursRemaining = minDTE === 0 ? 0.5 : minDTE * 24;
+  }
 
   const maxHours = actualHoursRemaining;
   const hoursRemaining = maxHours - simTimeOffsetHours;
