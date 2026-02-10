@@ -226,6 +226,21 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
 
     const { xMin, xMax, yMin, yMax } = viewState.current;
 
+    // Read theme colors from CSS custom properties
+    const cs = getComputedStyle(document.documentElement);
+    const themeColors = {
+      bgBase: cs.getPropertyValue('--bg-base').trim() || '#0a0a0a',
+      bgSurface: cs.getPropertyValue('--bg-surface').trim() || '#111',
+      gridLine: cs.getPropertyValue('--border-subtle').trim() || '#1a1a1a',
+      zeroLine: cs.getPropertyValue('--border-default').trim() || '#333',
+      axisText: cs.getPropertyValue('--text-tertiary').trim() || '#555',
+      legendText: cs.getPropertyValue('--text-muted').trim() || '#666',
+      labelBright: cs.getPropertyValue('--text-bright').trim() || '#fff',
+    };
+    const isLight = document.documentElement.dataset.theme === 'light';
+    const chartBg = isLight ? '#ffffff' : themeColors.bgBase;
+    const chartBgAlpha = isLight ? 'rgba(255,255,255,0.4)' : 'rgba(10,10,10,0.4)';
+
     // Update backdrop props for external render
     const chartWidth = width - PADDING.left - PADDING.right;
     const chartHeight = height - PADDING.top - PADDING.bottom;
@@ -238,7 +253,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     });
 
     // Clear - fill axis areas, leave chart area for backdrop to show
-    ctx.fillStyle = '#0a0a0a';
+    ctx.fillStyle = chartBg;
     // Top padding
     ctx.fillRect(0, 0, width, PADDING.top);
     // Bottom padding
@@ -250,14 +265,14 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
 
     // Chart area background (semi-transparent if backdrop exists)
     if (renderBackdrop) {
-      ctx.fillStyle = 'rgba(10, 10, 10, 0.4)'; // More transparent to let backdrop show through
+      ctx.fillStyle = chartBgAlpha;
     } else {
-      ctx.fillStyle = '#0a0a0a';
+      ctx.fillStyle = chartBg;
     }
     ctx.fillRect(PADDING.left, PADDING.top, chartWidth, chartHeight);
 
     // Draw grid
-    ctx.strokeStyle = '#1a1a1a';
+    ctx.strokeStyle = themeColors.gridLine;
     ctx.lineWidth = 1;
 
     // Y grid lines and labels
@@ -266,7 +281,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     const yStart = Math.ceil(yMin / yStep) * yStep;
 
     ctx.font = '10px monospace';
-    ctx.fillStyle = '#555';
+    ctx.fillStyle = themeColors.axisText;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
 
@@ -306,7 +321,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     // Draw zero line (more prominent)
     const zeroY = toCanvasY(0, height);
     if (zeroY >= PADDING.top && zeroY <= height - PADDING.bottom) {
-      ctx.strokeStyle = '#333';
+      ctx.strokeStyle = themeColors.zeroLine;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.moveTo(PADDING.left, zeroY);
@@ -479,7 +494,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
           ctx.beginPath();
           ctx.arc(spotX, pnlY, 6, 0, Math.PI * 2);
           ctx.fill();
-          ctx.strokeStyle = '#fff';
+          ctx.strokeStyle = chartBg;
           ctx.lineWidth = 2;
           ctx.stroke();
 
@@ -517,13 +532,13 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
 
     ctx.fillStyle = '#3b82f6';
     ctx.fillRect(legendX, legendY, 16, 2);
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = themeColors.legendText;
     ctx.textAlign = 'left';
     ctx.fillText('At Expiry', legendX + 20, legendY + 3);
 
     ctx.fillStyle = '#e879f9';
     ctx.fillRect(legendX, legendY + 12, 16, 2);
-    ctx.fillStyle = '#666';
+    ctx.fillStyle = themeColors.legendText;
     ctx.fillText('Real-Time', legendX + 20, legendY + 15);
 
   }, [expirationData, theoreticalData, spotPrice, expirationBreakevens, theoreticalBreakevens, strikes, alertLines, toCanvasX, toCanvasY, renderBackdrop]);
