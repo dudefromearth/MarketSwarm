@@ -8552,6 +8552,185 @@ body {
   box-shadow: 4px 0 16px rgba(150, 150, 150, 0.5), 8px 0 32px rgba(120, 120, 120, 0.3);
 }
 
+/* ============================================
+   Trade Log Panel — Light Theme
+   ============================================ */
+
+/* Edge bar */
+[data-theme="light"] .trade-log-edge-bar {
+  background: linear-gradient(to right, #e5e5ea, #d1d1d6);
+  border-left-color: #d1d1d6;
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .trade-log-edge-bar:hover {
+  background: linear-gradient(to right, #c7c7cc, #b0b0b5);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .edge-bar-label {
+  color: #6e6e73;
+  text-shadow: none;
+}
+
+[data-theme="light"] .trade-log-edge-bar:hover .edge-bar-label {
+  color: #1d1d1f;
+  text-shadow: none;
+}
+
+/* Close bar */
+[data-theme="light"] .trade-log-close-bar {
+  background: linear-gradient(to left, #e5e5ea, #d1d1d6);
+  border-right-color: #d1d1d6;
+  box-shadow: 4px 0 12px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .trade-log-close-bar:hover {
+  background: linear-gradient(to left, #c7c7cc, #b0b0b5);
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .close-bar-label {
+  color: #6e6e73;
+  text-shadow: none;
+}
+
+[data-theme="light"] .trade-log-close-bar:hover .close-bar-label {
+  color: #1d1d1f;
+  text-shadow: none;
+}
+
+/* Overlay drawer */
+[data-theme="light"] .trade-log-overlay {
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.08);
+}
+
+/* Toggle button */
+[data-theme="light"] .trade-log-toggle {
+  background: #007aff;
+}
+
+[data-theme="light"] .trade-log-toggle:hover {
+  background: #0069d9;
+}
+
+/* Import history dropdown */
+[data-theme="light"] .import-history-dropdown {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .import-history-header {
+  color: #86868b;
+}
+
+[data-theme="light"] .import-history-item:hover {
+  background: rgba(239, 68, 68, 0.06);
+}
+
+[data-theme="light"] .import-count {
+  color: #86868b;
+}
+
+/* Add trade button */
+[data-theme="light"] .btn-add-trade {
+  border-color: #188038;
+  color: #188038;
+}
+
+[data-theme="light"] .btn-add-trade:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.08);
+  color: #15803d;
+  border-color: #15803d;
+}
+
+/* Tool buttons */
+[data-theme="light"] .btn-tool {
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .btn-tool:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* Strategy badges */
+[data-theme="light"] .strategy-badge.butterfly {
+  background: #ede9fe;
+  color: #6d28d9;
+}
+
+[data-theme="light"] .strategy-badge.vertical {
+  background: #e0f2fe;
+  color: #0e7490;
+}
+
+[data-theme="light"] .strategy-badge.single {
+  background: #ecfccb;
+  color: #4d7c0f;
+}
+
+/* Side badges */
+[data-theme="light"] .side-badge.call {
+  background: rgba(34, 197, 94, 0.12);
+  color: #15803d;
+}
+
+[data-theme="light"] .side-badge.put {
+  background: rgba(239, 68, 68, 0.12);
+  color: #b91c1c;
+}
+
+/* DTE badge */
+[data-theme="light"] .dte-badge {
+  background: #f0f0f2;
+  color: #3c3c43;
+}
+
+/* Trade entry modal header border */
+[data-theme="light"] .trade-log-header {
+  border-bottom-color: #e5e5ea;
+}
+
+/* Reporting button */
+[data-theme="light"] .btn-reporting {
+  background: #e0ecff;
+  border-color: #007aff;
+  color: #007aff;
+}
+
+[data-theme="light"] .btn-reporting:hover {
+  background: #cde0ff;
+  color: #0055cc;
+}
+
+/* Manage logs button */
+[data-theme="light"] .btn-manage-logs {
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .btn-manage-logs:hover {
+  background: #f0f0f2;
+}
+
+/* Direction badges in light */
+[data-theme="light"] .direction-badge.long,
+[data-theme="light"] .order-direction.long {
+  background: rgba(34, 197, 94, 0.1);
+  color: #15803d;
+}
+
+[data-theme="light"] .direction-badge.short,
+[data-theme="light"] .order-direction.short {
+  background: rgba(239, 68, 68, 0.1);
+  color: #b91c1c;
+}
+
+/* Trade row open highlight */
+[data-theme="light"] .trade-row.open {
+  background: rgba(251, 191, 36, 0.06);
+}
+
 /* ==================== FOTW Trade Log v2 Styles ==================== */
 
 /* Log Selector */
