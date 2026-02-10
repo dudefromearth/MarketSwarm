@@ -541,6 +541,103 @@ export default function NotificationCenter({ className = '' }: NotificationCente
         .notification-dismiss:hover {
           color: #ef4444;
         }
+
+        /* --- Light Theme --- */
+        [data-theme="light"] .notification-dropdown {
+          background: #ffffff;
+          border-color: #d1d1d6;
+          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+
+        [data-theme="light"] .notification-header {
+          background: #f5f5f7;
+          border-bottom-color: #e5e5ea;
+        }
+
+        [data-theme="light"] .notification-title {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .notification-clear-all {
+          color: #007aff;
+        }
+
+        [data-theme="light"] .notification-clear-all:hover {
+          background: rgba(0, 122, 255, 0.08);
+        }
+
+        [data-theme="light"] .notification-empty {
+          color: #34c759;
+        }
+
+        [data-theme="light"] .notification-item {
+          border-bottom-color: #e5e5ea;
+        }
+
+        [data-theme="light"] .notification-item:hover {
+          background: #f5f5f7;
+        }
+
+        [data-theme="light"] .notification-item.unread {
+          background: rgba(0, 122, 255, 0.04);
+        }
+
+        [data-theme="light"] .notification-title-text {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .unread-dot {
+          background: #007aff;
+        }
+
+        [data-theme="light"] .notification-message {
+          color: #6e6e73;
+        }
+
+        [data-theme="light"] .notification-details summary {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .notification-details pre {
+          background: #f0f0f2;
+          color: #48484a;
+        }
+
+        [data-theme="light"] .notification-meta {
+          color: #aeaeb2;
+        }
+
+        [data-theme="light"] .notification-category {
+          background: rgba(0, 0, 0, 0.04);
+          color: #86868b;
+        }
+
+        [data-theme="light"] .notification-action {
+          background: #007aff;
+        }
+
+        [data-theme="light"] .notification-action:hover {
+          background: #0062cc;
+        }
+
+        [data-theme="light"] .notification-dismiss {
+          color: #aeaeb2;
+        }
+
+        [data-theme="light"] .notification-dismiss:hover {
+          color: #ff3b30;
+        }
+
+        [data-theme="light"] .notification-list::-webkit-scrollbar {
+          width: 4px;
+        }
+        [data-theme="light"] .notification-list::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        [data-theme="light"] .notification-list::-webkit-scrollbar-thumb {
+          background: #d1d1d6;
+          border-radius: 2px;
+        }
       `}</style>
     </div>
   );

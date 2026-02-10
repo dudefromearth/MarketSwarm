@@ -280,6 +280,68 @@ export default function WhatsNew({ area, className = '' }: WhatsNewProps) {
           font-size: 11px;
           line-height: 1.4;
         }
+
+        /* --- Light Theme --- */
+        [data-theme="light"] .whats-new-btn {
+          color: #aeaeb2;
+        }
+
+        [data-theme="light"] .whats-new-btn:hover {
+          color: #6e6e73;
+        }
+
+        [data-theme="light"] .whats-new-dot {
+          background: #007aff;
+        }
+
+        [data-theme="light"] .whats-new-dropdown {
+          background: #ffffff;
+          border-color: #d1d1d6;
+          box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+        }
+
+        [data-theme="light"] .whats-new-dropdown-header {
+          border-bottom-color: #e5e5ea;
+        }
+
+        [data-theme="light"] .whats-new-dropdown-title {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .whats-new-group-label {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .whats-new-entry:hover {
+          background: #f5f5f7;
+        }
+
+        [data-theme="light"] .whats-new-entry.unseen {
+          background: rgba(0, 122, 255, 0.04);
+        }
+
+        [data-theme="light"] .whats-new-entry-title {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .whats-new-entry-dot {
+          background: #007aff;
+        }
+
+        [data-theme="light"] .whats-new-entry-desc {
+          color: #6e6e73;
+        }
+
+        [data-theme="light"] .whats-new-dropdown-list::-webkit-scrollbar {
+          width: 4px;
+        }
+        [data-theme="light"] .whats-new-dropdown-list::-webkit-scrollbar-track {
+          background: transparent;
+        }
+        [data-theme="light"] .whats-new-dropdown-list::-webkit-scrollbar-thumb {
+          background: #d1d1d6;
+          border-radius: 2px;
+        }
       `}</style>
     </div>
   );
