@@ -20,6 +20,7 @@ import { TradeLogProvider } from './contexts/TradeLogContext.tsx'
 import { DealerGravityProvider } from './contexts/DealerGravityContext.tsx'
 import { ApiClientProvider } from './contexts/ApiClientContext.tsx'
 import { PositionsProvider } from './contexts/PositionsContext.tsx'
+import { UserPreferencesProvider } from './contexts/UserPreferencesContext.tsx'
 
 // Wrapper component for routes that need trading providers
 function TradingProviders({ children }: { children: React.ReactNode }) {
@@ -41,6 +42,7 @@ function TradingProviders({ children }: { children: React.ReactNode }) {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <BrowserRouter>
+      <UserPreferencesProvider>
       <SystemNotificationsProvider>
         <AlertProvider>
           <PathProvider>
@@ -72,6 +74,7 @@ createRoot(document.getElementById('root')!).render(
         </PathProvider>
         </AlertProvider>
       </SystemNotificationsProvider>
+    </UserPreferencesProvider>
     </BrowserRouter>
   </StrictMode>,
 )

@@ -26,6 +26,7 @@ import LogManagerModal from './components/LogManagerModal';
 import TradeDetailModal from './components/TradeDetailModal';
 import ReportingView from './components/ReportingView';
 import SettingsModal from './components/SettingsModal';
+import { useUserPreferences } from './contexts/UserPreferencesContext';
 import JournalView from './components/JournalView';
 import PlaybookView from './components/PlaybookView';
 import AlertCreationModal, { type EditingAlertData } from './components/AlertCreationModal';
@@ -438,6 +439,9 @@ function App() {
   // Path context for stage inference
   const { setActivePanel } = usePath();
 
+  // Display preferences
+  const preferences = useUserPreferences();
+
   // Navigation
   const navigate = useNavigate();
 
@@ -645,7 +649,7 @@ function App() {
   const [gexDrawerOpen, setGexDrawerOpen] = useState(false); // GEX drawer overlay state
   const [heatmapCollapsed, setHeatmapCollapsed] = useState(false);
   const [isRiskGraphHovered, setIsRiskGraphHovered] = useState(false); // Track mouse over Risk Graph
-  const [widgetsRowCollapsed, setWidgetsRowCollapsed] = useState(true);
+  const [widgetsRowCollapsed, setWidgetsRowCollapsed] = useState(!preferences.indicatorPanelsVisible);
   const prevWidgetsCollapsed = useRef(widgetsRowCollapsed);
   const [priceAlertLines, setPriceAlertLines] = useState<PriceAlertLine[]>(() => {
     try {
@@ -916,6 +920,11 @@ function App() {
   useEffect(() => {
     prevWidgetsCollapsed.current = widgetsRowCollapsed;
   }, [widgetsRowCollapsed]);
+
+  // Sync indicator visibility preference → local collapse state
+  useEffect(() => {
+    setWidgetsRowCollapsed(!preferences.indicatorPanelsVisible);
+  }, [preferences.indicatorPanelsVisible]);
 
   // Available DTEs from data
   const availableDtes = useMemo(() => {
@@ -2680,7 +2689,11 @@ function App() {
       <div className={`widget-row-container ${widgetsRowCollapsed ? 'collapsed' : ''}`}>
         <div
           className="widget-row-header"
-          onClick={() => setWidgetsRowCollapsed(!widgetsRowCollapsed)}
+          onClick={() => {
+            const newCollapsed = !widgetsRowCollapsed;
+            setWidgetsRowCollapsed(newCollapsed);
+            preferences.setIndicatorPanelsVisible(!newCollapsed);
+          }}
           style={{ cursor: 'pointer' }}
         >
           <span className="panel-toggle">{widgetsRowCollapsed ? '▶' : '▼'}</span>

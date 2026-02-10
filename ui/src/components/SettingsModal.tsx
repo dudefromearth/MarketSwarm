@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { usePath } from '../contexts/PathContext';
 import { useTimezone } from '../contexts/TimezoneContext';
+import { useUserPreferences, type ThemeMode, type TextSize } from '../contexts/UserPreferencesContext';
 
 const JOURNAL_API = '';
 
@@ -78,6 +79,11 @@ type AssetTypeFilter = 'all' | 'index_option' | 'etf_option' | 'future' | 'stock
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const { tourCompleted, resetTour } = usePath();
   const { setTimezone: setGlobalTimezone } = useTimezone();
+  const {
+    theme, setTheme, resolvedTheme,
+    textSize, setTextSize,
+    indicatorPanelsVisible, setIndicatorPanelsVisible,
+  } = useUserPreferences();
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [symbols, setSymbols] = useState<Symbol[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1053,6 +1059,63 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
 
               {activeTab === 'display' && (
                 <div className="settings-display">
+                  <div className="settings-group">
+                    <h4>Appearance</h4>
+                    <div className="setting-item">
+                      <label>Theme</label>
+                      <div className="setting-toggle-group">
+                        {(['dark', 'light', 'auto'] as ThemeMode[]).map((t) => (
+                          <button
+                            key={t}
+                            className={`setting-toggle-btn ${theme === t ? 'active' : ''}`}
+                            onClick={() => setTheme(t)}
+                          >
+                            {t.charAt(0).toUpperCase() + t.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="setting-hint">
+                        {theme === 'auto'
+                          ? `Following system preference (currently ${resolvedTheme})`
+                          : `Using ${theme} theme`}
+                      </span>
+                    </div>
+                    <div className="setting-item">
+                      <label>Text Size</label>
+                      <div className="setting-toggle-group">
+                        {(['compact', 'normal', 'comfortable'] as TextSize[]).map((s) => (
+                          <button
+                            key={s}
+                            className={`setting-toggle-btn ${textSize === s ? 'active' : ''}`}
+                            onClick={() => setTextSize(s)}
+                          >
+                            {s.charAt(0).toUpperCase() + s.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="setting-hint">
+                        {textSize === 'compact' ? 'Smaller text for more information density'
+                          : textSize === 'comfortable' ? 'Larger text for easier reading'
+                          : 'Default text size'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="settings-group">
+                    <h4>Layout</h4>
+                    <div className="setting-item">
+                      <label className="setting-checkbox-row">
+                        <input
+                          type="checkbox"
+                          checked={indicatorPanelsVisible}
+                          onChange={(e) => setIndicatorPanelsVisible(e.target.checked)}
+                        />
+                        Show Indicator Panels
+                      </label>
+                      <span className="setting-hint">Show the Indicators row (Mode, VIX, Bias, LFI widgets) above the main panels</span>
+                    </div>
+                  </div>
+
                   <div className="settings-group">
                     <h4>Path Indicator</h4>
                     <div className="setting-item">
