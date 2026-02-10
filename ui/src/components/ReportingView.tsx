@@ -7,6 +7,16 @@ import {
 } from 'lightweight-charts';
 import type { IChartApi, UTCTimestamp } from 'lightweight-charts';
 
+// Theme-aware chart colors
+function getChartColors(theme: string) {
+  const isLight = theme === 'light';
+  return {
+    textColor: isLight ? 'rgba(110,110,115,1)' : 'rgba(148,163,184,1)',
+    gridColor: isLight ? 'rgba(0,0,0,0.06)' : 'rgba(51,65,85,0.3)',
+    borderColor: isLight ? 'rgba(209,209,214,1)' : 'rgba(30,41,59,1)',
+  };
+}
+
 const JOURNAL_API = '';
 
 interface LogAnalytics {
@@ -108,6 +118,16 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
   const [distributionData, setDistributionData] = useState<DistributionBin[]>([]);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<TimeRange>('ALL');
+  const [theme, setTheme] = useState(document.documentElement.dataset.theme || 'dark');
+
+  // Watch for theme changes
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setTheme(document.documentElement.dataset.theme || 'dark');
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -183,23 +203,25 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
     const container = equityChartRef.current;
     const { width } = container.getBoundingClientRect();
 
+    const colors = getChartColors(theme);
+
     const chart = createChart(container, {
       width: width || 800,
       height: 438,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: 'rgba(148,163,184,1)',
+        textColor: colors.textColor,
       },
       grid: {
-        vertLines: { color: 'rgba(51,65,85,0.3)' },
-        horzLines: { color: 'rgba(51,65,85,0.3)' },
+        vertLines: { color: colors.gridColor },
+        horzLines: { color: colors.gridColor },
       },
       rightPriceScale: {
-        borderColor: 'rgba(30,41,59,1)',
+        borderColor: colors.borderColor,
         scaleMargins: { top: 0.1, bottom: 0.1 },
       },
       timeScale: {
-        borderColor: 'rgba(30,41,59,1)',
+        borderColor: colors.borderColor,
         timeVisible: true,
         secondsVisible: false,
       },
@@ -260,7 +282,7 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
         equityChartApiRef.current = null;
       }
     };
-  }, [loading, equityData, timeRange]);
+  }, [loading, equityData, timeRange, theme]);
 
   // Create and update drawdown chart
   useEffect(() => {
@@ -275,23 +297,25 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
     const container = drawdownChartRef.current;
     const { width } = container.getBoundingClientRect();
 
+    const colors = getChartColors(theme);
+
     const chart = createChart(container, {
       width: width || 800,
       height: 88,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: 'rgba(148,163,184,1)',
+        textColor: colors.textColor,
       },
       grid: {
-        vertLines: { color: 'rgba(51,65,85,0.3)' },
-        horzLines: { color: 'rgba(51,65,85,0.3)' },
+        vertLines: { color: colors.gridColor },
+        horzLines: { color: colors.gridColor },
       },
       rightPriceScale: {
-        borderColor: 'rgba(30,41,59,1)',
+        borderColor: colors.borderColor,
         scaleMargins: { top: 0.1, bottom: 0.1 },
       },
       timeScale: {
-        borderColor: 'rgba(30,41,59,1)',
+        borderColor: colors.borderColor,
         timeVisible: true,
         secondsVisible: false,
       },
@@ -344,7 +368,7 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
         drawdownChartApiRef.current = null;
       }
     };
-  }, [loading, drawdownData, timeRange]);
+  }, [loading, drawdownData, timeRange, theme]);
 
   const _formatCurrency = (cents: number) => {
     const dollars = cents / 100;

@@ -1479,6 +1479,273 @@ export default function TradeImportModal({ isOpen, onClose, onImport, selectedLo
           font-size: 11px;
           opacity: 0.8;
         }
+
+        /* Light theme */
+        [data-theme="light"] .trade-import-overlay {
+          background: rgba(0, 0, 0, 0.2);
+          backdrop-filter: blur(2px);
+        }
+
+        [data-theme="light"] .trade-import-modal {
+          background: #ffffff;
+          border-color: #d1d1d6;
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
+        }
+
+        [data-theme="light"] .trade-import-header {
+          border-bottom-color: #e5e5ea;
+          background: rgba(0, 0, 0, 0.02);
+        }
+
+        [data-theme="light"] .trade-import-header h3 {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .close-btn {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .close-btn:hover {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .platform-prompt {
+          color: #6e6e73;
+        }
+
+        [data-theme="light"] .platform-card {
+          background: #f5f5f7;
+          border-color: #d1d1d6;
+        }
+
+        [data-theme="light"] .platform-card:hover:not(.disabled) {
+          border-color: #007aff;
+          background: rgba(0, 122, 255, 0.06);
+        }
+
+        [data-theme="light"] .platform-name {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .platform-desc {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .platform-card.ai-card {
+          background: rgba(139, 92, 246, 0.06);
+        }
+
+        [data-theme="light"] .platform-card.ai-card:hover {
+          background: rgba(139, 92, 246, 0.1);
+        }
+
+        [data-theme="light"] .ai-spinner {
+          border-color: #d1d1d6;
+        }
+
+        [data-theme="light"] .ai-status-text {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .ai-substatus {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .platform-selected {
+          background: #f5f5f7;
+        }
+
+        [data-theme="light"] .platform-label {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .import-instructions {
+          color: #6e6e73;
+          background: rgba(0, 122, 255, 0.06);
+          border-color: rgba(0, 122, 255, 0.15);
+        }
+
+        [data-theme="light"] .template-section {
+          background: #f5f5f7;
+          border-color: #d1d1d6;
+        }
+
+        [data-theme="light"] .btn-template {
+          background: #007aff;
+        }
+
+        [data-theme="light"] .btn-template:hover {
+          background: #0066d6;
+        }
+
+        [data-theme="light"] .template-help {
+          color: #6e6e73;
+        }
+
+        [data-theme="light"] .template-columns strong {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .template-note {
+          border-top-color: #e5e5ea;
+          color: #86868b;
+        }
+
+        [data-theme="light"] .file-drop-zone {
+          border-color: #d1d1d6;
+        }
+
+        [data-theme="light"] .file-drop-zone:hover {
+          border-color: #007aff;
+          background: rgba(0, 122, 255, 0.04);
+        }
+
+        [data-theme="light"] .drop-text {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .supported-platforms {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .import-summary {
+          background: #f5f5f7;
+        }
+
+        [data-theme="light"] .summary-item .label {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .summary-item .value {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .trades-list {
+          border-color: #d1d1d6;
+        }
+
+        [data-theme="light"] .trades-header {
+          background: #f5f5f7;
+          border-bottom-color: #d1d1d6;
+        }
+
+        [data-theme="light"] .select-all {
+          color: #6e6e73;
+        }
+
+        [data-theme="light"] .trade-row {
+          border-bottom-color: #e5e5ea;
+        }
+
+        [data-theme="light"] .trade-row:hover {
+          background: rgba(0, 122, 255, 0.04);
+        }
+
+        [data-theme="light"] .trade-row.selected {
+          background: rgba(0, 122, 255, 0.08);
+        }
+
+        [data-theme="light"] .trade-date {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .strategy-badge {
+          background: #e5e5ea;
+          color: #6e6e73;
+        }
+
+        [data-theme="light"] .trade-price {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .trade-price .effect {
+          background: #e5e5ea;
+          color: #6e6e73;
+        }
+
+        [data-theme="light"] .trade-import-footer {
+          border-top-color: #e5e5ea;
+        }
+
+        [data-theme="light"] .btn-cancel,
+        [data-theme="light"] .btn-back {
+          background: #e5e5ea;
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .btn-import {
+          background: #007aff;
+        }
+
+        [data-theme="light"] .btn-import:disabled {
+          background: #e5e5ea;
+          color: #aeaeb2;
+        }
+
+        [data-theme="light"] .log-selection-section {
+          border-bottom-color: #e5e5ea;
+        }
+
+        [data-theme="light"] .log-selection-label {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .loading-indicator {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .log-option {
+          background: #f5f5f7;
+          border-color: #d1d1d6;
+        }
+
+        [data-theme="light"] .log-option:hover {
+          border-color: #aeaeb2;
+        }
+
+        [data-theme="light"] .log-option.selected {
+          border-color: #007aff;
+          background: rgba(0, 122, 255, 0.06);
+        }
+
+        [data-theme="light"] .log-name {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .log-description {
+          color: #6e6e73;
+        }
+
+        [data-theme="light"] .log-meta {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .warning-more {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .archived-log-notice {
+          background: rgba(0, 122, 255, 0.06);
+          border-color: rgba(0, 122, 255, 0.15);
+          color: #007aff;
+        }
+
+        /* Light scrollbar */
+        [data-theme="light"] .trades-scroll::-webkit-scrollbar-thumb {
+          background: #c7c7cc;
+        }
+
+        [data-theme="light"] .trades-scroll::-webkit-scrollbar-thumb:hover {
+          background: #aeaeb2;
+        }
+
+        [data-theme="light"] .log-selection-grid::-webkit-scrollbar-thumb {
+          background: #c7c7cc;
+        }
+
+        [data-theme="light"] .log-selection-grid::-webkit-scrollbar-thumb:hover {
+          background: #aeaeb2;
+        }
       `}</style>
     </div>
   );

@@ -359,6 +359,142 @@
    Responsive
    ============================================================================ */
 
+/* ============================================================================
+   Light Theme
+   ============================================================================ */
+
+/* Process drawer tab (right) */
+[data-theme="light"] .drawer-tab-right {
+  background: linear-gradient(270deg, #e8edf5 0%, #f5f5f7 100%);
+  border-left-color: #4a6fa5;
+  color: #4a6fa5;
+}
+
+[data-theme="light"] .drawer-tab-right:hover {
+  background: linear-gradient(270deg, #dde4f0 0%, #eeeef2 100%);
+  border-left-color: #3a5a90;
+  color: #3a5a90;
+}
+
+[data-theme="light"] .drawer-tab-right.active-phase {
+  border-left-color: #007aff;
+  color: #007aff;
+}
+
+/* Process drawer panel (right) */
+[data-theme="light"] .drawer-right {
+  background: linear-gradient(225deg, #f0f2f8 0%, #f5f5f7 50%, #fafafa 100%);
+  border-left-color: #c8d4e4;
+  box-shadow: -4px 0 20px rgba(74, 111, 165, 0.08);
+}
+
+[data-theme="light"] .drawer-right .drawer-header {
+  background: linear-gradient(180deg, #e8edf5 0%, #f0f2f8 100%);
+  border-bottom-color: #c8d4e4;
+}
+
+[data-theme="light"] .drawer-right .drawer-header h2 {
+  color: #3a5a90;
+}
+
+[data-theme="light"] .drawer-right .drawer-subtitle {
+  color: #6b8cba;
+}
+
+[data-theme="light"] .drawer-right .drawer-close {
+  color: #6b8cba;
+}
+
+[data-theme="light"] .drawer-right .drawer-close:hover {
+  color: #3a5a90;
+  background: rgba(74, 111, 165, 0.1);
+}
+
+[data-theme="light"] .drawer-right .drawer-question {
+  color: #4a6fa5;
+  border-left-color: #4a6fa5;
+}
+
+[data-theme="light"] .drawer-right .process-checklist li::before {
+  color: #4a6fa5;
+}
+
+/* Routine drawer tab (left) */
+[data-theme="light"] .drawer-tab-left {
+  background: linear-gradient(90deg, #f5f0e4 0%, #f5f5f7 100%);
+  border-right-color: #b8860b;
+  color: #9a7209;
+}
+
+[data-theme="light"] .drawer-tab-left:hover {
+  background: linear-gradient(90deg, #efe8d4 0%, #eeeef2 100%);
+  border-right-color: #9a7209;
+  color: #7a5a00;
+}
+
+[data-theme="light"] .drawer-tab-left.active-phase {
+  border-right-color: #b8860b;
+  color: #b8860b;
+}
+
+/* Routine drawer panel (left) */
+[data-theme="light"] .drawer-left {
+  background: linear-gradient(135deg, #f8f4ea 0%, #f5f5f7 50%, #fafafa 100%);
+  border-right-color: #e0d4b8;
+  box-shadow: 4px 0 20px rgba(184, 134, 11, 0.06);
+}
+
+[data-theme="light"] .drawer-left .drawer-header {
+  background: linear-gradient(180deg, #f0ead6 0%, #f8f4ea 100%);
+  border-bottom-color: #e0d4b8;
+}
+
+[data-theme="light"] .drawer-left .drawer-header h2 {
+  color: #9a7209;
+}
+
+[data-theme="light"] .drawer-left .drawer-subtitle {
+  color: #b8960b;
+}
+
+[data-theme="light"] .drawer-left .drawer-close {
+  color: #b8960b;
+}
+
+[data-theme="light"] .drawer-left .drawer-close:hover {
+  color: #9a7209;
+  background: rgba(184, 134, 11, 0.1);
+}
+
+[data-theme="light"] .drawer-left .drawer-question {
+  color: #9a7209;
+  border-left-color: #b8860b;
+}
+
+[data-theme="light"] .drawer-left .routine-checklist li::before {
+  color: #b8860b;
+}
+
+/* Shared drawer elements */
+[data-theme="light"] .drawer-overlay {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .routine-checklist li,
+[data-theme="light"] .process-checklist li {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+  color: #6e6e73;
+}
+
+[data-theme="light"] .routine-checklist li:hover,
+[data-theme="light"] .process-checklist li:hover {
+  color: #1d1d1f;
+}
+
+/* ============================================================================
+   Responsive
+   ============================================================================ */
+
 @media (max-width: 1200px) {
   .drawer-left {
     width: 280px;
