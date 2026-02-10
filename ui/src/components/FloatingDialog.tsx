@@ -124,6 +124,35 @@ export default function FloatingDialog({
           overflow-y: auto;
           flex: 1;
         }
+
+        /* Light theme */
+        [data-theme="light"] .floating-dialog-overlay {
+          background: rgba(0, 0, 0, 0.2);
+          backdrop-filter: blur(2px);
+        }
+
+        [data-theme="light"] .floating-dialog {
+          background: #ffffff;
+          border: 1px solid #d1d1d6;
+          box-shadow: 0 20px 60px rgba(0, 0, 0, 0.12);
+        }
+
+        [data-theme="light"] .floating-dialog-header {
+          border-bottom-color: #e5e5ea;
+          background: rgba(0, 0, 0, 0.02);
+        }
+
+        [data-theme="light"] .floating-dialog-header h2 {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .floating-dialog-header .close-btn {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .floating-dialog-header .close-btn:hover {
+          color: #1d1d1f;
+        }
       `}</style>
     </div>
   );

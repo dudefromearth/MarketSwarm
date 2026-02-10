@@ -12820,9 +12820,9 @@ body {
 }
 
 .position-create-tabs .tab-btn.active {
-  background: #3b82f6;
-  border-color: #3b82f6;
-  color: var(--text-bright);
+  background: #48484a;
+  border-color: #48484a;
+  color: #ffffff;
 }
 
 .position-create-body {
@@ -13091,7 +13091,7 @@ body {
 }
 
 .position-create-body .leg-row.compact .leg-right {
-  width: 40px;
+  width: 60px;
 }
 
 .position-create-body .leg-row.compact .leg-expiration {
@@ -13344,6 +13344,189 @@ body {
   background: #14532d;
   color: var(--text-faint);
   cursor: not-allowed;
+}
+
+/* ============================================
+   Position Create Modal — Light Theme
+   ============================================ */
+
+[data-theme="light"] .position-create-overlay {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="light"] .position-create-modal {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .position-create-tabs {
+  background: #f5f5f7;
+}
+
+[data-theme="light"] .position-create-tabs .tab-btn {
+  background: #e5e5ea;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .position-create-tabs .tab-btn:hover {
+  background: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .position-create-tabs .tab-btn.active {
+  background: #1d1d1f;
+  border-color: #1d1d1f;
+  color: #ffffff;
+}
+
+[data-theme="light"] .mini-risk-graph {
+  background: #f0f0f2;
+}
+
+[data-theme="light"] .direction-btn {
+  background: #e5e5ea;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .direction-btn:hover {
+  background: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .direction-btn.long.active {
+  background: #d1fae5;
+  color: #166534;
+}
+
+[data-theme="light"] .direction-btn.short.active {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+[data-theme="light"] .selected-type-label {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .selected-type-badge {
+  background: #e0ecff;
+  border-color: #007aff;
+  color: #007aff;
+}
+
+[data-theme="light"] .quick-setup-row .setup-field input {
+  background: #f5f5f7;
+  color: #1d1d1f;
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .quick-setup-row .setup-field input:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .side-toggle .side-btn {
+  background: #e5e5ea;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .side-toggle .side-btn:hover {
+  background: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .side-toggle .side-btn.call.active {
+  background: #22c55e;
+}
+
+[data-theme="light"] .side-toggle .side-btn.put.active {
+  background: #ef4444;
+}
+
+[data-theme="light"] .position-create-body .cost-type-btn {
+  background: #e5e5ea;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .position-create-body .cost-type-btn:hover {
+  background: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .position-create-body .cost-type-btn.debit.active {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+[data-theme="light"] .position-create-body .cost-type-btn.credit.active {
+  background: #d1fae5;
+  color: #166534;
+}
+
+[data-theme="light"] .position-create-body .script-input {
+  background: #f5f5f7;
+  color: #1d1d1f;
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .position-create-body .script-input:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .position-create-body .btn-paste {
+  background: #e5e5ea;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .position-create-body .btn-paste:hover {
+  background: #007aff;
+  border-color: #007aff;
+}
+
+[data-theme="light"] .format-detection {
+  background: #f5f5f7;
+}
+
+[data-theme="light"] .position-create-body .example-btn {
+  background: #f5f5f7;
+  color: #6e6e73;
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .position-create-body .example-btn:hover {
+  background: #e5e5ea;
+  border-color: #007aff;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .position-create-footer .btn-create {
+  background: #22c55e;
+}
+
+[data-theme="light"] .position-create-footer .btn-create:hover:not(:disabled) {
+  background: #16a34a;
+}
+
+[data-theme="light"] .position-create-footer .btn-create:disabled {
+  background: #d1d1d6;
+  color: #aeaeb2;
+}
+
+[data-theme="light"] .vega-warning-overlay {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="light"] .vega-warning-modal {
+  background: #ffffff;
+  border-color: #f59e0b;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .vega-warning-modal p {
+  color: #3c3c43;
+}
+
+[data-theme="light"] .vega-warning-modal p strong {
+  color: #b45309;
 }
 
 /* ============================================
@@ -15675,16 +15858,81 @@ body {
    FloatingDialog — Light Theme
    ============================================ */
 
-[data-theme="light"] .floating-dialog-backdrop {
-  background: rgba(0, 0, 0, 0.2);
-}
-
-[data-theme="light"] .floating-dialog {
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
-}
-
 [data-theme="light"] .floating-dialog .form-row {
   border-bottom-color: #e5e5ea;
+}
+
+[data-theme="light"] .floating-dialog .form-label {
+  color: #86868b;
+}
+
+[data-theme="light"] .floating-dialog .form-value {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .floating-dialog .strategy-legs {
+  background: #f5f5f7;
+}
+
+[data-theme="light"] .floating-dialog .strategy-leg {
+  color: #3c3c43;
+}
+
+[data-theme="light"] .floating-dialog .strategy-leg:not(:last-child) {
+  border-bottom-color: #e5e5ea;
+}
+
+[data-theme="light"] .floating-dialog .tos-script {
+  background: #f5f5f7;
+  border-color: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .floating-dialog .form-actions {
+  border-top-color: #e5e5ea;
+}
+
+[data-theme="light"] .floating-dialog .btn-primary {
+  background: #007aff;
+}
+
+[data-theme="light"] .floating-dialog .btn-primary:hover {
+  background: #0069d9;
+}
+
+[data-theme="light"] .floating-dialog .btn-secondary {
+  background: #e5e5ea;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .floating-dialog .btn-secondary:hover {
+  background: #d1d1d6;
+}
+
+[data-theme="light"] .floating-dialog .btn-success {
+  background: #34c759;
+}
+
+[data-theme="light"] .floating-dialog .btn-success:hover {
+  background: #28a745;
+}
+
+[data-theme="light"] .floating-dialog .form-input {
+  background: #f5f5f7;
+  border-color: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .floating-dialog .form-input:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .floating-dialog .side-call {
+  color: #188038;
+}
+
+[data-theme="light"] .floating-dialog .side-put {
+  color: #c5221f;
 }
 
 /* ============================================

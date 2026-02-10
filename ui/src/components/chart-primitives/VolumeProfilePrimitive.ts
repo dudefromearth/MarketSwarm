@@ -85,7 +85,9 @@ class VolumeProfilePaneRenderer implements IPrimitivePaneRenderer {
         const barWidth = normalizedWidth * actualMaxWidth;
 
         // Priority: numRows-based height > binSize-based height > default
-        const effectiveBarHeight = viewportBarHeight > 0 ? viewportBarHeight : (barHeight > 0 ? barHeight : defaultBarHeight);
+        // Add 1px so adjacent bars overlap slightly — eliminates visible gaps
+        const rawBarHeight = viewportBarHeight > 0 ? viewportBarHeight : (barHeight > 0 ? barHeight : defaultBarHeight);
+        const effectiveBarHeight = Math.ceil(rawBarHeight) + 1;
 
         ctx.fillRect(leftMargin, y - effectiveBarHeight / 2, barWidth, effectiveBarHeight);
       }

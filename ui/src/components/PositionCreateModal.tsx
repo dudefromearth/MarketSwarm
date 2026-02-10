@@ -118,13 +118,13 @@ const MINI_RISK_GRAPHS: Record<PositionType, { path: string; color: string }> = 
     color: '#ef4444',
   },
   calendar: {
-    // Calendar: Tent top with convex sides, single peak
-    path: 'M0,10 Q2,4 12,2 Q22,4 24,10',
+    // Calendar: Tent top with concave sides, single peak
+    path: 'M0,10 Q7,10 12,2 Q17,10 24,10',
     color: '#06b6d4',
   },
   diagonal: {
-    // Diagonal: Tent top with convex sides, two peaks
-    path: 'M0,10 Q2,4 8,3 Q12,5 16,3 Q22,4 24,10',
+    // Diagonal: Tent top with concave sides, two peaks
+    path: 'M0,10 Q5,10 8,3 Q12,6 16,3 Q19,10 24,10',
     color: '#06b6d4',
   },
   custom: {

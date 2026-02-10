@@ -391,6 +391,51 @@ export default function StrikeDropdown({
         .strike-dropdown-list::-webkit-scrollbar-thumb:hover {
           background: #6b7280;
         }
+
+        /* Light theme */
+        [data-theme="light"] .strike-dropdown-trigger {
+          background: #f5f5f7;
+          border-color: #d1d1d6;
+        }
+
+        [data-theme="light"] .strike-dropdown.open .strike-dropdown-trigger {
+          border-color: #007aff;
+        }
+
+        [data-theme="light"] .strike-input {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .strike-dropdown-arrow {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .strike-dropdown-list {
+          background: #ffffff;
+          border-color: #d1d1d6;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        [data-theme="light"] .strike-option {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .strike-option:hover {
+          background: #f0f0f2;
+        }
+
+        [data-theme="light"] .strike-option.selected {
+          background: #007aff;
+          color: white;
+        }
+
+        [data-theme="light"] .strike-dropdown-list::-webkit-scrollbar-thumb {
+          background: #c7c7cc;
+        }
+
+        [data-theme="light"] .strike-dropdown-list::-webkit-scrollbar-thumb:hover {
+          background: #aeaeb2;
+        }
       `}</style>
     </div>
   );

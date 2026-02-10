@@ -314,8 +314,8 @@ export default function GexChartPanel({
         textColor: 'rgba(148, 163, 184, 1)',
       },
       grid: {
-        vertLines: { color: 'rgba(51, 65, 85, 0.3)' },
-        horzLines: { color: 'rgba(51, 65, 85, 0.3)' },
+        vertLines: { color: 'transparent' },
+        horzLines: { color: 'transparent' },
       },
       rightPriceScale: {
         borderColor: 'rgba(30, 41, 59, 1)',
