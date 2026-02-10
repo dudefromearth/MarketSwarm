@@ -91,6 +91,27 @@ export type ProcessPhase =
  */
 export type AlertBudgetClass = 'standard' | 'high_priority' | 'critical';
 
+/**
+ * Alert Intent - whether alert is position-specific or strategy-general
+ * Used for default selection logic in orphan alert dialog
+ */
+export type AlertIntent = 'position_specific' | 'strategy_general';
+
+/**
+ * Map alert type to default intent
+ */
+export function getDefaultAlertIntent(type: AlertType): AlertIntent {
+  switch (type) {
+    case 'ai_theta_gamma':
+    case 'ai_sentiment':
+    case 'ai_risk_zone':
+    case 'butterfly_profit_mgmt':
+      return 'strategy_general';
+    default:
+      return 'position_specific';
+  }
+}
+
 // ==================== Algo Alerts (Strategy-Aware) ====================
 
 /**
@@ -925,6 +946,7 @@ export interface EditAlertInput {
   label?: string;
   enabled?: boolean;
   minProfitThreshold?: number;
+  strategyId?: string;
 }
 
 // AI evaluation result from backend

@@ -49,7 +49,8 @@ import { recognizePositionType, strategyToLegs } from './utils/positionRecogniti
 import SyncStatusIndicator from './components/SyncStatusIndicator';
 import VersionIndicator from './components/VersionIndicator';
 import NotificationCenter from './components/NotificationCenter';
-import type { AlertType, AlertBehavior } from './types/alerts';
+import type { AlertType, AlertBehavior, AlertIntent } from './types/alerts';
+import { getDefaultAlertIntent } from './types/alerts';
 import RoutineDrawer from './components/RoutineDrawer';
 import GexChartPanel from './components/GexChartPanel';
 import TradeRecommendationsPanel from './components/TradeRecommendationsPanel';
@@ -58,6 +59,7 @@ import TrackingAnalyticsDashboard from './components/TrackingAnalyticsDashboard'
 import LeaderboardView from './components/LeaderboardView';
 import MonitorPanel from './components/MonitorPanel';
 import FloatingDialog from './components/FloatingDialog';
+import OrphanedAlertDialog from './components/OrphanedAlertDialog';
 import DailyOnboarding from './components/DailyOnboarding';
 import ProcessBar, { type ProcessPhase } from './components/ProcessBar';
 import AlertManager, { AlertManagerTab } from './components/AlertManager';
@@ -191,6 +193,8 @@ interface RiskGraphAlert {
   color: string;
   // Behavior when triggered
   behavior: AlertBehavior;
+  // Alert intent - position-specific vs strategy-general
+  intent?: AlertIntent;
   // Track if price was previously on the other side (for repeat alerts)
   wasOnOtherSide?: boolean;
   // AI Theta/Gamma specific fields
@@ -434,7 +438,9 @@ function App() {
     alerts,
     createAlert: contextCreateAlert,
     updateAlert: contextUpdateAlert,
+    deleteAlert: contextDeleteAlert,
     getAlert: contextGetAlert,
+    getAlertsForStrategy,
   } = useAlerts();
 
   // Path context for stage inference
@@ -632,6 +638,13 @@ function App() {
   const [alertModalInitialPrice, setAlertModalInitialPrice] = useState<number | null>(null);
   const [alertModalInitialCondition, setAlertModalInitialCondition] = useState<'above' | 'below' | 'at'>('below');
   const [alertModalEditingAlert, setAlertModalEditingAlert] = useState<EditingAlertData | null>(null); // Alert being edited
+
+  // Orphaned alert dialog state (shown when removing a position with bound alerts)
+  const [orphanDialog, setOrphanDialog] = useState<{
+    positionId: string;
+    positionLabel: string;
+    boundAlerts: Array<{ id: string; label: string; type: string; intent: AlertIntent; isLocal: boolean }>;
+  } | null>(null);
 
   // Memoized strategy lookup for O(1) access in alert evaluation (vs O(n) .find())
   const strategyLookup = useMemo(() =>
@@ -1138,13 +1151,112 @@ function App() {
     });
   }, []);
 
-  // Remove strategy from risk graph
+  // Remove strategy from risk graph (intercepts if position has bound alerts)
   const removeFromRiskGraph = async (id: string) => {
-    try {
-      await contextRemoveStrategy(id);
-    } catch (err) {
-      console.error('Failed to remove strategy:', err);
+    // Collect bound alerts from both sources
+    const backendAlerts = getAlertsForStrategy(id);
+    const localAlerts = riskGraphAlerts.filter(a => a.strategyId === id);
+
+    const boundAlerts: Array<{ id: string; label: string; type: string; intent: AlertIntent; isLocal: boolean }> = [];
+
+    for (const a of backendAlerts) {
+      const alertType = a.type as AlertType;
+      boundAlerts.push({
+        id: a.id,
+        label: a.label || a.type,
+        type: a.type,
+        intent: getDefaultAlertIntent(alertType),
+        isLocal: false,
+      });
     }
+    for (const a of localAlerts) {
+      // Skip if already collected from backend (same id)
+      if (boundAlerts.some(b => b.id === a.id)) continue;
+      boundAlerts.push({
+        id: a.id,
+        label: a.strategyLabel ? `${a.type} - ${a.strategyLabel}` : a.type,
+        type: a.type,
+        intent: a.intent || getDefaultAlertIntent(a.type),
+        isLocal: true,
+      });
+    }
+
+    if (boundAlerts.length === 0) {
+      // No alerts - remove immediately
+      try {
+        await contextRemoveStrategy(id);
+      } catch (err) {
+        console.error('Failed to remove strategy:', err);
+      }
+      return;
+    }
+
+    // Alerts exist - show dialog
+    const strategy = riskGraphStrategies.find(s => s.id === id);
+    const typeLabel = strategy
+      ? `${strategy.strategy === 'butterfly' ? 'BF' : strategy.strategy === 'vertical' ? 'VS' : 'SGL'} ${strategy.strike}${strategy.width > 0 ? '/' + strategy.width : ''} ${strategy.side.charAt(0).toUpperCase()}`
+      : id;
+
+    setOrphanDialog({
+      positionId: id,
+      positionLabel: typeLabel,
+      boundAlerts,
+    });
+  };
+
+  // Handle reassigning orphaned alerts to another position
+  const handleReassignAlerts = async (targetPositionId: string) => {
+    if (!orphanDialog) return;
+    const { positionId, boundAlerts } = orphanDialog;
+
+    const targetStrategy = riskGraphStrategies.find(s => s.id === targetPositionId);
+    const targetLabel = targetStrategy
+      ? `${targetStrategy.strategy === 'butterfly' ? 'BF' : targetStrategy.strategy === 'vertical' ? 'VS' : 'SGL'} ${targetStrategy.strike}${targetStrategy.width > 0 ? '/' + targetStrategy.width : ''} ${targetStrategy.side.charAt(0).toUpperCase()}`
+      : targetPositionId;
+
+    // Reassign backend alerts
+    for (const a of boundAlerts.filter(a => !a.isLocal)) {
+      contextUpdateAlert({ id: a.id, strategyId: targetPositionId });
+    }
+
+    // Reassign local alerts
+    setRiskGraphAlerts(prev =>
+      prev.map(a =>
+        a.strategyId === positionId
+          ? { ...a, strategyId: targetPositionId, strategyLabel: targetLabel }
+          : a
+      )
+    );
+
+    // Remove the position
+    try {
+      await contextRemoveStrategy(positionId);
+    } catch (err) {
+      console.error('Failed to remove strategy after reassign:', err);
+    }
+    setOrphanDialog(null);
+  };
+
+  // Handle deleting orphaned alerts along with the position
+  const handleDeleteOrphanedAlerts = async () => {
+    if (!orphanDialog) return;
+    const { positionId, boundAlerts } = orphanDialog;
+
+    // Delete backend alerts
+    for (const a of boundAlerts.filter(a => !a.isLocal)) {
+      contextDeleteAlert(a.id);
+    }
+
+    // Delete local alerts
+    setRiskGraphAlerts(prev => prev.filter(a => a.strategyId !== positionId));
+
+    // Remove the position
+    try {
+      await contextRemoveStrategy(positionId);
+    } catch (err) {
+      console.error('Failed to remove strategy after alert deletion:', err);
+    }
+    setOrphanDialog(null);
   };
 
   // Toggle strategy visibility in risk graph
@@ -3829,6 +3941,22 @@ function App() {
         initialPrice={alertModalInitialPrice}
         initialCondition={alertModalInitialCondition}
         editingAlert={alertModalEditingAlert}
+      />
+
+      {/* Orphaned Alert Dialog - shown when removing a position with bound alerts */}
+      <OrphanedAlertDialog
+        isOpen={orphanDialog !== null}
+        positionLabel={orphanDialog?.positionLabel ?? ''}
+        alerts={orphanDialog?.boundAlerts ?? []}
+        availablePositions={riskGraphStrategies
+          .filter(s => s.id !== orphanDialog?.positionId)
+          .map(s => ({
+            id: s.id,
+            label: `${s.strategy === 'butterfly' ? 'BF' : s.strategy === 'vertical' ? 'VS' : 'SGL'} ${s.strike}${s.width > 0 ? '/' + s.width : ''} ${s.side.charAt(0).toUpperCase()}`,
+          }))}
+        onReassign={handleReassignAlerts}
+        onDeleteAlerts={handleDeleteOrphanedAlerts}
+        onCancel={() => setOrphanDialog(null)}
       />
 
       {/* ToS Import Modal (legacy - kept for backward compat) */}
