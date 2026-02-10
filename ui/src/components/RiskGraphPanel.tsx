@@ -625,6 +625,8 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                   strikes={chartStrikes}
                   onOpenAlertDialog={handleOpenAlertDialog}
                   alertLines={alertLinesForChart}
+                  expiredExpirationData={pnlChartData.expiredExpirationPoints}
+                  expiredTheoreticalData={pnlChartData.expiredTheoreticalPoints}
                   renderBackdrop={renderBackdrop}
                 />
               )}

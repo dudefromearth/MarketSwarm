@@ -238,6 +238,9 @@ export interface RiskGraphData {
   centerPrice: number;
   // Strategy IDs that are "alive" at the simulated time (not past expiration)
   activeStrategyIds: string[];
+  // Faded curves for sim-expired strategies (shown as ghost lines)
+  expiredExpirationPoints: PnLPoint[];
+  expiredTheoreticalPoints: PnLPoint[];
 }
 
 interface UseRiskGraphCalculationsProps {
@@ -1456,6 +1459,8 @@ export function useRiskGraphCalculations({
         allStrikes: [],
         centerPrice: spotPrice,
         activeStrategyIds: [],
+        expiredExpirationPoints: [],
+        expiredTheoreticalPoints: [],
       };
     }
 
@@ -1553,9 +1558,14 @@ export function useRiskGraphCalculations({
     // Generate price points with critical strikes
     const pricePoints = generatePricePoints(fullMinPrice, fullMaxPrice, allStrikes, 250);
 
+    // Expired strategies (sim-expired, for faded ghost curves)
+    const expiredStrategies = visibleStrategies.filter(s => !activeStrategyIds.includes(s.id));
+
     // Calculate P&L curves
     const expirationPoints: PnLPoint[] = [];
     const theoreticalPoints: PnLPoint[] = [];
+    const expiredExpirationPoints: PnLPoint[] = [];
+    const expiredTheoreticalPoints: PnLPoint[] = [];
     let minPnL = Infinity;
     let maxPnL = -Infinity;
 
@@ -1573,6 +1583,19 @@ export function useRiskGraphCalculations({
         theoPnL += calculateTheoreticalPnL(strat, price, volatility, riskFreeRate, getStrategyTimeYears(strat.id), spotPrice, pricingParams);
       }
       theoreticalPoints.push({ price, pnl: theoPnL });
+
+      // Expired strategies — expiration P&L (they're at expiration, so intrinsic value)
+      if (expiredStrategies.length > 0) {
+        let expiredExpPnL = 0;
+        let expiredTheoPnL = 0;
+        for (const strat of expiredStrategies) {
+          const ep = calculateExpirationPnL(strat, price, volatility);
+          expiredExpPnL += ep;
+          expiredTheoPnL += ep; // at expiration, theoretical = intrinsic
+        }
+        expiredExpirationPoints.push({ price, pnl: expiredExpPnL });
+        expiredTheoreticalPoints.push({ price, pnl: expiredTheoPnL });
+      }
 
       // Track P&L range for visible area
       if (price >= minPrice && price <= maxPrice) {
@@ -1652,6 +1675,8 @@ export function useRiskGraphCalculations({
       allStrikes,
       centerPrice,
       activeStrategyIds,
+      expiredExpirationPoints,
+      expiredTheoreticalPoints,
     };
   }, [strategies, spotPrice, vix, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotOffset, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths]);
 }

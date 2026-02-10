@@ -40,6 +40,9 @@ export interface PnLChartProps {
   strikes: number[];
   onOpenAlertDialog?: (price: number, type: PriceAlertType) => void;
   alertLines?: { price: number; color: string; label?: string }[];
+  /** Faded curves for sim-expired strategies */
+  expiredExpirationData?: PnLPoint[];
+  expiredTheoreticalData?: PnLPoint[];
   /** Optional backdrop render function - rendered behind chart */
   renderBackdrop?: (props: BackdropRenderProps) => React.ReactNode;
 }
@@ -66,6 +69,8 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
   strikes,
   onOpenAlertDialog,
   alertLines = [],
+  expiredExpirationData = [],
+  expiredTheoreticalData = [],
   renderBackdrop,
 }, ref) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -386,6 +391,43 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
       }
     });
 
+    // Draw faded expired strategy curves (ghost lines behind active curves)
+    if (expiredExpirationData.length > 1) {
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      let started = false;
+      expiredExpirationData.forEach(point => {
+        const x = toCanvasX(point.price, width);
+        const y = toCanvasY(point.pnl, height);
+        if (!started) { ctx.moveTo(x, y); started = true; }
+        else { ctx.lineTo(x, y); }
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+
+    if (expiredTheoreticalData.length > 1) {
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = '#e879f9';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      let started = false;
+      expiredTheoreticalData.forEach(point => {
+        const x = toCanvasX(point.price, width);
+        const y = toCanvasY(point.pnl, height);
+        if (!started) { ctx.moveTo(x, y); started = true; }
+        else { ctx.lineTo(x, y); }
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
+
     // Draw expiration P&L curve
     if (expirationData.length > 1) {
       ctx.strokeStyle = '#3b82f6';
@@ -541,7 +583,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     ctx.fillStyle = themeColors.legendText;
     ctx.fillText('Real-Time', legendX + 20, legendY + 15);
 
-  }, [expirationData, theoreticalData, spotPrice, expirationBreakevens, theoreticalBreakevens, strikes, alertLines, toCanvasX, toCanvasY, renderBackdrop]);
+  }, [expirationData, theoreticalData, spotPrice, expirationBreakevens, theoreticalBreakevens, strikes, alertLines, expiredExpirationData, expiredTheoreticalData, toCanvasX, toCanvasY, renderBackdrop]);
 
   // Calculate nice step size for axis labels
   function calculateNiceStep(range: number, targetSteps: number): number {
