@@ -479,6 +479,87 @@ export default function DealerGravitySettings({ isOpen, onClose }: DealerGravity
           padding: 40px;
           color: var(--text-muted, #666);
         }
+
+        /* Light theme */
+        [data-theme="light"] .dg-settings-modal {
+          background: #ffffff;
+          border-color: #d1d1d6;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+        }
+
+        [data-theme="light"] .dg-settings-modal .modal-header {
+          border-bottom-color: #e5e5ea;
+        }
+
+        [data-theme="light"] .dg-settings-modal .modal-header h2 {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .dg-settings-modal .modal-close {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .dg-settings-modal .modal-close:hover {
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .dg-settings-modal .modal-footer {
+          border-top-color: #e5e5ea;
+        }
+
+        [data-theme="light"] .dg-settings-modal .btn-primary {
+          background: #007aff;
+        }
+
+        [data-theme="light"] .dg-settings-modal .btn-primary:hover {
+          background: #0069d9;
+        }
+
+        [data-theme="light"] .dg-settings-modal .btn-secondary {
+          background: #e5e5ea;
+          color: #1d1d1f;
+        }
+
+        [data-theme="light"] .dg-settings-modal .btn-secondary:hover {
+          background: #d1d1d6;
+        }
+
+        [data-theme="light"] .settings-section h3 {
+          color: #1d1d1f;
+          border-bottom-color: #e5e5ea;
+        }
+
+        [data-theme="light"] .setting-row label {
+          color: #3c3c43;
+        }
+
+        [data-theme="light"] .setting-row input[type="color"] {
+          border-color: #d1d1d6;
+        }
+
+        [data-theme="light"] .setting-row select {
+          background: #f5f5f7;
+          color: #1d1d1f;
+          border-color: #d1d1d6;
+        }
+
+        [data-theme="light"] .setting-hint {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .setting-hint-inline {
+          color: #86868b;
+        }
+
+        [data-theme="light"] .setting-number-input {
+          background: #f5f5f7;
+          color: #1d1d1f;
+          border-color: #d1d1d6;
+        }
+
+        [data-theme="light"] .loading-state {
+          color: #86868b;
+        }
       `}</style>
     </div>
   );

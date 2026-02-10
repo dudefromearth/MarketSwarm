@@ -498,27 +498,18 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
           {/* Dealer Gravity Backdrop Controls */}
           {(dgArtifact || (gexByStrike && Object.keys(gexByStrike).length > 0)) && (
             <div className="backdrop-controls" title="Dealer Gravity Backdrop">
-              <button
-                className={`btn-backdrop-toggle ${showVolumeProfile ? 'active' : ''}`}
-                onClick={() => setShowVolumeProfile(!showVolumeProfile)}
-                title="Toggle Volume Profile"
-              >
-                VP
-              </button>
-              <button
-                className={`btn-backdrop-toggle ${showGex ? 'active' : ''}`}
-                onClick={() => setShowGex(!showGex)}
-                title="Toggle GEX (Gamma Exposure)"
-              >
-                GEX
-              </button>
-              <button
-                className={`btn-backdrop-toggle ${showStructuralLines ? 'active' : ''}`}
-                onClick={() => setShowStructuralLines(!showStructuralLines)}
-                title="Toggle Structural Lines (Volume Nodes, Wells, Crevasses)"
-              >
-                DG
-              </button>
+              <label className="backdrop-toggle-label" title="Toggle Volume Profile">
+                <input type="checkbox" checked={showVolumeProfile} onChange={() => setShowVolumeProfile(!showVolumeProfile)} />
+                <span>VP</span>
+              </label>
+              <label className="backdrop-toggle-label" title="Toggle Structural Lines (Volume Nodes, Wells, Crevasses)">
+                <input type="checkbox" checked={showStructuralLines} onChange={() => setShowStructuralLines(!showStructuralLines)} />
+                <span>DG</span>
+              </label>
+              <label className="backdrop-toggle-label" title="Toggle GEX (Gamma Exposure)">
+                <input type="checkbox" checked={showGex} onChange={() => setShowGex(!showGex)} />
+                <span>GEX</span>
+              </label>
               <input
                 type="range"
                 className="backdrop-opacity-slider"

@@ -2599,6 +2599,32 @@ body {
   border-radius: 4px;
 }
 
+.backdrop-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.backdrop-toggle-label input[type="checkbox"] {
+  width: 26px;
+  min-width: 26px;
+  height: 15px;
+  border-radius: 8px;
+}
+
+.backdrop-toggle-label input[type="checkbox"]::before {
+  width: 11px;
+  height: 11px;
+}
+
+.backdrop-toggle-label input[type="checkbox"]:checked::before {
+  transform: translateX(11px);
+}
+
 .btn-backdrop-toggle {
   padding: 2px 6px;
   font-size: 10px;
@@ -10261,7 +10287,7 @@ body {
   margin-bottom: 6px;
 }
 
-.setting-item input,
+.setting-item input:not([type="checkbox"]),
 .setting-item select {
   width: 100%;
   max-width: 300px;
