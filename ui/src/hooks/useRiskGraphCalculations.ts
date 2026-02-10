@@ -1496,17 +1496,21 @@ export function useRiskGraphCalculations({
     const timeOffsetDays = timeMachineEnabled ? simTimeOffsetHours / 24 : 0;
 
     // Compute per-strategy time-to-expiry (fractional days until 4pm ET close)
+    // realTimeDaysMap: unclamped values for active/expired filtering
+    // strategyTimeDaysMap: clamped values for pricing (Black-Scholes needs T > 0)
+    const realTimeDaysMap = new Map<string, number>();
     const strategyTimeDaysMap = new Map<string, number>();
     for (const strat of visibleStrategies) {
-      let days: number;
+      let realDays: number;
       if (strat.expiration) {
         const expClose = new Date(strat.expiration + 'T16:00:00-05:00');
-        days = Math.max(0.001, (expClose.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        realDays = (expClose.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
       } else {
         const fallbackDte = strat.dte ?? 30;
-        days = fallbackDte === 0 ? 0.02 : fallbackDte;
+        realDays = fallbackDte === 0 ? 0.02 : fallbackDte;
       }
-      strategyTimeDaysMap.set(strat.id, days);
+      realTimeDaysMap.set(strat.id, realDays);
+      strategyTimeDaysMap.set(strat.id, Math.max(0.001, realDays));
     }
 
     // Use the furthest-out expiration for the global time reference (range calc, slider)
@@ -1514,10 +1518,10 @@ export function useRiskGraphCalculations({
     const baseTimeDays = allTimeDays.length > 0 ? Math.max(...allTimeDays) : 30;
 
     // Filter to strategies that are still "alive" at the simulated time
-    // A strategy is expired when its time-to-expiry minus the sim offset reaches zero
+    // Uses unclamped real days so naturally expired positions are correctly detected
     const activeStrategies = visibleStrategies.filter(strat => {
-      const rawDays = strategyTimeDaysMap.get(strat.id) ?? 0;
-      return rawDays - timeOffsetDays > 0;
+      const realDays = realTimeDaysMap.get(strat.id) ?? 0;
+      return realDays - timeOffsetDays > 0;
     });
     const activeStrategyIds = activeStrategies.map(s => s.id);
 
