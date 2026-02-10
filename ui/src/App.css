@@ -7228,17 +7228,13 @@ body {
 }
 
 .monitor-tab .tab-badge {
-  background: #3b82f6;
-  color: var(--text-bright);
+  background: #ef4444;
+  color: #fff;
   font-size: 10px;
   padding: 2px 6px;
   border-radius: 8px;
   min-width: 18px;
   text-align: center;
-}
-
-.monitor-tab .tab-badge.open {
-  background: #22c55e;
 }
 
 .monitor-content {

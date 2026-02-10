@@ -161,6 +161,22 @@ function MonitorPanelContent({
                       <span>Qty: {o.quantity ?? '—'}</span>
                     </div>
                     <div className="monitor-item-actions">
+                      {onViewInRiskGraph && (
+                        <button
+                          className="monitor-btn view"
+                          onClick={() => onViewInRiskGraph({
+                            id: String(o.id),
+                            symbol: o.symbol,
+                            side: o.direction,
+                            entry_price: o.limit_price,
+                            entry_time: '',
+                            status: 'pending',
+                          })}
+                          title="Send to Risk Graph"
+                        >
+                          📈
+                        </button>
+                      )}
                       <button className="monitor-btn cancel" onClick={() => handleCancelOrder(o.id)}>
                         Cancel
                       </button>
