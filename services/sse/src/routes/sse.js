@@ -6,8 +6,27 @@ import { getMarketRedis, getMarketRedisSub } from "../redis.js";
 import { getKeys } from "../keys.js";
 import { trackUserConnection, untrackUserConnection } from "./admin.js";
 import { getCurrentUser } from "../auth.js";
+import { getUserProfile } from "../db/userStore.js";
 
 const router = Router();
+
+// Resolve WordPress user ID → internal DB user ID for user-scoped SSE streams.
+// Pub/sub dispatchers use the internal DB ID, so clients must register under it.
+router.use(async (req, res, next) => {
+  const user = getCurrentUser(req);
+  const wp = user?.wp;
+  if (wp?.issuer && wp?.id) {
+    try {
+      const profile = await getUserProfile(wp.issuer, wp.id);
+      if (profile?.id) {
+        req.dbUserId = String(profile.id);
+      }
+    } catch (e) {
+      console.error("[sse] Failed to resolve user ID:", e.message);
+    }
+  }
+  next();
+});
 
 // Client connection tracking
 const clients = {
@@ -326,13 +345,11 @@ router.get("/alerts", (req, res) => {
 
 // GET /sse/risk-graph - User-scoped real-time risk graph updates
 router.get("/risk-graph", (req, res) => {
-  const user = getCurrentUser(req);
-  if (!user?.wp?.id) {
+  const userId = req.dbUserId;
+  if (!userId) {
     res.status(401).json({ error: "Authentication required" });
     return;
   }
-
-  const userId = String(user.wp.id);
   sseHeaders(res);
 
   // Track this client for user-scoped broadcasting
@@ -355,13 +372,11 @@ router.get("/risk-graph", (req, res) => {
 // GET /sse/trade-log - User-scoped real-time trade log updates
 // Supports ?last_seq=N for reconnection to resume from last seen event
 router.get("/trade-log", (req, res) => {
-  const user = getCurrentUser(req);
-  if (!user?.wp?.id) {
+  const userId = req.dbUserId;
+  if (!userId) {
     res.status(401).json({ error: "Authentication required" });
     return;
   }
-
-  const userId = String(user.wp.id);
   const lastSeq = req.query.last_seq ? parseInt(req.query.last_seq, 10) : null;
   sseHeaders(res);
 
@@ -390,13 +405,11 @@ router.get("/trade-log", (req, res) => {
 // GET /sse/positions - User-scoped real-time position updates
 // Receives events when positions are created, updated, or deleted
 router.get("/positions", (req, res) => {
-  const user = getCurrentUser(req);
-  if (!user?.wp?.id) {
+  const userId = req.dbUserId;
+  if (!userId) {
     res.status(401).json({ error: "Authentication required" });
     return;
   }
-
-  const userId = String(user.wp.id);
   sseHeaders(res);
 
   // Track this client for user-scoped broadcasting
@@ -437,13 +450,11 @@ router.get("/dealer-gravity", (req, res) => {
 // GET /sse/logs - User-scoped log lifecycle events
 // Receives events when logs are archived, reactivated, retired, etc.
 router.get("/logs", (req, res) => {
-  const user = getCurrentUser(req);
-  if (!user?.wp?.id) {
+  const userId = req.dbUserId;
+  if (!userId) {
     res.status(401).json({ error: "Authentication required" });
     return;
   }
-
-  const userId = String(user.wp.id);
   sseHeaders(res);
 
   // Track this client for user-scoped broadcasting
