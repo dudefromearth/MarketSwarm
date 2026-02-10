@@ -76,6 +76,144 @@
 }
 
 /* ============================================
+   Light Theme: Line Art Butterfly
+   ============================================ */
+
+[data-theme="light"] .path-avatar {
+  color: #1d1d1f;
+  opacity: 0.4;
+  filter: none;
+}
+
+[data-theme="light"] .path-avatar:hover {
+  opacity: 0.7;
+  filter: none;
+}
+
+[data-theme="light"] .path-avatar.fading-in {
+  animation: avatarFadeInLight 700ms ease-out forwards;
+}
+
+@keyframes avatarFadeInLight {
+  0% { opacity: 0; }
+  100% { opacity: 0.4; }
+}
+
+/* Line art: wings become stroke outlines */
+[data-theme="light"] .butterfly-shape .wing {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 0.75;
+  opacity: 0.6;
+}
+
+/* Line art: body is a thin filled stroke */
+[data-theme="light"] .butterfly-shape .body {
+  fill: currentColor;
+  fill-opacity: 0.08;
+  stroke: currentColor;
+  stroke-width: 0.75;
+  opacity: 0.8;
+}
+
+/* Line art: wing details are barely-there strokes */
+[data-theme="light"] .butterfly-shape .wing-detail {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 0.5;
+  opacity: 0.25;
+}
+
+/* Active state: Apple blue line art */
+[data-theme="light"] .path-avatar.chat-open {
+  color: #007aff;
+  opacity: 0.8;
+  filter: none;
+}
+
+[data-theme="light"] .path-avatar.chat-open:hover {
+  filter: none;
+}
+
+/* ============================================
+   Light Theme: Welcome Tour
+   ============================================ */
+
+[data-theme="light"] .welcome-tour-overlay {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="light"] .welcome-tour-modal {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  box-shadow: 0 16px 64px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .welcome-tour-headline {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .welcome-tour-video {
+  background: #f5f5f7;
+  border-color: #e5e5ea;
+  color: #86868b;
+}
+
+[data-theme="light"] .welcome-tour-text p {
+  color: #48484a;
+}
+
+[data-theme="light"] .welcome-tour-path {
+  color: #007aff;
+  background: #f0f0f2;
+}
+
+[data-theme="light"] .welcome-tour-philosophy {
+  color: #6e6e73;
+}
+
+[data-theme="light"] .welcome-tour-btn.primary {
+  background: #007aff;
+}
+
+[data-theme="light"] .welcome-tour-btn.primary:hover {
+  background: #0062cc;
+}
+
+[data-theme="light"] .welcome-butterfly-teaser,
+[data-theme="light"] .welcome-butterfly-handoff {
+  color: #86868b;
+}
+
+/* ============================================
+   Light Theme: Expanded Panel (legacy)
+   ============================================ */
+
+[data-theme="light"] .path-indicator-expanded {
+  background: rgba(255, 255, 255, 0.98);
+  border-color: #d1d1d6;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .path-expanded-header {
+  border-bottom-color: #e5e5ea;
+  background: #f5f5f7;
+}
+
+[data-theme="light"] .path-expanded-title {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .path-close-btn {
+  color: #aeaeb2;
+}
+
+[data-theme="light"] .path-close-btn:hover {
+  color: #1d1d1f;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+/* ============================================
    Expanded Panel (from bottom-right)
    ============================================ */
 

@@ -103,6 +103,7 @@ export default function PathIndicator({
           <g className="butterfly-shape">
             {/* Left wing */}
             <ellipse
+              className="wing"
               cx="18"
               cy="24"
               rx="10"
@@ -112,6 +113,7 @@ export default function PathIndicator({
             />
             {/* Right wing */}
             <ellipse
+              className="wing"
               cx="30"
               cy="24"
               rx="10"
@@ -121,6 +123,7 @@ export default function PathIndicator({
             />
             {/* Body */}
             <ellipse
+              className="body"
               cx="24"
               cy="24"
               rx="3"
@@ -130,6 +133,7 @@ export default function PathIndicator({
             />
             {/* Wing details - subtle curves */}
             <ellipse
+              className="wing-detail"
               cx="16"
               cy="20"
               rx="4"
@@ -138,6 +142,7 @@ export default function PathIndicator({
               opacity="0.3"
             />
             <ellipse
+              className="wing-detail"
               cx="32"
               cy="20"
               rx="4"
@@ -146,6 +151,7 @@ export default function PathIndicator({
               opacity="0.3"
             />
             <ellipse
+              className="wing-detail"
               cx="16"
               cy="28"
               rx="3"
@@ -154,6 +160,7 @@ export default function PathIndicator({
               opacity="0.25"
             />
             <ellipse
+              className="wing-detail"
               cx="32"
               cy="28"
               rx="3"

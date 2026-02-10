@@ -45,6 +45,62 @@
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
 }
 
+[data-theme="light"] .vexy-message-content strong {
+  font-weight: 600;
+}
+
+[data-theme="light"] .vexy-rate-limit {
+  background: rgba(234, 179, 8, 0.06);
+  border-color: rgba(234, 179, 8, 0.15);
+  color: #92650a;
+}
+
+[data-theme="light"] .vexy-rate-limit.exhausted {
+  background: rgba(255, 59, 48, 0.06);
+  border-color: rgba(255, 59, 48, 0.15);
+  color: #d63a2f;
+}
+
+[data-theme="light"] .vexy-chat-error {
+  background: rgba(255, 59, 48, 0.06);
+  border-color: rgba(255, 59, 48, 0.15);
+  color: #d63a2f;
+}
+
+[data-theme="light"] .vexy-chat-error-retry {
+  border-color: rgba(255, 59, 48, 0.25);
+  color: #d63a2f;
+}
+
+[data-theme="light"] .vexy-chat-error-retry:hover {
+  background: rgba(255, 59, 48, 0.06);
+}
+
+[data-theme="light"] .vexy-tier-badge {
+  color: #ffffff;
+}
+
+[data-theme="light"] .vexy-tier-badge.observer {
+  background: #86868b;
+}
+
+[data-theme="light"] .vexy-tier-badge.activator {
+  background: #007aff;
+}
+
+[data-theme="light"] .vexy-tier-badge.navigator,
+[data-theme="light"] .vexy-tier-badge.coaching {
+  background: #5856d6;
+}
+
+[data-theme="light"] .vexy-tier-badge.administrator {
+  background: #ff3b30;
+}
+
+[data-theme="light"] .vexy-chat-messages::-webkit-scrollbar-thumb {
+  background: #d1d1d6;
+}
+
 /* ========== Main Container ========== */
 .vexy-chat-panel {
   position: fixed;
