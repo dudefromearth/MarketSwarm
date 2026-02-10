@@ -3448,7 +3448,7 @@ body {
   border-radius: 6px;
   padding: 8px 10px;
   margin-bottom: 6px;
-  transition: opacity 250ms ease, border-color 250ms ease;
+  transition: opacity 500ms ease, border-color 500ms ease;
 }
 
 .risk-graph-position-item.hidden-position {

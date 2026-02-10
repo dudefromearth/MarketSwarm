@@ -86,16 +86,28 @@ export default function WhatsNew({ area, className = '' }: WhatsNewProps) {
   return (
     <div className={`whats-new ${className}`} ref={containerRef}>
       <button
-        className="whats-new-btn"
+        className={`whats-new-btn ${className.includes('apple') ? 'whats-new-btn-apple' : ''}`}
         onClick={(e) => { e.stopPropagation(); setIsOpen(!isOpen); }}
         title="What's new here"
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10" />
-          <line x1="12" y1="16" x2="12" y2="12" />
-          <line x1="12" y1="8" x2="12.01" y2="8" />
-        </svg>
-        {hasUnseen && <span className="whats-new-dot" />}
+        {className.includes('apple') ? (
+          <>
+            <span className="whats-new-btn-label">What's New</span>
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+              <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            </svg>
+            {hasUnseen && <span className="whats-new-dot" />}
+          </>
+        ) : (
+          <>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="16" x2="12" y2="12" />
+              <line x1="12" y1="8" x2="12.01" y2="8" />
+            </svg>
+            {hasUnseen && <span className="whats-new-dot" />}
+          </>
+        )}
       </button>
 
       {isOpen && (
@@ -163,6 +175,41 @@ export default function WhatsNew({ area, className = '' }: WhatsNewProps) {
           color: #9ca3af;
         }
 
+        .whats-new-btn-apple {
+          background: rgba(255, 255, 255, 0.06);
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          border-radius: 6px;
+          padding: 3px 8px;
+          gap: 4px;
+          font-size: 11px;
+          font-weight: 500;
+          color: #9ca3af;
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+        }
+
+        .whats-new-btn-apple:hover {
+          background: rgba(255, 255, 255, 0.1);
+          color: #d1d5db;
+          border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .whats-new-btn-label {
+          white-space: nowrap;
+        }
+
+        [data-theme="light"] .whats-new-btn-apple {
+          background: rgba(0, 0, 0, 0.03);
+          border-color: rgba(0, 0, 0, 0.1);
+          color: #6e6e73;
+        }
+
+        [data-theme="light"] .whats-new-btn-apple:hover {
+          background: rgba(0, 0, 0, 0.06);
+          color: #1d1d1f;
+          border-color: rgba(0, 0, 0, 0.15);
+        }
+
         .whats-new-dot {
           position: absolute;
           top: 0;
@@ -176,7 +223,7 @@ export default function WhatsNew({ area, className = '' }: WhatsNewProps) {
         .whats-new-dropdown {
           position: absolute;
           top: calc(100% + 6px);
-          right: 0;
+          left: 0;
           width: 300px;
           max-height: 360px;
           background: #1a1a1f;

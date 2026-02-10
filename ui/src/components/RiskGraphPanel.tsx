@@ -532,8 +532,8 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     <div className="panel echarts-risk-graph-panel">
       <div className="panel-header">
         <h3>Risk Graph {strategies.length > 0 && `(${strategies.length})`}</h3>
+        <WhatsNew area="risk-graph" className="whats-new-apple" />
         <div className="panel-header-actions">
-          <WhatsNew area="risk-graph" />
           {/* Dealer Gravity Backdrop Controls */}
           {(dgArtifact || (gexByStrike && Object.keys(gexByStrike).length > 0)) && (
             <div className="backdrop-controls" title="Dealer Gravity Backdrop">

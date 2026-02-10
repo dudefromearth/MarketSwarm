@@ -590,7 +590,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
 
   }, [expirationData, theoreticalData, spotPrice, expirationBreakevens, theoreticalBreakevens, strikes, alertLines, expiredExpirationData, expiredTheoreticalData, toCanvasX, toCanvasY, renderBackdrop]);
 
-  // Animate expired curve opacity (250ms fade in/out)
+  // Animate expired curve opacity (500ms fade in/out)
   const hasExpired = expiredExpirationData.length > 0;
   useEffect(() => {
     const target = hasExpired ? 0.25 : 0;
@@ -600,7 +600,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
       return;
     }
     const startTime = performance.now();
-    const duration = 250;
+    const duration = 500;
     const animate = (now: number) => {
       const t = Math.min((now - startTime) / duration, 1);
       const eased = t * (2 - t); // ease-out
