@@ -267,3 +267,125 @@
 .alert-btn-save:hover {
   background: #2563eb;
 }
+
+/* --- Light Theme --- */
+[data-theme="light"] .alert-modal-backdrop {
+  background: rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(4px);
+}
+
+[data-theme="light"] .alert-modal {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .alert-modal-header {
+  background: #f5f5f7;
+  border-bottom-color: #e5e5ea;
+}
+
+[data-theme="light"] .alert-modal-header h3 {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .alert-modal-strategy {
+  background: #007aff;
+}
+
+[data-theme="light"] .alert-modal-close {
+  color: #aeaeb2;
+}
+
+[data-theme="light"] .alert-modal-close:hover {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .alert-label {
+  color: #86868b;
+}
+
+[data-theme="light"] .alert-type-btn {
+  background: #f5f5f7;
+  border-color: #e5e5ea;
+}
+
+[data-theme="light"] .alert-type-btn:hover {
+  background: #ffffff;
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .alert-type-btn.selected {
+  border-color: #007aff;
+  background: rgba(0, 122, 255, 0.06);
+}
+
+[data-theme="light"] .alert-type-name {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .alert-type-btn.selected .alert-type-name {
+  color: #007aff;
+}
+
+[data-theme="light"] .alert-type-desc {
+  color: #86868b;
+}
+
+[data-theme="light"] .alert-input {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .alert-input:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .alert-input-suffix {
+  color: #86868b;
+}
+
+[data-theme="light"] .alert-select {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .alert-select:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .alert-help {
+  color: #86868b;
+}
+
+[data-theme="light"] .alert-color-btn.selected {
+  border-color: #1d1d1f;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .alert-modal-footer {
+  background: #f5f5f7;
+  border-top-color: #e5e5ea;
+}
+
+[data-theme="light"] .alert-btn-cancel {
+  background: transparent;
+  border: 1px solid #d1d1d6;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .alert-btn-cancel:hover {
+  background: #f0f0f2;
+  border-color: #aeaeb2;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .alert-btn-save {
+  background: #007aff;
+}
+
+[data-theme="light"] .alert-btn-save:hover {
+  background: #0063d1;
+}

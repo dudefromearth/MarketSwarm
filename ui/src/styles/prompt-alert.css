@@ -433,3 +433,220 @@
   background: #3b82f6;
   transition: width 0.3s;
 }
+
+/* --- Light Theme --- */
+[data-theme="light"] .prompt-alert-modal-overlay {
+  background: rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(4px);
+}
+
+[data-theme="light"] .prompt-alert-modal {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .prompt-alert-header {
+  background: #f5f5f7;
+  border-bottom-color: #e5e5ea;
+}
+
+[data-theme="light"] .prompt-alert-header h2 {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .prompt-alert-strategy {
+  background: #007aff;
+}
+
+[data-theme="light"] .prompt-alert-close {
+  color: #aeaeb2;
+}
+
+[data-theme="light"] .prompt-alert-close:hover {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .prompt-alert-label {
+  color: #86868b;
+}
+
+[data-theme="light"] .prompt-alert-textarea {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .prompt-alert-textarea:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .prompt-alert-textarea::placeholder {
+  color: #aeaeb2;
+}
+
+[data-theme="light"] .prompt-alert-hint {
+  color: #86868b;
+}
+
+[data-theme="light"] .prompt-alert-example {
+  background: #f5f5f7;
+  border-color: #e5e5ea;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .prompt-alert-example:hover {
+  background: #ffffff;
+  border-color: #007aff;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .prompt-alert-option {
+  background: #f5f5f7;
+  border-color: #e5e5ea;
+}
+
+[data-theme="light"] .prompt-alert-option:hover {
+  background: #ffffff;
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .prompt-alert-option.selected {
+  background: rgba(0, 122, 255, 0.06);
+  border-color: #007aff;
+}
+
+[data-theme="light"] .prompt-alert-option .option-label {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .prompt-alert-option .option-desc {
+  color: #86868b;
+}
+
+[data-theme="light"] .prompt-alert-advanced-toggle {
+  color: #007aff;
+}
+
+[data-theme="light"] .prompt-alert-advanced-toggle:hover {
+  color: #0063d1;
+}
+
+[data-theme="light"] .prompt-alert-advanced {
+  background: #f5f5f7;
+  border-color: #e5e5ea;
+}
+
+[data-theme="light"] .prompt-alert-select {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .prompt-alert-select:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .prompt-alert-reference {
+  background: #f0f0f2;
+}
+
+[data-theme="light"] .reference-label {
+  color: #86868b;
+}
+
+[data-theme="light"] .reference-value {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .prompt-alert-error {
+  background: rgba(255, 59, 48, 0.06);
+  border-color: rgba(255, 59, 48, 0.2);
+  color: #ff3b30;
+}
+
+[data-theme="light"] .prompt-alert-footer {
+  background: #f5f5f7;
+  border-top-color: #e5e5ea;
+}
+
+[data-theme="light"] .prompt-alert-btn.cancel {
+  background: transparent;
+  border: 1px solid #d1d1d6;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .prompt-alert-btn.cancel:hover {
+  background: #f0f0f2;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .prompt-alert-btn.save {
+  background: #007aff;
+}
+
+[data-theme="light"] .prompt-alert-btn.save:hover:not(:disabled) {
+  background: #0063d1;
+}
+
+/* Observer panel light overrides */
+[data-theme="light"] .observer-prompt-alert {
+  background: #f5f5f7;
+  border-color: #e5e5ea;
+}
+
+[data-theme="light"] .observer-prompt-alert.update {
+  border-color: #007aff;
+  background: rgba(0, 122, 255, 0.04);
+}
+
+[data-theme="light"] .observer-prompt-alert.warn {
+  border-color: #ff9500;
+  background: rgba(255, 149, 0, 0.04);
+}
+
+[data-theme="light"] .observer-prompt-alert.accomplished {
+  border-color: #34c759;
+  background: rgba(52, 199, 89, 0.04);
+}
+
+[data-theme="light"] .observer-prompt-text {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .observer-prompt-reasoning {
+  color: #6e6e73;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .observer-prompt-meta {
+  color: #aeaeb2;
+}
+
+[data-theme="light"] .observer-prompt-confidence-bar {
+  background: #e5e5ea;
+}
+
+[data-theme="light"] .observer-prompt-confidence-fill {
+  background: #007aff;
+}
+
+[data-theme="light"] .prompt-stage-badge.watching {
+  background: #f0f0f2;
+  color: #86868b;
+}
+
+[data-theme="light"] .prompt-stage-badge.update {
+  background: rgba(0, 122, 255, 0.1);
+  color: #007aff;
+}
+
+[data-theme="light"] .prompt-stage-badge.warn {
+  background: rgba(255, 149, 0, 0.1);
+  color: #c77800;
+}
+
+[data-theme="light"] .prompt-stage-badge.accomplished {
+  background: rgba(52, 199, 89, 0.1);
+  color: #248a3d;
+}

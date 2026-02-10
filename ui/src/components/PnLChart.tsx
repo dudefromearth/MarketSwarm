@@ -865,80 +865,20 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
       {/* Context Menu */}
       {contextMenu && (
         <div
-          style={{
-            position: 'absolute',
-            left: contextMenu.x,
-            top: contextMenu.y,
-            background: '#1a1a1a',
-            border: '1px solid #333',
-            borderRadius: '6px',
-            padding: '4px 0',
-            minWidth: '180px',
-            boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
-            zIndex: 100,
-          }}
+          className="pnl-context-menu"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
           onMouseLeave={closeContextMenu}
         >
-          <div style={{
-            padding: '6px 12px',
-            borderBottom: '1px solid #333',
-            color: '#888',
-            fontSize: '11px',
-          }}>
+          <div className="pnl-context-menu-header">
             Alert at {contextMenu.price.toFixed(0)}
           </div>
-          <button
-            onClick={() => handleCreateAlert('price_above')}
-            style={{
-              display: 'block',
-              width: '100%',
-              padding: '8px 12px',
-              background: 'transparent',
-              border: 'none',
-              color: '#fff',
-              fontSize: '12px',
-              textAlign: 'left',
-              cursor: 'pointer',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = '#2a2a2a'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-          >
+          <button className="pnl-context-menu-item" onClick={() => handleCreateAlert('price_above')}>
             🔔 Alert when price rises above
           </button>
-          <button
-            onClick={() => handleCreateAlert('price_below')}
-            style={{
-              display: 'block',
-              width: '100%',
-              padding: '8px 12px',
-              background: 'transparent',
-              border: 'none',
-              color: '#fff',
-              fontSize: '12px',
-              textAlign: 'left',
-              cursor: 'pointer',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = '#2a2a2a'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-          >
+          <button className="pnl-context-menu-item" onClick={() => handleCreateAlert('price_below')}>
             🔔 Alert when price falls below
           </button>
-          <button
-            onClick={() => handleCreateAlert('price_touch')}
-            style={{
-              display: 'block',
-              width: '100%',
-              padding: '8px 12px',
-              background: 'transparent',
-              border: 'none',
-              color: '#fff',
-              fontSize: '12px',
-              textAlign: 'left',
-              cursor: 'pointer',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = '#2a2a2a'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-          >
+          <button className="pnl-context-menu-item" onClick={() => handleCreateAlert('price_touch')}>
             🔔 Alert when price touches
           </button>
         </div>
