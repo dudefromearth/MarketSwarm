@@ -92,7 +92,13 @@
   font-weight: 500;
   color: rgba(255, 255, 255, 0.4);
   letter-spacing: 0.3px;
-  transition: color 0.3s ease;
+  transition: color 0.3s ease, font-size 0.3s ease;
+}
+
+/* Detected phase: bump font size by 1px for subtle prominence */
+.process-bar-phase.visited .process-bar-phase-label,
+.process-bar-phase.active .process-bar-phase-label {
+  font-size: 12px;
 }
 
 /* ============================================
