@@ -2,6 +2,7 @@
 // Market Mode Score gauge with animated needle
 
 import { useEffect, useRef, useState } from "react";
+import { useUserPreferences } from "../contexts/UserPreferencesContext";
 
 type Props = {
   score: number;
@@ -13,6 +14,9 @@ export default function MarketModeGaugeCard({ score }: Props) {
     if (raw >= 0 && raw <= 1) return raw * 100;
     return raw; // assume 0–100
   }
+
+  const { resolvedTheme } = useUserPreferences();
+  const isLight = resolvedTheme === 'light';
 
   const normalized = normalizeScore(score);
   const target = Math.max(0, Math.min(100, normalized));
@@ -133,7 +137,7 @@ export default function MarketModeGaugeCard({ score }: Props) {
           <path
             d={`M ${cx - rArc} ${cy} A ${rArc} ${rArc} 0 0 1 ${cx + rArc} ${cy}`}
             fill="none"
-            stroke="rgba(255,255,255,0.10)"
+            stroke={isLight ? "rgba(0,0,0,0.08)" : "rgba(255,255,255,0.10)"}
             strokeWidth="18"
             strokeLinecap="round"
           />
@@ -164,7 +168,7 @@ export default function MarketModeGaugeCard({ score }: Props) {
           <path
             d={`M ${cx - rArc} ${cy} A ${rArc} ${rArc} 0 0 1 ${cx + rArc} ${cy}`}
             fill="none"
-            stroke="rgba(255,255,255,0.75)"
+            stroke={isLight ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.75)"}
             strokeWidth="6"
             strokeLinecap="round"
             strokeDasharray="22 140"
@@ -191,7 +195,7 @@ export default function MarketModeGaugeCard({ score }: Props) {
                 y1={y1}
                 x2={x2}
                 y2={y2}
-                stroke="rgba(255,255,255,0.22)"
+                stroke={isLight ? "rgba(0,0,0,0.15)" : "rgba(255,255,255,0.22)"}
                 strokeWidth={tick.thick}
                 strokeLinecap="round"
               />
@@ -199,27 +203,27 @@ export default function MarketModeGaugeCard({ score }: Props) {
           })}
 
           {/* Labels */}
-          <text x={cx - rArc} y={cy + 20} textAnchor="middle" fontSize="11" fill="rgba(244,244,245,0.72)">
+          <text x={cx - rArc} y={cy + 20} textAnchor="middle" fontSize="11" fill={isLight ? "rgba(0,0,0,0.5)" : "rgba(244,244,245,0.72)"}>
             0
           </text>
-          <text x={cx} y={22} textAnchor="middle" fontSize="11" fill="rgba(244,244,245,0.72)">
+          <text x={cx} y={22} textAnchor="middle" fontSize="11" fill={isLight ? "rgba(0,0,0,0.5)" : "rgba(244,244,245,0.72)"}>
             50
           </text>
-          <text x={cx + rArc} y={cy + 20} textAnchor="middle" fontSize="11" fill="rgba(244,244,245,0.72)">
+          <text x={cx + rArc} y={cy + 20} textAnchor="middle" fontSize="11" fill={isLight ? "rgba(0,0,0,0.5)" : "rgba(244,244,245,0.72)"}>
             100
           </text>
 
           {/* Needle */}
           <g filter="url(#needleGlow)">
-            <line x1={cx} y1={cy} x2={nx} y2={ny} stroke="rgba(255,255,255,0.18)" strokeWidth="11" strokeLinecap="round" />
-            <line x1={cx} y1={cy} x2={nx} y2={ny} stroke="rgba(255,255,255,0.92)" strokeWidth="5.2" strokeLinecap="round" />
-            <circle cx={cx} cy={cy} r={capR} fill="rgba(244,244,245,0.95)" />
-            <circle cx={cx} cy={cy} r={16} fill="rgba(255,255,255,0.06)" />
-            <circle cx={cx} cy={cy} r={22} fill="rgba(255,255,255,0.04)" />
+            <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={isLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.18)"} strokeWidth="11" strokeLinecap="round" />
+            <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={isLight ? "rgba(0,0,0,0.75)" : "rgba(255,255,255,0.92)"} strokeWidth="5.2" strokeLinecap="round" />
+            <circle cx={cx} cy={cy} r={capR} fill={isLight ? "rgba(29,29,31,0.9)" : "rgba(244,244,245,0.95)"} />
+            <circle cx={cx} cy={cy} r={16} fill={isLight ? "rgba(0,0,0,0.04)" : "rgba(255,255,255,0.06)"} />
+            <circle cx={cx} cy={cy} r={22} fill={isLight ? "rgba(0,0,0,0.03)" : "rgba(255,255,255,0.04)"} />
           </g>
 
           {/* Score display */}
-          <text x={cx} y={186} textAnchor="middle" fontSize="28" fontWeight="800" fill="rgba(244,244,245,0.95)">
+          <text x={cx} y={186} textAnchor="middle" fontSize="28" fontWeight="800" fill={isLight ? "rgba(29,29,31,0.9)" : "rgba(244,244,245,0.95)"}>
             {Math.round(display)}
           </text>
         </svg>
