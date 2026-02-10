@@ -51,11 +51,16 @@
   /* Text scale */
   --text-scale: 1;
 
+  /* Theme: time machine active */
+  --tm-active-bg: #0f1510;
+  --tm-active-border: #2a4a2a;
+
   /* Theme: controls (Apple-style) */
   --control-active: #007aff;
   --control-track: #48484a;
   --control-thumb: #ffffff;
   --control-thumb-shadow: rgba(0, 0, 0, 0.3);
+
 }
 
 /* Light theme — Apple-style: bright whites, warm grays, clean contrast */
@@ -88,6 +93,9 @@
   --scrollbar-thumb-hover: #aeaeb2;
 
   --overlay-bg: rgba(0, 0, 0, 0.3);
+
+  --tm-active-bg: #f2f2f7;
+  --tm-active-border: #d1d1d6;
 
   --control-track: #e9e9eb;
   --control-thumb-shadow: rgba(0, 0, 0, 0.15);
@@ -1807,6 +1815,7 @@ body {
 
 .heatmap-body {
   flex: 1;
+  background: var(--bg-surface);
 }
 
 .heatmap-row {
@@ -4412,8 +4421,8 @@ body {
 }
 
 .time-machine-panel.active {
-  background: #0f1510;
-  border-top: 1px solid #2a4a2a;
+  background: var(--tm-active-bg);
+  border-top: 1px solid var(--tm-active-border);
 }
 
 .time-machine-header {

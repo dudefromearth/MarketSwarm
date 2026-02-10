@@ -2549,7 +2549,7 @@ function App() {
   // Color function based on % change from adjacent tile
   // Uses threshold state for blue/red transition point
   const debitColor = (value: number | null, pctChange: number) => {
-    if (value === null || value <= 0) return '#1a1a1a';
+    if (value === null || value <= 0) return preferences.resolvedTheme === 'light' ? '#ffffff' : '#1a1a1a';
 
     const maxRedPct = threshold * 2.5; // Brightest red at 2.5x threshold
     let r, g, b;
