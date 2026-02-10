@@ -92,6 +92,17 @@ function formatCrosshairLabel(time: unknown): string {
   });
 }
 
+// Helper: theme-aware chart colors for LightweightCharts canvas
+function getChartColors(theme: string) {
+  const isLight = theme === 'light';
+  return {
+    background: isLight ? '#ffffff' : '#0a0a0a',
+    textColor: isLight ? 'rgba(110,110,115,1)' : 'rgba(148,163,184,1)',
+    gridColor: isLight ? 'rgba(0,0,0,0.06)' : 'transparent',
+    borderColor: isLight ? 'rgba(209,209,214,1)' : 'rgba(30,41,59,1)',
+  };
+}
+
 // Helper: convert hex to rgba
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -222,6 +233,16 @@ export default function GexChartPanel({
   const [showStructuralLines, setShowStructuralLines] = useState(true);
   const structuralLinesRef = useRef<any[]>([]);
 
+  // Theme awareness for canvas chart
+  const [theme, setTheme] = useState(document.documentElement.dataset.theme || 'dark');
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      setTheme(document.documentElement.dataset.theme || 'dark');
+    });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => observer.disconnect();
+  }, []);
+
   // Handle AI analysis request
   const handleAnalyze = useCallback(async () => {
     if (!chartRef.current || analyzing) return;
@@ -307,22 +328,24 @@ export default function GexChartPanel({
     if (!containerRef.current || !isOpen) return;
     if (chartRef.current) return;
 
+    const colors = getChartColors(document.documentElement.dataset.theme || 'dark');
+
     const chart = createChart(containerRef.current, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: '#0a0a0a' },
-        textColor: 'rgba(148, 163, 184, 1)',
+        background: { type: ColorType.Solid, color: colors.background },
+        textColor: colors.textColor,
       },
       grid: {
-        vertLines: { color: 'transparent' },
-        horzLines: { color: 'transparent' },
+        vertLines: { color: colors.gridColor },
+        horzLines: { color: colors.gridColor },
       },
       rightPriceScale: {
-        borderColor: 'rgba(30, 41, 59, 1)',
+        borderColor: colors.borderColor,
         scaleMargins: { top: 0.08, bottom: 0.08 },  // More margin for broader view
       },
       timeScale: {
-        borderColor: 'rgba(30, 41, 59, 1)',
+        borderColor: colors.borderColor,
         timeVisible: true,
         secondsVisible: false,
       },
@@ -453,6 +476,24 @@ export default function GexChartPanel({
       }
     };
   }, [isOpen]);
+
+  // Update chart colors when theme changes
+  useEffect(() => {
+    if (!chartRef.current) return;
+    const colors = getChartColors(theme);
+    chartRef.current.applyOptions({
+      layout: {
+        background: { type: ColorType.Solid, color: colors.background },
+        textColor: colors.textColor,
+      },
+      grid: {
+        vertLines: { color: colors.gridColor },
+        horzLines: { color: colors.gridColor },
+      },
+      rightPriceScale: { borderColor: colors.borderColor },
+      timeScale: { borderColor: colors.borderColor },
+    });
+  }, [theme]);
 
   // Track GEX bars panel height for pixel-accurate positioning
   useEffect(() => {

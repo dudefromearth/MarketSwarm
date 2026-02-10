@@ -12246,6 +12246,18 @@ body {
   background: rgba(0, 0, 0, 0.06);
 }
 
+[data-theme="light"] .gex-side-center-line {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .gex-side-atm-marker {
+  background: rgba(200, 150, 0, 0.7);
+}
+
+[data-theme="light"] .gex-side-bar-row.atm .gex-side-bar {
+  box-shadow: 0 0 6px rgba(200, 150, 0, 0.5);
+}
+
 /* ============================================
    Risk Graph Canvas - 5-Sigma Chart Surface
    ============================================ */
