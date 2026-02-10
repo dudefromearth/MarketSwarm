@@ -21,6 +21,30 @@
   --vexy-gold-bright: #f0c860;
 }
 
+/* ========== Light Theme Override ========== */
+[data-theme="light"] {
+  --vexy-bg: #ffffff;
+  --vexy-bg-secondary: #f5f5f7;
+  --vexy-bg-message: #f0f0f2;
+  --vexy-bg-user: #e5e5ea;
+  --vexy-border: #d1d1d6;
+  --vexy-text: #1d1d1f;
+  --vexy-text-muted: #6e6e73;
+  --vexy-text-dim: #aeaeb2;
+  --vexy-accent: #007aff;
+  --vexy-accent-dim: #0062cc;
+  --vexy-gold: #8b6914;
+  --vexy-gold-bright: #6b5010;
+}
+
+[data-theme="light"] .vexy-chat-panel {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .vexy-settings-menu {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+}
+
 /* ========== Main Container ========== */
 .vexy-chat-panel {
   position: fixed;
@@ -141,11 +165,15 @@
   background: none;
   border: none;
   color: var(--vexy-text-dim);
-  font-size: 16px;
+  font-size: 18px;
   padding: 6px 8px;
   cursor: pointer;
   border-radius: 4px;
   transition: color 150ms ease, background 150ms ease;
+}
+
+[data-theme="light"] .vexy-chat-action-btn {
+  color: var(--vexy-text-muted);
 }
 
 .vexy-chat-action-btn:hover {

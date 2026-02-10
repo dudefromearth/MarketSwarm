@@ -199,6 +199,46 @@ input[type="checkbox"]:checked::before {
   transform: translateX(14px);
 }
 
+/* ── Apple-style select dropdowns ── */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-color: var(--control-thumb);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-primary);
+  padding: 5px 28px 5px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px 6px;
+  box-shadow: 0 0.5px 1px rgba(0, 0, 0, 0.05);
+}
+
+select:hover {
+  border-color: var(--border-hover);
+}
+
+select:focus {
+  border-color: var(--control-active);
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.2);
+}
+
+select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+select option {
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
 body {
   margin: 0;
   background: var(--bg-base);
@@ -1856,8 +1896,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  color: var(--text-bright);
+  font-size: 12px;
+  color: #facc15;
   text-shadow: 0 0 2px rgba(0,0,0,0.8);
   border-right: 1px solid var(--border-subtle);
   transition: background-color 0.15s;
@@ -1903,47 +1943,15 @@ body {
 }
 
 .heatmap-select {
-  background: var(--bg-surface-alt);
-  border: 1px solid var(--border-default);
-  color: var(--text-bright);
-  padding: 4px 8px;
-  border-radius: 4px;
   font-size: 11px;
-  cursor: pointer;
+  padding: 4px 24px 4px 8px;
 }
 
-.heatmap-select:hover {
-  border-color: var(--border-hover);
-}
-
-/* Display dropdown for heatmap - outline style with slight shading */
 .control-select {
-  background: rgba(26, 26, 26, 0.6);
-  border: 1px solid var(--border-hover);
-  color: var(--text-heading);
-  padding: 4px 10px;
-  border-radius: 4px;
   font-size: 11px;
   font-weight: 500;
-  cursor: pointer;
-  outline: none;
-  transition: all 0.15s ease;
   min-width: 70px;
-}
-
-.control-select:hover {
-  border-color: #777;
-  background: rgba(40, 40, 40, 0.7);
-}
-
-.control-select:focus {
-  border-color: #fbbf24;
-  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.2);
-}
-
-.control-select option {
-  background: var(--bg-surface-alt);
-  color: var(--text-heading);
+  padding: 4px 24px 4px 10px;
 }
 
 .heatmap-control-group.optimal-slider {
@@ -3626,12 +3634,8 @@ body {
 }
 
 .alert-form-row select {
-  background: var(--bg-surface-alt);
-  border: 1px solid var(--border-strong);
-  color: var(--text-secondary);
-  padding: 4px 6px;
-  border-radius: 3px;
   font-size: 11px;
+  padding: 4px 24px 4px 6px;
   flex: 1;
   min-width: 0;
 }
@@ -3831,7 +3835,6 @@ body {
   align-items: center;
 }
 
-.alert-edit-form select,
 .alert-edit-form input {
   background: var(--bg-input);
   border: 1px solid var(--border-strong);
@@ -3841,7 +3844,11 @@ body {
   padding: 6px 8px;
 }
 
-.alert-edit-form select:focus,
+.alert-edit-form select {
+  font-size: 11px;
+  padding: 6px 24px 6px 8px;
+}
+
 .alert-edit-form input:focus {
   outline: none;
   border-color: #3b82f6;
@@ -4860,29 +4867,8 @@ body {
 }
 
 .regime-select {
-  background: var(--bg-surface-alt);
-  border: 1px solid var(--border-default);
-  border-radius: 4px;
-  color: var(--text-primary);
   font-size: 11px;
-  padding: 4px 8px;
-  cursor: pointer;
-  outline: none;
-  transition: all 0.15s;
-}
-
-.regime-select:hover:not(:disabled) {
-  border-color: var(--border-hover);
-  background: var(--bg-elevated);
-}
-
-.regime-select:focus {
-  border-color: #f59e0b;
-}
-
-.regime-select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+  padding: 4px 24px 4px 8px;
 }
 
 .regime-indicator {
@@ -4928,30 +4914,9 @@ body {
 }
 
 .model-select {
-  background: var(--bg-surface-alt);
-  border: 1px solid var(--border-default);
-  border-radius: 4px;
-  color: var(--text-primary);
   font-size: 11px;
-  padding: 4px 8px;
-  cursor: pointer;
-  outline: none;
-  transition: all 0.15s;
+  padding: 4px 24px 4px 8px;
   min-width: 140px;
-}
-
-.model-select:hover:not(:disabled) {
-  border-color: var(--border-hover);
-  background: var(--bg-elevated);
-}
-
-.model-select:focus {
-  border-color: #8b5cf6;
-}
-
-.model-select:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 
 .model-indicator {
@@ -6445,12 +6410,8 @@ body {
 }
 
 .trade-log-filters select {
-  background: var(--bg-surface-alt);
-  border: 1px solid var(--border-default);
-  color: var(--text-secondary);
-  padding: 4px 8px;
-  border-radius: 4px;
   font-size: 11px;
+  padding: 4px 24px 4px 8px;
 }
 
 .trade-log-stats {
@@ -8397,24 +8358,10 @@ body {
 }
 
 .log-select {
-  background: transparent;
-  border: 1px solid #64748b;
-  color: var(--text-heading);
-  padding: 5px 10px;
-  border-radius: 4px;
   font-size: 11px;
   font-weight: 500;
   min-width: 140px;
-  cursor: pointer;
-}
-
-.log-select:hover {
-  border-color: var(--text-secondary);
-}
-
-.log-select:focus {
-  outline: none;
-  border-color: var(--text-secondary);
+  padding: 5px 28px 5px 10px;
 }
 
 .log-summary {
@@ -9592,12 +9539,8 @@ body {
 }
 
 .asset-filter select {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  padding: 6px 10px;
-  color: var(--text-heading);
   font-size: 12px;
+  padding: 6px 28px 6px 10px;
 }
 
 .btn-add-symbol {
@@ -9649,16 +9592,10 @@ body {
 .form-group input,
 .form-group select {
   width: 100%;
-  background: var(--bg-surface-alt);
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  padding: 8px 10px;
-  color: var(--text-heading);
-  font-size: 13px;
+  padding: 8px 28px 8px 10px;
 }
 
-.form-group input:focus,
-.form-group select:focus {
+.form-group input:focus {
   outline: none;
   border-color: #3b82f6;
 }
@@ -9850,12 +9787,8 @@ body {
 }
 
 .tags-sort select {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  padding: 4px 8px;
-  color: var(--text-heading);
   font-size: 12px;
+  padding: 4px 24px 4px 8px;
 }
 
 .btn-add-tag {
@@ -10147,16 +10080,11 @@ body {
 .setting-item select {
   width: 100%;
   max-width: 300px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border-strong);
-  border-radius: 4px;
-  padding: 8px 12px;
-  color: var(--text-heading);
+  padding: 8px 28px 8px 12px;
   font-size: calc(13px * var(--text-scale));
 }
 
-.setting-item input:focus,
-.setting-item select:focus {
+.setting-item input:focus {
   outline: none;
   border-color: var(--accent-primary);
 }
@@ -10719,6 +10647,96 @@ body {
 
 .trade-log-edge-bar.process-drawer.hint {
   animation: process-hint-glow 2.5s ease-in-out infinite;
+}
+
+/* Light theme: drawers become light gray bars with shadow depth, dark gray text */
+/* Proximity glow retained as deepening shadow */
+[data-theme="light"] .commentary-edge-bar.routine-drawer {
+  background: #e5e5ea;
+  box-shadow:
+    calc(2px + var(--proximity) * 4px) 0 calc(6px + var(--proximity) * 10px) rgba(0, 0, 0, calc(0.08 + var(--proximity) * 0.12)),
+    calc(4px + var(--proximity) * 8px) 0 calc(12px + var(--proximity) * 20px) rgba(0, 0, 0, calc(0.04 + var(--proximity) * 0.08));
+}
+[data-theme="light"] .commentary-edge-bar.routine-drawer:hover {
+  background: #dddde2;
+  box-shadow: 6px 0 16px rgba(0, 0, 0, 0.18), 10px 0 28px rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .commentary-edge-bar.routine-drawer .drawer-tab {
+  background: #e5e5ea;
+  box-shadow:
+    calc(2px + var(--proximity) * 4px) 0 calc(6px + var(--proximity) * 10px) rgba(0, 0, 0, calc(0.08 + var(--proximity) * 0.12)),
+    calc(4px + var(--proximity) * 8px) 0 calc(12px + var(--proximity) * 20px) rgba(0, 0, 0, calc(0.04 + var(--proximity) * 0.08));
+}
+[data-theme="light"] .commentary-edge-bar.routine-drawer:hover .drawer-tab {
+  background: #dddde2;
+  box-shadow: 6px 0 16px rgba(0, 0, 0, 0.18), 10px 0 28px rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .commentary-edge-bar.routine-drawer .drawer-tab-label,
+[data-theme="light"] .commentary-edge-bar.routine-drawer:hover .drawer-tab-label {
+  color: #6e6e73;
+  text-shadow: none;
+}
+[data-theme="light"] .commentary-overlay .commentary-close-bar,
+[data-theme="light"] .commentary-overlay .commentary-close-bar:hover {
+  background: #e5e5ea;
+  box-shadow: -2px 0 6px rgba(0, 0, 0, 0.12), -4px 0 12px rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .commentary-overlay .commentary-close-bar .close-bar-label,
+[data-theme="light"] .commentary-overlay .commentary-close-bar:hover .close-bar-label {
+  color: #6e6e73;
+  text-shadow: none;
+}
+
+[data-theme="light"] .trade-log-edge-bar.process-drawer {
+  background: #e5e5ea;
+  box-shadow:
+    calc(-2px - var(--proximity) * 4px) 0 calc(6px + var(--proximity) * 10px) rgba(0, 0, 0, calc(0.08 + var(--proximity) * 0.12)),
+    calc(-4px - var(--proximity) * 8px) 0 calc(12px + var(--proximity) * 20px) rgba(0, 0, 0, calc(0.04 + var(--proximity) * 0.08));
+}
+[data-theme="light"] .trade-log-edge-bar.process-drawer:hover {
+  background: #dddde2;
+  box-shadow: -6px 0 16px rgba(0, 0, 0, 0.18), -10px 0 28px rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .trade-log-edge-bar.process-drawer .drawer-tab {
+  background: #e5e5ea;
+  box-shadow:
+    calc(-2px - var(--proximity) * 4px) 0 calc(6px + var(--proximity) * 10px) rgba(0, 0, 0, calc(0.08 + var(--proximity) * 0.12)),
+    calc(-4px - var(--proximity) * 8px) 0 calc(12px + var(--proximity) * 20px) rgba(0, 0, 0, calc(0.04 + var(--proximity) * 0.08));
+}
+[data-theme="light"] .trade-log-edge-bar.process-drawer:hover .drawer-tab {
+  background: #dddde2;
+  box-shadow: -6px 0 16px rgba(0, 0, 0, 0.18), -10px 0 28px rgba(0, 0, 0, 0.1);
+}
+[data-theme="light"] .trade-log-edge-bar.process-drawer .drawer-tab-label,
+[data-theme="light"] .trade-log-edge-bar.process-drawer:hover .drawer-tab-label {
+  color: #6e6e73;
+  text-shadow: none;
+}
+[data-theme="light"] .trade-log-overlay .trade-log-close-bar,
+[data-theme="light"] .trade-log-overlay .trade-log-close-bar:hover {
+  background: #e5e5ea;
+  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.12), 4px 0 12px rgba(0, 0, 0, 0.06);
+}
+[data-theme="light"] .trade-log-overlay .trade-log-close-bar .close-bar-label,
+[data-theme="light"] .trade-log-overlay .trade-log-close-bar:hover .close-bar-label {
+  color: #6e6e73;
+  text-shadow: none;
+}
+
+/* Light mode hint: subtle shadow pulse instead of glow */
+@keyframes light-hint-shadow-left {
+  0%, 100% { box-shadow: 2px 0 6px rgba(0,0,0,0.08), 4px 0 12px rgba(0,0,0,0.04); }
+  50% { box-shadow: 6px 0 16px rgba(0,0,0,0.18), 10px 0 28px rgba(0,0,0,0.1); }
+}
+@keyframes light-hint-shadow-right {
+  0%, 100% { box-shadow: -2px 0 6px rgba(0,0,0,0.08), -4px 0 12px rgba(0,0,0,0.04); }
+  50% { box-shadow: -6px 0 16px rgba(0,0,0,0.18), -10px 0 28px rgba(0,0,0,0.1); }
+}
+[data-theme="light"] .commentary-edge-bar.routine-drawer.hint {
+  animation: light-hint-shadow-left 2.5s ease-in-out infinite;
+}
+[data-theme="light"] .trade-log-edge-bar.process-drawer.hint {
+  animation: light-hint-shadow-right 2.5s ease-in-out infinite;
 }
 
 .commentary-panel-inner {
@@ -12122,24 +12140,9 @@ body {
 }
 
 .strategy-edit-body .form-group select {
-  background: #0f0f1a;
-  border: 1px solid var(--border-default);
-  border-radius: 6px;
-  padding: 10px 12px;
-  color: var(--text-heading);
   font-size: 14px;
+  padding: 10px 28px 10px 12px;
   width: 100%;
-  cursor: pointer;
-}
-
-.strategy-edit-body .form-group select:focus {
-  outline: none;
-  border-color: #3b82f6;
-}
-
-.strategy-edit-body .form-group select option {
-  background: #1a1a2e;
-  color: var(--text-heading);
 }
 
 .strategy-edit-body .button-group {
@@ -12634,19 +12637,9 @@ body {
 
 .position-type-select {
   flex: 0 0 auto;
-  padding: 6px 10px;
-  background: #252535;
-  border: 1px solid var(--border-default);
-  border-radius: 4px;
-  color: var(--text-primary);
   font-size: 13px;
-  cursor: pointer;
   min-width: 140px;
-}
-
-.position-type-select:focus {
-  outline: none;
-  border-color: #3b82f6;
+  padding: 6px 28px 6px 10px;
 }
 
 .position-type-display {
@@ -15465,6 +15458,98 @@ body {
 
 .floating-dialog .side-put {
   color: #ef4444;
+}
+
+/* ============================================
+   FloatingDialog — Light Theme
+   ============================================ */
+
+[data-theme="light"] .floating-dialog-backdrop {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="light"] .floating-dialog {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .floating-dialog .form-row {
+  border-bottom-color: #e5e5ea;
+}
+
+/* ============================================
+   Strategy Edit Modal — Light Theme
+   ============================================ */
+
+[data-theme="light"] .strategy-edit-overlay {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="light"] .strategy-edit-modal {
+  background: #ffffff;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .strategy-edit-body .form-group input {
+  background: #f5f5f7;
+}
+
+[data-theme="light"] .strategy-edit-body .form-group input:disabled {
+  background: #f0f0f2;
+}
+
+[data-theme="light"] .strategy-edit-body .btn-option {
+  background: #f5f5f7;
+}
+
+[data-theme="light"] .strategy-edit-body .btn-option:hover {
+  background: #e5e5ea;
+}
+
+[data-theme="light"] .strategy-edit-body .btn-option.active {
+  background: rgba(0, 122, 255, 0.1);
+  border-color: #007aff;
+  color: #007aff;
+}
+
+[data-theme="light"] .strategy-edit-body .btn-option.side-call.active {
+  background: rgba(34, 197, 94, 0.1);
+  border-color: #22c55e;
+  color: #15803d;
+}
+
+[data-theme="light"] .strategy-edit-body .btn-option.side-put.active {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
+  color: #b91c1c;
+}
+
+[data-theme="light"] .strategy-preview-mini {
+  background: #f5f5f7;
+}
+
+[data-theme="light"] .strategy-edit-footer .btn-save:disabled {
+  background: #e5e5ea;
+  color: #aeaeb2;
+}
+
+[data-theme="light"] .risk-graph-sidebar .btn-edit-strategy {
+  background: rgba(0, 122, 255, 0.1);
+  color: #007aff;
+}
+
+[data-theme="light"] .risk-graph-sidebar .btn-edit-strategy:hover {
+  background: #007aff;
+  color: white;
+}
+
+[data-theme="light"] .risk-graph-sidebar .btn-log-trade {
+  background: rgba(34, 197, 94, 0.1);
+  color: #15803d;
+}
+
+[data-theme="light"] .risk-graph-sidebar .btn-log-trade:hover {
+  background: #22c55e;
+  color: white;
 }
 
 /* ============================================
