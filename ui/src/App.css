@@ -5051,6 +5051,72 @@ body {
   margin-top: 4px;
 }
 
+/* Time Machine — Light Theme */
+[data-theme="light"] .time-machine-panel.active .switch-label {
+  color: #b45309;
+  text-shadow: none;
+}
+
+[data-theme="light"] .time-machine-controls .time-readout {
+  color: #b45309;
+}
+
+[data-theme="light"] .time-machine-controls .thumb-value {
+  color: #c2410c;
+}
+
+[data-theme="light"] .time-machine-controls .vol-value,
+[data-theme="light"] .time-machine-controls .vol-label-left .vol-value {
+  color: #b45309;
+}
+
+[data-theme="light"] .time-machine-controls .vol-value:hover {
+  background: rgba(180, 83, 9, 0.1);
+}
+
+[data-theme="light"] .time-machine-controls .vol-value-input {
+  color: #b45309;
+  background: rgba(180, 83, 9, 0.08);
+  border-color: #d97706;
+}
+
+[data-theme="light"] .time-machine-switch .live-price {
+  color: #15803d;
+}
+
+[data-theme="light"] .time-machine-controls .time-slider.progressive {
+  background: linear-gradient(
+    to right,
+    var(--control-track) 0%,
+    var(--control-track) 45%,
+    #c7a97a 50%,
+    #b8923f 65%,
+    #a67c2e 80%,
+    #8b6914 100%
+  );
+}
+
+[data-theme="light"] .time-machine-controls .time-slider.progressive::-webkit-slider-thumb {
+  box-shadow: 0 0.5px 2px var(--control-thumb-shadow), 0 0 0 2px rgba(180, 83, 9, 0.25);
+}
+
+[data-theme="light"] .time-machine-controls .time-slider.progressive::-moz-range-thumb {
+  box-shadow: 0 0.5px 2px var(--control-thumb-shadow), 0 0 0 2px rgba(180, 83, 9, 0.25);
+}
+
+[data-theme="light"] .time-machine-controls .vertical-control {
+  border-left-color: var(--border-default);
+}
+
+[data-theme="light"] .time-machine-controls .vol-slider-vertical::-webkit-slider-thumb {
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="light"] .time-machine-controls .vol-slider-vertical::-moz-range-thumb {
+  border-color: #d97706;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
 /* Market Regime selector */
 .regime-control {
   display: flex;
