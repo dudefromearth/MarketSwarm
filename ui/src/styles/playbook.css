@@ -361,8 +361,7 @@
 }
 
 .flagged-item input[type="checkbox"] {
-  margin-top: 2px;
-  cursor: pointer;
+  /* inherits global Apple toggle */
 }
 
 .flagged-item-content {

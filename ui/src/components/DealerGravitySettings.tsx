@@ -420,9 +420,7 @@ export default function DealerGravitySettings({ isOpen, onClose }: DealerGravity
         }
 
         .setting-row input[type="checkbox"] {
-          width: 16px;
-          height: 16px;
-          cursor: pointer;
+          /* inherits global Apple toggle */
         }
 
         .setting-row input[type="range"] {

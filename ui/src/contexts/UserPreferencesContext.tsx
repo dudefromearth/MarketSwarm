@@ -55,6 +55,45 @@ export function UserPreferencesProvider({ children }: { children: ReactNode }) {
     document.documentElement.dataset.textSize = textSize;
   }, [textSize]);
 
+  // Range slider filled-track: set --range-pct on every input[type="range"]
+  useEffect(() => {
+    const updatePct = (el: HTMLInputElement) => {
+      const min = parseFloat(el.min) || 0;
+      const max = parseFloat(el.max) || 100;
+      const val = parseFloat(el.value);
+      const pct = ((val - min) / (max - min)) * 100;
+      el.style.setProperty('--range-pct', `${pct}%`);
+    };
+
+    const onInput = (e: Event) => {
+      const t = e.target as HTMLInputElement;
+      if (t?.type === 'range') updatePct(t);
+    };
+
+    // Init all existing range inputs
+    document.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach(updatePct);
+
+    document.addEventListener('input', onInput);
+
+    // Watch for dynamically added range inputs
+    const obs = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        m.addedNodes.forEach((node) => {
+          if (node instanceof HTMLElement) {
+            if (node.matches?.('input[type="range"]')) updatePct(node as HTMLInputElement);
+            node.querySelectorAll<HTMLInputElement>('input[type="range"]').forEach(updatePct);
+          }
+        });
+      }
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+
+    return () => {
+      document.removeEventListener('input', onInput);
+      obs.disconnect();
+    };
+  }, []);
+
   return (
     <UserPreferencesContext.Provider value={{
       theme, setTheme, resolvedTheme,
