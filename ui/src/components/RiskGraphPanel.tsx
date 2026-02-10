@@ -302,9 +302,10 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     mcNumPaths,
   });
 
-  // Extract strikes from strategies for chart
+  // Extract strikes from active strategies for chart (excludes sim-expired positions for auto-fit)
   const chartStrikes = useMemo(() => {
-    return strategies.filter(s => s.visible).flatMap(strat => {
+    const activeIds = new Set(pnlChartData.activeStrategyIds);
+    return strategies.filter(s => s.visible && activeIds.has(s.id)).flatMap(strat => {
       // Use legs if available for accurate strike extraction
       if (strat.legs && strat.legs.length > 0) {
         return strat.legs.map(leg => leg.strike);
@@ -317,7 +318,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
       }
       return [strat.strike];
     });
-  }, [strategies]);
+  }, [strategies, pnlChartData.activeStrategyIds]);
 
   // Stats derived from the hook's calculated data
   const riskGraphData = useMemo(() => {
@@ -498,6 +499,29 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   // Current slider position
   const sliderPosition = hoursToSlider(simTimeOffsetHours);
 
+  // Compute expiration markers for the time slider
+  // Shows where each position expires relative to the slider range
+  const expirationMarkers = useMemo(() => {
+    if (!timeMachineEnabled) return [];
+    const markers: Array<{ position: number; label: string; expired: boolean }> = [];
+    const seen = new Set<string>(); // dedupe by expiration date
+    for (const s of visibleStrategies) {
+      if (!s.expiration || seen.has(s.expiration)) continue;
+      seen.add(s.expiration);
+      const expClose = new Date(s.expiration + 'T16:00:00-05:00');
+      const hoursToExp = (expClose.getTime() - now.getTime()) / (1000 * 60 * 60);
+      if (hoursToExp <= 0 || hoursToExp >= maxHours) continue; // skip if at boundary
+      const sliderPos = hoursToSlider(hoursToExp);
+      const dateLabel = s.expiration.slice(5); // "MM-DD"
+      markers.push({
+        position: sliderPos,
+        label: dateLabel,
+        expired: simTimeOffsetHours >= hoursToExp,
+      });
+    }
+    return markers;
+  }, [visibleStrategies, timeMachineEnabled, maxHours, hoursToSlider, now, simTimeOffsetHours]);
+
   // Handle slider change with progressive mapping
   const handleTimeSliderChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const position = parseFloat(e.target.value);
@@ -672,7 +696,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                       const isCredit = costBasisType === 'credit';
 
                       return (
-                        <div key={strat.id} className={`risk-graph-position-item ${!strat.visible ? 'hidden-position' : ''}`}>
+                        <div key={strat.id} className={`risk-graph-position-item ${!strat.visible ? 'hidden-position' : ''} ${strat.visible && !pnlChartData.activeStrategyIds.includes(strat.id) ? 'sim-expired' : ''}`}>
                           <div className="position-content">
                             {/* Header Row: Symbol, Label, DTE, Cost Basis */}
                             <div className="position-row-header">
@@ -916,6 +940,22 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                 <div className={`time-machine-controls ${!timeMachineEnabled ? 'disabled' : ''}`}>
                   <div className="horizontal-controls">
                     <div className="control-group time-control">
+                      {/* Expiration markers above slider */}
+                      {expirationMarkers.length > 0 && (
+                        <div className="expiration-markers">
+                          {expirationMarkers.map(m => (
+                            <div
+                              key={m.label}
+                              className={`exp-marker ${m.expired ? 'expired' : ''}`}
+                              style={{ left: `${m.position}%` }}
+                              title={`Expires ${m.label}`}
+                            >
+                              <span className="exp-marker-line" />
+                              <span className="exp-marker-label">{m.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <div className="slider-row">
                         <span className="control-label">Time</span>
                         <input

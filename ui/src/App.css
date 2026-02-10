@@ -3455,6 +3455,29 @@ body {
   border-style: dashed;
 }
 
+.risk-graph-position-item.sim-expired {
+  opacity: 0.35;
+  border-style: dotted;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.risk-graph-position-item.sim-expired .position-symbol,
+.risk-graph-position-item.sim-expired .position-label,
+.risk-graph-position-item.sim-expired .position-dte {
+  text-decoration: line-through;
+  text-decoration-color: rgba(255, 255, 255, 0.3);
+}
+
+[data-theme="light"] .risk-graph-position-item.sim-expired {
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .risk-graph-position-item.sim-expired .position-symbol,
+[data-theme="light"] .risk-graph-position-item.sim-expired .position-label,
+[data-theme="light"] .risk-graph-position-item.sim-expired .position-dte {
+  text-decoration-color: rgba(0, 0, 0, 0.25);
+}
+
 .position-content {
   display: flex;
   flex-direction: column;
@@ -4801,6 +4824,64 @@ body {
   color: #f97316;
   pointer-events: none;
   white-space: nowrap;
+}
+
+/* Expiration markers above time slider */
+.expiration-markers {
+  position: relative;
+  height: 20px;
+  margin: 0 36px 0 48px; /* align with slider track (label width + gap on left, readout on right) */
+}
+
+.exp-marker {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  pointer-events: none;
+}
+
+.exp-marker-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: #f59e0b;
+  white-space: nowrap;
+  letter-spacing: 0.3px;
+}
+
+.exp-marker-line {
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid #f59e0b;
+}
+
+.exp-marker.expired .exp-marker-label {
+  color: #6b7280;
+}
+
+.exp-marker.expired .exp-marker-line {
+  border-top-color: #6b7280;
+}
+
+[data-theme="light"] .exp-marker-label {
+  color: #d97706;
+}
+
+[data-theme="light"] .exp-marker-line {
+  border-top-color: #d97706;
+}
+
+[data-theme="light"] .exp-marker.expired .exp-marker-label {
+  color: #9ca3af;
+}
+
+[data-theme="light"] .exp-marker.expired .exp-marker-line {
+  border-top-color: #9ca3af;
 }
 
 .time-machine-controls .time-slider {

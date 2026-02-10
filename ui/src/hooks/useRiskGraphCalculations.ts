@@ -236,6 +236,8 @@ export interface RiskGraphData {
   delta: number;  // Delta (price sensitivity)
   allStrikes: number[];
   centerPrice: number;
+  // Strategy IDs that are "alive" at the simulated time (not past expiration)
+  activeStrategyIds: string[];
 }
 
 interface UseRiskGraphCalculationsProps {
@@ -1453,6 +1455,7 @@ export function useRiskGraphCalculations({
         delta: 0,
         allStrikes: [],
         centerPrice: spotPrice,
+        activeStrategyIds: [],
       };
     }
 
@@ -1505,6 +1508,14 @@ export function useRiskGraphCalculations({
     const allTimeDays = Array.from(strategyTimeDaysMap.values());
     const baseTimeDays = allTimeDays.length > 0 ? Math.max(...allTimeDays) : 30;
 
+    // Filter to strategies that are still "alive" at the simulated time
+    // A strategy is expired when its time-to-expiry minus the sim offset reaches zero
+    const activeStrategies = visibleStrategies.filter(strat => {
+      const rawDays = strategyTimeDaysMap.get(strat.id) ?? 0;
+      return rawDays - timeOffsetDays > 0;
+    });
+    const activeStrategyIds = activeStrategies.map(s => s.id);
+
     // Helper to get per-strategy time-to-expiry years (with sim offset applied)
     const getStrategyTimeYears = (stratId: string): number => {
       const raw = strategyTimeDaysMap.get(stratId) ?? baseTimeDays;
@@ -1549,17 +1560,16 @@ export function useRiskGraphCalculations({
     let maxPnL = -Infinity;
 
     for (const price of pricePoints) {
-      // Expiration P&L (at primary expiration)
-      // For calendars/diagonals: far-dated legs valued using Black-Scholes
+      // Expiration P&L (at primary expiration) — only active strategies (not sim-expired)
       let expPnL = 0;
-      for (const strat of visibleStrategies) {
+      for (const strat of activeStrategies) {
         expPnL += calculateExpirationPnL(strat, price, volatility);
       }
       expirationPoints.push({ price, pnl: expPnL });
 
       // Theoretical P&L (Black-Scholes with volatility skew, per-strategy time)
       let theoPnL = 0;
-      for (const strat of visibleStrategies) {
+      for (const strat of activeStrategies) {
         theoPnL += calculateTheoreticalPnL(strat, price, volatility, riskFreeRate, getStrategyTimeYears(strat.id), spotPrice, pricingParams);
       }
       theoreticalPoints.push({ price, pnl: theoPnL });
@@ -1593,7 +1603,7 @@ export function useRiskGraphCalculations({
       mcNumPaths: pricingModel === 'monte-carlo' ? Math.min(mcNumPaths, 1000) : 1000,
     };
     let theoreticalPnLAtSpot = 0;
-    for (const strat of visibleStrategies) {
+    for (const strat of activeStrategies) {
       theoreticalPnLAtSpot += calculateTheoreticalPnL(
         strat,
         simulatedSpot,
@@ -1609,7 +1619,7 @@ export function useRiskGraphCalculations({
     let totalDelta = 0;
     let totalGamma = 0;
     let totalTheta = 0;
-    for (const strat of visibleStrategies) {
+    for (const strat of activeStrategies) {
       const greeks = calculateStrategyGreeks(
         strat,
         simulatedSpot,
@@ -1641,6 +1651,7 @@ export function useRiskGraphCalculations({
       delta: totalDelta,
       allStrikes,
       centerPrice,
+      activeStrategyIds,
     };
   }, [strategies, spotPrice, vix, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotOffset, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths]);
 }
