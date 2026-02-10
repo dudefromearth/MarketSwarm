@@ -201,6 +201,56 @@
    Responsive
    ============================================ */
 
+/* ============================================
+   Light Theme
+   ============================================ */
+
+[data-theme="light"] .process-bar {
+  background: transparent;
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .process-bar-phase-dot {
+  background: rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .process-bar-phase-label {
+  color: rgba(0, 0, 0, 0.35);
+}
+
+[data-theme="light"] .process-bar-phase--neutral.visited .process-bar-phase-dot,
+[data-theme="light"] .process-bar-phase--neutral.active .process-bar-phase-dot {
+  background: rgba(0, 0, 0, 0.5);
+  box-shadow: 0 0 4px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .process-bar-phase--neutral.visited .process-bar-phase-label,
+[data-theme="light"] .process-bar-phase--neutral.active .process-bar-phase-label {
+  color: rgba(0, 0, 0, 0.6);
+}
+
+[data-theme="light"] .process-bar--guided .process-bar-phase.active {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="light"] .process-bar-connector {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.06),
+    rgba(0, 0, 0, 0.1),
+    rgba(0, 0, 0, 0.06)
+  );
+}
+
+[data-theme="light"] .process-bar-connector.visited {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 0, 0, 0.12),
+    rgba(0, 0, 0, 0.18),
+    rgba(0, 0, 0, 0.12)
+  );
+}
+
 @media (max-width: 768px) {
   .process-bar {
     height: 28px;
