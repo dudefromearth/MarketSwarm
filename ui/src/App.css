@@ -13919,7 +13919,7 @@ body {
 .indicator-settings-dialog {
   background: #1a1a2e;
   border: 1px solid var(--border-default);
-  border-radius: 8px;
+  border-radius: 12px;
   min-width: 280px;
   max-width: 320px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
@@ -13944,15 +13944,22 @@ body {
   background: none;
   border: none;
   color: var(--text-muted);
-  font-size: 20px;
+  font-size: 16px;
   cursor: pointer;
   padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
   line-height: 1;
-  transition: color 0.15s;
+  transition: all 0.15s ease;
 }
 
 .indicator-settings-close:hover {
-  color: #ef4444;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .indicator-settings-body {
@@ -14040,8 +14047,8 @@ body {
 .mode-toggle {
   display: flex;
   gap: 0;
-  background: #0f0f1a;
-  border-radius: 6px;
+  background: rgba(118, 118, 128, 0.24);
+  border-radius: 8px;
   padding: 2px;
 }
 
@@ -14054,8 +14061,8 @@ body {
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  border-radius: 4px;
-  transition: all 0.15s;
+  border-radius: 6px;
+  transition: all 0.2s ease;
 }
 
 .mode-btn:hover {
@@ -14063,8 +14070,9 @@ body {
 }
 
 .mode-btn.active {
-  background: #3b82f6;
-  color: white;
+  background: rgba(99, 99, 102, 0.55);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 .row-size-control {
@@ -14326,34 +14334,33 @@ body {
 }
 
 .settings-btn {
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 12px;
+  padding: 7px 18px;
+  border-radius: 8px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.15s ease;
 }
 
 .settings-btn.reset {
   background: transparent;
-  border: 1px solid var(--border-strong);
-  color: var(--text-secondary);
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .settings-btn.reset:hover {
-  border-color: var(--border-muted);
   color: var(--text-primary);
-  background: var(--bg-hover);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .settings-btn.save {
-  background: #3b82f6;
+  background: #007aff;
   border: none;
   color: white;
 }
 
 .settings-btn.save:hover {
-  background: #2563eb;
+  background: #0062cc;
 }
 
 /* --- Light Theme: Indicator Settings Dialog, Labels, Overlays --- */
@@ -14368,7 +14375,8 @@ body {
 }
 
 [data-theme="light"] .indicator-settings-close:hover {
-  color: #ff3b30;
+  color: #1d1d1f;
+  background: rgba(0, 0, 0, 0.04);
 }
 
 [data-theme="light"] .indicator-settings-footer {
@@ -14380,11 +14388,13 @@ body {
 }
 
 [data-theme="light"] .mode-toggle {
-  background: #f0f0f2;
+  background: rgba(118, 118, 128, 0.12);
 }
 
 [data-theme="light"] .mode-btn.active {
-  background: #007aff;
+  background: #ffffff;
+  color: #1d1d1f;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 [data-theme="light"] .mode-btn:hover {
@@ -14421,14 +14431,12 @@ body {
 }
 
 [data-theme="light"] .settings-btn.reset {
-  border-color: #d1d1d6;
-  color: #6e6e73;
+  color: #aeaeb2;
 }
 
 [data-theme="light"] .settings-btn.reset:hover {
-  border-color: #aeaeb2;
   color: #1d1d1f;
-  background: #f0f0f2;
+  background: rgba(0, 0, 0, 0.04);
 }
 
 [data-theme="light"] .gex-chart-panel .indicator-settings-overlay,
@@ -15481,34 +15489,35 @@ body {
   background: #1d4ed8;
 }
 
-/* Mode Toggle */
+/* Mode Toggle — Apple segmented control (duplicate kept in sync) */
 .mode-toggle {
   display: flex;
-  gap: 4px;
-  background: var(--bg-elevated);
-  border-radius: 6px;
-  padding: 4px;
+  gap: 0;
+  background: rgba(118, 118, 128, 0.24);
+  border-radius: 8px;
+  padding: 2px;
 }
 
 .mode-btn {
   padding: 6px 16px;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--text-faint);
   font-size: 12px;
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.15s;
+  transition: all 0.2s ease;
 }
 
 .mode-btn:hover {
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .mode-btn.active {
-  background: #2563eb;
-  color: white;
+  background: rgba(99, 99, 102, 0.55);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
 
 /* Current Mode Styles */
