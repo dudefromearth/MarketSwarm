@@ -10074,6 +10074,46 @@ body {
   background: #ff3b30;
 }
 
+[data-theme="light"] .stat-value.profit {
+  color: #248a3d;
+}
+
+[data-theme="light"] .stat-value.loss {
+  color: #ff3b30;
+}
+
+[data-theme="light"] .stat-item.highlight-green {
+  background: rgba(52, 199, 89, 0.08);
+  border-color: rgba(52, 199, 89, 0.2);
+}
+
+[data-theme="light"] .stat-item.highlight-green .stat-value {
+  color: #248a3d;
+}
+
+[data-theme="light"] .stat-item.highlight-yellow {
+  background: rgba(255, 149, 0, 0.08);
+  border-color: rgba(255, 149, 0, 0.2);
+}
+
+[data-theme="light"] .stat-item.highlight-yellow .stat-value {
+  color: #c77800;
+}
+
+[data-theme="light"] .btn-back {
+  border-color: #d1d1d6;
+  color: #007aff;
+}
+
+[data-theme="light"] .btn-back:hover {
+  background: #f0f0f2;
+  color: #0063d1;
+}
+
+[data-theme="light"] .axis-label.center {
+  color: #ff3b30;
+}
+
 /* ==================== Settings Modal ==================== */
 
 /* Floating Settings Dialog */

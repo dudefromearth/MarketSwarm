@@ -358,3 +358,147 @@
 .widget {
   position: relative;
 }
+
+/* ========== Light Theme ========== */
+[data-theme="light"] .mel-status-bar {
+  background: #f5f5f7;
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .mel-status-bar:hover {
+  background: #e5e5ea;
+  border-color: #aeaeb2;
+}
+
+[data-theme="light"] .mel-status-bar.mel-valid {
+  border-color: rgba(52, 199, 89, 0.3);
+}
+
+[data-theme="light"] .mel-status-bar.mel-degraded {
+  border-color: rgba(255, 149, 0, 0.3);
+}
+
+[data-theme="light"] .mel-status-bar.mel-revoked {
+  border-color: rgba(255, 59, 48, 0.3);
+}
+
+[data-theme="light"] .mel-label {
+  color: #86868b;
+}
+
+[data-theme="light"] .mel-offline {
+  color: #aeaeb2;
+}
+
+[data-theme="light"] .mel-separator {
+  color: #d1d1d6;
+}
+
+[data-theme="light"] .mel-model-label {
+  color: #86868b;
+}
+
+[data-theme="light"] .mel-model-trend {
+  color: #aeaeb2;
+}
+
+[data-theme="light"] .mel-coherence-collapsing {
+  background: rgba(255, 59, 48, 0.1);
+  color: #ff3b30;
+}
+
+[data-theme="light"] .mel-coherence-mixed {
+  background: rgba(255, 149, 0, 0.1);
+  color: #c77800;
+}
+
+[data-theme="light"] .mel-coherence-recovered {
+  background: rgba(0, 122, 255, 0.1);
+  color: #007aff;
+}
+
+[data-theme="light"] .mel-events {
+  color: #c77800;
+}
+
+/* Dashboard */
+[data-theme="light"] .mel-dashboard-overlay {
+  background: rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(4px);
+}
+
+[data-theme="light"] .mel-dashboard {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+}
+
+[data-theme="light"] .mel-dashboard-header {
+  border-bottom-color: #e5e5ea;
+}
+
+[data-theme="light"] .mel-dashboard-header h2 {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .mel-dashboard-subtitle {
+  color: #86868b;
+}
+
+[data-theme="light"] .mel-dashboard-close {
+  color: #aeaeb2;
+}
+
+[data-theme="light"] .mel-dashboard-close:hover {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .mel-dashboard-question {
+  color: #86868b;
+  border-bottom-color: #e5e5ea;
+}
+
+[data-theme="light"] .mel-model-row {
+  border-bottom-color: #e5e5ea;
+}
+
+[data-theme="light"] .mel-model-name {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .mel-model-bar-container {
+  background: #e5e5ea;
+}
+
+[data-theme="light"] .mel-global-inner {
+  background: #ffffff;
+}
+
+[data-theme="light"] .mel-global-value {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .mel-global-label {
+  color: #86868b;
+}
+
+[data-theme="light"] .mel-interp-valid {
+  color: #248a3d;
+}
+
+[data-theme="light"] .mel-interp-degraded {
+  color: #c77800;
+}
+
+[data-theme="light"] .mel-interp-revoked {
+  color: #ff3b30;
+}
+
+[data-theme="light"] .mel-dashboard-footer {
+  border-top-color: #e5e5ea;
+  color: #86868b;
+}
+
+[data-theme="light"] .mel-footer-events {
+  color: #c77800;
+}
