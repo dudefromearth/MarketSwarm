@@ -76,6 +76,10 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // Animated opacity for expired curves (fades in/out over 250ms)
+  const expiredOpacityRef = useRef(0);
+  const expiredAnimFrameRef = useRef<number>(0);
+
   // View state (what portion of data is visible)
   const viewState = useRef<ViewState>({ xMin: 0, xMax: 100, yMin: -100, yMax: 100 });
 
@@ -392,8 +396,9 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     });
 
     // Draw faded expired strategy curves (ghost lines behind active curves)
-    if (expiredExpirationData.length > 1) {
-      ctx.globalAlpha = 0.25;
+    const expAlpha = expiredOpacityRef.current;
+    if (expiredExpirationData.length > 1 && expAlpha > 0.01) {
+      ctx.globalAlpha = expAlpha;
       ctx.strokeStyle = '#3b82f6';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
@@ -410,8 +415,8 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
       ctx.globalAlpha = 1;
     }
 
-    if (expiredTheoreticalData.length > 1) {
-      ctx.globalAlpha = 0.25;
+    if (expiredTheoreticalData.length > 1 && expAlpha > 0.01) {
+      ctx.globalAlpha = expAlpha;
       ctx.strokeStyle = '#e879f9';
       ctx.lineWidth = 1.5;
       ctx.setLineDash([6, 4]);
@@ -584,6 +589,30 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     ctx.fillText('Real-Time', legendX + 20, legendY + 15);
 
   }, [expirationData, theoreticalData, spotPrice, expirationBreakevens, theoreticalBreakevens, strikes, alertLines, expiredExpirationData, expiredTheoreticalData, toCanvasX, toCanvasY, renderBackdrop]);
+
+  // Animate expired curve opacity (250ms fade in/out)
+  const hasExpired = expiredExpirationData.length > 0;
+  useEffect(() => {
+    const target = hasExpired ? 0.25 : 0;
+    const start = expiredOpacityRef.current;
+    if (Math.abs(start - target) < 0.005) {
+      expiredOpacityRef.current = target;
+      return;
+    }
+    const startTime = performance.now();
+    const duration = 250;
+    const animate = (now: number) => {
+      const t = Math.min((now - startTime) / duration, 1);
+      const eased = t * (2 - t); // ease-out
+      expiredOpacityRef.current = start + (target - start) * eased;
+      draw();
+      if (t < 1) {
+        expiredAnimFrameRef.current = requestAnimationFrame(animate);
+      }
+    };
+    expiredAnimFrameRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(expiredAnimFrameRef.current);
+  }, [hasExpired, draw]);
 
   // Calculate nice step size for axis labels
   function calculateNiceStep(range: number, targetSteps: number): number {
