@@ -108,7 +108,7 @@ export default function SyncStatusIndicator({
           align-items: center;
           gap: 6px;
           font-size: 12px;
-          color: #9ca3af;
+          color: var(--text-secondary);
         }
 
         .sync-indicator-dot {

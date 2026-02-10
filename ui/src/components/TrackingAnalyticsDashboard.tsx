@@ -576,7 +576,7 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
                             <td style={{ color: getRegimeColor(trade.entry_regime) }}>
                               {trade.entry_regime}
                             </td>
-                            <td style={{ fontSize: '0.85em', color: '#94a3b8' }}>
+                            <td style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
                               {trade.entry_gex_flip ? (
                                 <span title={`Strike ${Number(trade.entry_gex_flip) > Number(trade.strike) ? 'below' : 'above'} GEX flip`}>
                                   {Number(trade.entry_gex_flip).toFixed(0)}
@@ -584,7 +584,7 @@ export default function TrackingAnalyticsDashboard({ isOpen, onClose }: Props) {
                                 </span>
                               ) : '-'}
                             </td>
-                            <td style={{ fontSize: '0.85em', color: '#94a3b8' }}>
+                            <td style={{ fontSize: '0.85em', color: 'var(--text-secondary)' }}>
                               {trade.entry_hour !== undefined ? (
                                 <span title={`Day ${trade.entry_day_of_week ?? '?'}`}>
                                   {Math.floor(trade.entry_hour)}:{String(Math.round((trade.entry_hour % 1) * 60)).padStart(2, '0')}

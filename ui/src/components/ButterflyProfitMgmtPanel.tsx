@@ -102,7 +102,7 @@ export default function ButterflyProfitMgmtPanel({
     }}>
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-        <span style={{ color: '#9ca3af', fontSize: '12px', textTransform: 'uppercase' }}>
+        <span style={{ color: 'var(--text-secondary)', fontSize: '12px', textTransform: 'uppercase' }}>
           Profit Management
         </span>
         {isActive && (
@@ -128,7 +128,7 @@ export default function ButterflyProfitMgmtPanel({
           marginBottom: '16px',
           textAlign: 'center',
         }}>
-          <span style={{ color: '#9ca3af' }}>
+          <span style={{ color: 'var(--text-secondary)' }}>
             Activates at {activationPct.toFixed(0)}% profit ({(activationPct - profitPct).toFixed(1)}% away)
           </span>
         </div>
@@ -137,7 +137,7 @@ export default function ButterflyProfitMgmtPanel({
       {/* Profit vs HWM Visualization */}
       <div style={{ marginBottom: '16px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-          <span style={{ color: '#d1d5db', fontSize: '13px' }}>Current Profit</span>
+          <span style={{ color: 'var(--text-primary)', fontSize: '13px' }}>Current Profit</span>
           <span style={{ color: profitPct >= 0 ? '#22c55e' : '#ef4444', fontSize: '13px', fontWeight: 'bold' }}>
             ${currentProfit.toFixed(2)} ({profitPct.toFixed(1)}%)
           </span>
@@ -171,8 +171,8 @@ export default function ButterflyProfitMgmtPanel({
         </div>
         {hwm > 0 && (
           <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '4px' }}>
-            <span style={{ color: '#6b7280', fontSize: '11px' }}>0%</span>
-            <span style={{ color: '#3b82f6', fontSize: '11px' }}>
+            <span style={{ color: 'var(--text-muted)', fontSize: '11px' }}>0%</span>
+            <span style={{ color: 'var(--accent-primary)', fontSize: '11px' }}>
               HWM: ${hwm.toFixed(2)} ({hwmPct.toFixed(1)}%)
             </span>
           </div>
@@ -183,7 +183,7 @@ export default function ButterflyProfitMgmtPanel({
       {isActive && (
         <div style={{ marginBottom: '16px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-            <span style={{ color: '#d1d5db', fontSize: '13px' }}>Risk Score</span>
+            <span style={{ color: 'var(--text-primary)', fontSize: '13px' }}>Risk Score</span>
             <span style={{
               color: getRiskScoreColor(riskScore),
               fontSize: '13px',
@@ -244,7 +244,7 @@ export default function ButterflyProfitMgmtPanel({
           borderRadius: '4px',
           padding: '12px',
         }}>
-          <span style={{ color: '#6b7280', fontSize: '11px', textTransform: 'uppercase' }}>
+          <span style={{ color: 'var(--text-muted)', fontSize: '11px', textTransform: 'uppercase' }}>
             Risk Factors
           </span>
           <div style={{ marginTop: '8px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
@@ -259,7 +259,7 @@ export default function ButterflyProfitMgmtPanel({
       {/* Last Assessment */}
       {alert.mgmtLastAssessment && (
         <div style={{ marginTop: '12px', textAlign: 'right' }}>
-          <span style={{ color: '#6b7280', fontSize: '10px' }}>
+          <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>
             Last: {new Date(alert.mgmtLastAssessment).toLocaleTimeString()}
           </span>
         </div>
@@ -272,7 +272,7 @@ export default function ButterflyProfitMgmtPanel({
 function RiskFactorRow({ label, value }: { label: string; value: number }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-      <span style={{ color: '#9ca3af', fontSize: '11px', flex: 1 }}>{label}</span>
+      <span style={{ color: 'var(--text-secondary)', fontSize: '11px', flex: 1 }}>{label}</span>
       <div style={{
         width: '40px',
         height: '4px',

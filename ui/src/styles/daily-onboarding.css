@@ -210,3 +210,43 @@
     font-size: 10px;
   }
 }
+
+/* ========== Light Theme ========== */
+[data-theme="light"] .daily-onboarding-overlay {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="light"] .heading-line {
+  background: linear-gradient(90deg, transparent, #c7c7cc, transparent);
+}
+
+[data-theme="light"] .heading-text {
+  color: #6e6e73;
+}
+
+[data-theme="light"] .process-phase {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .phase-number {
+  color: #6e6e73;
+  background: rgba(0, 0, 0, 0.04);
+  border-color: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .phase-label {
+  color: #6e6e73;
+}
+
+[data-theme="light"] .connector-arrow {
+  background: linear-gradient(90deg, #c7c7cc, #aeaeb2);
+}
+
+[data-theme="light"] .connector-arrow::after {
+  border-left-color: #aeaeb2;
+}
+
+[data-theme="light"] .daily-onboarding-hint {
+  color: #aeaeb2;
+}

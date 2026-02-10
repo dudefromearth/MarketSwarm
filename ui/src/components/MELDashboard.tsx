@@ -84,7 +84,7 @@ export default function MELDashboard({ snapshot, onClose }: MELDashboardProps) {
                 className={`mel-global-circle mel-state-${globalState.toLowerCase()}`}
                 style={{
                   '--integrity': `${global_structure_integrity}%`,
-                  background: `conic-gradient(${getStateColor(globalState)} ${global_structure_integrity * 3.6}deg, #333 0deg)`,
+                  background: `conic-gradient(${getStateColor(globalState)} ${global_structure_integrity * 3.6}deg, var(--border-default) 0deg)`,
                 } as React.CSSProperties}
               >
                 <div className="mel-global-inner">

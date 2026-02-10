@@ -15,6 +15,16 @@
 
 [data-theme="light"] {
   color-scheme: light;
+  color: #1d1d1f;
+  background-color: #f5f5f7;
+}
+
+[data-theme="light"] button {
+  background-color: #e5e5ea;
+}
+
+[data-theme="light"] button:hover {
+  border-color: #007aff;
 }
 
 a {

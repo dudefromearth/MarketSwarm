@@ -38,7 +38,7 @@ class TradeDetailErrorBoundary extends Component<{ children: ReactNode; onClose:
             <div className="trade-detail-content">
               <div className="form-error" style={{ padding: '20px' }}>
                 <p>Failed to display trade details.</p>
-                <p style={{ fontSize: '11px', color: '#888', marginTop: '8px' }}>
+                <p style={{ fontSize: '11px', color: 'var(--text-tertiary)', marginTop: '8px' }}>
                   {this.state.error?.message || 'Unknown error'}
                 </p>
               </div>

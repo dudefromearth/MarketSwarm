@@ -133,7 +133,7 @@ export default function TradeTrackingPanel({ isOpen = true }: Props) {
   const getPnlColor = (pnl: number) => {
     if (pnl > 0) return '#22c55e';
     if (pnl < 0) return '#ef4444';
-    return '#94a3b8';
+    return 'var(--text-secondary)';
   };
 
   const getRankColor = (rank: number) => {

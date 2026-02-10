@@ -279,3 +279,111 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ========== Light Theme ========== */
+[data-theme="light"] .adi-panel {
+  background: #ffffff;
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .adi-panel-header {
+  border-bottom-color: #d1d1d6;
+}
+
+[data-theme="light"] .adi-panel-header h4 {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .adi-schema-version {
+  color: #6e6e73;
+  background: #e5e5ea;
+}
+
+[data-theme="light"] .adi-description {
+  color: #6e6e73;
+}
+
+[data-theme="light"] .adi-download-btn {
+  background: #e5e5ea;
+  border-color: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .adi-download-btn:hover {
+  background: #d1d1d6;
+  color: #000;
+}
+
+[data-theme="light"] .adi-dropdown-content {
+  background: #ffffff;
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .adi-dropdown-content button {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .adi-dropdown-content button:hover {
+  background: #e5e5ea;
+  color: #000;
+}
+
+[data-theme="light"] .adi-format-btn {
+  background: #e5e5ea;
+  border-color: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .adi-format-btn:hover {
+  background: #d1d1d6;
+  color: #000;
+}
+
+[data-theme="light"] .adi-preview-btn {
+  border-color: #d1d1d6;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .adi-preview-btn:hover {
+  border-color: #aeaeb2;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .adi-download-label {
+  color: #6e6e73;
+}
+
+[data-theme="light"] .adi-snapshot-info {
+  border-top-color: #d1d1d6;
+  color: #86868b;
+}
+
+[data-theme="light"] .adi-preview-overlay {
+  background: rgba(0, 0, 0, 0.25);
+}
+
+[data-theme="light"] .adi-preview-modal {
+  background: #ffffff;
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .adi-preview-header {
+  border-bottom-color: #d1d1d6;
+}
+
+[data-theme="light"] .adi-preview-header h4 {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .adi-preview-header button {
+  color: #86868b;
+}
+
+[data-theme="light"] .adi-preview-header button:hover {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .adi-preview-content {
+  color: #1d1d1f;
+  background: #f5f5f7;
+}
