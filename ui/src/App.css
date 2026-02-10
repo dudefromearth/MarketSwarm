@@ -1805,6 +1805,29 @@ body {
     0 0 15px rgba(59, 130, 246, 0.2);
 }
 
+/* --- Light Theme: VP Settings Dialog --- */
+[data-theme="light"] .vp-settings-dialog-overlay {
+  background: rgba(0, 0, 0, 0.18);
+}
+
+[data-theme="light"] .vp-settings-dialog {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .vp-settings-header {
+  border-bottom-color: #e5e5ea;
+}
+
+[data-theme="light"] .vp-settings-close:hover {
+  color: #ff3b30;
+}
+
+[data-theme="light"] .vp-setting-row span {
+  color: #007aff;
+}
+
 /* Heatmap Panel */
 .heatmap-panel {
   width: 500px;
@@ -12124,6 +12147,105 @@ body {
   display: none;
 }
 
+/* --- Light Theme: GEX Chart Panel, DG Indicators, AI Analysis, Legend --- */
+[data-theme="light"] .gex-chart-tf-btn.active,
+[data-theme="light"] .gex-mode-btn.active {
+  background: #007aff;
+  border-color: #007aff;
+}
+
+[data-theme="light"] .gex-chart-loading-overlay {
+  background: rgba(245, 245, 247, 0.8);
+  color: #6e6e73;
+}
+
+[data-theme="light"] .gex-chart-spinner {
+  border-color: rgba(0, 122, 255, 0.2);
+  border-top-color: #007aff;
+}
+
+[data-theme="light"] .skeleton-candle {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.06) 0%, rgba(0, 0, 0, 0.03) 100%);
+}
+
+[data-theme="light"] .gex-chart-legend {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid #e5e5ea;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .gex-chart-legend .legend-item:hover {
+  background: rgba(0, 122, 255, 0.08);
+}
+
+[data-theme="light"] .gex-chart-legend .legend-item:hover .legend-gear {
+  color: #007aff;
+}
+
+[data-theme="light"] .gex-side-btn:hover {
+  background: rgba(0, 122, 255, 0.12);
+  border-color: #007aff;
+}
+
+[data-theme="light"] .dg-indicator {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: #d1d1d6;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .dg-indicator:hover {
+  background: #ffffff;
+  border-color: rgba(147, 51, 234, 0.5);
+}
+
+[data-theme="light"] .dg-indicator.dg-indicator-static:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .dg-indicator-btn:hover {
+  background: rgba(147, 51, 234, 0.1);
+}
+
+[data-theme="light"] .dg-settings-overlay {
+  background: rgba(0, 0, 0, 0.18);
+  backdrop-filter: blur(4px);
+}
+
+[data-theme="light"] .gex-chart-ai-btn {
+  background: rgba(147, 51, 234, 0.08);
+  border-color: rgba(147, 51, 234, 0.3);
+  color: #7c3aed;
+}
+
+[data-theme="light"] .gex-chart-ai-btn:hover:not(:disabled) {
+  background: rgba(147, 51, 234, 0.15);
+  border-color: #7c3aed;
+}
+
+[data-theme="light"] .gex-chart-ai-btn.analyzing {
+  background: rgba(147, 51, 234, 0.18);
+}
+
+[data-theme="light"] .dg-analysis-panel {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme="light"] .dg-analysis-header {
+  background: rgba(147, 51, 234, 0.06);
+  border-bottom-color: #e5e5ea;
+}
+
+[data-theme="light"] .dg-analysis-header h4 {
+  color: #7c3aed;
+}
+
+[data-theme="light"] .dg-analysis-close:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
 /* ============================================
    Risk Graph Canvas - 5-Sigma Chart Surface
    ============================================ */
@@ -14232,6 +14354,123 @@ body {
 
 .settings-btn.save:hover {
   background: #2563eb;
+}
+
+/* --- Light Theme: Indicator Settings Dialog, Labels, Overlays --- */
+[data-theme="light"] .indicator-settings-dialog {
+  background: #ffffff;
+  border-color: #d1d1d6;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+[data-theme="light"] .indicator-settings-header {
+  border-bottom-color: #e5e5ea;
+}
+
+[data-theme="light"] .indicator-settings-close:hover {
+  color: #ff3b30;
+}
+
+[data-theme="light"] .indicator-settings-footer {
+  border-top-color: #e5e5ea;
+}
+
+[data-theme="light"] .setting-value {
+  color: #007aff;
+}
+
+[data-theme="light"] .mode-toggle {
+  background: #f0f0f2;
+}
+
+[data-theme="light"] .mode-btn.active {
+  background: #007aff;
+}
+
+[data-theme="light"] .mode-btn:hover {
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .row-size-input {
+  background: #f5f5f7;
+  border-color: #d1d1d6;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .row-size-input:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .reset-btn {
+  border-color: #d1d1d6;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .reset-btn:hover {
+  border-color: #aeaeb2;
+  color: #1d1d1f;
+  background: #f0f0f2;
+}
+
+[data-theme="light"] .settings-btn.save {
+  background: #007aff;
+}
+
+[data-theme="light"] .settings-btn.save:hover {
+  background: #0062cc;
+}
+
+[data-theme="light"] .settings-btn.reset {
+  border-color: #d1d1d6;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .settings-btn.reset:hover {
+  border-color: #aeaeb2;
+  color: #1d1d1f;
+  background: #f0f0f2;
+}
+
+[data-theme="light"] .gex-chart-panel .indicator-settings-overlay,
+[data-theme="light"] .indicator-settings-overlay {
+  background: rgba(0, 0, 0, 0.18);
+}
+
+[data-theme="light"] .indicator-label {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: #d1d1d6;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="light"] .indicator-label:hover {
+  background: #ffffff;
+  border-color: rgba(147, 51, 234, 0.5);
+}
+
+[data-theme="light"] .indicator-label.gex-static:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .indicator-btn:hover {
+  background: rgba(0, 122, 255, 0.1);
+  color: #007aff;
+}
+
+[data-theme="light"] .indicator-btn.eye.visible:hover {
+  background: rgba(52, 199, 89, 0.1);
+}
+
+[data-theme="light"] .indicator-btn.eye.hidden:hover {
+  background: rgba(255, 59, 48, 0.1);
+}
+
+[data-theme="light"] .color-control input[type="color"] {
+  border-color: #d1d1d6;
+}
+
+[data-theme="light"] .color-preview {
+  border-color: #d1d1d6;
 }
 
 /* =========================================================

@@ -2260,9 +2260,45 @@
   color: #b45309;
 }
 
+[data-theme="light"] .save-btn {
+  background: #007aff;
+}
+
+[data-theme="light"] .save-btn:hover:not(:disabled) {
+  background: #0066d6;
+}
+
 [data-theme="light"] .save-btn:disabled {
   background: #e5e5ea;
   color: #aeaeb2;
+}
+
+[data-theme="light"] .pending-badge {
+  background: #007aff;
+}
+
+[data-theme="light"] .attachment-ref-btn {
+  background: #007aff;
+}
+
+[data-theme="light"] .attachment-ref-btn:hover {
+  background: #0066d6;
+}
+
+[data-theme="light"] .preview-download-btn {
+  background: #007aff;
+}
+
+[data-theme="light"] .preview-download-btn:hover {
+  background: #0066d6;
+}
+
+[data-theme="light"] .uploading-indicator {
+  color: #007aff;
+}
+
+[data-theme="light"] .drop-overlay span {
+  background: #007aff;
 }
 
 [data-theme="light"] .entry-trade-refs,

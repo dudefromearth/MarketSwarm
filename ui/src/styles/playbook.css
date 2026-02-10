@@ -952,7 +952,48 @@
   color: #b45309;
 }
 
+[data-theme="light"] .btn-save {
+  background: #007aff;
+}
+
+[data-theme="light"] .btn-save:hover:not(:disabled) {
+  background: #0066d6;
+}
+
 [data-theme="light"] .btn-save:disabled {
   background: #e5e5ea;
   color: #aeaeb2;
+}
+
+[data-theme="light"] .btn-new-entry {
+  background: #007aff;
+}
+
+[data-theme="light"] .btn-new-entry:hover {
+  background: #0066d6;
+}
+
+[data-theme="light"] .flagged-count {
+  background: #007aff;
+}
+
+[data-theme="light"] .filter-select:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .search-input:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .title-input:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .type-select:focus,
+[data-theme="light"] .status-select:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .description-textarea:focus {
+  border-color: #007aff;
 }
