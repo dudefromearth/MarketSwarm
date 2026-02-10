@@ -69,6 +69,76 @@
 [data-theme="light"] .gex-posture { font-size: 14.5px; }
 [data-theme="light"] .waiting-anchor { font-size: 14.5px; }
 
+/* --- Light Theme: Micro-pause, VIX badges, waiting anchor, inputs --- */
+[data-theme="light"] .micro-pause {
+  background: rgba(245, 245, 247, 0.92);
+}
+
+[data-theme="light"] .micro-pause-text {
+  color: #6e6e73;
+}
+
+[data-theme="light"] .vix-regime-badge.zombieland {
+  background: rgba(52, 199, 89, 0.1);
+  color: #248a3d;
+}
+
+[data-theme="light"] .vix-regime-badge.goldilocks {
+  background: rgba(139, 105, 20, 0.1);
+  color: #8b6914;
+}
+
+[data-theme="light"] .vix-regime-badge.elevated {
+  background: rgba(255, 149, 0, 0.1);
+  color: #c77c00;
+}
+
+[data-theme="light"] .vix-regime-badge.chaos {
+  background: rgba(255, 59, 48, 0.1);
+  color: #d63a2f;
+}
+
+[data-theme="light"] .waiting-anchor {
+  border-top-color: #e5e5ea;
+}
+
+[data-theme="light"] .routine-briefing-content strong {
+  color: #1d1d1f;
+  font-weight: 600;
+}
+
+[data-theme="light"] .routine-briefing-content em {
+  color: #6e6e73;
+}
+
+[data-theme="light"] .ask-vexy-input {
+  background: #f0f0f2;
+  color: #1d1d1f;
+  border: 1px solid #d1d1d6;
+}
+
+[data-theme="light"] .ask-vexy-input::placeholder {
+  color: #aeaeb2;
+}
+
+[data-theme="light"] .ask-vexy-input:focus {
+  border-color: #007aff;
+}
+
+[data-theme="light"] .ask-vexy-submit {
+  border-color: #d1d1d6;
+  color: #6e6e73;
+}
+
+[data-theme="light"] .ask-vexy-submit:hover:not(:disabled) {
+  border-color: #aeaeb2;
+  color: #1d1d1f;
+}
+
+[data-theme="light"] .routine-content::-webkit-scrollbar-thumb {
+  background: #d1d1d6;
+}
+
 /* ========== Micro-Pause Overlay ========== */
 .micro-pause {
   position: fixed;
