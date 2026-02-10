@@ -13633,6 +13633,11 @@ body {
   font-family: 'SF Mono', monospace;
 }
 
+.quick-setup-row .setup-field.setup-field-qty input {
+  width: 52px;
+  text-align: center;
+}
+
 .quick-setup-row .setup-field input[type="date"] {
   width: 120px;
 }
@@ -13691,7 +13696,7 @@ body {
 }
 
 .position-create-body .leg-row.compact .leg-quantity {
-  width: 50px;
+  width: 60px;
 }
 
 .position-create-body .leg-row.compact .leg-strike {

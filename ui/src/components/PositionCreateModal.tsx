@@ -319,6 +319,7 @@ export default function PositionCreateModal({
   const [width, setWidth] = useState('20');
   const [expiration, setExpiration] = useState('');
   const [primaryRight, setPrimaryRight] = useState<'call' | 'put'>('call');
+  const [positionQty, setPositionQty] = useState(1);
 
   // Vega warning for short calendars/diagonals
   const [showVegaWarning, setShowVegaWarning] = useState(false);
@@ -442,8 +443,15 @@ export default function PositionCreateModal({
   }, [mode, positionType, direction, recognition, currentLegs]);
 
   const legsNotation = useMemo(() => {
+    if (positionQty > 1) {
+      const multiplied = currentLegs.map(leg => ({
+        ...leg,
+        quantity: leg.quantity * positionQty,
+      }));
+      return formatLegsDisplay(multiplied);
+    }
     return formatLegsDisplay(currentLegs);
-  }, [currentLegs]);
+  }, [currentLegs, positionQty]);
 
   // Calculate DTE
   const dte = useMemo(() => {
@@ -474,6 +482,7 @@ export default function PositionCreateModal({
     setScriptInput('');
     setParsedPosition(null);
     setParseError(null);
+    setPositionQty(1);
     onClose();
   }, [onClose]);
 
@@ -487,9 +496,15 @@ export default function PositionCreateModal({
     expirations.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
     const primaryExpiration = expirations[0];
 
+    // Apply position quantity multiplier to all leg quantities
+    const multipliedLegs = currentLegs.map(leg => ({
+      ...leg,
+      quantity: leg.quantity * positionQty,
+    }));
+
     onCreate({
       symbol,
-      legs: currentLegs,
+      legs: multipliedLegs,
       costBasis: costBasisNum,
       costBasisType,
       expiration: primaryExpiration,
@@ -497,7 +512,7 @@ export default function PositionCreateModal({
     });
 
     handleClose();
-  }, [symbol, currentLegs, costBasis, costBasisType, dte, onCreate, handleClose]);
+  }, [symbol, currentLegs, costBasis, costBasisType, dte, positionQty, onCreate, handleClose]);
 
   const handlePasteFromClipboard = useCallback(async () => {
     try {
@@ -627,6 +642,17 @@ export default function PositionCreateModal({
               <div className="form-group">
                 <label>Quick Setup</label>
                 <div className="quick-setup-row">
+                  <div className="setup-field setup-field-qty">
+                    <span className="field-label">Qty</span>
+                    <input
+                      type="number"
+                      value={positionQty}
+                      onChange={e => setPositionQty(Math.max(1, Math.min(99, parseInt(e.target.value) || 1)))}
+                      min="1"
+                      max="99"
+                      step="1"
+                    />
+                  </div>
                   <div className="setup-field">
                     <span className="field-label">Strike</span>
                     <input
