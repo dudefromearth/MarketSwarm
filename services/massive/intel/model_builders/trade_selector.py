@@ -1668,8 +1668,9 @@ class TradeSelectorModelBuilder:
             # Store in memory
             self._tracked_trades[trade_id] = tracked
 
-            # Persist to Redis
+            # Persist to Redis (7-day safety TTL, refreshed on each write)
             await r.hset(self.TRACKING_ACTIVE_KEY, trade_id, json.dumps(tracked))
+            await r.expire(self.TRACKING_ACTIVE_KEY, 604800)
 
             self.logger.info(
                 f"[TRACKING] New entry: {rec['tile_key']} rank={rec['rank']} "
@@ -1762,9 +1763,10 @@ class TradeSelectorModelBuilder:
                 final_pnl / trade["debit"] if trade["debit"] > 0 else 0
             )
 
-            # Move from active to history
+            # Move from active to history (keep last 10,000 entries)
             await r.hdel(self.TRACKING_ACTIVE_KEY, trade_id)
             await r.lpush(self.TRACKING_HISTORY_KEY, json.dumps(trade))
+            await r.ltrim(self.TRACKING_HISTORY_KEY, 0, 9999)
 
             # Update aggregate stats by entry rank
             rank = trade["entry_rank"]
@@ -1773,6 +1775,7 @@ class TradeSelectorModelBuilder:
             await r.hincrbyfloat(self.TRACKING_STATS_KEY, f"rank{rank}:total_max_pnl", trade["max_pnl"])
             if trade["is_winner"]:
                 await r.hincrby(self.TRACKING_STATS_KEY, f"rank{rank}:wins", 1)
+            await r.expire(self.TRACKING_STATS_KEY, 604800)
 
             # Remove from memory
             del self._tracked_trades[trade_id]

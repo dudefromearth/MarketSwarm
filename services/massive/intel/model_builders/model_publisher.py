@@ -152,7 +152,8 @@ class ModelPublisher:
             "changed": changed,
             "removed": removed,
         })
-        await r.xadd(replay_stream, {"payload": delta_payload})
+        await r.xadd(replay_stream, {"payload": delta_payload},
+                     maxlen=50000, approximate=True)
         await r.expire(replay_stream, self.replay_ttl_sec)
 
         # Publish diff via pub/sub for real-time SSE streaming
