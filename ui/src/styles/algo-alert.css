@@ -1,0 +1,573 @@
+/* Algo Alert Styles — Position State Machine for Risk Graph */
+
+/* ==================== Algo Alert Panel (sidebar) ==================== */
+
+.algo-alert-panel {
+  border-top: 1px solid var(--border-default, #374151);
+  padding: 8px 0;
+}
+
+.algo-alert-panel .section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary, #9ca3af);
+}
+
+.algo-alert-panel .section-header .btn-new-algo {
+  font-size: 10px;
+  padding: 2px 8px;
+  border: 1px solid var(--border-default, #374151);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary, #9ca3af);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.algo-alert-panel .section-header .btn-new-algo:hover {
+  background: var(--bg-surface-hover, #1f2937);
+  color: var(--text-primary, #f3f4f6);
+}
+
+/* ==================== Alert Item ==================== */
+
+.algo-alert-item {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle, rgba(55, 65, 81, 0.5));
+  cursor: default;
+}
+
+.algo-alert-item:last-child {
+  border-bottom: none;
+}
+
+.algo-alert-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.algo-alert-item-name {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-primary, #f3f4f6);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.algo-alert-mode-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.algo-alert-mode-badge.entry {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.15);
+}
+
+.algo-alert-mode-badge.management {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.15);
+}
+
+.algo-alert-status-badge {
+  font-size: 9px;
+  font-weight: 500;
+  padding: 1px 4px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.algo-alert-item-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.algo-alert-item-actions button {
+  font-size: 10px;
+  padding: 1px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary, #6b7280);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.algo-alert-item-actions button:hover {
+  color: var(--text-primary, #f3f4f6);
+  background: var(--bg-surface-hover, #1f2937);
+}
+
+.algo-alert-item-actions button.delete:hover {
+  color: #ef4444;
+}
+
+/* ==================== Frozen Banner ==================== */
+
+.algo-alert-frozen-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  margin: 2px 0;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 4px;
+  font-size: 10px;
+  color: #f59e0b;
+}
+
+/* ==================== Filter State Dots ==================== */
+
+.algo-filter-state {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  padding: 2px 0;
+}
+
+.algo-filter-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.algo-filter-dot.pass {
+  background: #22c55e;
+}
+
+.algo-filter-dot.fail {
+  background: #ef4444;
+}
+
+.algo-filter-dot.unavailable {
+  background: #f59e0b;
+}
+
+.algo-filter-tooltip {
+  font-size: 10px;
+  color: var(--text-tertiary, #6b7280);
+  padding: 2px 0;
+}
+
+/* ==================== Proposal Card ==================== */
+
+.proposal-card {
+  padding: 8px;
+  margin: 4px 0;
+  background: var(--bg-surface, #111827);
+  border: 1px solid var(--border-default, #374151);
+  border-radius: 6px;
+}
+
+.proposal-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.proposal-type-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.proposal-expiry {
+  font-size: 9px;
+  color: var(--text-tertiary, #6b7280);
+}
+
+.proposal-reasoning {
+  font-size: 11px;
+  color: var(--text-secondary, #9ca3af);
+  margin-bottom: 6px;
+  line-height: 1.4;
+}
+
+.proposal-position-detail {
+  font-size: 10px;
+  color: var(--text-secondary, #9ca3af);
+  background: var(--bg-surface-alt, rgba(31, 41, 55, 0.5));
+  padding: 4px 6px;
+  border-radius: 3px;
+  margin-bottom: 6px;
+}
+
+.proposal-alignment {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--text-tertiary, #6b7280);
+  margin-bottom: 8px;
+}
+
+.proposal-alignment-label {
+  font-style: italic;
+}
+
+.proposal-alignment-bar {
+  flex: 1;
+  height: 3px;
+  background: var(--bg-surface-alt, #1f2937);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.proposal-alignment-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+
+.proposal-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.proposal-actions button {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.proposal-actions .btn-approve {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.3);
+}
+
+.proposal-actions .btn-approve:hover {
+  background: rgba(34, 197, 94, 0.25);
+}
+
+.proposal-actions .btn-reject {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.2);
+}
+
+.proposal-actions .btn-reject:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+/* ==================== Algo Alert Creator (modal/form) ==================== */
+
+.algo-alert-creator {
+  padding: 12px;
+  background: var(--bg-surface, #111827);
+  border: 1px solid var(--border-default, #374151);
+  border-radius: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.algo-alert-creator h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary, #f3f4f6);
+  margin: 0 0 10px 0;
+}
+
+.algo-alert-creator .form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.algo-alert-creator label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-secondary, #9ca3af);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.algo-alert-creator input,
+.algo-alert-creator select,
+.algo-alert-creator textarea {
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--border-default, #374151);
+  border-radius: 4px;
+  background: var(--bg-input, #1f2937);
+  color: var(--text-primary, #f3f4f6);
+  outline: none;
+}
+
+.algo-alert-creator input:focus,
+.algo-alert-creator select:focus,
+.algo-alert-creator textarea:focus {
+  border-color: #3b82f6;
+}
+
+.algo-alert-creator .mode-toggle {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.algo-alert-creator .mode-toggle button {
+  flex: 1;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border: 1px solid var(--border-default, #374151);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary, #9ca3af);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.algo-alert-creator .mode-toggle button.active {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+/* Filter Builder */
+
+.filter-builder {
+  margin-bottom: 10px;
+}
+
+.filter-builder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.filter-builder-header .btn-add-filter {
+  font-size: 10px;
+  padding: 2px 8px;
+  border: 1px dashed var(--border-default, #374151);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary, #9ca3af);
+  cursor: pointer;
+}
+
+.filter-builder-header .btn-add-filter:hover {
+  border-color: #3b82f6;
+  color: #3b82f6;
+}
+
+.filter-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+.filter-row select,
+.filter-row input {
+  font-size: 10px;
+  padding: 3px 5px;
+}
+
+.filter-row .btn-remove-filter {
+  font-size: 10px;
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  color: #ef4444;
+  cursor: pointer;
+}
+
+.filter-row .required-toggle {
+  font-size: 9px;
+  color: var(--text-tertiary, #6b7280);
+  cursor: pointer;
+  user-select: none;
+}
+
+.filter-row .required-toggle.required {
+  color: #f59e0b;
+}
+
+/* Constraints section */
+
+.constraints-section {
+  padding: 8px;
+  background: var(--bg-surface-alt, rgba(31, 41, 55, 0.5));
+  border-radius: 4px;
+  margin-bottom: 10px;
+}
+
+.constraints-section .form-row-inline {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.constraints-section .form-row-inline label {
+  min-width: 70px;
+}
+
+.constraints-section .form-row-inline input {
+  flex: 1;
+}
+
+/* Form footer */
+
+.algo-alert-creator .form-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle, rgba(55, 65, 81, 0.5));
+}
+
+.algo-alert-creator .form-footer button {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.algo-alert-creator .form-footer .btn-cancel {
+  background: transparent;
+  color: var(--text-secondary, #9ca3af);
+  border-color: var(--border-default, #374151);
+}
+
+.algo-alert-creator .form-footer .btn-save {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.algo-alert-creator .form-footer .btn-save:hover {
+  background: rgba(59, 130, 246, 0.25);
+}
+
+/* ==================== Empty State ==================== */
+
+.algo-alert-empty {
+  padding: 8px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-tertiary, #6b7280);
+}
+
+/* ==================== Structural Language Tooltip ==================== */
+
+.structural-tooltip {
+  font-size: 9px;
+  color: var(--text-tertiary, #6b7280);
+  font-style: italic;
+  padding: 2px 0;
+}
+
+/* ==================== Light Theme Overrides ==================== */
+
+[data-theme="light"] .algo-alert-panel {
+  border-top-color: #e5e7eb;
+}
+
+[data-theme="light"] .algo-alert-panel .section-header {
+  color: #6b7280;
+}
+
+[data-theme="light"] .algo-alert-panel .section-header .btn-new-algo {
+  border-color: #d1d5db;
+  color: #6b7280;
+}
+
+[data-theme="light"] .algo-alert-panel .section-header .btn-new-algo:hover {
+  background: #f3f4f6;
+  color: #1f2937;
+}
+
+[data-theme="light"] .algo-alert-item {
+  border-bottom-color: #e5e7eb;
+}
+
+[data-theme="light"] .algo-alert-item-name {
+  color: #1f2937;
+}
+
+[data-theme="light"] .algo-alert-item-actions button {
+  color: #9ca3af;
+}
+
+[data-theme="light"] .algo-alert-item-actions button:hover {
+  color: #1f2937;
+  background: #f3f4f6;
+}
+
+[data-theme="light"] .algo-alert-frozen-banner {
+  background: rgba(245, 158, 11, 0.08);
+  border-color: rgba(245, 158, 11, 0.25);
+}
+
+[data-theme="light"] .proposal-card {
+  background: #ffffff;
+  border-color: #e5e7eb;
+}
+
+[data-theme="light"] .proposal-reasoning {
+  color: #4b5563;
+}
+
+[data-theme="light"] .proposal-position-detail {
+  background: #f9fafb;
+  color: #4b5563;
+}
+
+[data-theme="light"] .algo-alert-creator {
+  background: #ffffff;
+  border-color: #e5e7eb;
+}
+
+[data-theme="light"] .algo-alert-creator h3 {
+  color: #1f2937;
+}
+
+[data-theme="light"] .algo-alert-creator label {
+  color: #6b7280;
+}
+
+[data-theme="light"] .algo-alert-creator input,
+[data-theme="light"] .algo-alert-creator select,
+[data-theme="light"] .algo-alert-creator textarea {
+  background: #f9fafb;
+  border-color: #d1d5db;
+  color: #1f2937;
+}
+
+[data-theme="light"] .constraints-section {
+  background: #f9fafb;
+}

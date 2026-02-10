@@ -1161,6 +1161,7 @@ def create_all_evaluators(ai_manager: Optional[AIProviderManager] = None, logger
     """
     from .prompt_evaluator import PromptDrivenEvaluator
     from .reference_state_capture import ReferenceStateCaptureService
+    from .algo_alert_evaluator import AlgoAlertEvaluator
 
     reference_service = ReferenceStateCaptureService(logger)
 
@@ -1175,4 +1176,5 @@ def create_all_evaluators(ai_manager: Optional[AIProviderManager] = None, logger
         ButterflyEntryEvaluator(),
         ButterflyProfitMgmtEvaluator(ai_manager),
         PromptDrivenEvaluator(ai_manager, reference_service, logger),
+        AlgoAlertEvaluator(logger=logger),
     ]

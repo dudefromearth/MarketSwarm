@@ -203,6 +203,42 @@ class CopilotOrchestrator:
                         except Exception:
                             pass
 
+                    # Fetch bias/LFI data (published by massive)
+                    bias_lfi_data = None
+                    bias_lfi_raw = await self.market_redis.get("massive:bias_lfi:model:latest")
+                    if bias_lfi_raw:
+                        try:
+                            bias_lfi_data = json.loads(bias_lfi_raw)
+                        except Exception:
+                            pass
+
+                    # Fetch market mode data (published by massive)
+                    market_mode_data = None
+                    market_mode_raw = await self.market_redis.get("massive:market_mode:model:latest")
+                    if market_mode_raw:
+                        try:
+                            market_mode_data = json.loads(market_mode_raw)
+                        except Exception:
+                            pass
+
+                    # Fetch VIX regime data (published by massive)
+                    vix_regime_data = None
+                    vix_regime_raw = await self.market_redis.get("massive:vix_regime:model:latest")
+                    if vix_regime_raw:
+                        try:
+                            vix_regime_data = json.loads(vix_regime_raw)
+                        except Exception:
+                            pass
+
+                    # Fetch trade selector data (published by massive)
+                    trade_selector_data = None
+                    trade_selector_raw = await self.market_redis.get("massive:trade_selector:SPX:latest")
+                    if trade_selector_raw:
+                        try:
+                            trade_selector_data = json.loads(trade_selector_raw)
+                        except Exception:
+                            pass
+
                     # Fetch GEX data - process ALL expirations
                     gex_calls_raw = await self.market_redis.get("massive:gex:model:I:SPX:calls")
                     gex_puts_raw = await self.market_redis.get("massive:gex:model:I:SPX:puts")
@@ -275,6 +311,10 @@ class CopilotOrchestrator:
                                         "price_history": price_history,
                                         "volume_profile": volume_profile,
                                         "heatmap": heatmap_data,
+                                        "bias_lfi": bias_lfi_data,
+                                        "market_mode": market_mode_data,
+                                        "vix_regime": vix_regime_data,
+                                        "trade_selector": trade_selector_data,
                                         "timestamp": datetime.utcnow(),
                                     }
 

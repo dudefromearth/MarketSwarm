@@ -13,6 +13,7 @@ import { useRef, useMemo, useCallback, useState, forwardRef, useImperativeHandle
 import PnLChart, { type PnLChartHandle, type PriceAlertType, type BackdropRenderProps } from './PnLChart';
 import RiskGraphBackdrop from './RiskGraphBackdrop';
 import DealerGravitySettings from './DealerGravitySettings';
+import AlgoAlertPanel from './AlgoAlertPanel';
 import WhatsNew from './WhatsNew';
 import {
   useRiskGraphCalculations,
@@ -767,6 +768,11 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                     )}
                   </div>
                 </div>
+
+                {/* Algo Alerts Section */}
+                <AlgoAlertPanel
+                  positionIds={strategies.map(s => s.id)}
+                />
 
                 {/* Alerts Section */}
                 <div className="risk-graph-alerts">

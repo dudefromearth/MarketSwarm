@@ -3741,6 +3741,272 @@ class JournalOrchestrator:
             self.logger.error(f"list_prompt_alerts_internal error: {e}")
             return self._error_response(str(e), 500, request)
 
+    # ==================== Algo Alerts ====================
+
+    async def _publish_algo_alerts_sync(self, action: str, alert_id: str):
+        """Publish sync event for algo alerts."""
+        try:
+            r = self.buses.get('market') or self.buses.get('intel')
+            if r:
+                await r.publish('algo_alerts:sync', json.dumps({
+                    'action': action,
+                    'alert_id': alert_id,
+                }))
+        except Exception as e:
+            self.logger.warn(f"Failed to publish algo_alerts:sync: {e}")
+
+    async def list_algo_alerts(self, request: web.Request) -> web.Response:
+        """GET /api/algo-alerts - List algo alerts for the current user."""
+        try:
+            user = await self.auth.get_request_user(request)
+            user_id = user['id'] if user else None
+            if not user_id:
+                return self._error_response('Unauthorized', 401, request)
+
+            status_filter = request.query.get('status')
+            alerts = self.db.list_algo_alerts(user_id, status_filter)
+            return self._json_response({
+                'success': True,
+                'data': alerts,
+                'count': len(alerts)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"list_algo_alerts error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def create_algo_alert(self, request: web.Request) -> web.Response:
+        """POST /api/algo-alerts - Create a new algo alert."""
+        try:
+            user = await self.auth.get_request_user(request)
+            user_id = user['id'] if user else None
+            if not user_id:
+                return self._error_response('Unauthorized', 401, request)
+
+            data = await request.json()
+            import uuid
+            alert_id = str(uuid.uuid4())
+
+            name = data.get('name', 'Untitled Algo Alert')
+            mode = data.get('mode', 'entry')
+            if mode not in ('entry', 'management'):
+                return self._error_response('Invalid mode — must be entry or management', 400, request)
+
+            filters = data.get('filters', [])
+            if not filters:
+                return self._error_response('At least one filter is required', 400, request)
+
+            # Assign IDs to filters if missing
+            for f in filters:
+                if not f.get('id'):
+                    f['id'] = str(uuid.uuid4())
+
+            entry_constraints = data.get('entryConstraints')
+            position_id = data.get('positionId')
+            prompt_override = data.get('promptOverride')
+
+            alert = self.db.create_algo_alert(
+                alert_id=alert_id,
+                user_id=user_id,
+                name=name,
+                mode=mode,
+                filters=json.dumps(filters),
+                entry_constraints=json.dumps(entry_constraints) if entry_constraints else None,
+                position_id=position_id,
+                prompt_override=prompt_override,
+            )
+
+            await self._publish_algo_alerts_sync('create', alert_id)
+
+            return self._json_response({
+                'success': True,
+                'data': alert,
+            }, status=201, request=request)
+        except Exception as e:
+            self.logger.error(f"create_algo_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def update_algo_alert_route(self, request: web.Request) -> web.Response:
+        """PUT /api/algo-alerts/:id - Update an algo alert."""
+        try:
+            user = await self.auth.get_request_user(request)
+            user_id = user['id'] if user else None
+            if not user_id:
+                return self._error_response('Unauthorized', 401, request)
+
+            alert_id = request.match_info['id']
+            data = await request.json()
+
+            updates = {}
+            if 'name' in data:
+                updates['name'] = data['name']
+            if 'status' in data:
+                if data['status'] not in ('active', 'paused', 'frozen', 'archived'):
+                    return self._error_response('Invalid status', 400, request)
+                updates['status'] = data['status']
+            if 'filters' in data:
+                import uuid as _uuid
+                for f in data['filters']:
+                    if not f.get('id'):
+                        f['id'] = str(_uuid.uuid4())
+                updates['filters'] = json.dumps(data['filters'])
+            if 'entryConstraints' in data:
+                updates['entry_constraints'] = json.dumps(data['entryConstraints'])
+            if 'positionId' in data:
+                updates['position_id'] = data['positionId']
+            if 'promptOverride' in data:
+                updates['prompt_override'] = data['promptOverride']
+
+            alert = self.db.update_algo_alert(alert_id, user_id, updates)
+            if not alert:
+                return self._error_response('Algo alert not found', 404, request)
+
+            await self._publish_algo_alerts_sync('update', alert_id)
+
+            return self._json_response({
+                'success': True,
+                'data': alert,
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"update_algo_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def delete_algo_alert_route(self, request: web.Request) -> web.Response:
+        """DELETE /api/algo-alerts/:id - Delete an algo alert."""
+        try:
+            user = await self.auth.get_request_user(request)
+            user_id = user['id'] if user else None
+            if not user_id:
+                return self._error_response('Unauthorized', 401, request)
+
+            alert_id = request.match_info['id']
+            deleted = self.db.delete_algo_alert(alert_id, user_id)
+            if not deleted:
+                return self._error_response('Algo alert not found', 404, request)
+
+            await self._publish_algo_alerts_sync('delete', alert_id)
+
+            return self._json_response({
+                'success': True,
+                'message': 'Algo alert deleted'
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"delete_algo_alert error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def list_algo_proposals(self, request: web.Request) -> web.Response:
+        """GET /api/algo-proposals - List proposals for the current user."""
+        try:
+            user = await self.auth.get_request_user(request)
+            user_id = user['id'] if user else None
+            if not user_id:
+                return self._error_response('Unauthorized', 401, request)
+
+            algo_alert_id = request.query.get('algoAlertId')
+            status_filter = request.query.get('status')
+
+            proposals = self.db.list_algo_proposals(user_id, algo_alert_id, status_filter)
+            return self._json_response({
+                'success': True,
+                'data': proposals,
+                'count': len(proposals)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"list_algo_proposals error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def approve_algo_proposal(self, request: web.Request) -> web.Response:
+        """POST /api/algo-proposals/:id/approve - Approve a proposal."""
+        try:
+            user = await self.auth.get_request_user(request)
+            user_id = user['id'] if user else None
+            if not user_id:
+                return self._error_response('Unauthorized', 401, request)
+
+            proposal_id = request.match_info['id']
+            proposal = self.db.resolve_algo_proposal(proposal_id, user_id, 'approved')
+            if not proposal:
+                return self._error_response('Proposal not found', 404, request)
+
+            # Clear pending proposal in evaluator (via sync)
+            algo_alert_id = proposal.get('algoAlertId')
+            if algo_alert_id:
+                await self._publish_algo_alerts_sync('proposal_resolved', algo_alert_id)
+
+            return self._json_response({
+                'success': True,
+                'data': proposal,
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"approve_algo_proposal error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def reject_algo_proposal(self, request: web.Request) -> web.Response:
+        """POST /api/algo-proposals/:id/reject - Reject a proposal."""
+        try:
+            user = await self.auth.get_request_user(request)
+            user_id = user['id'] if user else None
+            if not user_id:
+                return self._error_response('Unauthorized', 401, request)
+
+            proposal_id = request.match_info['id']
+            proposal = self.db.resolve_algo_proposal(proposal_id, user_id, 'rejected')
+            if not proposal:
+                return self._error_response('Proposal not found', 404, request)
+
+            algo_alert_id = proposal.get('algoAlertId')
+            if algo_alert_id:
+                await self._publish_algo_alerts_sync('proposal_resolved', algo_alert_id)
+
+            return self._json_response({
+                'success': True,
+                'data': proposal,
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"reject_algo_proposal error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def list_algo_alerts_internal(self, request: web.Request) -> web.Response:
+        """GET /api/internal/algo-alerts - List all active algo alerts (for Copilot)."""
+        try:
+            alerts = self.db.get_active_algo_alerts()
+            return self._json_response({
+                'success': True,
+                'data': alerts,
+                'count': len(alerts)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"list_algo_alerts_internal error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def update_algo_alert_status_internal(self, request: web.Request) -> web.Response:
+        """PUT /api/internal/algo-alerts/:id/status - Update status (from Copilot)."""
+        try:
+            alert_id = request.match_info['id']
+            data = await request.json()
+            status = data.get('status')
+            frozen_reason = data.get('frozen_reason')
+
+            updated = self.db.update_algo_alert_status_internal(alert_id, status, frozen_reason)
+            return self._json_response({
+                'success': updated,
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"update_algo_alert_status_internal error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def create_algo_proposal_internal(self, request: web.Request) -> web.Response:
+        """POST /api/internal/algo-proposals - Create proposal (from Copilot)."""
+        try:
+            data = await request.json()
+            proposal = self.db.create_algo_proposal(data)
+            return self._json_response({
+                'success': True,
+                'data': proposal,
+            }, status=201, request=request)
+        except Exception as e:
+            self.logger.error(f"create_algo_proposal_internal error: {e}")
+            return self._error_response(str(e), 500, request)
+
     # ==================== Trade Idea Tracking (Feedback Loop) ====================
 
     async def create_tracked_idea(self, request: web.Request) -> web.Response:
@@ -6328,6 +6594,18 @@ class JournalOrchestrator:
         app.router.add_patch('/api/prompt-alerts/{id}', self.update_prompt_alert)
         app.router.add_delete('/api/prompt-alerts/{id}', self.delete_prompt_alert)
         app.router.add_get('/api/internal/prompt-alerts', self.list_prompt_alerts_internal)
+
+        # Algo Alerts
+        app.router.add_get('/api/algo-alerts', self.list_algo_alerts)
+        app.router.add_post('/api/algo-alerts', self.create_algo_alert)
+        app.router.add_put('/api/algo-alerts/{id}', self.update_algo_alert_route)
+        app.router.add_delete('/api/algo-alerts/{id}', self.delete_algo_alert_route)
+        app.router.add_get('/api/algo-proposals', self.list_algo_proposals)
+        app.router.add_post('/api/algo-proposals/{id}/approve', self.approve_algo_proposal)
+        app.router.add_post('/api/algo-proposals/{id}/reject', self.reject_algo_proposal)
+        app.router.add_get('/api/internal/algo-alerts', self.list_algo_alerts_internal)
+        app.router.add_put('/api/internal/algo-alerts/{id}/status', self.update_algo_alert_status_internal)
+        app.router.add_post('/api/internal/algo-proposals', self.create_algo_proposal_internal)
 
         # Legacy endpoints (backwards compatibility)
         app.router.add_get('/api/trades', self.legacy_list_trades)

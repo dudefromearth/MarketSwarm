@@ -26,7 +26,7 @@ from .models_v2 import (
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 20
+    SCHEMA_VERSION = 21
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -235,6 +235,9 @@ class JournalDBv2:
 
             if current_version < 20:
                 self._migrate_to_v20(conn)
+
+            if current_version < 21:
+                self._migrate_to_v21(conn)
 
             conn.commit()
         finally:
@@ -1864,6 +1867,316 @@ class JournalDBv2:
             self._set_schema_version(conn, 20)
         finally:
             cursor.close()
+
+    def _migrate_to_v21(self, conn):
+        """Migrate to v21: Algo Alerts — Position State Machine for Risk Graph.
+
+        Two tables:
+        - algo_alerts: Configurable filter-based alerts (entry + management modes)
+        - algo_proposals: Proposed actions requiring trader confirmation
+        """
+        cursor = conn.cursor()
+        try:
+            if not self._table_exists(conn, 'algo_alerts'):
+                cursor.execute("""
+                    CREATE TABLE algo_alerts (
+                        id VARCHAR(36) PRIMARY KEY,
+                        user_id INT NOT NULL,
+                        name VARCHAR(255),
+                        mode ENUM('entry', 'management') NOT NULL,
+                        status ENUM('active', 'paused', 'frozen', 'archived') DEFAULT 'active',
+                        frozen_reason TEXT,
+                        filters JSON NOT NULL,
+                        entry_constraints JSON,
+                        position_id VARCHAR(36),
+                        prompt_override TEXT,
+                        last_evaluation JSON,
+                        last_evaluated_at DATETIME,
+                        evaluation_count INT DEFAULT 0,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                        INDEX idx_algo_alerts_user (user_id),
+                        INDEX idx_algo_alerts_status (status)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            if not self._table_exists(conn, 'algo_proposals'):
+                cursor.execute("""
+                    CREATE TABLE algo_proposals (
+                        id VARCHAR(36) PRIMARY KEY,
+                        algo_alert_id VARCHAR(36) NOT NULL,
+                        user_id INT NOT NULL,
+                        type ENUM('entry', 'exit', 'tighten', 'hold', 'adjust') NOT NULL,
+                        status ENUM('pending', 'approved', 'rejected', 'expired') DEFAULT 'pending',
+                        suggested_position JSON,
+                        reasoning TEXT,
+                        filter_results JSON,
+                        structural_alignment_score FLOAT,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        expires_at DATETIME NOT NULL,
+                        resolved_at DATETIME,
+                        INDEX idx_algo_proposals_alert (algo_alert_id),
+                        INDEX idx_algo_proposals_user_status (user_id, status)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                """)
+
+            self._set_schema_version(conn, 21)
+        finally:
+            cursor.close()
+
+    # ==================== Algo Alert CRUD ====================
+
+    def create_algo_alert(self, alert_id: str, user_id: int, name: str, mode: str,
+                          filters: str, entry_constraints: str = None,
+                          position_id: str = None, prompt_override: str = None) -> dict:
+        """Create a new algo alert."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO algo_alerts (id, user_id, name, mode, filters, entry_constraints,
+                                         position_id, prompt_override)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (alert_id, user_id, name, mode, filters, entry_constraints,
+                  position_id, prompt_override))
+            conn.commit()
+            return self.get_algo_alert(alert_id, user_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_algo_alert(self, alert_id: str, user_id: int = None) -> Optional[dict]:
+        """Get a single algo alert."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            if user_id:
+                cursor.execute("SELECT * FROM algo_alerts WHERE id = %s AND user_id = %s",
+                               (alert_id, user_id))
+            else:
+                cursor.execute("SELECT * FROM algo_alerts WHERE id = %s", (alert_id,))
+            row = cursor.fetchone()
+            if row:
+                return self._serialize_algo_alert(row)
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_algo_alerts(self, user_id: int, status: str = None) -> list:
+        """List algo alerts for a user, optionally filtered by status."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            if status:
+                cursor.execute(
+                    "SELECT * FROM algo_alerts WHERE user_id = %s AND status = %s ORDER BY created_at DESC",
+                    (user_id, status))
+            else:
+                cursor.execute(
+                    "SELECT * FROM algo_alerts WHERE user_id = %s AND status != 'archived' ORDER BY created_at DESC",
+                    (user_id,))
+            rows = cursor.fetchall()
+            return [self._serialize_algo_alert(r) for r in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_algo_alert(self, alert_id: str, user_id: int, updates: dict) -> Optional[dict]:
+        """Update an algo alert."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            allowed_fields = {'name', 'status', 'frozen_reason', 'filters', 'entry_constraints',
+                              'position_id', 'prompt_override', 'last_evaluation', 'last_evaluated_at',
+                              'evaluation_count'}
+            set_clauses = []
+            values = []
+            for key, value in updates.items():
+                if key in allowed_fields:
+                    set_clauses.append(f"{key} = %s")
+                    values.append(value)
+
+            if not set_clauses:
+                return self.get_algo_alert(alert_id, user_id)
+
+            values.extend([alert_id, user_id])
+            cursor.execute(
+                f"UPDATE algo_alerts SET {', '.join(set_clauses)} WHERE id = %s AND user_id = %s",
+                values)
+            conn.commit()
+            return self.get_algo_alert(alert_id, user_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def delete_algo_alert(self, alert_id: str, user_id: int) -> bool:
+        """Delete an algo alert."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("DELETE FROM algo_alerts WHERE id = %s AND user_id = %s",
+                           (alert_id, user_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_active_algo_alerts(self) -> list:
+        """Get all active/frozen algo alerts (for Copilot evaluation)."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            cursor.execute(
+                "SELECT * FROM algo_alerts WHERE status IN ('active', 'frozen') ORDER BY created_at DESC")
+            rows = cursor.fetchall()
+            return [self._serialize_algo_alert(r) for r in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_algo_alert_status_internal(self, alert_id: str, status: str,
+                                          frozen_reason: str = None) -> bool:
+        """Update algo alert status (internal — no user_id check)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "UPDATE algo_alerts SET status = %s, frozen_reason = %s WHERE id = %s",
+                (status, frozen_reason, alert_id))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            cursor.close()
+            conn.close()
+
+    def _serialize_algo_alert(self, row: dict) -> dict:
+        """Serialize an algo alert row to camelCase dict."""
+        result = {
+            "id": row["id"],
+            "userId": row["user_id"],
+            "name": row.get("name", ""),
+            "mode": row["mode"],
+            "status": row["status"],
+            "frozenReason": row.get("frozen_reason"),
+            "filters": json.loads(row["filters"]) if isinstance(row.get("filters"), str) else row.get("filters", []),
+            "entryConstraints": json.loads(row["entry_constraints"]) if isinstance(row.get("entry_constraints"), str) else row.get("entry_constraints"),
+            "positionId": row.get("position_id"),
+            "promptOverride": row.get("prompt_override"),
+            "lastEvaluation": json.loads(row["last_evaluation"]) if isinstance(row.get("last_evaluation"), str) else row.get("last_evaluation"),
+            "lastEvaluatedAt": str(row["last_evaluated_at"]) if row.get("last_evaluated_at") else None,
+            "evaluationCount": row.get("evaluation_count", 0),
+            "createdAt": str(row["created_at"]) if row.get("created_at") else None,
+            "updatedAt": str(row["updated_at"]) if row.get("updated_at") else None,
+        }
+        return result
+
+    # ==================== Algo Proposal CRUD ====================
+
+    def create_algo_proposal(self, proposal: dict) -> dict:
+        """Create a new algo proposal."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO algo_proposals (id, algo_alert_id, user_id, type, status,
+                                            suggested_position, reasoning, filter_results,
+                                            structural_alignment_score, expires_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                proposal["id"],
+                proposal.get("algoAlertId", proposal.get("algo_alert_id")),
+                proposal.get("userId", proposal.get("user_id", 0)),
+                proposal["type"],
+                proposal.get("status", "pending"),
+                json.dumps(proposal.get("suggestedPosition", proposal.get("suggested_position"))) if proposal.get("suggestedPosition") or proposal.get("suggested_position") else None,
+                proposal.get("reasoning", ""),
+                json.dumps(proposal.get("filterResults", proposal.get("filter_results", []))),
+                proposal.get("structuralAlignmentScore", proposal.get("structural_alignment_score", 0)),
+                proposal.get("expiresAt", proposal.get("expires_at")),
+            ))
+            conn.commit()
+            return self.get_algo_proposal(proposal["id"])
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_algo_proposal(self, proposal_id: str, user_id: int = None) -> Optional[dict]:
+        """Get a single algo proposal."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            if user_id:
+                cursor.execute("SELECT * FROM algo_proposals WHERE id = %s AND user_id = %s",
+                               (proposal_id, user_id))
+            else:
+                cursor.execute("SELECT * FROM algo_proposals WHERE id = %s", (proposal_id,))
+            row = cursor.fetchone()
+            if row:
+                return self._serialize_algo_proposal(row)
+            return None
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_algo_proposals(self, user_id: int, algo_alert_id: str = None,
+                            status: str = None) -> list:
+        """List algo proposals for a user."""
+        conn = self._get_conn()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            conditions = ["user_id = %s"]
+            values = [user_id]
+            if algo_alert_id:
+                conditions.append("algo_alert_id = %s")
+                values.append(algo_alert_id)
+            if status:
+                conditions.append("status = %s")
+                values.append(status)
+
+            where = " AND ".join(conditions)
+            cursor.execute(
+                f"SELECT * FROM algo_proposals WHERE {where} ORDER BY created_at DESC",
+                values)
+            rows = cursor.fetchall()
+            return [self._serialize_algo_proposal(r) for r in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def resolve_algo_proposal(self, proposal_id: str, user_id: int,
+                              status: str, resolved_at: str = None) -> Optional[dict]:
+        """Resolve (approve/reject) an algo proposal."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            resolved = resolved_at or datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute(
+                "UPDATE algo_proposals SET status = %s, resolved_at = %s WHERE id = %s AND user_id = %s",
+                (status, resolved, proposal_id, user_id))
+            conn.commit()
+            return self.get_algo_proposal(proposal_id, user_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def _serialize_algo_proposal(self, row: dict) -> dict:
+        """Serialize an algo proposal row to camelCase dict."""
+        return {
+            "id": row["id"],
+            "algoAlertId": row["algo_alert_id"],
+            "userId": row["user_id"],
+            "type": row["type"],
+            "status": row["status"],
+            "suggestedPosition": json.loads(row["suggested_position"]) if isinstance(row.get("suggested_position"), str) else row.get("suggested_position"),
+            "reasoning": row.get("reasoning", ""),
+            "filterResults": json.loads(row["filter_results"]) if isinstance(row.get("filter_results"), str) else row.get("filter_results", []),
+            "structuralAlignmentScore": float(row.get("structural_alignment_score", 0) or 0),
+            "createdAt": str(row["created_at"]) if row.get("created_at") else None,
+            "expiresAt": str(row["expires_at"]) if row.get("expires_at") else None,
+            "resolvedAt": str(row["resolved_at"]) if row.get("resolved_at") else None,
+        }
 
     # ==================== Trade Log CRUD ====================
 

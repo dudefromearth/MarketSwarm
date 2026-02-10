@@ -20,6 +20,7 @@ import { TradeLogProvider } from './contexts/TradeLogContext.tsx'
 import { DealerGravityProvider } from './contexts/DealerGravityContext.tsx'
 import { ApiClientProvider } from './contexts/ApiClientContext.tsx'
 import { PositionsProvider } from './contexts/PositionsContext.tsx'
+import { AlgoAlertProvider } from './contexts/AlgoAlertContext.tsx'
 import { UserPreferencesProvider } from './contexts/UserPreferencesContext.tsx'
 
 // Wrapper component for routes that need trading providers
@@ -29,9 +30,11 @@ function TradingProviders({ children }: { children: React.ReactNode }) {
       <DealerGravityProvider>
         <RiskGraphProvider>
           <PositionsProvider>
-            <TradeLogProvider>
-              {children}
-            </TradeLogProvider>
+            <AlgoAlertProvider>
+              <TradeLogProvider>
+                {children}
+              </TradeLogProvider>
+            </AlgoAlertProvider>
           </PositionsProvider>
         </RiskGraphProvider>
       </DealerGravityProvider>

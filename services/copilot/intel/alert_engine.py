@@ -36,6 +36,8 @@ class AlertEngineConfig:
     sync_channel: str = "alerts:sync"
     # Prompt alerts sync channel
     prompt_alerts_sync_channel: str = "prompt_alerts:sync"
+    # Algo alerts sync channel
+    algo_alerts_sync_channel: str = "algo_alerts:sync"
     # Role gating config
     role_gating: Optional[Dict[str, list]] = None
     limits: Optional[Dict[str, dict]] = None
@@ -299,6 +301,9 @@ class AlertEngine:
 
         # Prompt alert cache (id -> prompt alert dict with reference state)
         self._prompt_alerts: Dict[str, dict] = {}
+
+        # Algo alert cache (id -> algo alert dict)
+        self._algo_alerts: Dict[str, dict] = {}
 
         # Market data cache
         self._market_data: dict = {}
@@ -747,6 +752,22 @@ class AlertEngine:
                         if evaluation:
                             await self._handle_evaluation(alert, evaluation)
 
+                # Evaluate algo alerts (structured filters — fast, deterministic)
+                algo_evaluator = self.get_evaluator("algo_alert")
+                if algo_evaluator and self._algo_alerts:
+                    for algo_alert in self._algo_alerts.values():
+                        if algo_alert.get("status") not in ("active", "frozen"):
+                            continue
+                        try:
+                            result = await algo_evaluator.evaluate_algo_alert(
+                                algo_alert, self._market_data
+                            )
+                            evaluated_count += 1
+                            if result:
+                                await self._handle_algo_evaluation(result, algo_alert)
+                        except Exception as e:
+                            self._log(f"Algo alert eval error: {e}", level="warn")
+
                 await self._record_analytics(
                     incr_fast_loop_runs=1,
                     incr_alerts_evaluated=evaluated_count
@@ -834,6 +855,71 @@ class AlertEngine:
             self._prompt_alerts[prompt_alert["id"]]["lastAiConfidence"] = evaluation.confidence
             self._prompt_alerts[prompt_alert["id"]]["lastAiReasoning"] = evaluation.reasoning
 
+    async def _handle_algo_evaluation(self, result: dict, algo_alert: dict) -> None:
+        """Handle an algo alert evaluation result."""
+        alert_id = result.get("algoAlertId", "")
+
+        # Always publish filter state (transparent cognition)
+        await self._publish_event("algo_alert_evaluation", {
+            "algoAlertId": alert_id,
+            "filterResults": result.get("filterResults", []),
+            "allPassed": result.get("allPassed", False),
+            "status": algo_alert.get("status", "active"),
+            "frozenReason": result.get("frozenReason"),
+        })
+
+        # Handle status changes (freeze/unfreeze)
+        status_change = result.get("statusChange")
+        if status_change:
+            new_status = status_change.get("newStatus")
+            reason = status_change.get("reason", "")
+
+            # Update local cache
+            if alert_id in self._algo_alerts:
+                self._algo_alerts[alert_id]["status"] = new_status
+                if new_status == "frozen":
+                    self._algo_alerts[alert_id]["frozen_reason"] = reason
+
+            # Publish status change event
+            event_type = "algo_alert_frozen" if new_status == "frozen" else "algo_alert_resumed"
+            await self._publish_event(event_type, {
+                "algoAlertId": alert_id,
+                "reason": reason,
+            })
+
+            # Persist status change to Journal DB
+            try:
+                url = f"{self._config.journal_api_url}/api/internal/algo-alerts/{alert_id}/status"
+                async with aiohttp.ClientSession() as session:
+                    await session.put(url, json={
+                        "status": new_status,
+                        "frozen_reason": reason if new_status == "frozen" else None,
+                    })
+            except Exception as e:
+                self._log(f"Failed to persist algo alert status: {e}", level="warn")
+
+        # Handle proposals
+        proposal = result.get("proposal")
+        if proposal:
+            # Publish proposal event via SSE
+            await self._publish_event("algo_alert_proposal", {
+                "proposalId": proposal["id"],
+                "algoAlertId": alert_id,
+                "type": proposal["type"],
+                "reasoning": proposal["reasoning"],
+                "structuralAlignmentScore": proposal.get("structuralAlignmentScore", 0),
+                "suggestedPosition": proposal.get("suggestedPosition"),
+                "expiresAt": proposal["expiresAt"],
+            })
+
+            # Persist proposal to Journal DB
+            try:
+                url = f"{self._config.journal_api_url}/api/internal/algo-proposals"
+                async with aiohttp.ClientSession() as session:
+                    await session.post(url, json=proposal)
+            except Exception as e:
+                self._log(f"Failed to persist algo proposal: {e}", level="warn")
+
     async def _sync_subscription_loop(self) -> None:
         """
         Subscribe to alerts:sync and prompt_alerts:sync Redis channels for real-time updates.
@@ -847,9 +933,10 @@ class AlertEngine:
             pubsub = self._redis.pubsub()
             await pubsub.subscribe(
                 self._config.sync_channel,
-                self._config.prompt_alerts_sync_channel
+                self._config.prompt_alerts_sync_channel,
+                self._config.algo_alerts_sync_channel,
             )
-            self._log(f"Subscribed to {self._config.sync_channel} and {self._config.prompt_alerts_sync_channel}", emoji="")
+            self._log(f"Subscribed to {self._config.sync_channel}, {self._config.prompt_alerts_sync_channel}, {self._config.algo_alerts_sync_channel}", emoji="")
 
             while self._running:
                 try:
@@ -869,6 +956,8 @@ class AlertEngine:
                         # Reload alerts based on channel
                         if channel == self._config.prompt_alerts_sync_channel:
                             await self.load_prompt_alerts()
+                        elif channel == self._config.algo_alerts_sync_channel:
+                            await self.load_algo_alerts()
                         else:
                             await self.load_alerts()
 
@@ -884,7 +973,8 @@ class AlertEngine:
             try:
                 await pubsub.unsubscribe(
                     self._config.sync_channel,
-                    self._config.prompt_alerts_sync_channel
+                    self._config.prompt_alerts_sync_channel,
+                    self._config.algo_alerts_sync_channel,
                 )
             except Exception:
                 pass
@@ -913,6 +1003,31 @@ class AlertEngine:
     def get_prompt_alerts(self) -> List[dict]:
         """Get all prompt alerts."""
         return list(self._prompt_alerts.values())
+
+    async def load_algo_alerts(self) -> None:
+        """Load active algo alerts from Journal service."""
+        url = f"{self._config.journal_api_url}/api/internal/algo-alerts"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if result.get("success") and result.get("data"):
+                            self._algo_alerts.clear()
+                            for alert_dict in result["data"]:
+                                try:
+                                    self._algo_alerts[alert_dict["id"]] = alert_dict
+                                except Exception as e:
+                                    self._log(f"Error loading algo alert: {e}", level="warn")
+                            self._log(f"Loaded {len(self._algo_alerts)} algo alerts from Journal DB", emoji="")
+                    else:
+                        self._log(f"Failed to load algo alerts: HTTP {resp.status}", level="warn")
+        except Exception as e:
+            self._log(f"Error loading algo alerts: {e}", level="warn")
+
+    def get_algo_alerts(self) -> List[dict]:
+        """Get all algo alerts."""
+        return list(self._algo_alerts.values())
 
     async def publish_prompt_stage_change(
         self,
@@ -945,6 +1060,7 @@ class AlertEngine:
         # Load alerts from database
         await self.load_alerts()
         await self.load_prompt_alerts()
+        await self.load_algo_alerts()
 
         # Start evaluation loops
         self._fast_loop_task = asyncio.create_task(

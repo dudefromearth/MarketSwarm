@@ -8,6 +8,7 @@ marked.setOptions({ breaks: true, gfm: true });
 import './styles/mel.css';
 import './styles/commentary.css';
 import './styles/path-indicator.css';
+import './styles/algo-alert.css';
 import PathIndicator from './components/PathIndicator';
 import WelcomeTour from './components/WelcomeTour';
 import LightweightPriceChart from './components/LightweightPriceChart';
