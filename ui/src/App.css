@@ -8692,16 +8692,32 @@ body {
   border-bottom-color: #e5e5ea;
 }
 
-/* Reporting button */
+/* Action buttons - Apple style */
 [data-theme="light"] .btn-reporting {
-  background: #e0ecff;
-  border-color: #007aff;
+  background: rgba(0, 122, 255, 0.1);
   color: #007aff;
 }
 
 [data-theme="light"] .btn-reporting:hover {
-  background: #cde0ff;
-  color: #0055cc;
+  background: rgba(0, 122, 255, 0.18);
+}
+
+[data-theme="light"] .btn-journal {
+  background: rgba(52, 199, 89, 0.1);
+  color: #28a745;
+}
+
+[data-theme="light"] .btn-journal:hover {
+  background: rgba(52, 199, 89, 0.18);
+}
+
+[data-theme="light"] .btn-playbook {
+  background: rgba(88, 86, 214, 0.1);
+  color: #5856d6;
+}
+
+[data-theme="light"] .btn-playbook:hover {
+  background: rgba(88, 86, 214, 0.18);
 }
 
 /* Manage logs button */
@@ -8798,49 +8814,43 @@ body {
   gap: 8px;
 }
 
-.btn-reporting {
-  background: #1e3a5f;
-  border: 1px solid #2563eb;
-  color: #60a5fa;
-  padding: 6px 12px;
-  border-radius: 4px;
+.btn-reporting,
+.btn-journal,
+.btn-playbook {
+  padding: 6px 14px;
+  border-radius: 6px;
   font-size: 12px;
+  font-weight: 500;
   cursor: pointer;
+  border: none;
+  transition: all 0.15s ease;
+}
+
+.btn-reporting {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
 }
 
 .btn-reporting:hover {
-  background: #1e40af;
-  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.25);
 }
 
 .btn-journal {
-  background: #1a2e1a;
-  border: 1px solid #22c55e;
+  background: rgba(52, 199, 89, 0.15);
   color: #4ade80;
-  padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
 }
 
 .btn-journal:hover {
-  background: #166534;
-  color: #86efac;
+  background: rgba(52, 199, 89, 0.25);
 }
 
 .btn-playbook {
-  background: #2a1a2e;
-  border: 1px solid #a855f7;
-  color: #c084fc;
-  padding: 6px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
+  background: rgba(88, 86, 214, 0.15);
+  color: #a78bfa;
 }
 
 .btn-playbook:hover {
-  background: #581c87;
-  color: #d8b4fe;
+  background: rgba(88, 86, 214, 0.25);
 }
 
 /* Status Tabs */
