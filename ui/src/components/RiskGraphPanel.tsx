@@ -302,10 +302,9 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     mcNumPaths,
   });
 
-  // Extract strikes from active strategies for chart (excludes sim-expired positions for auto-fit)
+  // Extract strikes from all visible strategies for chart (includes expired for auto-fit bounds)
   const chartStrikes = useMemo(() => {
-    const activeIds = new Set(pnlChartData.activeStrategyIds);
-    return strategies.filter(s => s.visible && activeIds.has(s.id)).flatMap(strat => {
+    return strategies.filter(s => s.visible).flatMap(strat => {
       // Use legs if available for accurate strike extraction
       if (strat.legs && strat.legs.length > 0) {
         return strat.legs.map(leg => leg.strike);
@@ -318,7 +317,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
       }
       return [strat.strike];
     });
-  }, [strategies, pnlChartData.activeStrategyIds]);
+  }, [strategies]);
 
   // Stats derived from the hook's calculated data
   const riskGraphData = useMemo(() => {
