@@ -1483,25 +1483,35 @@ export function useRiskGraphCalculations({
     const volatility = Math.max(5, adjustedVix) / 100; // Convert VIX to decimal (e.g., 20 -> 0.20)
 
     // Time to expiration — compute dynamically from expiration date string
-    // This ensures the curve always reflects actual time remaining, not a stale DTE snapshot
-    const primaryExpiration = visibleStrategies[0]?.expiration;
-
-    // Compute actual fractional days until 4pm ET on the expiration date
+    // Each strategy gets its own time-to-expiry; the max is used for range/slider
     const now = new Date();
-    let baseTimeDays: number;
-    if (primaryExpiration) {
-      // Parse expiration date with 4pm ET close (approximate UTC-5)
-      const expClose = new Date(primaryExpiration + 'T16:00:00-05:00');
-      const diffMs = expClose.getTime() - now.getTime();
-      baseTimeDays = Math.max(0.001, diffMs / (1000 * 60 * 60 * 24));
-    } else {
-      // Fallback to static dte if no expiration string
-      const baseDte = visibleStrategies[0]?.dte ?? 30;
-      baseTimeDays = baseDte === 0 ? 0.02 : baseDte; // 0DTE fallback ≈ 30 min
+    const timeOffsetDays = timeMachineEnabled ? simTimeOffsetHours / 24 : 0;
+
+    // Compute per-strategy time-to-expiry (fractional days until 4pm ET close)
+    const strategyTimeDaysMap = new Map<string, number>();
+    for (const strat of visibleStrategies) {
+      let days: number;
+      if (strat.expiration) {
+        const expClose = new Date(strat.expiration + 'T16:00:00-05:00');
+        days = Math.max(0.001, (expClose.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      } else {
+        const fallbackDte = strat.dte ?? 30;
+        days = fallbackDte === 0 ? 0.02 : fallbackDte;
+      }
+      strategyTimeDaysMap.set(strat.id, days);
     }
 
-    // Apply time offset from simulation slider
-    const timeOffsetDays = timeMachineEnabled ? simTimeOffsetHours / 24 : 0;
+    // Use the furthest-out expiration for the global time reference (range calc, slider)
+    const allTimeDays = Array.from(strategyTimeDaysMap.values());
+    const baseTimeDays = allTimeDays.length > 0 ? Math.max(...allTimeDays) : 30;
+
+    // Helper to get per-strategy time-to-expiry years (with sim offset applied)
+    const getStrategyTimeYears = (stratId: string): number => {
+      const raw = strategyTimeDaysMap.get(stratId) ?? baseTimeDays;
+      return Math.max(raw - timeOffsetDays, 0.001) / 365;
+    };
+
+    // Global effective time (for range calculations and backward compat)
     const effectiveDaysToExpiry = Math.max(0, baseTimeDays - timeOffsetDays);
     const timeToExpiryYears = Math.max(effectiveDaysToExpiry, 0.001) / 365;
 
@@ -1547,10 +1557,10 @@ export function useRiskGraphCalculations({
       }
       expirationPoints.push({ price, pnl: expPnL });
 
-      // Theoretical P&L (Black-Scholes with volatility skew)
+      // Theoretical P&L (Black-Scholes with volatility skew, per-strategy time)
       let theoPnL = 0;
       for (const strat of visibleStrategies) {
-        theoPnL += calculateTheoreticalPnL(strat, price, volatility, riskFreeRate, timeToExpiryYears, spotPrice, pricingParams);
+        theoPnL += calculateTheoreticalPnL(strat, price, volatility, riskFreeRate, getStrategyTimeYears(strat.id), spotPrice, pricingParams);
       }
       theoreticalPoints.push({ price, pnl: theoPnL });
 
@@ -1589,13 +1599,13 @@ export function useRiskGraphCalculations({
         simulatedSpot,
         volatility,
         riskFreeRate,
-        timeToExpiryYears,
+        getStrategyTimeYears(strat.id),
         spotPrice,
         spotPricingParams
       );
     }
 
-    // Calculate aggregate Greeks at simulated spot (with skew)
+    // Calculate aggregate Greeks at simulated spot (with skew, per-strategy time)
     let totalDelta = 0;
     let totalGamma = 0;
     let totalTheta = 0;
@@ -1605,7 +1615,7 @@ export function useRiskGraphCalculations({
         simulatedSpot,
         volatility,
         riskFreeRate,
-        timeToExpiryYears,
+        getStrategyTimeYears(strat.id),
         spotPrice,
         regimeConfig
       );

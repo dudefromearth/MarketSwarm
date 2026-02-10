@@ -452,7 +452,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
       const expClose = new Date(exp + 'T16:00:00-05:00');
       return (expClose.getTime() - now.getTime()) / (1000 * 60 * 60);
     });
-    actualHoursRemaining = Math.max(0.5, Math.min(...hoursPerExpiration));
+    actualHoursRemaining = Math.max(0.5, Math.max(...hoursPerExpiration));
   } else {
     // Fallback: use static dte
     const minDTE = visibleStrategies.length > 0
