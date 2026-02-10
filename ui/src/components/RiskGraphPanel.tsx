@@ -352,6 +352,20 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
       });
     });
 
+    // AI Theta/Gamma zone lines
+    alerts.filter(a => a.enabled && a.type === 'ai_theta_gamma' && a.isZoneActive && a.zoneLow && a.zoneHigh).forEach(alert => {
+      lines.push({
+        price: alert.zoneLow!,
+        color: alert.color || '#f59e0b',
+        label: `Zone ${alert.zoneLow!.toFixed(0)}`,
+      });
+      lines.push({
+        price: alert.zoneHigh!,
+        color: alert.color || '#f59e0b',
+        label: `Zone ${alert.zoneHigh!.toFixed(0)}`,
+      });
+    });
+
     return lines;
   }, [priceAlertLines, alerts]);
 
@@ -800,7 +814,10 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                           case 'trailing_stop':
                             return `Trail -$${val.toFixed(0)}`;
                           case 'ai_theta_gamma':
-                            return 'Theta/Gamma Zone';
+                            if (alert.isZoneActive && alert.zoneLow && alert.zoneHigh) {
+                              return `Zone ${alert.zoneLow.toFixed(0)}–${alert.zoneHigh.toFixed(0)}`;
+                            }
+                            return `T/G Zone (${((alert.minProfitThreshold || 0.5) * 100).toFixed(0)}% to arm)`;
                           case 'ai_sentiment':
                             return 'Sentiment Shift';
                           case 'ai_risk_zone':

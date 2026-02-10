@@ -429,9 +429,31 @@ class CopilotOrchestrator:
         keys_config = alerts_settings.get("keys", {})
 
         # Setup AI provider manager for AI-powered alerts
+        # Auto-detect provider: use configured provider if its key exists,
+        # otherwise fall back to whichever key is available
+        configured_provider = alerts_settings.get("provider", "openai")
+        openai_key = self.config.get("OPENAI_API_KEY") or ""
+        anthropic_key = self.config.get("ANTHROPIC_API_KEY") or ""
+        xai_key = self.config.get("XAI_API_KEY") or ""
+
+        if configured_provider == "openai" and openai_key:
+            ai_provider, ai_key = "openai", openai_key
+        elif configured_provider == "anthropic" and anthropic_key:
+            ai_provider, ai_key = "anthropic", anthropic_key
+        elif configured_provider == "grok" and xai_key:
+            ai_provider, ai_key = "grok", xai_key
+        elif anthropic_key:
+            ai_provider, ai_key = "anthropic", anthropic_key
+        elif openai_key:
+            ai_provider, ai_key = "openai", openai_key
+        elif xai_key:
+            ai_provider, ai_key = "grok", xai_key
+        else:
+            ai_provider, ai_key = configured_provider, ""
+
         ai_config = AIProviderConfig(
-            provider=alerts_settings.get("provider", "openai"),
-            api_key=self.config.get("OPENAI_API_KEY") or self.config.get("ANTHROPIC_API_KEY"),
+            provider=ai_provider,
+            api_key=ai_key,
             model=alerts_settings.get("model"),
         )
 
@@ -442,7 +464,7 @@ class CopilotOrchestrator:
                 fallback=None,
                 logger=self.logger,
             )
-            self.logger.info(f"AI provider configured: {alerts_settings.get('provider', 'anthropic')}", emoji="🤖")
+            self.logger.info(f"AI provider configured: {ai_provider} (requested: {configured_provider})", emoji="🤖")
         except Exception as e:
             self.logger.warn(f"AI provider setup failed: {e}, AI alerts will be disabled", emoji="⚠️")
             self.ai_manager = None
