@@ -1037,6 +1037,10 @@ function App() {
   // Add strategy to risk graph list
   const addToRiskGraph = async () => {
     if (!selectedTile) return;
+    if (!selectedTile.expiration) {
+      console.error('Cannot add to risk graph: no expiration date available (GEX data may not be loaded)');
+      return;
+    }
     try {
       await contextAddStrategy({
         ...selectedTile,
