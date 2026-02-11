@@ -1065,8 +1065,8 @@ router.get("/rss-articles", requireAdmin, async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 200, 500);
 
   try {
-    const now = Date.now();
-    const minScore = now - hours * 60 * 60 * 1000;
+    const nowSec = Date.now() / 1000;
+    const minScore = nowSec - hours * 60 * 60;
 
     // Get UIDs from the enriched index (sorted set, newest first)
     const uids = await redis.zrevrangebyscore(
@@ -1101,7 +1101,7 @@ router.get("/rss-articles", requireAdmin, async (req, res) => {
       };
 
       const enrichedTs = parseFloat(hash.enriched_ts) || parseFloat(hash.published_ts) || 0;
-      const ageMinutes = enrichedTs ? Math.round((now - enrichedTs) / 60000) : null;
+      const ageMinutes = enrichedTs ? Math.round((nowSec - enrichedTs) / 60) : null;
 
       articles.push({
         uid: uids[i],
@@ -1115,8 +1115,8 @@ router.get("/rss-articles", requireAdmin, async (req, res) => {
         entities: parseJSON(hash.entities),
         tickers: parseJSON(hash.tickers),
         takeaways: parseJSON(hash.takeaways),
-        enriched_ts: enrichedTs,
-        published_ts: parseFloat(hash.published_ts) || 0,
+        enriched_ts: enrichedTs * 1000,
+        published_ts: (parseFloat(hash.published_ts) || 0) * 1000,
         age_minutes: ageMinutes,
       });
     }
