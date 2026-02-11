@@ -18,8 +18,8 @@ Configuration priority:
 # ============================================================
 # Admin Server Version & Info
 # ============================================================
-ADMIN_VERSION = "1.1.0"
-ADMIN_BUILD_DATE = "2026-02-03"
+ADMIN_VERSION = "1.2.0"
+ADMIN_BUILD_DATE = "2026-02-10"
 ADMIN_FEATURES = [
     {"id": "service-mgmt", "name": "Service Management", "desc": "Start, stop, restart services"},
     {"id": "log-viewer", "name": "Log Viewer", "desc": "View and tail service logs"},
@@ -29,6 +29,7 @@ ADMIN_FEATURES = [
     {"id": "self-config", "name": "Self-Configuring", "desc": "Auto-discover node from repo path"},
     {"id": "live-status", "name": "Live Status", "desc": "Auto-refresh service status every 5s"},
     {"id": "uptime-tracking", "name": "Uptime Tracking", "desc": "Track service uptime when started via admin"},
+    {"id": "health-monitor", "name": "Health Monitor", "desc": "Deep Redis, heartbeat, and HTTP health monitoring with scoring and notifications"},
 ]
 
 import os
@@ -38,10 +39,13 @@ import time
 import signal
 import subprocess
 import argparse
+import threading
 from pathlib import Path
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List
 from datetime import datetime
+from urllib import request as urllib_request
 
 # ============================================================
 # Configuration Discovery
@@ -653,6 +657,1243 @@ def check_truth() -> bool:
         return result.stdout.strip() == "1"
     except Exception:
         return False
+
+
+# ============================================================
+# Health Monitoring System
+# ============================================================
+
+class HealthCollector:
+    """
+    Background daemon thread that collects system health every 30s.
+    All Redis operations are READ-ONLY with 2s timeouts.
+    Thread-safe via threading.Lock on all shared state.
+    """
+
+    REDIS_INSTANCES = {
+        "system-redis": {"host": "127.0.0.1", "port": 6379},
+        "market-redis": {"host": "127.0.0.1", "port": 6380},
+        "intel-redis":  {"host": "127.0.0.1", "port": 6381},
+    }
+
+    HEARTBEAT_SERVICES = {
+        "massive":      {"interval": 5,  "ttl": 15},
+        "rss_agg":      {"interval": 5,  "ttl": 15},
+        "vexy_ai":      {"interval": 15, "ttl": 45},
+        "content_anal": {"interval": 15, "ttl": 45},
+        "journal":      {"interval": 5,  "ttl": 15},
+        "copilot":      {"interval": 5,  "ttl": 15},
+        "sse":          {"interval": 5,  "ttl": 15},
+        "healer":       {"interval": 10, "ttl": 30},
+        "mesh":         {"interval": 5,  "ttl": 15},
+    }
+
+    HEALTH_ENDPOINTS = {
+        "sse":      "http://127.0.0.1:3001/api/health",
+        "journal":  "http://127.0.0.1:3002/health",
+        "vexy_ai":  "http://127.0.0.1:3005/health",
+        "copilot":  "http://127.0.0.1:8095/health",
+    }
+
+    MAX_HISTORY = 240
+    MAX_EVENTS = 100
+    COLLECT_INTERVAL = 15
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._history = deque(maxlen=self.MAX_HISTORY)
+        self._events = deque(maxlen=self.MAX_EVENTS)
+        self._latest = None
+        self._previous_snapshot = None
+        self._thread = None
+        self._running = False
+        self._webhook_url = ""
+        self._webhook_timeout = 4
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._load_webhook_config()
+        self._running = True
+        self._thread = threading.Thread(
+            target=self._run_loop, daemon=True, name="health-collector"
+        )
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+
+    def _run_loop(self):
+        # Brief startup delay so first collection has Redis ready
+        time.sleep(5)
+        while self._running:
+            try:
+                snapshot = self._collect()
+                with self._lock:
+                    self._latest = snapshot
+                    self._history.append(snapshot)
+                self._generate_events(snapshot)
+            except Exception:
+                pass
+            time.sleep(self.COLLECT_INTERVAL)
+
+    # ----------------------------------------------------------
+    # Data Collection (all READ-ONLY)
+    # ----------------------------------------------------------
+
+    def _collect(self) -> dict:
+        ts = time.time()
+        redis_data = self._collect_redis()
+        heartbeat_data = self._collect_heartbeats()
+        http_data = self._collect_http_health()
+        pid_data = self._collect_service_pids()
+
+        # Merge PID status into heartbeat data: if a service is PID-alive
+        # but heartbeat-dead, mark it as "running_no_heartbeat" instead of "dead"
+        for svc, pid_info in pid_data.items():
+            if svc in heartbeat_data:
+                hb = heartbeat_data[svc]
+                hb["pid_alive"] = pid_info.get("pid_alive", False)
+                hb["pid"] = pid_info.get("pid")
+                if not hb.get("alive") and pid_info.get("pid_alive"):
+                    hb["status"] = "running_no_heartbeat"
+
+        snapshot = {
+            "ts": ts,
+            "ts_iso": datetime.fromtimestamp(ts).isoformat(),
+            "redis": redis_data,
+            "heartbeats": heartbeat_data,
+            "http_health": http_data,
+            "score": 0.0,
+        }
+        snapshot["score"] = self._compute_score(snapshot)
+        return snapshot
+
+    def _collect_redis(self) -> dict:
+        import redis
+        results = {}
+        for name, conn in self.REDIS_INSTANCES.items():
+            try:
+                r = redis.Redis(
+                    host=conn["host"], port=conn["port"],
+                    decode_responses=True,
+                    socket_timeout=2, socket_connect_timeout=2,
+                )
+                info = r.info()
+                dbsize = r.dbsize()
+                hits = info.get("keyspace_hits", 0)
+                misses = info.get("keyspace_misses", 0)
+                total = hits + misses
+                results[name] = {
+                    "alive": True,
+                    "used_memory_mb": round(info.get("used_memory", 0) / 1048576, 1),
+                    "used_memory_peak_mb": round(info.get("used_memory_peak", 0) / 1048576, 1),
+                    "connected_clients": info.get("connected_clients", 0),
+                    "total_keys": dbsize,
+                    "uptime_seconds": info.get("uptime_in_seconds", 0),
+                    "ops_per_sec": info.get("instantaneous_ops_per_sec", 0),
+                    "hit_rate": round(hits / total, 3) if total > 0 else 0.0,
+                    "maxmemory": info.get("maxmemory", 0),
+                    "evicted_keys": info.get("evicted_keys", 0),
+                }
+                r.close()
+            except Exception:
+                results[name] = {"alive": False}
+        return results
+
+    def _collect_heartbeats(self) -> dict:
+        import redis
+        results = {}
+        try:
+            r = redis.Redis(
+                host="127.0.0.1", port=6379,
+                decode_responses=True,
+                socket_timeout=2, socket_connect_timeout=2,
+            )
+            for svc, cfg in self.HEARTBEAT_SERVICES.items():
+                key = f"{svc}:heartbeat"
+                try:
+                    data = r.get(key)
+                    ttl = r.ttl(key)
+                    if data:
+                        payload = json.loads(data)
+                        hb_ts = payload.get("ts", 0)
+                        age = time.time() - hb_ts if hb_ts > 0 else None
+                        # Degraded if TTL < 50% of expected
+                        status = "healthy"
+                        if ttl > 0 and ttl < cfg["ttl"] * 0.5:
+                            status = "degraded"
+                        results[svc] = {
+                            "alive": True,
+                            "last_ts": hb_ts,
+                            "age_sec": round(age, 1) if age is not None else None,
+                            "ttl_remaining": ttl if ttl > 0 else 0,
+                            "expected_ttl": cfg["ttl"],
+                            "status": status,
+                        }
+                    else:
+                        results[svc] = {
+                            "alive": False,
+                            "status": "dead",
+                            "expected_ttl": cfg["ttl"],
+                        }
+                except Exception:
+                    results[svc] = {"alive": False, "status": "unknown"}
+            r.close()
+        except Exception:
+            for svc in self.HEARTBEAT_SERVICES:
+                results[svc] = {"alive": False, "status": "unknown"}
+        return results
+
+    def _collect_http_health(self) -> dict:
+        import requests as req_lib
+        results = {}
+        for svc, url in self.HEALTH_ENDPOINTS.items():
+            try:
+                resp = req_lib.get(url, timeout=3)
+                results[svc] = {
+                    "reachable": True,
+                    "status_code": resp.status_code,
+                    "healthy": resp.ok,
+                }
+            except req_lib.exceptions.ConnectionError:
+                results[svc] = {"reachable": False, "healthy": False, "error": "connection_refused"}
+            except req_lib.exceptions.Timeout:
+                results[svc] = {"reachable": False, "healthy": False, "error": "timeout"}
+            except Exception as e:
+                results[svc] = {"reachable": False, "healthy": False, "error": str(e)[:100]}
+        return results
+
+    def _collect_service_pids(self) -> dict:
+        """
+        Cross-reference heartbeat data with PID-based service status.
+        Uses ServiceManager to check if processes are actually running,
+        even when heartbeat threads have crashed.
+        READ-ONLY: only reads PID files and checks process existence.
+        """
+        results = {}
+        try:
+            manager = ServiceManager()
+            for svc_name in self.HEARTBEAT_SERVICES:
+                if svc_name in SERVICES:
+                    status = manager.get_status(svc_name)
+                    results[svc_name] = {
+                        "pid_alive": status.get("running", False),
+                        "pid": status.get("pid"),
+                    }
+                else:
+                    results[svc_name] = {"pid_alive": False, "pid": None}
+        except Exception:
+            pass
+        return results
+
+    # ----------------------------------------------------------
+    # Health Score
+    # ----------------------------------------------------------
+
+    def _compute_score(self, snapshot: dict) -> float:
+        redis_data = snapshot.get("redis", {})
+        redis_count = len(self.REDIS_INSTANCES)
+        redis_alive = sum(1 for v in redis_data.values() if v.get("alive"))
+        redis_score = redis_alive / redis_count if redis_count > 0 else 0.0
+
+        hb_data = snapshot.get("heartbeats", {})
+        hb_count = len(self.HEARTBEAT_SERVICES)
+        hb_sum = 0.0
+        for info in hb_data.values():
+            if info.get("status") == "healthy":
+                hb_sum += 1.0
+            elif info.get("status") == "degraded":
+                hb_sum += 0.5
+            elif info.get("status") == "running_no_heartbeat":
+                # PID alive but heartbeat thread dead — partial credit
+                hb_sum += 0.5
+        hb_score = hb_sum / hb_count if hb_count > 0 else 0.0
+
+        http_data = snapshot.get("http_health", {})
+        http_count = len(self.HEALTH_ENDPOINTS)
+        http_healthy = sum(1 for v in http_data.values() if v.get("healthy"))
+        http_score = http_healthy / http_count if http_count > 0 else 0.0
+
+        return round(redis_score * 0.30 + hb_score * 0.50 + http_score * 0.20, 3)
+
+    # ----------------------------------------------------------
+    # Event Generation & Notifications
+    # ----------------------------------------------------------
+
+    def _generate_events(self, snapshot: dict):
+        """Compare current snapshot with previous to detect meaningful events."""
+        prev = self._previous_snapshot
+        events = []
+        ts = snapshot["ts"]
+        ts_iso = snapshot["ts_iso"]
+
+        if prev is not None:
+            self._detect_service_events(events, snapshot, prev, ts, ts_iso)
+            self._detect_redis_events(events, snapshot, prev, ts, ts_iso)
+            self._detect_http_events(events, snapshot, prev, ts, ts_iso)
+            self._detect_score_events(events, snapshot, prev, ts, ts_iso)
+
+        if events:
+            with self._lock:
+                for ev in events:
+                    self._events.append(ev)
+            for ev in events:
+                self._fire_webhook_event(ev)
+
+            # Trigger auto-healer for service_down events
+            for ev in events:
+                if ev["type"] == "service_down" and _auto_healer.enabled:
+                    _auto_healer.trigger(ev["service"], ev, snapshot)
+
+        self._previous_snapshot = snapshot
+
+    def _detect_service_events(self, events, snap, prev, ts, ts_iso):
+        hb_data = snap.get("heartbeats", {})
+        prev_hb = prev.get("heartbeats", {})
+
+        for svc, info in hb_data.items():
+            new_status = info.get("status", "unknown")
+            old_info = prev_hb.get(svc, {})
+            old_status = old_info.get("status")
+            if old_status is None or old_status == new_status:
+                continue
+
+            pid = info.get("pid", "?")
+            pid_alive = info.get("pid_alive", False)
+
+            if new_status == "dead" and not pid_alive:
+                events.append({
+                    "ts": ts, "ts_iso": ts_iso,
+                    "type": "service_down", "severity": "critical",
+                    "service": svc,
+                    "message": f"{svc} crashed — heartbeat dead, process gone (was {old_status})",
+                    "data": {"from": old_status, "pid_alive": False},
+                })
+            elif new_status in ("dead", "running_no_heartbeat") and pid_alive and old_status in ("healthy", "degraded"):
+                events.append({
+                    "ts": ts, "ts_iso": ts_iso,
+                    "type": "heartbeat_lost", "severity": "warning",
+                    "service": svc,
+                    "message": f"{svc} heartbeat thread died — PID {pid} still running (was {old_status})",
+                    "data": {"from": old_status, "pid": pid},
+                })
+            elif new_status == "healthy" and old_status == "running_no_heartbeat":
+                events.append({
+                    "ts": ts, "ts_iso": ts_iso,
+                    "type": "heartbeat_restored", "severity": "info",
+                    "service": svc,
+                    "message": f"{svc} heartbeat restored (was running without heartbeat)",
+                    "data": {"from": old_status},
+                })
+            elif new_status == "healthy" and old_status == "dead":
+                events.append({
+                    "ts": ts, "ts_iso": ts_iso,
+                    "type": "service_recovered", "severity": "info",
+                    "service": svc,
+                    "message": f"{svc} recovered — heartbeat healthy, PID {pid}",
+                    "data": {"from": old_status, "pid": pid},
+                })
+            elif new_status == "degraded" and old_status == "healthy":
+                ttl = info.get("ttl_remaining", 0)
+                expected = info.get("expected_ttl", 0)
+                events.append({
+                    "ts": ts, "ts_iso": ts_iso,
+                    "type": "service_degraded", "severity": "warning",
+                    "service": svc,
+                    "message": f"{svc} degraded — TTL {ttl}s remaining (expected {expected}s)",
+                    "data": {"ttl_remaining": ttl, "expected_ttl": expected},
+                })
+
+    def _detect_redis_events(self, events, snap, prev, ts, ts_iso):
+        redis_data = snap.get("redis", {})
+        prev_redis = prev.get("redis", {})
+
+        for name, info in redis_data.items():
+            old_info = prev_redis.get(name, {})
+            alive_now = info.get("alive", False)
+            alive_before = old_info.get("alive")
+            if alive_before is None:
+                continue
+
+            if alive_before and not alive_now:
+                events.append({
+                    "ts": ts, "ts_iso": ts_iso,
+                    "type": "redis_down", "severity": "critical",
+                    "service": name,
+                    "message": f"{name} is unreachable",
+                    "data": {},
+                })
+            elif not alive_before and alive_now:
+                mem = info.get("used_memory_mb", 0)
+                keys = info.get("total_keys", 0)
+                events.append({
+                    "ts": ts, "ts_iso": ts_iso,
+                    "type": "redis_recovered", "severity": "info",
+                    "service": name,
+                    "message": f"{name} recovered — {mem}MB, {keys:,} keys",
+                    "data": {"used_memory_mb": mem, "total_keys": keys},
+                })
+
+            # Metric comparisons (both cycles alive)
+            if alive_now and alive_before:
+                mem_now = info.get("used_memory_mb", 0)
+                mem_prev = old_info.get("used_memory_mb", 0)
+                if mem_prev > 0:
+                    pct = (mem_now - mem_prev) / mem_prev
+                    if pct > 0.20:
+                        events.append({
+                            "ts": ts, "ts_iso": ts_iso,
+                            "type": "redis_memory_warning", "severity": "warning",
+                            "service": name,
+                            "message": f"{name} memory spike: {mem_now}MB (+{pct*100:.0f}% in {self.COLLECT_INTERVAL}s, was {mem_prev}MB)",
+                            "data": {"used_memory_mb": mem_now, "previous_mb": mem_prev, "pct_change": round(pct, 3)},
+                        })
+                if mem_now > 500 and mem_prev <= 500:
+                    events.append({
+                        "ts": ts, "ts_iso": ts_iso,
+                        "type": "redis_memory_warning", "severity": "warning",
+                        "service": name,
+                        "message": f"{name} crossed 500MB threshold: {mem_now}MB",
+                        "data": {"used_memory_mb": mem_now, "threshold_mb": 500},
+                    })
+
+                clients_now = info.get("connected_clients", 0)
+                clients_prev = old_info.get("connected_clients", 0)
+                if clients_prev > 0:
+                    change = (clients_now - clients_prev) / clients_prev
+                    if change > 0.50:
+                        events.append({
+                            "ts": ts, "ts_iso": ts_iso,
+                            "type": "redis_clients_spike", "severity": "warning",
+                            "service": name,
+                            "message": f"{name} client spike: {clients_now} (+{change*100:.0f}%, was {clients_prev})",
+                            "data": {"connected_clients": clients_now, "previous": clients_prev},
+                        })
+
+    def _detect_http_events(self, events, snap, prev, ts, ts_iso):
+        http_data = snap.get("http_health", {})
+        prev_http = prev.get("http_health", {})
+
+        for svc, info in http_data.items():
+            old_info = prev_http.get(svc, {})
+            reachable_now = info.get("reachable", False)
+            healthy_now = info.get("healthy", False)
+            reachable_before = old_info.get("reachable")
+            if reachable_before is None:
+                continue
+
+            if reachable_before and not reachable_now:
+                err = info.get("error", "unknown")
+                events.append({
+                    "ts": ts, "ts_iso": ts_iso,
+                    "type": "endpoint_down", "severity": "critical",
+                    "service": svc,
+                    "message": f"{svc} HTTP endpoint down ({err})",
+                    "data": {"error": err},
+                })
+            elif not reachable_before and reachable_now and healthy_now:
+                events.append({
+                    "ts": ts, "ts_iso": ts_iso,
+                    "type": "endpoint_recovered", "severity": "info",
+                    "service": svc,
+                    "message": f"{svc} HTTP endpoint recovered (status {info.get('status_code', '?')})",
+                    "data": {"status_code": info.get("status_code")},
+                })
+            elif reachable_now and not healthy_now and old_info.get("healthy", True):
+                code = info.get("status_code", "?")
+                events.append({
+                    "ts": ts, "ts_iso": ts_iso,
+                    "type": "endpoint_unhealthy", "severity": "warning",
+                    "service": svc,
+                    "message": f"{svc} returning HTTP {code}",
+                    "data": {"status_code": code},
+                })
+
+    def _detect_score_events(self, events, snap, prev, ts, ts_iso):
+        score_now = snap.get("score", 0.0)
+        score_prev = prev.get("score")
+        if score_prev is None:
+            return
+
+        if score_now < 0.60 and score_prev >= 0.60:
+            events.append({
+                "ts": ts, "ts_iso": ts_iso,
+                "type": "score_critical", "severity": "critical",
+                "service": None,
+                "message": f"Health score dropped to {score_now*100:.0f}% (was {score_prev*100:.0f}%)",
+                "data": {"score": score_now, "previous_score": score_prev},
+            })
+        elif score_now >= 0.80 and score_prev < 0.80:
+            events.append({
+                "ts": ts, "ts_iso": ts_iso,
+                "type": "score_recovered", "severity": "info",
+                "service": None,
+                "message": f"Health score recovered to {score_now*100:.0f}% (was {score_prev*100:.0f}%)",
+                "data": {"score": score_now, "previous_score": score_prev},
+            })
+
+    def _extract_crash_logs(self, svc: str) -> str:
+        """
+        Extract meaningful log context for a crashed/degraded service.
+        Reads last 100 lines, finds the last run's operational output,
+        and prioritizes error lines over startup boilerplate.
+        """
+        mgr = ServiceManager()
+        log_data = mgr.logs(svc, lines=100)
+        raw = log_data.get("logs", "").strip()
+        if not raw:
+            return ""
+
+        lines = raw.split("\n")
+
+        # Find all "Starting" headers to identify run boundaries
+        start_indices = []
+        for i, line in enumerate(lines):
+            if line.startswith("Starting ") and "at 20" in line:
+                start_indices.append(i)
+
+        def _lines_after_header(header_idx):
+            """Get operational lines after a startup header block."""
+            run_start = header_idx
+            while run_start < len(lines) and (
+                lines[run_start].startswith("=") or
+                lines[run_start].startswith("Starting ") or
+                lines[run_start].startswith("Command: ") or
+                lines[run_start].strip() == ""
+            ):
+                run_start += 1
+            return lines[run_start:]
+
+        # Get lines from the most recent run
+        if start_indices:
+            run_lines = _lines_after_header(start_indices[-1])
+            # If current run has almost nothing useful, also grab previous run's tail
+            if len(run_lines) < 5 and len(start_indices) >= 2:
+                prev_header = start_indices[-2]
+                curr_header = start_indices[-1]
+                prev_run = lines[prev_header:curr_header]
+                # Get the last 20 lines of the previous run
+                prev_tail = [l for l in prev_run if not l.startswith("=") and l.strip()]
+                if prev_tail:
+                    run_lines = prev_tail[-20:] + ["", "--- service restarted ---", ""] + run_lines
+        else:
+            run_lines = lines
+
+        # Extract error/exception lines if any exist
+        error_lines = []
+        for i, line in enumerate(run_lines):
+            lower = line.lower()
+            if any(kw in lower for kw in ["error", "exception", "traceback", "fatal", "critical", "failed", "crash"]):
+                # Grab context: 2 lines before + the error + 3 lines after
+                start = max(0, i - 2)
+                end = min(len(run_lines), i + 4)
+                for ctx_line in run_lines[start:end]:
+                    if ctx_line not in error_lines:
+                        error_lines.append(ctx_line)
+
+        if error_lines:
+            # Show errors with context, plus last 5 operational lines
+            result_lines = error_lines
+            tail = run_lines[-5:]
+            if tail and tail != error_lines[-5:]:
+                result_lines.append("...")
+                result_lines.extend(tail)
+        else:
+            # No errors found — show last 20 operational lines (skip startup noise)
+            # Filter out common startup boilerplate
+            startup_noise = [
+                "starting setup", "loading truth", "truth loaded", "parsing component",
+                "loaded structural", "setup complete", "log configured",
+                "configuration loaded", "heartbeat thread started",
+                "entering service loop", "orchestrator start", "ctrl+c",
+                "starting orchestrator", "service loop", "main loop",
+            ]
+            operational = [l for l in run_lines if not any(
+                kw in l.lower() for kw in startup_noise
+            )]
+            if operational:
+                result_lines = operational[-20:]
+            elif run_lines:
+                # Only startup lines exist — service had no operational output
+                return "(service had no operational output before shutdown — only startup logs)"
+            else:
+                result_lines = []
+
+        result = "\n".join(result_lines).strip()
+        # Slack block text limit ~3000 chars
+        if len(result) > 2800:
+            result = result[-2800:]
+        return result if result else "(no operational output before shutdown)"
+
+    def _fire_webhook_event(self, event: dict):
+        url = self._webhook_url
+        if not url:
+            return
+        try:
+            severity = event["severity"]
+            svc = event.get("service") or "system"
+            ev_type = event.get("type", "unknown")
+            ts_iso = event.get("ts_iso", "")
+
+            # Severity header
+            if severity == "critical":
+                header = f":red_circle: CRITICAL — {svc}"
+            elif severity == "warning":
+                header = f":warning: WARNING — {svc}"
+            else:
+                header = f":large_green_circle: RECOVERED — {svc}"
+
+            # Build context fields
+            fields = []
+
+            # Health score context
+            latest = self.get_latest()
+            if latest:
+                score = latest.get("score", 0)
+                label = _score_label(score)
+                fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*Health Score:* {score*100:.0f}% ({label})"
+                })
+
+            fields.append({"type": "mrkdwn", "text": f"*Event:* `{ev_type}`"})
+            fields.append({"type": "mrkdwn", "text": f"*Time:* {ts_iso}"})
+
+            # Add relevant metrics from event data
+            data = event.get("data", {})
+            if data.get("used_memory_mb"):
+                prev = data.get("previous_mb", "?")
+                fields.append({"type": "mrkdwn", "text": f"*Memory:* {data['used_memory_mb']}MB (was {prev}MB)"})
+            if data.get("ttl_remaining") is not None:
+                fields.append({"type": "mrkdwn", "text": f"*TTL:* {data['ttl_remaining']}s / {data.get('expected_ttl', '?')}s"})
+
+            # Build Slack Block Kit payload
+            blocks = [
+                {"type": "header", "text": {"type": "plain_text", "text": header}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"*{event['message']}*"}},
+            ]
+
+            if fields:
+                blocks.append({"type": "section", "fields": fields[:8]})
+
+            # Include recent logs for service events
+            if svc != "system" and ev_type in ("service_down", "service_degraded", "heartbeat_lost", "endpoint_down"):
+                try:
+                    log_text = self._extract_crash_logs(svc)
+                    if log_text:
+                        blocks.append({"type": "divider"})
+                        blocks.append({
+                            "type": "section",
+                            "text": {"type": "mrkdwn", "text": f"*Recent Logs ({svc}):*\n```{log_text}```"}
+                        })
+                except Exception:
+                    pass
+
+            # Redis summary for Redis events
+            if ev_type.startswith("redis_") and latest:
+                redis_info = latest.get("redis", {}).get(svc, {})
+                if redis_info.get("alive"):
+                    mem = redis_info.get("used_memory_mb", 0)
+                    keys = redis_info.get("total_keys", 0)
+                    ops = redis_info.get("ops_per_sec", 0)
+                    clients = redis_info.get("connected_clients", 0)
+                    blocks.append({"type": "divider"})
+                    blocks.append({
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": f"*{svc} Stats:* {mem}MB mem | {keys:,} keys | {ops} ops/s | {clients} clients"}
+                    })
+
+            payload = json.dumps({
+                "text": f"{header}: {event['message']}",
+                "blocks": blocks,
+            }).encode()
+
+            req = urllib_request.Request(
+                url, data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            urllib_request.urlopen(req, timeout=self._webhook_timeout)
+        except Exception:
+            pass
+
+    # ----------------------------------------------------------
+    # Thread-safe Accessors (called by API endpoints)
+    # ----------------------------------------------------------
+
+    def get_latest(self) -> dict:
+        with self._lock:
+            return dict(self._latest) if self._latest else {}
+
+    def get_history(self, count: int = 240) -> list:
+        with self._lock:
+            items = list(self._history)
+        return items[-count:]
+
+    def get_alerts(self, count: int = 100) -> list:
+        """Backwards-compatible: returns events."""
+        with self._lock:
+            return list(self._events)[-count:]
+
+    def get_events(self, count: int = 100, severity: str = None) -> list:
+        """Get events with optional severity filter (comma-separated)."""
+        with self._lock:
+            items = list(self._events)
+        if severity:
+            allowed = set(s.strip() for s in severity.split(","))
+            items = [e for e in items if e.get("severity") in allowed]
+        return items[-count:]
+
+    def configure_webhook(self, url: str, timeout: int = 4):
+        self._webhook_url = url
+        self._webhook_timeout = timeout
+        # Persist to config file
+        try:
+            cfg = load_admin_config()
+            cfg["health_webhook"] = {"url": url, "timeout": timeout}
+            save_admin_config(cfg)
+        except Exception:
+            pass
+
+    def _load_webhook_config(self):
+        """Load webhook URL from persistent config on startup."""
+        try:
+            cfg = load_admin_config()
+            wh = cfg.get("health_webhook", {})
+            if wh.get("url"):
+                self._webhook_url = wh["url"]
+                self._webhook_timeout = wh.get("timeout", 4)
+        except Exception:
+            pass
+
+    def get_webhook_config(self) -> dict:
+        return {"url": self._webhook_url, "timeout": self._webhook_timeout}
+
+
+# ============================================================
+# AutoHealer — AI-powered service recovery via Claude Code CLI
+# ============================================================
+
+class AutoHealer:
+    """Two-phase auto-healing: diagnose (read-only) then fix (guarded edits).
+
+    Phase 1: Read-only diagnosis — determines what went wrong and if it can be safely fixed
+    Phase 2: Guarded fix — applies minimal code changes with git stash rollback safety net
+
+    Guardrails:
+    - Phase 1 is strictly read-only (Read, Glob, Grep only)
+    - Phase 2 edits restricted to services/{service}/ directory only
+    - Git stash before edits, auto-rollback if fix fails
+    - 60-second health verification after fix
+    - 10-minute cooldown per service (no retry spam)
+    - 3-minute timeout per Claude subprocess
+    - $2 budget for diagnosis, $3 budget for fix ($5 total max)
+    - Slack notifications at every stage
+    """
+
+    CLAUDE_PATH = "/opt/homebrew/bin/claude"
+    COOLDOWN_SEC = 600       # 10 minutes between attempts per service
+    TIMEOUT_SEC = 180        # 3-minute subprocess timeout
+    VERIFY_TIMEOUT = 60      # 60 seconds to verify health after fix
+    DIAG_BUDGET = 2          # $2 for diagnosis phase
+    FIX_BUDGET = 3           # $3 for fix phase
+
+    DIAGNOSIS_PROMPT = """You are a diagnostic agent for MarketSwarm, a trading analytics platform.
+A service has crashed. Your job is to investigate and determine if it can be safely fixed.
+
+RULES:
+1. Read the service's log file first to understand what happened
+2. Scan the service's code directory to understand the codebase
+3. Check if the issue is in the service's own code or in shared dependencies
+4. Produce your analysis as a JSON object (and ONLY the JSON, no other text)
+
+OUTPUT FORMAT (JSON only):
+{{
+  "diagnosis": "Clear explanation of what went wrong",
+  "root_cause": "The specific root cause",
+  "can_fix": true or false,
+  "risk_level": "low or medium or high",
+  "fix_plan": "Step-by-step plan for the fix (if can_fix is true)",
+  "affected_files": ["list of files that would need to change"],
+  "reason_cannot_fix": "Explanation if can_fix is false"
+}}
+
+Set can_fix to false if ANY of these apply:
+- The fix requires changing files outside services/{service}/
+- The fix requires changing shared/ code, scripts/, truth/, or ui/
+- The fix requires changing environment variables or Redis configuration
+- The root cause is in a dependency, not the service's own code
+- The fix could affect other running services
+- You are not confident the fix will work
+- The issue is a transient network/resource error (just needs restart)
+- The issue is an OOM, disk full, or hardware/resource issue"""
+
+    FIX_PROMPT = """You are a repair agent for MarketSwarm. You have been authorized to fix a specific issue.
+
+HARD RULES — VIOLATION WILL CAUSE SYSTEM DAMAGE:
+1. ONLY edit files inside services/{service}/ — NO exceptions
+2. NEVER create files outside services/{service}/
+3. NEVER modify shared/, scripts/, truth/, ui/, or any other service directory
+4. Make the MINIMAL change needed — do not refactor, clean up, or improve
+5. Do not change any API contracts, function signatures, or data formats
+6. Do not add new dependencies
+
+After making changes, output ONLY a JSON summary:
+{{
+  "files_changed": ["list of modified files"],
+  "description": "What was changed and why",
+  "changes_made": "Technical summary of edits"
+}}"""
+
+    def __init__(self, health_collector):
+        self._hc = health_collector
+        self._cooldowns: Dict[str, float] = {}
+        self._active: Optional[str] = None
+        self._lock = threading.Lock()
+        self._log_file = ROOT / "logs" / "healer.log"
+        self._enabled = False  # Off by default — enable via UI toggle
+        self._history: deque = deque(maxlen=50)  # recent heal attempts
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @enabled.setter
+    def enabled(self, val: bool):
+        self._enabled = val
+        self._log(f"AutoHealer {'enabled' if val else 'disabled'}")
+
+    def trigger(self, service_name: str, event: dict, snapshot: dict):
+        """Entry point — called from _generate_events() on service_down."""
+        with self._lock:
+            if not self._enabled:
+                return
+            # Check cooldown
+            last = self._cooldowns.get(service_name, 0)
+            if time.time() - last < self.COOLDOWN_SEC:
+                remaining = int(self.COOLDOWN_SEC - (time.time() - last))
+                self._log(f"Skipping {service_name} — cooldown ({remaining}s remaining)")
+                return
+            # Check not already healing
+            if self._active:
+                self._log(f"Skipping {service_name} — already healing {self._active}")
+                return
+            self._active = service_name
+            self._cooldowns[service_name] = time.time()
+
+        t = threading.Thread(
+            target=self._heal_thread,
+            args=(service_name, event, snapshot),
+            daemon=True,
+            name=f"healer-{service_name}",
+        )
+        t.start()
+
+    def _heal_thread(self, service_name: str, event: dict, snapshot: dict):
+        """Full two-phase healing flow."""
+        record = {
+            "service": service_name,
+            "started": datetime.now().isoformat(),
+            "trigger_event": event.get("type", "unknown"),
+            "phases": {},
+            "result": "pending",
+        }
+        try:
+            self._log(f"=== HEAL START: {service_name} ===")
+            self._slack_notify(
+                f":mag: INVESTIGATING — {service_name}",
+                f"{service_name} crashed — starting AI diagnosis",
+                "warning",
+            )
+
+            # Phase 1: Diagnosis (read-only)
+            self._log(f"Phase 1: Diagnosing {service_name}...")
+            diagnosis = self._phase1_diagnose(service_name, snapshot)
+            record["phases"]["diagnosis"] = diagnosis
+
+            if diagnosis is None:
+                record["result"] = "diagnosis_failed"
+                self._slack_notify(
+                    f":x: DIAGNOSIS FAILED — {service_name}",
+                    "Claude CLI failed to produce a diagnosis. Manual intervention needed.",
+                    "critical",
+                )
+                return
+
+            self._log(f"Diagnosis: can_fix={diagnosis.get('can_fix')}, risk={diagnosis.get('risk_level')}")
+
+            # Check if fixable
+            if not diagnosis.get("can_fix", False) or diagnosis.get("risk_level") == "high":
+                record["result"] = "cannot_fix"
+                reason = diagnosis.get("reason_cannot_fix") or diagnosis.get("diagnosis", "Unknown")
+                self._slack_notify(
+                    f":no_entry: AI CANNOT FIX — {service_name}",
+                    f"*Diagnosis:* {diagnosis.get('diagnosis', 'N/A')}\n"
+                    f"*Risk Level:* {diagnosis.get('risk_level', 'N/A')}\n"
+                    f"*Reason:* {reason}\n"
+                    f"*Action Required:* Manual intervention needed",
+                    "critical",
+                )
+                return
+
+            # Phase 2: Fix (guarded edits)
+            self._log(f"Phase 2: Applying fix for {service_name}...")
+            self._slack_notify(
+                f":wrench: APPLYING FIX — {service_name}",
+                f"*Diagnosis:* {diagnosis.get('diagnosis', 'N/A')}\n"
+                f"*Fix Plan:* {diagnosis.get('fix_plan', 'N/A')}",
+                "warning",
+            )
+
+            fix_result = self._phase2_fix(service_name, diagnosis)
+            record["phases"]["fix"] = fix_result
+
+            if fix_result is None:
+                record["result"] = "fix_failed"
+                self._rollback_stash(service_name)
+                self._slack_notify(
+                    f":x: FIX FAILED — {service_name}",
+                    "Claude CLI failed to apply fixes. Changes rolled back. Manual intervention needed.",
+                    "critical",
+                )
+                return
+
+            # Verify: restart and check health
+            self._log(f"Verifying fix for {service_name}...")
+            healthy = self._verify_health(service_name)
+
+            if healthy:
+                record["result"] = "healed"
+                self._drop_stash()
+                files = fix_result.get("files_changed", [])
+                self._slack_notify(
+                    f":white_check_mark: AUTO-HEALED — {service_name}",
+                    f"*Diagnosis:* {diagnosis.get('diagnosis', 'N/A')}\n"
+                    f"*Fix:* {fix_result.get('description', 'N/A')}\n"
+                    f"*Files Changed:* {', '.join(files) if files else 'N/A'}\n"
+                    f"*Verified:* Service healthy, heartbeat active",
+                    "info",
+                )
+            else:
+                record["result"] = "verify_failed"
+                self._rollback_stash(service_name)
+                self._slack_notify(
+                    f":x: FIX FAILED — {service_name}",
+                    f"*Diagnosis:* {diagnosis.get('diagnosis', 'N/A')}\n"
+                    f"*Attempted Fix:* {fix_result.get('description', 'N/A')}\n"
+                    f"*Result:* Service did not recover — changes rolled back\n"
+                    f"*Action Required:* Manual intervention needed",
+                    "critical",
+                )
+
+        except Exception as exc:
+            record["result"] = "error"
+            record["error"] = str(exc)
+            self._log(f"ERROR healing {service_name}: {exc}")
+            self._slack_notify(
+                f":x: HEALER ERROR — {service_name}",
+                f"Unexpected error: {exc}\nManual intervention needed.",
+                "critical",
+            )
+        finally:
+            record["finished"] = datetime.now().isoformat()
+            with self._lock:
+                self._active = None
+                self._history.append(record)
+            self._log(f"=== HEAL END: {service_name} — {record['result']} ===")
+
+    def _phase1_diagnose(self, service_name: str, snapshot: dict) -> Optional[dict]:
+        """Phase 1: Read-only diagnosis via Claude CLI."""
+        log_path = ROOT / "logs" / f"{service_name}.log"
+        svc_dir = ROOT / "services" / service_name
+
+        prompt = (
+            f"A MarketSwarm service named '{service_name}' has crashed.\n\n"
+            f"Service code directory: {svc_dir}\n"
+            f"Service log file: {log_path}\n"
+            f"Project root: {ROOT}\n\n"
+            f"Please investigate by:\n"
+            f"1. Reading the log file to find errors/exceptions\n"
+            f"2. Scanning the service code to understand the issue\n"
+            f"3. Determining if this is a code bug you can fix\n\n"
+            f"Remember: output ONLY valid JSON, no markdown fences, no extra text."
+        )
+
+        sys_prompt = self.DIAGNOSIS_PROMPT.replace("{service}", service_name)
+
+        try:
+            result = subprocess.run(
+                [
+                    self.CLAUDE_PATH,
+                    "--print",
+                    "--output-format", "json",
+                    "--model", "sonnet",
+                    "--system-prompt", sys_prompt,
+                    "--allowedTools", "Read,Glob,Grep",
+                    "--max-budget-usd", str(self.DIAG_BUDGET),
+                    "--no-session-persistence",
+                    prompt,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=self.TIMEOUT_SEC,
+                cwd=str(ROOT),
+            )
+
+            if result.returncode != 0:
+                self._log(f"Phase 1 CLI error (rc={result.returncode}): {result.stderr[:500]}")
+                return None
+
+            return self._parse_claude_json(result.stdout, "diagnosis")
+
+        except subprocess.TimeoutExpired:
+            self._log(f"Phase 1 timed out after {self.TIMEOUT_SEC}s")
+            return None
+        except Exception as exc:
+            self._log(f"Phase 1 error: {exc}")
+            return None
+
+    def _phase2_fix(self, service_name: str, diagnosis: dict) -> Optional[dict]:
+        """Phase 2: Apply fix with git stash safety net."""
+        svc_dir = ROOT / "services" / service_name
+
+        # Git stash scoped to service directory
+        self._create_stash(service_name)
+
+        prompt = (
+            f"You are fixing a bug in the MarketSwarm service '{service_name}'.\n\n"
+            f"Service directory: {svc_dir}\n"
+            f"Project root: {ROOT}\n\n"
+            f"DIAGNOSIS:\n{diagnosis.get('diagnosis', 'N/A')}\n\n"
+            f"ROOT CAUSE:\n{diagnosis.get('root_cause', 'N/A')}\n\n"
+            f"FIX PLAN:\n{diagnosis.get('fix_plan', 'N/A')}\n\n"
+            f"AFFECTED FILES:\n{json.dumps(diagnosis.get('affected_files', []))}\n\n"
+            f"Apply the fix now. ONLY edit files inside services/{service_name}/.\n"
+            f"Output ONLY valid JSON when done, no markdown fences, no extra text."
+        )
+
+        sys_prompt = self.FIX_PROMPT.replace("{service}", service_name)
+
+        try:
+            result = subprocess.run(
+                [
+                    self.CLAUDE_PATH,
+                    "--print",
+                    "--output-format", "json",
+                    "--model", "sonnet",
+                    "--system-prompt", sys_prompt,
+                    "--allowedTools", "Read,Glob,Grep,Edit,Write",
+                    "--disallowedTools", "Bash",
+                    "--max-budget-usd", str(self.FIX_BUDGET),
+                    "--no-session-persistence",
+                    prompt,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=self.TIMEOUT_SEC,
+                cwd=str(ROOT),
+            )
+
+            if result.returncode != 0:
+                self._log(f"Phase 2 CLI error (rc={result.returncode}): {result.stderr[:500]}")
+                return None
+
+            return self._parse_claude_json(result.stdout, "fix")
+
+        except subprocess.TimeoutExpired:
+            self._log(f"Phase 2 timed out after {self.TIMEOUT_SEC}s")
+            return None
+        except Exception as exc:
+            self._log(f"Phase 2 error: {exc}")
+            return None
+
+    def _verify_health(self, service_name: str) -> bool:
+        """Restart service and verify it becomes healthy within VERIFY_TIMEOUT."""
+        try:
+            mgr = ServiceManager()
+            mgr.restart(service_name)
+            self._log(f"Restarted {service_name}, waiting for health verification...")
+
+            deadline = time.time() + self.VERIFY_TIMEOUT
+            while time.time() < deadline:
+                time.sleep(5)
+                status = mgr.get_status(service_name)
+                pid = status.get("pid")
+                running = status.get("running", False)
+
+                if not running:
+                    continue
+
+                # Also check heartbeat via Redis
+                try:
+                    import redis as redis_lib
+                    r = redis_lib.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                    hb_key = f"{service_name}:heartbeat"
+                    if r.exists(hb_key):
+                        self._log(f"Verified: {service_name} PID={pid}, heartbeat alive")
+                        r.close()
+                        return True
+                    r.close()
+                except Exception:
+                    pass
+
+                self._log(f"Waiting... {service_name} running={running}, pid={pid}")
+
+            self._log(f"Verification timed out after {self.VERIFY_TIMEOUT}s")
+            return False
+
+        except Exception as exc:
+            self._log(f"Verification error: {exc}")
+            return False
+
+    def _create_stash(self, service_name: str):
+        """Git stash scoped to service directory."""
+        try:
+            ts = int(time.time())
+            subprocess.run(
+                ["git", "stash", "push", "-m", f"healer-{service_name}-{ts}",
+                 "--", f"services/{service_name}/"],
+                capture_output=True, text=True, cwd=str(ROOT), timeout=10,
+            )
+            self._log(f"Created git stash for services/{service_name}/")
+        except Exception as exc:
+            self._log(f"Git stash create warning: {exc}")
+
+    def _rollback_stash(self, service_name: str):
+        """Pop the most recent stash to rollback changes."""
+        try:
+            result = subprocess.run(
+                ["git", "stash", "pop"],
+                capture_output=True, text=True, cwd=str(ROOT), timeout=10,
+            )
+            if result.returncode == 0:
+                self._log(f"Rolled back changes for {service_name}")
+            else:
+                self._log(f"Git stash pop warning: {result.stderr[:200]}")
+        except Exception as exc:
+            self._log(f"Git stash pop error: {exc}")
+
+    def _drop_stash(self):
+        """Drop the most recent stash (fix was successful)."""
+        try:
+            subprocess.run(
+                ["git", "stash", "drop"],
+                capture_output=True, text=True, cwd=str(ROOT), timeout=10,
+            )
+        except Exception:
+            pass
+
+    def _parse_claude_json(self, output: str, phase: str) -> Optional[dict]:
+        """Parse JSON from Claude CLI output (handles --output-format json wrapper)."""
+        try:
+            # --output-format json wraps response in {"result": "...", ...}
+            wrapper = json.loads(output)
+            content = wrapper.get("result", "")
+            if isinstance(content, dict):
+                return content
+
+            # Try to extract JSON from the text content
+            text = str(content)
+
+            # Strip markdown fences if present
+            if "```json" in text:
+                text = text.split("```json", 1)[1].split("```", 1)[0]
+            elif "```" in text:
+                text = text.split("```", 1)[1].split("```", 1)[0]
+
+            return json.loads(text.strip())
+        except (json.JSONDecodeError, KeyError, IndexError) as exc:
+            self._log(f"Failed to parse {phase} JSON: {exc}")
+            self._log(f"Raw output (first 500 chars): {output[:500]}")
+            return None
+
+    def _slack_notify(self, header: str, body: str, severity: str):
+        """Send Slack notification via HealthCollector's webhook."""
+        url = self._hc._webhook_url
+        if not url:
+            return
+        try:
+            blocks = [
+                {"type": "header", "text": {"type": "plain_text", "text": header[:150]}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": body[:2900]}},
+            ]
+            # Add health score context
+            latest = self._hc.get_latest()
+            if latest:
+                score = latest.get("score", 0)
+                label = _score_label(score)
+                blocks.append({
+                    "type": "context",
+                    "elements": [{"type": "mrkdwn", "text": f"Health Score: {score*100:.0f}% ({label}) | AutoHealer"}],
+                })
+
+            payload = json.dumps({
+                "text": f"{header}: {body[:200]}",
+                "blocks": blocks,
+            }).encode()
+
+            req = urllib_request.Request(
+                url, data=payload,
+                headers={"Content-Type": "application/json"},
+            )
+            urllib_request.urlopen(req, timeout=4)
+        except Exception as exc:
+            self._log(f"Slack notify error: {exc}")
+
+    def _log(self, message: str):
+        """Append timestamped line to healer log file."""
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{ts}] {message}\n"
+        try:
+            self._log_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self._log_file, "a") as f:
+                f.write(line)
+        except Exception:
+            pass
+
+    # Thread-safe accessors for API
+
+    def get_status(self) -> dict:
+        with self._lock:
+            return {
+                "enabled": self._enabled,
+                "active": self._active,
+                "cooldowns": {
+                    svc: {
+                        "last_attempt": datetime.fromtimestamp(ts).isoformat(),
+                        "remaining_sec": max(0, int(self.COOLDOWN_SEC - (time.time() - ts))),
+                    }
+                    for svc, ts in self._cooldowns.items()
+                },
+                "history": list(self._history),
+            }
+
+    def get_log(self, lines: int = 100) -> str:
+        try:
+            if not self._log_file.exists():
+                return "(no healer log yet)"
+            text = self._log_file.read_text()
+            all_lines = text.strip().split("\n")
+            return "\n".join(all_lines[-lines:])
+        except Exception:
+            return "(error reading healer log)"
+
+
+def _score_label(score: float) -> str:
+    if score >= 0.95:
+        return "excellent"
+    if score >= 0.80:
+        return "good"
+    if score >= 0.60:
+        return "degraded"
+    if score >= 0.30:
+        return "critical"
+    return "down"
+
+
+# Module-level singletons (started in create_web_app)
+_health_collector = HealthCollector()
+_auto_healer = AutoHealer(_health_collector)
 
 
 # ============================================================
@@ -1722,6 +2963,104 @@ def create_web_app():
     @app.get("/api/ml/equity-curve")
     def api_ml_equity_curve(days: int = 30):
         return proxy_ml_request(f"/equity-curve?days={days}")
+
+    # ================================================================
+    # Health Monitoring API
+    # ================================================================
+
+    _health_collector.start()
+
+    @app.get("/api/health")
+    def api_health():
+        """Get unified health status with score."""
+        latest = _health_collector.get_latest()
+        if not latest:
+            return {"status": "initializing", "message": "Health collector starting up"}
+        return {
+            "score": latest.get("score", 0.0),
+            "score_label": _score_label(latest.get("score", 0.0)),
+            "ts": latest.get("ts"),
+            "ts_iso": latest.get("ts_iso"),
+            "redis": latest.get("redis", {}),
+            "heartbeats": latest.get("heartbeats", {}),
+            "http_health": latest.get("http_health", {}),
+            "events_count": len(_health_collector.get_events()),
+        }
+
+    @app.get("/api/health/redis")
+    def api_health_redis():
+        """Get detailed Redis health from last collection."""
+        latest = _health_collector.get_latest()
+        return {
+            "redis": latest.get("redis", {}),
+            "ts": latest.get("ts"),
+        }
+
+    @app.get("/api/health/heartbeats")
+    def api_health_heartbeats():
+        """Get heartbeat status for all monitored services."""
+        latest = _health_collector.get_latest()
+        return {
+            "heartbeats": latest.get("heartbeats", {}),
+            "ts": latest.get("ts"),
+        }
+
+    @app.get("/api/health/history")
+    def api_health_history(count: int = 240):
+        """Get health score history for timeline chart."""
+        count = min(count, 240)
+        history = _health_collector.get_history(count)
+        return {
+            "history": [{"ts": h["ts"], "score": h["score"]} for h in history],
+            "total_snapshots": len(history),
+        }
+
+    @app.get("/api/health/alerts")
+    def api_health_alerts(count: int = 100):
+        """Get health alert log (backwards-compatible, returns events)."""
+        count = min(count, 100)
+        return {
+            "alerts": _health_collector.get_alerts(count),
+        }
+
+    @app.get("/api/health/events")
+    def api_health_events(count: int = 100, severity: str = None):
+        """Get health events with optional severity filter."""
+        count = min(count, 100)
+        return {
+            "events": _health_collector.get_events(count, severity),
+        }
+
+    @app.post("/api/health/webhook")
+    def api_health_webhook(body: dict = Body(default={})):
+        """Configure health notification webhook."""
+        url = body.get("url", "")
+        timeout = int(body.get("timeout", 4))
+        _health_collector.configure_webhook(url, timeout)
+        return {"success": True, "webhook_url": url, "timeout": timeout}
+
+    @app.get("/api/health/webhook")
+    def api_health_webhook_config():
+        """Get current webhook configuration."""
+        return _health_collector.get_webhook_config()
+
+    # AutoHealer endpoints
+    @app.get("/api/health/healer")
+    def api_healer_status():
+        """Get auto-healer status: enabled, active service, cooldowns, history."""
+        return _auto_healer.get_status()
+
+    @app.post("/api/health/healer/toggle")
+    def api_healer_toggle(body: dict = Body(default={})):
+        """Enable or disable auto-healing."""
+        enabled = body.get("enabled", not _auto_healer.enabled)
+        _auto_healer.enabled = bool(enabled)
+        return {"success": True, "enabled": _auto_healer.enabled}
+
+    @app.get("/api/health/healer/log")
+    def api_healer_log(lines: int = 100):
+        """Get recent healer log entries."""
+        return {"log": _auto_healer.get_log(lines)}
 
     return app
 

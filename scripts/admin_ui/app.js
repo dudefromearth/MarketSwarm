@@ -1951,4 +1951,443 @@ async function deployFull() {
 // Initialize deploy status after page load
 document.addEventListener('DOMContentLoaded', function() {
     setTimeout(refreshDeployStatus, 1000);
+    // Start health monitoring (delay to allow first collection)
+    setTimeout(refreshHealth, 6000);
+    // Auto-refresh health every 30s
+    setInterval(refreshHealth, 30000);
 });
+
+// ============================================================
+// System Health
+// ============================================================
+
+let healthData = null;
+let healthHistory = [];
+let healthEvents = [];
+let healthEventFilter = 'all';
+
+async function refreshHealth() {
+    try {
+        const [healthResp, historyResp, eventsResp] = await Promise.all([
+            fetch(`${API_BASE}/api/health`).then(r => r.ok ? r.json() : null),
+            fetch(`${API_BASE}/api/health/history?count=240`).then(r => r.ok ? r.json() : null),
+            fetch(`${API_BASE}/api/health/events?count=50`).then(r => r.ok ? r.json() : null),
+        ]);
+
+        if (!healthResp || healthResp.status === 'initializing') {
+            return; // Collector still starting up
+        }
+
+        healthData = healthResp;
+        healthHistory = (historyResp && historyResp.history) || [];
+        healthEvents = (eventsResp && eventsResp.events) || [];
+
+        renderHealthScore(healthResp);
+        renderRedisGauges(healthResp.redis || {});
+        renderHeartbeatGrid(healthResp.heartbeats || {});
+        renderHealthTimeline(healthHistory);
+        renderHealthEvents(healthEvents);
+        refreshHealerStatus();
+    } catch (err) {
+        console.error('Health refresh error:', err);
+    }
+}
+
+function renderHealthScore(data) {
+    const circle = document.getElementById('health-score-circle');
+    const valueEl = document.getElementById('health-score-value');
+    const labelEl = document.getElementById('health-score-label');
+    const tsEl = document.getElementById('health-score-ts');
+    const alertsEl = document.getElementById('health-score-alerts');
+
+    if (!data || data.score === undefined) {
+        valueEl.textContent = '--';
+        labelEl.textContent = 'Initializing...';
+        return;
+    }
+
+    const score = data.score;
+    const pct = Math.round(score * 100);
+    const label = data.score_label || 'unknown';
+
+    valueEl.textContent = pct;
+    labelEl.textContent = label;
+
+    // Update circle class
+    circle.className = 'health-score-circle ' + label;
+
+    // Color the score value
+    if (score >= 0.95) valueEl.style.color = 'var(--accent-green)';
+    else if (score >= 0.80) valueEl.style.color = '#7cb342';
+    else if (score >= 0.60) valueEl.style.color = 'var(--accent-yellow)';
+    else valueEl.style.color = 'var(--accent-red)';
+
+    // Timestamp
+    if (data.ts_iso) {
+        const d = new Date(data.ts_iso);
+        tsEl.textContent = `Last collected: ${d.toLocaleTimeString()}`;
+    }
+
+    // Alert count
+    const evCount = data.events_count || 0;
+    if (evCount > 0) {
+        alertsEl.textContent = `${evCount} event(s)`;
+        alertsEl.style.color = 'var(--accent-yellow)';
+    } else {
+        alertsEl.textContent = 'No events';
+        alertsEl.style.color = 'var(--text-muted)';
+    }
+}
+
+function renderRedisGauges(redis) {
+    const container = document.getElementById('health-redis-gauges');
+    if (!redis || Object.keys(redis).length === 0) {
+        container.innerHTML = '<div class="loading">No data yet...</div>';
+        return;
+    }
+
+    const instanceOrder = ['system-redis', 'market-redis', 'intel-redis'];
+    container.innerHTML = instanceOrder.map(name => {
+        const info = redis[name];
+        if (!info) return '';
+
+        if (!info.alive) {
+            return `
+                <div class="health-redis-row">
+                    <span class="health-redis-dot dead"></span>
+                    <span class="health-redis-name">${name.replace('-redis', '')}</span>
+                    <div class="health-redis-stats">
+                        <span style="color: var(--accent-red)">DOWN</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        return `
+            <div class="health-redis-row">
+                <span class="health-redis-dot alive"></span>
+                <span class="health-redis-name">${name.replace('-redis', '')}</span>
+                <div class="health-redis-stats">
+                    <span><span class="health-redis-stat-label">mem</span>${info.used_memory_mb}MB</span>
+                    <span><span class="health-redis-stat-label">keys</span>${(info.total_keys || 0).toLocaleString()}</span>
+                    <span><span class="health-redis-stat-label">clients</span>${info.connected_clients}</span>
+                    <span><span class="health-redis-stat-label">ops/s</span>${info.ops_per_sec}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderHeartbeatGrid(heartbeats) {
+    const container = document.getElementById('health-heartbeat-grid');
+    if (!heartbeats || Object.keys(heartbeats).length === 0) {
+        container.innerHTML = '<div class="loading">No data yet...</div>';
+        return;
+    }
+
+    const serviceOrder = [
+        'massive', 'sse', 'journal',
+        'copilot', 'vexy_ai', 'rss_agg',
+        'content_anal', 'healer', 'mesh'
+    ];
+
+    container.innerHTML = serviceOrder.map(svc => {
+        const info = heartbeats[svc];
+        if (!info) return '';
+
+        const status = info.status || 'unknown';
+        let ageText = '--';
+        if (info.alive && info.age_sec !== null && info.age_sec !== undefined) {
+            ageText = info.age_sec < 60 ? `${info.age_sec.toFixed(0)}s ago` : `${Math.floor(info.age_sec / 60)}m ago`;
+        } else if (status === 'running_no_heartbeat') {
+            ageText = `PID ${info.pid || '?'}`;
+        } else if (!info.alive) {
+            ageText = 'no signal';
+        }
+
+        // Display label: show "running*" for PID-alive but heartbeat-dead
+        const displayStatus = status === 'running_no_heartbeat' ? 'running*' : status;
+
+        return `
+            <div class="health-hb-tile ${status}">
+                <div class="health-hb-name">${svc}</div>
+                <div class="health-hb-age">${ageText}</div>
+                <div class="health-hb-status ${status}">${displayStatus}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderHealthTimeline(history) {
+    const canvas = document.getElementById('health-timeline-canvas');
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    ctx.scale(dpr, dpr);
+
+    const w = rect.width;
+    const h = rect.height;
+    const pad = { top: 8, right: 8, bottom: 20, left: 35 };
+    const plotW = w - pad.left - pad.right;
+    const plotH = h - pad.top - pad.bottom;
+
+    // Clear
+    ctx.clearRect(0, 0, w, h);
+
+    // Background zones
+    const zones = [
+        { min: 0.8, max: 1.0, color: 'rgba(63, 185, 80, 0.06)' },
+        { min: 0.6, max: 0.8, color: 'rgba(210, 153, 34, 0.06)' },
+        { min: 0.0, max: 0.6, color: 'rgba(248, 81, 73, 0.06)' },
+    ];
+
+    zones.forEach(z => {
+        const y1 = pad.top + plotH * (1 - z.max);
+        const y2 = pad.top + plotH * (1 - z.min);
+        ctx.fillStyle = z.color;
+        ctx.fillRect(pad.left, y1, plotW, y2 - y1);
+    });
+
+    // Grid lines
+    ctx.strokeStyle = '#30363d';
+    ctx.lineWidth = 0.5;
+    [0.2, 0.4, 0.6, 0.8, 1.0].forEach(v => {
+        const y = pad.top + plotH * (1 - v);
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(pad.left + plotW, y);
+        ctx.stroke();
+    });
+
+    // Y-axis labels
+    ctx.fillStyle = '#484f58';
+    ctx.font = '10px SF Mono, Menlo, monospace';
+    ctx.textAlign = 'right';
+    [0, 0.5, 1.0].forEach(v => {
+        const y = pad.top + plotH * (1 - v);
+        ctx.fillText((v * 100).toFixed(0), pad.left - 4, y + 3);
+    });
+
+    if (!history || history.length < 2) {
+        ctx.fillStyle = '#484f58';
+        ctx.font = '12px -apple-system, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('Collecting data...', w / 2, h / 2);
+        return;
+    }
+
+    // Plot score line
+    const points = history.map((h, i) => ({
+        x: pad.left + (i / (history.length - 1)) * plotW,
+        y: pad.top + plotH * (1 - Math.max(0, Math.min(1, h.score))),
+    }));
+
+    // Line
+    ctx.beginPath();
+    ctx.strokeStyle = '#58a6ff';
+    ctx.lineWidth = 1.5;
+    points.forEach((p, i) => {
+        if (i === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+    });
+    ctx.stroke();
+
+    // Fill under the line
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    points.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.lineTo(points[points.length - 1].x, pad.top + plotH);
+    ctx.lineTo(points[0].x, pad.top + plotH);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(88, 166, 255, 0.08)';
+    ctx.fill();
+
+    // Dots at each point (if not too many)
+    if (points.length <= 60) {
+        points.forEach(p => {
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+            ctx.fillStyle = '#58a6ff';
+            ctx.fill();
+        });
+    }
+
+    // Time labels
+    if (history.length > 1) {
+        ctx.fillStyle = '#484f58';
+        ctx.font = '10px SF Mono, Menlo, monospace';
+        ctx.textAlign = 'center';
+
+        const first = new Date(history[0].ts * 1000);
+        const last = new Date(history[history.length - 1].ts * 1000);
+        ctx.fillText(first.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}), pad.left, h - 4);
+        ctx.fillText(last.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}), pad.left + plotW, h - 4);
+
+        if (history.length > 10) {
+            const midIdx = Math.floor(history.length / 2);
+            const mid = new Date(history[midIdx].ts * 1000);
+            ctx.fillText(mid.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'}), pad.left + plotW / 2, h - 4);
+        }
+    }
+}
+
+function renderHealthEvents(events) {
+    const container = document.getElementById('health-events-list');
+
+    if (!events || events.length === 0) {
+        container.innerHTML = '<div class="empty">No health events yet</div>';
+        return;
+    }
+
+    // Filter by severity
+    let filtered = events;
+    if (healthEventFilter !== 'all') {
+        filtered = events.filter(e => e.severity === healthEventFilter);
+    }
+
+    if (filtered.length === 0) {
+        container.innerHTML = `<div class="empty">No ${healthEventFilter} events</div>`;
+        return;
+    }
+
+    // Most recent first
+    const sorted = [...filtered].reverse();
+
+    container.innerHTML = sorted.map(event => {
+        const severity = event.severity || 'info';
+        const time = new Date(event.ts * 1000).toLocaleTimeString();
+        const svcLabel = event.service || 'system';
+        const icon = severity === 'critical' ? '!!!'
+                   : severity === 'warning' ? '!'
+                   : '\u2022';
+
+        return `
+            <div class="health-event-item ${severity}">
+                <span class="health-event-severity ${severity}">${icon}</span>
+                <span class="health-event-time">${time}</span>
+                <span class="health-event-service">${svcLabel}</span>
+                <span class="health-event-message">${event.message}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+function filterHealthEvents(severity) {
+    healthEventFilter = severity;
+    document.querySelectorAll('.health-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.severity === severity);
+    });
+    renderHealthEvents(healthEvents);
+}
+
+// Health Webhook Config
+async function openHealthWebhookConfig() {
+    const modal = document.getElementById('health-webhook-modal');
+    const urlInput = document.getElementById('health-webhook-url');
+
+    // Load current config
+    try {
+        const resp = await fetch(`${API_BASE}/api/health/webhook`);
+        if (resp.ok) {
+            const config = await resp.json();
+            urlInput.value = config.url || '';
+        }
+    } catch (e) {
+        // Ignore, field stays empty
+    }
+
+    modal.classList.remove('hidden');
+}
+
+function closeHealthWebhookConfig() {
+    document.getElementById('health-webhook-modal').classList.add('hidden');
+}
+
+async function saveHealthWebhook() {
+    const url = document.getElementById('health-webhook-url').value.trim();
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/health/webhook`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url }),
+        });
+        if (resp.ok) {
+            closeHealthWebhookConfig();
+        } else {
+            alert('Failed to save webhook config');
+        }
+    } catch (e) {
+        alert('Error saving webhook: ' + e.message);
+    }
+}
+
+// ============================================================
+// AutoHealer Toggle
+// ============================================================
+
+async function refreshHealerStatus() {
+    try {
+        const resp = await fetch(`${API_BASE}/api/health/healer`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        renderHealerStatus(data);
+    } catch (err) {
+        console.error('Healer status error:', err);
+    }
+}
+
+function renderHealerStatus(data) {
+    const toggle = document.getElementById('healer-toggle');
+    const statusText = document.getElementById('healer-status-text');
+    const activeText = document.getElementById('healer-active-text');
+
+    if (!toggle) return;
+
+    toggle.checked = data.enabled;
+
+    if (data.enabled) {
+        statusText.textContent = 'Enabled';
+        statusText.className = 'healer-status enabled';
+    } else {
+        statusText.textContent = 'Disabled';
+        statusText.className = 'healer-status disabled';
+    }
+
+    if (data.active) {
+        activeText.textContent = `Healing: ${data.active}`;
+        activeText.className = 'healer-active active';
+    } else {
+        activeText.textContent = '';
+    }
+}
+
+async function toggleHealer() {
+    const toggle = document.getElementById('healer-toggle');
+    const enabled = toggle.checked;
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/health/healer/toggle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled }),
+        });
+        if (resp.ok) {
+            const data = await resp.json();
+            // Refresh full status to update UI
+            refreshHealerStatus();
+        } else {
+            // Revert toggle on failure
+            toggle.checked = !enabled;
+            alert('Failed to toggle healer');
+        }
+    } catch (e) {
+        toggle.checked = !enabled;
+        alert('Error toggling healer: ' + e.message);
+    }
+}

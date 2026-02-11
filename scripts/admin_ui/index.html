@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MarketSwarm Node Admin</title>
-    <link rel="stylesheet" href="/styles.css?v=18">
+    <link rel="stylesheet" href="/styles.css?v=21">
 </head>
 <body>
     <div class="container">
@@ -167,6 +167,78 @@
                             <button class="btn-close" onclick="closeRedisValue()">&times;</button>
                         </div>
                         <pre id="redis-value-content" class="redis-value-content"></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- System Health Section -->
+        <div class="health-section">
+            <div class="panel-header">
+                <h2>System Health</h2>
+                <div class="panel-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="openHealthWebhookConfig()">Webhook</button>
+                    <button class="btn btn-secondary btn-sm" onclick="refreshHealth()">Refresh</button>
+                </div>
+            </div>
+
+            <div class="health-score-bar">
+                <div class="health-score-circle" id="health-score-circle">
+                    <span class="health-score-value" id="health-score-value">--</span>
+                </div>
+                <div class="health-score-info">
+                    <div class="health-score-label" id="health-score-label">Initializing...</div>
+                    <div class="health-score-timestamp" id="health-score-ts">Waiting for first collection...</div>
+                </div>
+                <div class="health-score-alerts" id="health-score-alerts"></div>
+            </div>
+
+            <div class="healer-toggle-bar">
+                <div class="healer-toggle-left">
+                    <span class="healer-label">Claude AI Auto-Healer</span>
+                    <span class="healer-status" id="healer-status-text">Loading...</span>
+                </div>
+                <div class="healer-toggle-right">
+                    <span class="healer-active" id="healer-active-text"></span>
+                    <label class="healer-switch">
+                        <input type="checkbox" id="healer-toggle" onchange="toggleHealer()">
+                        <span class="healer-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="health-grid">
+                <div class="health-card">
+                    <h4>Redis Instances</h4>
+                    <div id="health-redis-gauges">
+                        <div class="loading">Waiting for collector...</div>
+                    </div>
+                </div>
+
+                <div class="health-card">
+                    <h4>Service Heartbeats</h4>
+                    <div id="health-heartbeat-grid" class="health-heartbeat-grid">
+                        <div class="loading">Waiting for collector...</div>
+                    </div>
+                </div>
+
+                <div class="health-card wide">
+                    <h4>Health Score (2h)</h4>
+                    <canvas id="health-timeline-canvas" width="800" height="120"></canvas>
+                </div>
+
+                <div class="health-card wide">
+                    <div class="health-log-header">
+                        <h4>Health Event Log</h4>
+                        <div class="health-log-filters">
+                            <button class="health-filter-btn active" data-severity="all" onclick="filterHealthEvents('all')">All</button>
+                            <button class="health-filter-btn" data-severity="critical" onclick="filterHealthEvents('critical')">Critical</button>
+                            <button class="health-filter-btn" data-severity="warning" onclick="filterHealthEvents('warning')">Warning</button>
+                            <button class="health-filter-btn" data-severity="info" onclick="filterHealthEvents('info')">Info</button>
+                        </div>
+                    </div>
+                    <div id="health-events-list" class="health-events-list">
+                        <div class="empty">No health events yet</div>
                     </div>
                 </div>
             </div>
@@ -412,6 +484,27 @@
         </div>
     </div>
 
-    <script src="/app.js?v=18"></script>
+    <!-- Health Webhook Config Modal -->
+    <div id="health-webhook-modal" class="modal hidden">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Health Webhook Config</h3>
+                <button class="modal-close" onclick="closeHealthWebhookConfig()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-hint">Slack/Discord webhook URL for health state change notifications (service down/recovered).</p>
+                <div class="env-var-row">
+                    <span class="env-var-key">Webhook URL</span>
+                    <input type="text" id="health-webhook-url" class="env-override-input" placeholder="https://hooks.slack.com/services/..." style="width:100%">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeHealthWebhookConfig()">Cancel</button>
+                <button class="btn btn-success" onclick="saveHealthWebhook()">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/app.js?v=21"></script>
 </body>
 </html>

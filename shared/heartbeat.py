@@ -70,8 +70,8 @@ def start_heartbeat(
                     ex=ttl,
                 )
 
-            except Exception:
-                logger.exception("heartbeat publish failed")
+            except Exception as exc:
+                logger.error(f"heartbeat publish failed: {exc}")
 
             stop_event.wait(interval)
 
