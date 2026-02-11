@@ -14,6 +14,7 @@ import type { PositionLeg, PositionType, CostBasisType } from '../types/riskGrap
 import { POSITION_TYPE_LABELS } from '../types/riskGraph';
 import { recognizePositionType } from '../utils/positionRecognition';
 import { formatLegsDisplay, formatPositionLabel } from '../utils/positionFormatting';
+import { resolveSpotKey } from '../utils/symbolResolver';
 import StrikeDropdown from './StrikeDropdown';
 import {
   parseScript,
@@ -47,7 +48,8 @@ interface PositionCreateModalProps {
   onClose: () => void;
   onCreate: (position: CreatedPosition) => void;
   defaultSymbol?: string;
-  atmStrike?: number;  // Current ATM strike price
+  atmStrike?: number;  // Current ATM strike price (fallback for primary underlying)
+  spotData?: Record<string, { value: number; [key: string]: any }>;
 }
 
 type CreateMode = 'build' | 'import';
@@ -295,6 +297,7 @@ export default function PositionCreateModal({
   onCreate,
   defaultSymbol = 'SPX',
   atmStrike = 5900,
+  spotData,
 }: PositionCreateModalProps) {
   const [availableSymbols, setAvailableSymbols] = useState<AvailableSymbol[]>([]);
   const [mode, setMode] = useState<CreateMode>('build');
@@ -305,8 +308,8 @@ export default function PositionCreateModal({
     initialCentered: true,
   });
 
-  // Round ATM to nearest 5 for cleaner strikes
-  const roundedAtm = Math.round(atmStrike / 5) * 5;
+  // Index symbols get $5 rounding; stocks get $1
+  const INDEX_SYMBOLS = ['SPX', 'SPXW', 'NDX', 'NDXP', 'VIX', 'RUT', 'XSP'];
 
   // Build mode state
   const [symbol, setSymbol] = useState(defaultSymbol);
@@ -315,8 +318,24 @@ export default function PositionCreateModal({
   const [legs, setLegs] = useState<PositionLeg[]>([]);
   const [costBasis, setCostBasis] = useState('');
   const [costBasisType, setCostBasisType] = useState<CostBasisType>('debit');
+
+  // Per-symbol ATM: resolve from spotData when available, fall back to legacy atmStrike
+  const symbolAtm = useMemo(() => {
+    if (spotData) {
+      const key = resolveSpotKey(symbol);
+      const val = spotData[key]?.value;
+      if (val && val > 0) return val;
+    }
+    return atmStrike || 5900;
+  }, [symbol, spotData, atmStrike]);
+
+  const isIndex = INDEX_SYMBOLS.includes(symbol);
+  const strikeIncrement = isIndex ? 5 : 1;
+  const roundedAtm = Math.round(symbolAtm / strikeIncrement) * strikeIncrement;
+  const defaultWidth = isIndex ? 20 : 5;
+
   const [baseStrike, setBaseStrike] = useState(roundedAtm.toString());
-  const [width, setWidth] = useState('20');
+  const [width, setWidth] = useState(defaultWidth.toString());
   const [expiration, setExpiration] = useState('');
   const [primaryRight, setPrimaryRight] = useState<'call' | 'put'>('call');
   const [positionQty, setPositionQty] = useState(1);
@@ -362,6 +381,12 @@ export default function PositionCreateModal({
   const [parsedPosition, setParsedPosition] = useState<ParsedPosition | null>(null);
   const [parseError, setParseError] = useState<string | null>(null);
   const [detectedFormat, setDetectedFormat] = useState<ScriptFormat>('unknown');
+
+  // Reset strike and width when symbol changes (dynamic ATM per symbol)
+  useEffect(() => {
+    setBaseStrike(roundedAtm.toString());
+    setWidth(defaultWidth.toString());
+  }, [symbol, roundedAtm, defaultWidth]);
 
   // Fetch available symbols
   useEffect(() => {
@@ -659,7 +684,7 @@ export default function PositionCreateModal({
                       type="number"
                       value={baseStrike}
                       onChange={e => setBaseStrike(e.target.value)}
-                      step="5"
+                      step={strikeIncrement}
                     />
                   </div>
                   <div className="setup-field">
@@ -668,7 +693,7 @@ export default function PositionCreateModal({
                       type="number"
                       value={width}
                       onChange={e => setWidth(e.target.value)}
-                      step="5"
+                      step={strikeIncrement}
                     />
                   </div>
                   <div className="setup-field">
@@ -719,9 +744,9 @@ export default function PositionCreateModal({
                         value={leg.strike}
                         onChange={strike => updateLeg(index, { strike })}
                         atmStrike={roundedAtm}
-                        minStrike={roundedAtm - 500}
-                        maxStrike={roundedAtm + 500}
-                        strikeStep={5}
+                        minStrike={roundedAtm - (isIndex ? 500 : 100)}
+                        maxStrike={roundedAtm + (isIndex ? 500 : 100)}
+                        strikeStep={strikeIncrement}
                         className="leg-strike-dropdown"
                       />
                       <select

@@ -678,7 +678,7 @@ function App() {
   const [timeMachineEnabled, setTimeMachineEnabled] = useState(false);
   const [simTimeOffsetHours, setSimTimeOffsetHours] = useState(0); // Hours forward from now toward expiration
   const [simVolatilityOffset, setSimVolatilityOffset] = useState(0); // Percentage points offset from current VIX
-  const [simSpotOffset, setSimSpotOffset] = useState(0); // Points offset from current spot price
+  const [simSpotPct, setSimSpotPct] = useState(0); // Percentage offset from current spot price
 
   const [scrollLocked, setScrollLocked] = useState(true);
   const [hasScrolledToAtm, setHasScrolledToAtm] = useState(false);
@@ -2087,9 +2087,9 @@ function App() {
     return timeMinutes >= 570 && timeMinutes < 960;
   }, []);
 
-  // Simulated spot for 3D of Options (actual spot + offset when enabled)
+  // Simulated spot for 3D of Options (actual spot + percentage offset when enabled)
   const simulatedSpot = currentSpot && timeMachineEnabled
-    ? currentSpot + simSpotOffset
+    ? currentSpot * (1 + simSpotPct / 100)
     : currentSpot;
 
   // Check alerts against current spot price (use simulated if time machine enabled)
@@ -3538,12 +3538,12 @@ function App() {
           onSimTimeChange={setSimTimeOffsetHours}
           simVolatilityOffset={simVolatilityOffset}
           onSimVolatilityChange={setSimVolatilityOffset}
-          simSpotOffset={simSpotOffset}
-          onSimSpotChange={setSimSpotOffset}
+          simSpotPct={simSpotPct}
+          onSimSpotPctChange={setSimSpotPct}
           onResetSimulation={() => {
             setSimTimeOffsetHours(0);
             setSimVolatilityOffset(0);
-            setSimSpotOffset(0);
+            setSimSpotPct(0);
           }}
           onOpenJournal={() => setJournalOpen(true)}
           onCreatePosition={() => setShowPositionCreate(true)}
@@ -3992,6 +3992,7 @@ function App() {
         onCreate={handlePositionCreate}
         defaultSymbol={underlying.replace('I:', '')}
         atmStrike={spot?.[underlying]?.value}
+        spotData={spot || undefined}
       />
 
       {/* Position Edit Modal (Leg-based) */}

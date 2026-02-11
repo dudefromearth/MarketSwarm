@@ -23,6 +23,7 @@ import {
   MARKET_REGIMES,
   PRICING_MODELS,
 } from '../hooks/useRiskGraphCalculations';
+import { resolveSpotKey } from '../utils/symbolResolver';
 import { useAlerts } from '../contexts/AlertContext';
 import { useDealerGravity } from '../contexts/DealerGravityContext';
 import { useIndicatorSettings } from './chart-primitives';
@@ -125,8 +126,8 @@ export interface RiskGraphPanelProps {
   onSimTimeChange: (hours: number) => void;
   simVolatilityOffset: number;
   onSimVolatilityChange: (offset: number) => void;
-  simSpotOffset: number;
-  onSimSpotChange: (offset: number) => void;
+  simSpotPct: number;
+  onSimSpotPctChange: (pct: number) => void;
   onResetSimulation: () => void;
 
   // Reflection hook - opens Journal for capturing insights
@@ -177,8 +178,8 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   onSimTimeChange,
   simVolatilityOffset,
   onSimVolatilityChange,
-  simSpotOffset,
-  onSimSpotChange,
+  simSpotPct,
+  onSimSpotPctChange,
   onResetSimulation,
   onOpenJournal,
   onCreatePosition,
@@ -241,8 +242,27 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   // Monte Carlo parameters
   const [mcNumPaths, setMcNumPaths] = useState(5000);
 
-  // Simulated spot for 3D of Options
-  const simulatedSpot = timeMachineEnabled ? spotPrice + simSpotOffset : spotPrice;
+  // Weighting index selector — determines the X-axis reference for portfolio-weighted view
+  const underlyings = useMemo(() => {
+    const syms = new Set(strategies.map(s => s.symbol || 'SPX'));
+    return Array.from(syms).sort();
+  }, [strategies]);
+
+  const [weightingIndex, setWeightingIndex] = useState<string>('SPX');
+
+  // Auto-select: prefer SPX if present, else first available symbol
+  const effectiveWeightingIndex = underlyings.includes(weightingIndex) ? weightingIndex : (underlyings.includes('SPX') ? 'SPX' : underlyings[0] || 'SPX');
+
+  // Compute the weighting spot price from spotData
+  const weightingSpot = useMemo(() => {
+    if (!spotData) return spotPrice;
+    const key = resolveSpotKey(effectiveWeightingIndex);
+    const val = spotData[key]?.value;
+    return (val && val > 0) ? val : spotPrice;
+  }, [spotData, effectiveWeightingIndex, spotPrice]);
+
+  // Simulated spot for 3D of Options (percentage-based)
+  const simulatedSpot = timeMachineEnabled ? weightingSpot * (1 + simSpotPct / 100) : weightingSpot;
   const currentVix = vix + (timeMachineEnabled ? simVolatilityOffset : 0);
 
   // Handle VIX edit
@@ -307,10 +327,11 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     spotPrice: spotPrice,
     vix: vix,
     spotPrices,
+    weightingSpot,
     timeMachineEnabled,
     simVolatilityOffset,
     simTimeOffsetHours,
-    simSpotOffset,
+    simSpotPct,
     marketRegime,
     pricingModel,
     hestonVolOfVol,
@@ -550,6 +571,20 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     <div className="panel echarts-risk-graph-panel">
       <div className="panel-header">
         <h3>Risk Graph {strategies.length > 0 && `(${strategies.length})`}</h3>
+        {underlyings.length > 1 && (
+          <div className="weighting-selector">
+            {underlyings.map(sym => (
+              <button
+                key={sym}
+                className={`weighting-btn ${sym === effectiveWeightingIndex ? 'active' : ''}`}
+                onClick={() => setWeightingIndex(sym)}
+                title={`Weight chart to ${sym} prices`}
+              >
+                {sym}
+              </button>
+            ))}
+          </div>
+        )}
         <WhatsNew area="risk-graph" className="whats-new-apple" />
         <div className="panel-header-actions">
           {/* Dealer Gravity Backdrop Controls */}
@@ -947,7 +982,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                       <span className={`toggle-label-whatif ${timeMachineEnabled ? 'active' : ''}`}>What-If</span>
                     </label>
                     {!timeMachineEnabled && (
-                      <span className="live-price">{spotPrice.toFixed(2)}</span>
+                      <span className="live-price">{weightingSpot.toFixed(2)}</span>
                     )}
                     {timeMachineEnabled && (
                       <button className="btn-reset" onClick={onResetSimulation}>
@@ -998,19 +1033,19 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                         <div className="slider-with-thumb-value">
                           <input
                             type="range"
-                            min="-150"
-                            max="150"
-                            step="1"
-                            value={simSpotOffset}
-                            onChange={(e) => onSimSpotChange(parseFloat(e.target.value))}
+                            min="-10"
+                            max="10"
+                            step="0.1"
+                            value={simSpotPct}
+                            onChange={(e) => onSimSpotPctChange(parseFloat(e.target.value))}
                             className="spot-slider"
                             disabled={!timeMachineEnabled}
                           />
                           <div
                             className="thumb-value"
-                            style={{ left: `${((simSpotOffset + 150) / 300) * 100}%` }}
+                            style={{ left: `${((simSpotPct + 10) / 20) * 100}%` }}
                           >
-                            {simulatedSpot?.toFixed(0) || '-'}
+                            {simSpotPct >= 0 ? '+' : ''}{simSpotPct.toFixed(1)}%
                           </div>
                         </div>
                       </div>
@@ -1218,7 +1253,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                     <div className="stat simulation-indicator">
                       <span className="stat-label">Simulation</span>
                       <span className="stat-value">
-                        {simSpotOffset !== 0 && <span className="sim-param">Spot {simSpotOffset > 0 ? '+' : ''}{simSpotOffset}</span>}
+                        {simSpotPct !== 0 && <span className="sim-param">Spot {simSpotPct > 0 ? '+' : ''}{simSpotPct.toFixed(1)}%</span>}
                         {simTimeOffsetHours > 0 && <span className="sim-param">-{formatDTE(simTimeOffsetHours)} decay</span>}
                         {simVolatilityOffset !== 0 && <span className="sim-param">Vol {simVolatilityOffset > 0 ? '+' : ''}{simVolatilityOffset.toFixed(1)}</span>}
                       </span>

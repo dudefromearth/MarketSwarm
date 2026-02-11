@@ -250,10 +250,11 @@ interface UseRiskGraphCalculationsProps {
   spotPrice: number;
   vix: number;
   spotPrices?: Record<string, number>;  // symbol -> spot price map for per-symbol pricing
+  weightingSpot?: number;  // Spot price of the weighting index (for portfolio-weighted view)
   timeMachineEnabled?: boolean;
   simVolatilityOffset?: number;
   simTimeOffsetHours?: number;
-  simSpotOffset?: number;
+  simSpotPct?: number;     // Percentage offset for spot simulation (e.g., 2.0 = +2%)
   panOffset?: number;
   marketRegime?: MarketRegime;
   // Pricing model selection
@@ -1325,6 +1326,23 @@ export function _smoothPnLCurve(points: PnLPoint[], windowSize: number = 5): PnL
 }
 
 /**
+ * Get raw strike values from a strategy (no visibility filter)
+ */
+function getStrategyStrikeValues(strategy: Strategy): number[] {
+  if (strategy.legs && strategy.legs.length > 0) {
+    return strategy.legs.map(l => l.strike);
+  }
+  switch (strategy.strategy) {
+    case 'single': return [strategy.strike];
+    case 'vertical':
+      return [strategy.strike, strategy.side === 'call' ? strategy.strike + strategy.width : strategy.strike - strategy.width];
+    case 'butterfly':
+      return [strategy.strike - strategy.width, strategy.strike, strategy.strike + strategy.width];
+  }
+  return [strategy.strike];
+}
+
+/**
  * Get all critical strike prices from strategies
  * These are prices where the expiration P&L curve changes slope
  */
@@ -1425,10 +1443,11 @@ export function useRiskGraphCalculations({
   spotPrice,
   vix,
   spotPrices,
+  weightingSpot: weightingSpotProp,
   timeMachineEnabled = false,
   simVolatilityOffset = 0,
   simTimeOffsetHours = 0,
-  simSpotOffset = 0,
+  simSpotPct = 0,
   panOffset = 0,
   marketRegime = 'normal',
   pricingModel = 'black-scholes',
@@ -1445,8 +1464,11 @@ export function useRiskGraphCalculations({
       ? spotPrice
       : 6000; // sensible fallback for SPX-class underlyings
 
-    // Calculate simulated spot price for theoretical curve
-    const simulatedSpot = timeMachineEnabled ? safeSpot + simSpotOffset : safeSpot;
+    // Weighting spot: the index whose dollar prices define the X-axis
+    // Defaults to safeSpot (SPX) for backward compatibility
+    const ws = (weightingSpotProp && Number.isFinite(weightingSpotProp) && weightingSpotProp > 0)
+      ? weightingSpotProp
+      : safeSpot;
 
     // Resolve per-strategy spot price from the spotPrices map
     // Falls back to the global spotPrice when a symbol has no dedicated spot data
@@ -1462,10 +1484,10 @@ export function useRiskGraphCalculations({
       return {
         expirationPoints: [],
         theoreticalPoints: [],
-        minPrice: safeSpot - 100,
-        maxPrice: safeSpot + 100,
-        fullMinPrice: safeSpot - 200,
-        fullMaxPrice: safeSpot + 200,
+        minPrice: ws - 100,
+        maxPrice: ws + 100,
+        fullMinPrice: ws - 200,
+        fullMaxPrice: ws + 200,
         minPnL: -100,
         maxPnL: 100,
         expirationBreakevens: [],
@@ -1475,7 +1497,7 @@ export function useRiskGraphCalculations({
         gamma: 0,
         delta: 0,
         allStrikes: [],
-        centerPrice: safeSpot,
+        centerPrice: ws,
         activeStrategyIds: [],
         expiredExpirationPoints: [],
         expiredTheoreticalPoints: [],
@@ -1486,8 +1508,27 @@ export function useRiskGraphCalculations({
     // surfaces as an empty graph instead of crashing the component tree
     try {
 
-    // Get all critical strikes
-    const allStrikes = getCriticalStrikes(visibleStrategies);
+    // Project each strategy's strikes into weighting-index space
+    // strike → pct offset from strategy spot → projected price on weighting index
+    const projectStrike = (strike: number, stratSpot: number): number => {
+      const pct = (strike - stratSpot) / stratSpot;
+      return ws * (1 + pct);
+    };
+
+    // Get all critical strikes projected into weighting-index space
+    const projectedStrikes: number[] = [];
+    for (const strat of visibleStrategies) {
+      const stratSpot = getStrategySpot(strat);
+      const rawStrikes = getStrategyStrikeValues(strat);
+      for (const strike of rawStrikes) {
+        projectedStrikes.push(projectStrike(strike, stratSpot));
+      }
+    }
+
+    // allStrikes in weighting-index space (used for chart markers & range)
+    const allStrikes = projectedStrikes.length > 0
+      ? Array.from(new Set(projectedStrikes)).sort((a, b) => a - b)
+      : [ws];
     const minStrike = Math.min(...allStrikes);
     const maxStrike = Math.max(...allStrikes);
     const strikeRange = maxStrike - minStrike || 50;
@@ -1562,20 +1603,20 @@ export function useRiskGraphCalculations({
     // Risk-free rate
     const riskFreeRate = 0.05;
 
-    // Price range calculation
+    // Price range calculation — centered on the weighting index spot
     // Always calculate for a wide range regardless of time to expiration
     // Use the base (unadjusted) time for sigma calculation to maintain consistent range
     const baseDteForRange = Math.ceil(baseTimeDays);
-    const sigma1Day = spotPrice * (adjustedVix / 100) / Math.sqrt(252);
+    const sigma1Day = ws * (adjustedVix / 100) / Math.sqrt(252);
     const sigmaPadding = sigma1Day * Math.sqrt(Math.max(baseDteForRange, 7)) * 3; // Use at least 7 days for range calc
     const strategyPadding = strikeRange * 2;
 
-    // Ensure minimum padding of 10% of spot price or $200, whichever is larger
-    const minPadding = Math.max(spotPrice * 0.10, 200);
+    // Ensure minimum padding of 10% of weighting spot or $200, whichever is larger
+    const minPadding = Math.max(ws * 0.10, 200);
     const fullPadding = Math.max(sigmaPadding, strategyPadding, minPadding);
 
-    const fullMinPrice = Math.min(spotPrice, minStrike) - fullPadding;
-    const fullMaxPrice = Math.max(spotPrice, maxStrike) + fullPadding;
+    const fullMinPrice = Math.min(ws, minStrike) - fullPadding;
+    const fullMaxPrice = Math.max(ws, maxStrike) + fullPadding;
 
     // Viewport (for zoom/pan)
     const centerPrice = (minStrike + maxStrike) / 2 + panOffset;
@@ -1598,10 +1639,16 @@ export function useRiskGraphCalculations({
     let maxPnL = -Infinity;
 
     for (const price of pricePoints) {
+      // Percentage offset from the weighting index spot
+      const pctFromIndex = (price - ws) / ws;
+
       // Expiration P&L (at primary expiration) — only active strategies (not sim-expired)
+      // Each strategy's price is mapped proportionally from the weighting index
       let expPnL = 0;
       for (const strat of activeStrategies) {
-        expPnL += calculateExpirationPnL(strat, price, volatility);
+        const stratSpot = getStrategySpot(strat);
+        const stratPrice = stratSpot * (1 + pctFromIndex);
+        expPnL += calculateExpirationPnL(strat, stratPrice, volatility);
       }
       expirationPoints.push({ price, pnl: expPnL });
 
@@ -1609,7 +1656,8 @@ export function useRiskGraphCalculations({
       let theoPnL = 0;
       for (const strat of activeStrategies) {
         const stratSpot = getStrategySpot(strat);
-        theoPnL += calculateTheoreticalPnL(strat, price, volatility, riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams);
+        const stratPrice = stratSpot * (1 + pctFromIndex);
+        theoPnL += calculateTheoreticalPnL(strat, stratPrice, volatility, riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams);
       }
       theoreticalPoints.push({ price, pnl: theoPnL });
 
@@ -1618,7 +1666,9 @@ export function useRiskGraphCalculations({
         let expiredExpPnL = 0;
         let expiredTheoPnL = 0;
         for (const strat of expiredStrategies) {
-          const ep = calculateExpirationPnL(strat, price, volatility);
+          const stratSpot = getStrategySpot(strat);
+          const stratPrice = stratSpot * (1 + pctFromIndex);
+          const ep = calculateExpirationPnL(strat, stratPrice, volatility);
           expiredExpPnL += ep;
           expiredTheoPnL += ep; // at expiration, theoretical = intrinsic
         }
@@ -1657,7 +1707,7 @@ export function useRiskGraphCalculations({
     let theoreticalPnLAtSpot = 0;
     for (const strat of activeStrategies) {
       const stratSpot = getStrategySpot(strat);
-      const stratSimulatedSpot = timeMachineEnabled ? stratSpot + simSpotOffset : stratSpot;
+      const stratSimulatedSpot = timeMachineEnabled ? stratSpot * (1 + simSpotPct / 100) : stratSpot;
       theoreticalPnLAtSpot += calculateTheoreticalPnL(
         strat,
         stratSimulatedSpot,
@@ -1675,7 +1725,7 @@ export function useRiskGraphCalculations({
     let totalTheta = 0;
     for (const strat of activeStrategies) {
       const stratSpot = getStrategySpot(strat);
-      const stratSimulatedSpot = timeMachineEnabled ? stratSpot + simSpotOffset : stratSpot;
+      const stratSimulatedSpot = timeMachineEnabled ? stratSpot * (1 + simSpotPct / 100) : stratSpot;
       const greeks = calculateStrategyGreeks(
         strat,
         stratSimulatedSpot,
@@ -1719,10 +1769,10 @@ export function useRiskGraphCalculations({
       return {
         expirationPoints: [],
         theoreticalPoints: [],
-        minPrice: safeSpot - 100,
-        maxPrice: safeSpot + 100,
-        fullMinPrice: safeSpot - 200,
-        fullMaxPrice: safeSpot + 200,
+        minPrice: ws - 100,
+        maxPrice: ws + 100,
+        fullMinPrice: ws - 200,
+        fullMaxPrice: ws + 200,
         minPnL: -100,
         maxPnL: 100,
         expirationBreakevens: [],
@@ -1732,13 +1782,13 @@ export function useRiskGraphCalculations({
         gamma: 0,
         delta: 0,
         allStrikes: [],
-        centerPrice: safeSpot,
+        centerPrice: ws,
         activeStrategyIds: [],
         expiredExpirationPoints: [],
         expiredTheoreticalPoints: [],
       };
     }
-  }, [strategies, spotPrice, vix, spotPrices, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotOffset, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths]);
+  }, [strategies, spotPrice, vix, spotPrices, weightingSpotProp, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotPct, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths]);
 }
 
 // Export calculation functions for use elsewhere

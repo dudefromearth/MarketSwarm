@@ -2610,6 +2610,38 @@ body {
   border-color: #3b82f6;
 }
 
+/* Weighting index selector pills (portfolio-weighted risk graph) */
+.weighting-selector {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+  border: 1px solid var(--border-default);
+}
+
+.weighting-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.weighting-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.weighting-btn.active {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+}
+
 /* Dealer Gravity Backdrop Controls */
 .backdrop-controls {
   display: flex;
