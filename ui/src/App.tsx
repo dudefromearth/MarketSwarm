@@ -941,13 +941,27 @@ function App() {
   }, [preferences.indicatorPanelsVisible]);
 
   // Available DTEs from data
+  // After 4 PM ET, 0DTE options have expired — remove from choices
   const availableDtes = useMemo(() => {
-    return heatmap?.dtes_available || [0];
+    const dtes = heatmap?.dtes_available || [0];
+    const now = new Date();
+    const etHour = parseInt(now.toLocaleString('en-US', { timeZone: 'America/New_York', hour: 'numeric', hour12: false }));
+    if (etHour >= 16) {
+      const filtered = dtes.filter((d: number) => d !== 0);
+      return filtered.length > 0 ? filtered : dtes;
+    }
+    return dtes;
   }, [heatmap]);
 
-  // Auto-select first DTE with data (outside market hours, 0 DTE may be stale/empty)
+  // Auto-select first DTE with data (outside market hours, 0 DTE may be stale/expired)
   useEffect(() => {
     if (!heatmap?.tiles || availableDtes.length === 0) return;
+
+    // If current DTE was removed (e.g. 0DTE after market close), switch to first available
+    if (!availableDtes.includes(dte)) {
+      setDte(availableDtes[0]);
+      return;
+    }
 
     // Count tiles for current DTE
     const currentDteTileCount = Object.keys(heatmap.tiles).filter(key => {
