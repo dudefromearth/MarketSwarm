@@ -207,6 +207,9 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   // Track meaningful analyzer interaction for reflection hook
   const [hasAnalyzerInteraction, setHasAnalyzerInteraction] = useState(false);
 
+  // Lock/unlock state for position pricing (locked = user-entered, unlocked = model theo value)
+  const [priceLocked, setPriceLocked] = useState<Record<string, boolean>>({});
+
   // Backdrop visibility controls (off by default - user can enable as needed)
   const [showVolumeProfile, setShowVolumeProfile] = useState(false);
   const [showGex, setShowGex] = useState(false);
@@ -300,6 +303,24 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     return Object.keys(map).length > 0 ? map : undefined;
   }, [spotData]);
 
+  // Lock/unlock toggle for position pricing (default: unlocked)
+  const togglePriceLock = useCallback((id: string) => {
+    setPriceLocked(prev => {
+      const currentlyLocked = prev[id] ?? false;
+      return { ...prev, [id]: !currentlyLocked };
+    });
+  }, []);
+
+  // Compute set of unlocked strategy IDs for the calculation hook
+  const unlockedStrategyIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const s of strategies) {
+      const locked = priceLocked[s.id] ?? false;
+      if (!locked) ids.add(s.id);
+    }
+    return ids;
+  }, [strategies, priceLocked]);
+
   // Map strategies to the format expected by useRiskGraphCalculations
   const chartStrategies: Strategy[] = useMemo(() =>
     strategies.map(s => ({
@@ -337,6 +358,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     hestonVolOfVol,
     hestonCorrelation,
     mcNumPaths,
+    unlockedStrategyIds,
   });
 
   // Extract strikes from all visible strategies for chart (includes expired for auto-fit bounds)
@@ -743,16 +765,23 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                       const positionLabel = formatPositionLabel(positionType, direction, legs);
                       const legsNotation = formatLegsDisplay(legs);
 
-                      // Determine cost basis type (debit or credit)
-                      // Default to 'debit' for legacy positions, use explicit value if set
-                      const costBasisType = strat.costBasisType || 'debit';
+                      // Determine cost basis
                       const costBasis = strat.costBasis ?? strat.debit ?? null;
-                      const isCredit = costBasisType === 'credit';
+
+                      // Lock/unlock state: locked = user-entered price, unlocked = model price
+                      const isLocked = priceLocked[strat.id] ?? false;
+                      const theoValue = pnlChartData.strategyTheoValues[strat.id];
+
+                      // Derive credit/debit from the sign of the active value
+                      // Negative value = credit in both locked and unlocked modes
+                      const activeValue = isLocked ? costBasis : theoValue;
+                      const isCredit = activeValue != null ? activeValue < 0 : (strat.costBasisType === 'credit');
+                      const displayPrice = activeValue != null ? Math.abs(activeValue) : null;
 
                       return (
-                        <div key={strat.id} className={`risk-graph-position-item ${!strat.visible ? 'hidden-position' : ''} ${strat.visible && !pnlChartData.activeStrategyIds.includes(strat.id) ? 'sim-expired' : ''}`}>
+                        <div key={strat.id} className={`risk-graph-position-item ${!strat.visible ? 'hidden-position' : ''} ${strat.visible && !pnlChartData.activeStrategyIds.includes(strat.id) ? 'sim-expired' : ''} ${isCredit ? 'credit-tint' : 'debit-tint'}`}>
                           <div className="position-content">
-                            {/* Header Row: Symbol, Label, DTE, Cost Basis */}
+                            {/* Header Row: Symbol, Label, DTE, Lock + Cost Basis */}
                             <div className="position-row-header">
                               {strat.symbol && (
                                 <span className="position-symbol" title={strat.symbol}>
@@ -765,31 +794,73 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                               <span className="position-dte" title={`${strat.dte} days to expiration`}>
                                 {strat.dte}d
                               </span>
-                              {/* Prominent Debit/Credit Badge */}
-                              <span className={`position-cost-basis ${isCredit ? 'credit' : 'debit'}`}>
-                                <span className="cost-type-badge">{isCredit ? 'CR' : 'DR'}</span>
+                              {/* Lock/Unlock Toggle */}
+                              <button
+                                className={`btn-price-lock ${isLocked ? 'locked' : 'unlocked'}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  // When unlocking, save current theo value as the debit so re-lock preserves it
+                                  if (isLocked && theoValue != null) {
+                                    // Transitioning to unlocked — no debit update needed, hook uses theo
+                                  } else if (!isLocked && theoValue != null) {
+                                    // Re-locking — persist the last theo value as debit
+                                    onUpdateStrategyDebit(strat.id, theoValue);
+                                  }
+                                  togglePriceLock(strat.id);
+                                }}
+                                title={isLocked ? 'Price locked — click to use model price' : 'Using model price — click to lock'}
+                              >
+                                {isLocked ? (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                                    <rect x="3" y="11" width="18" height="12" rx="2" />
+                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                                  </svg>
+                                ) : (
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                                    <rect x="3" y="11" width="18" height="12" rx="2" />
+                                    <path d="M7 11V7a5 5 0 0 1 10 0" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" transform="rotate(-30, 17, 7) translate(3, -4)" />
+                                  </svg>
+                                )}
+                              </button>
+                              {/* Price field */}
+                              <span className="position-cost-basis">
                                 <span className="cost-value">
-                                  $<input
-                                    type="number"
-                                    className="debit-input"
-                                    defaultValue={costBasis !== null ? costBasis.toFixed(2) : ''}
-                                    key={`debit-${strat.id}-${costBasis}`}
-                                    step="0.01"
-                                    min="0"
-                                    placeholder="0.00"
-                                    onBlur={(e) => {
-                                      const val = parseFloat(e.target.value);
-                                      setHasAnalyzerInteraction(true);
-                                      onUpdateStrategyDebit(strat.id, isNaN(val) ? null : val);
-                                    }}
-                                    onKeyDown={(e) => {
-                                      if (e.key === 'Enter') {
-                                        e.currentTarget.blur();
-                                      }
-                                    }}
-                                    onClick={(e) => e.stopPropagation()}
-                                  />
+                                  ${isLocked ? (
+                                    <input
+                                      type="number"
+                                      className="debit-input"
+                                      defaultValue={costBasis !== null ? Math.abs(costBasis).toFixed(2) : ''}
+                                      key={`debit-${strat.id}-${costBasis}-locked`}
+                                      step="0.01"
+                                      min="0"
+                                      placeholder="0.00"
+                                      onBlur={(e) => {
+                                        const val = parseFloat(e.target.value);
+                                        setHasAnalyzerInteraction(true);
+                                        onUpdateStrategyDebit(strat.id, isNaN(val) ? null : val);
+                                      }}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.currentTarget.blur();
+                                        }
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                    />
+                                  ) : (
+                                    <input
+                                      type="number"
+                                      className="debit-input"
+                                      value={theoValue != null ? Math.abs(theoValue).toFixed(2) : ''}
+                                      key={`debit-${strat.id}-unlocked`}
+                                      step="0.01"
+                                      min="0"
+                                      placeholder="—"
+                                      readOnly
+                                      onClick={(e) => e.stopPropagation()}
+                                    />
+                                  )}
                                 </span>
+                                <span className="cost-type-label">{isCredit ? 'Credit' : 'Debit'}</span>
                               </span>
                             </div>
 

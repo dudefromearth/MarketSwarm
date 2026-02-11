@@ -3480,7 +3480,28 @@ body {
   border-radius: 6px;
   padding: 8px 10px;
   margin-bottom: 6px;
-  transition: opacity 500ms ease, border-color 500ms ease;
+  transition: opacity 500ms ease, border-color 500ms ease, background 300ms ease;
+}
+
+/* Card tinting for debit/credit positions */
+.risk-graph-position-item.debit-tint {
+  background: rgba(34, 197, 94, 0.06);
+  border-left: 3px solid rgba(34, 197, 94, 0.4);
+}
+
+.risk-graph-position-item.credit-tint {
+  background: rgba(239, 68, 68, 0.06);
+  border-left: 3px solid rgba(239, 68, 68, 0.4);
+}
+
+[data-theme="light"] .risk-graph-position-item.debit-tint {
+  background: rgba(34, 197, 94, 0.08);
+  border-left: 3px solid rgba(34, 197, 94, 0.5);
+}
+
+[data-theme="light"] .risk-graph-position-item.credit-tint {
+  background: rgba(239, 68, 68, 0.08);
+  border-left: 3px solid rgba(239, 68, 68, 0.5);
 }
 
 .risk-graph-position-item.hidden-position {
@@ -3555,58 +3576,76 @@ body {
   align-items: center;
 }
 
-/* Position Cost Basis (Debit/Credit) - Prominent display */
-.position-cost-basis {
+/* Lock/Unlock Price Toggle */
+.btn-price-lock {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  flex-shrink: 0;
+  line-height: 1;
+  color: var(--text-primary);
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border-radius: 4px;
+}
+
+.btn-price-lock:hover {
+  color: var(--text-bright, #fff);
+}
+
+.btn-price-lock.unlocked {
+  color: #ef4444;
+}
+
+.btn-price-lock.unlocked:hover {
+  color: #dc2626;
+}
+
+[data-theme="light"] .btn-price-lock {
+  color: #1f2937;
+}
+
+[data-theme="light"] .btn-price-lock.unlocked {
+  color: #dc2626;
+}
+
+/* Position Cost Basis (Debit/Credit) */
+.position-cost-basis {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
   font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
   font-size: 11px;
   font-weight: 600;
   flex-shrink: 0;
 }
 
-.position-cost-basis.debit {
-  background: rgba(239, 68, 68, 0.15);
-  border: 1px solid rgba(239, 68, 68, 0.4);
-}
-
-.position-cost-basis.credit {
-  background: rgba(34, 197, 94, 0.15);
-  border: 1px solid rgba(34, 197, 94, 0.4);
-}
-
-.position-cost-basis .cost-type-badge {
-  font-size: 10px;
-  font-weight: 700;
-  padding: 1px 4px;
-  border-radius: 2px;
-  letter-spacing: 0.5px;
-}
-
-.position-cost-basis.debit .cost-type-badge {
-  background: #ef4444;
-  color: var(--text-bright);
-}
-
-.position-cost-basis.credit .cost-type-badge {
-  background: #22c55e;
-  color: var(--text-bright);
-}
-
 .position-cost-basis .cost-value {
   display: flex;
   align-items: center;
+  color: var(--text-secondary);
 }
 
-.position-cost-basis.debit .cost-value {
+/* Debit-tinted cards get green cost value */
+.debit-tint .position-cost-basis .cost-value {
+  color: #4ade80;
+}
+
+/* Credit-tinted cards get red cost value */
+.credit-tint .position-cost-basis .cost-value {
   color: #f87171;
 }
 
-.position-cost-basis.credit .cost-value {
-  color: #4ade80;
+/* Small "Debit"/"Credit" label below price */
+.cost-type-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-tertiary);
+  display: block;
+  text-align: right;
+  font-weight: 500;
 }
 
 .position-cost-basis .debit-input {
@@ -3619,6 +3658,11 @@ body {
   font-family: inherit;
   padding: 0;
   text-align: right;
+}
+
+.position-cost-basis .debit-input[readonly] {
+  cursor: default;
+  opacity: 0.85;
 }
 
 .position-cost-basis .debit-input:focus {

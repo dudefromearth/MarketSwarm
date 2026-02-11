@@ -243,6 +243,8 @@ export interface RiskGraphData {
   // Faded curves for sim-expired strategies (shown as ghost lines)
   expiredExpirationPoints: PnLPoint[];
   expiredTheoreticalPoints: PnLPoint[];
+  // Per-strategy theoretical value at current/simulated spot (for lock/unlock pricing)
+  strategyTheoValues: Record<string, number>;
 }
 
 interface UseRiskGraphCalculationsProps {
@@ -265,6 +267,8 @@ interface UseRiskGraphCalculationsProps {
   hestonCorrelation?: number;   // Spot/vol correlation (rho), default -0.7
   // Monte Carlo parameters
   mcNumPaths?: number;          // Number of simulation paths, default 5000
+  // Lock/unlock: strategy IDs whose price should use model theoretical value
+  unlockedStrategyIds?: Set<string>;
 }
 
 // ============================================================
@@ -1093,6 +1097,115 @@ function calculateLegsTheoreticalPnL(
   return (theoreticalValue - debit) * multiplier;
 }
 
+/**
+ * Calculate the raw theoretical value of a strategy (per-share, NOT P&L)
+ * Same pricing logic as calculateTheoreticalPnL but returns the raw option value
+ * without subtracting debit or applying the multiplier.
+ * Used for lock/unlock dynamic pricing.
+ */
+function calculateStrategyTheoreticalValue(
+  strategy: Strategy,
+  price: number,
+  baseVolatility: number,
+  rate: number,
+  timeToExpiryYears: number,
+  spotPrice: number,
+  params: PricingParams
+): number {
+  const T = Math.max(0, timeToExpiryYears);
+
+  // At true expiration, return intrinsic value
+  if (T <= 0) {
+    // Calculate intrinsic per-share value
+    if (strategy.legs && strategy.legs.length > 0) {
+      let value = 0;
+      for (const leg of strategy.legs) {
+        const intrinsic = leg.right === 'call'
+          ? Math.max(0, price - leg.strike)
+          : Math.max(0, leg.strike - price);
+        value += intrinsic * leg.quantity;
+      }
+      return value;
+    }
+    // Legacy
+    switch (strategy.strategy) {
+      case 'single':
+        return strategy.side === 'call'
+          ? Math.max(0, price - strategy.strike)
+          : Math.max(0, strategy.strike - price);
+      case 'vertical':
+        if (strategy.side === 'call') {
+          return Math.max(0, price - strategy.strike) - Math.max(0, price - (strategy.strike + strategy.width));
+        } else {
+          return Math.max(0, strategy.strike - price) - Math.max(0, (strategy.strike - strategy.width) - price);
+        }
+      case 'butterfly': {
+        const lK = strategy.strike - strategy.width;
+        const mK = strategy.strike;
+        const uK = strategy.strike + strategy.width;
+        if (strategy.side === 'call') {
+          return Math.max(0, price - lK) - 2 * Math.max(0, price - mK) + Math.max(0, price - uK);
+        } else {
+          return Math.max(0, uK - price) - 2 * Math.max(0, mK - price) + Math.max(0, lK - price);
+        }
+      }
+    }
+    return 0;
+  }
+
+  // If legs are provided, sum per-leg theoretical values
+  if (strategy.legs && strategy.legs.length > 0) {
+    const primaryExp = hasMultipleExpirations(strategy.legs) ? getPrimaryExpiration(strategy.legs) : undefined;
+    let value = 0;
+    for (const leg of strategy.legs) {
+      value += calculateLegTheoreticalValue(
+        leg, price, baseVolatility, rate, T, spotPrice, params.regime, primaryExp
+      );
+    }
+    return value;
+  }
+
+  // Legacy: use pricing model
+  const optionCall = (K: number) => {
+    const skewedIV = calculateSkewedIV(baseVolatility, K, spotPrice, params.regime);
+    return blackScholesCall(price, K, T, rate, skewedIV);
+  };
+  const optionPut = (K: number) => {
+    const skewedIV = calculateSkewedIV(baseVolatility, K, spotPrice, params.regime);
+    return blackScholesPut(price, K, T, rate, skewedIV);
+  };
+
+  let value = 0;
+  switch (strategy.strategy) {
+    case 'single':
+      value = strategy.side === 'call' ? optionCall(strategy.strike) : optionPut(strategy.strike);
+      break;
+    case 'vertical':
+      if (strategy.side === 'call') {
+        value = optionCall(strategy.strike) - optionCall(strategy.strike + strategy.width);
+      } else {
+        value = optionPut(strategy.strike) - optionPut(strategy.strike - strategy.width);
+      }
+      break;
+    case 'butterfly': {
+      const lK = strategy.strike - strategy.width;
+      const mK = strategy.strike;
+      const uK = strategy.strike + strategy.width;
+      if (strategy.side === 'call') {
+        value = optionCall(lK) - 2 * optionCall(mK) + optionCall(uK);
+      } else {
+        value = optionPut(uK) - 2 * optionPut(mK) + optionPut(lK);
+      }
+      break;
+    }
+  }
+
+  // Clamp to valid bounds
+  const maxValue = getStrategyMaxValue(strategy);
+  const minValue = getStrategyMinValue(strategy);
+  return Math.max(minValue, Math.min(maxValue, value));
+}
+
 function calculateTheoreticalPnL(
   strategy: Strategy,
   price: number,
@@ -1455,6 +1568,7 @@ export function useRiskGraphCalculations({
   hestonMeanReversion = 2.0,
   hestonCorrelation = -0.7,
   mcNumPaths = 5000,
+  unlockedStrategyIds,
 }: UseRiskGraphCalculationsProps): RiskGraphData {
   return useMemo(() => {
     const visibleStrategies = strategies.filter(s => s.visible);
@@ -1501,6 +1615,7 @@ export function useRiskGraphCalculations({
         activeStrategyIds: [],
         expiredExpirationPoints: [],
         expiredTheoreticalPoints: [],
+        strategyTheoValues: {},
       };
     }
 
@@ -1624,11 +1739,32 @@ export function useRiskGraphCalculations({
     const minPrice = centerPrice - strikeRange / 2 - viewportPadding;
     const maxPrice = centerPrice + strikeRange / 2 + viewportPadding;
 
-    // Generate price points with critical strikes
-    const pricePoints = generatePricePoints(fullMinPrice, fullMaxPrice, allStrikes, 250);
+    // Include the (simulated) spot as a critical price point so the curve
+    // has an exact data point there — ensures unlocked positions hit P&L = 0
+    const simWs = timeMachineEnabled ? ws * (1 + simSpotPct / 100) : ws;
+    const criticalPrices = [...allStrikes, simWs];
+    const pricePoints = generatePricePoints(fullMinPrice, fullMaxPrice, criticalPrices, 250);
 
     // Expired strategies (sim-expired, for faded ghost curves)
     const expiredStrategies = visibleStrategies.filter(s => !activeStrategyIds.includes(s.id));
+
+    // Compute per-strategy theoretical value at current/simulated spot (for lock/unlock pricing)
+    const strategyTheoValues: Record<string, number> = {};
+    for (const strat of activeStrategies) {
+      const stratSpot = getStrategySpot(strat);
+      const simSpot = timeMachineEnabled ? stratSpot * (1 + simSpotPct / 100) : stratSpot;
+      strategyTheoValues[strat.id] = calculateStrategyTheoreticalValue(
+        strat, simSpot, volatility, riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams
+      );
+    }
+
+    // Helper: returns theo value for unlocked strategies, original debit for locked
+    const getEffectiveDebit = (strat: Strategy): number => {
+      if (unlockedStrategyIds?.has(strat.id)) {
+        return strategyTheoValues[strat.id] ?? strat.debit ?? 0;
+      }
+      return strat.debit ?? 0;
+    };
 
     // Calculate P&L curves
     const expirationPoints: PnLPoint[] = [];
@@ -1648,7 +1784,9 @@ export function useRiskGraphCalculations({
       for (const strat of activeStrategies) {
         const stratSpot = getStrategySpot(strat);
         const stratPrice = stratSpot * (1 + pctFromIndex);
-        expPnL += calculateExpirationPnL(strat, stratPrice, volatility);
+        const effectiveStrat = unlockedStrategyIds?.has(strat.id)
+          ? { ...strat, debit: getEffectiveDebit(strat) } : strat;
+        expPnL += calculateExpirationPnL(effectiveStrat, stratPrice, volatility);
       }
       expirationPoints.push({ price, pnl: expPnL });
 
@@ -1657,7 +1795,9 @@ export function useRiskGraphCalculations({
       for (const strat of activeStrategies) {
         const stratSpot = getStrategySpot(strat);
         const stratPrice = stratSpot * (1 + pctFromIndex);
-        theoPnL += calculateTheoreticalPnL(strat, stratPrice, volatility, riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams);
+        const effectiveStrat = unlockedStrategyIds?.has(strat.id)
+          ? { ...strat, debit: getEffectiveDebit(strat) } : strat;
+        theoPnL += calculateTheoreticalPnL(effectiveStrat, stratPrice, volatility, riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams);
       }
       theoreticalPoints.push({ price, pnl: theoPnL });
 
@@ -1706,6 +1846,8 @@ export function useRiskGraphCalculations({
     };
     let theoreticalPnLAtSpot = 0;
     for (const strat of activeStrategies) {
+      // Unlocked strategies have P&L = 0 at spot by definition (cost basis = model value)
+      if (unlockedStrategyIds?.has(strat.id)) continue;
       const stratSpot = getStrategySpot(strat);
       const stratSimulatedSpot = timeMachineEnabled ? stratSpot * (1 + simSpotPct / 100) : stratSpot;
       theoreticalPnLAtSpot += calculateTheoreticalPnL(
@@ -1760,6 +1902,7 @@ export function useRiskGraphCalculations({
       activeStrategyIds,
       expiredExpirationPoints,
       expiredTheoreticalPoints,
+      strategyTheoValues,
     };
 
     } catch (err) {
@@ -1786,9 +1929,10 @@ export function useRiskGraphCalculations({
         activeStrategyIds: [],
         expiredExpirationPoints: [],
         expiredTheoreticalPoints: [],
+        strategyTheoValues: {},
       };
     }
-  }, [strategies, spotPrice, vix, spotPrices, weightingSpotProp, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotPct, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths]);
+  }, [strategies, spotPrice, vix, spotPrices, weightingSpotProp, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotPct, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths, unlockedStrategyIds]);
 }
 
 // Export calculation functions for use elsewhere
