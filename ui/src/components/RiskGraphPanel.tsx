@@ -867,10 +867,9 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                                   const lockedVal = costBasis ?? 0;
                                   const pnl = theoValue - lockedVal; // positive = position gained value
                                   const pnlColor = Math.abs(pnl) < 0.005 ? 'var(--text-faint)' : pnl > 0 ? '#22c55e' : '#ef4444';
-                                  const theoIsCredit = theoValue < 0;
                                   return (
                                     <span className="natural-price" style={{ color: pnlColor }}>
-                                      ${Math.abs(theoValue).toFixed(2)} {theoIsCredit ? 'Cr' : 'Dr'}
+                                      ${Math.abs(theoValue).toFixed(2)}
                                     </span>
                                   );
                                 })()}
