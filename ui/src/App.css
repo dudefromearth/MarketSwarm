@@ -203,7 +203,7 @@ input[type="checkbox"]:checked::before {
 select {
   -webkit-appearance: none;
   appearance: none;
-  background-color: var(--control-thumb);
+  background-color: var(--bg-input);
   border: 1px solid var(--border-default);
   border-radius: 6px;
   color: var(--text-primary);
