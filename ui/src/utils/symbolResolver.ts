@@ -1,4 +1,14 @@
-/** Map position symbols to spot data keys */
+/**
+ * Symbol Resolver — backward-compat wrapper
+ *
+ * Delegates to symbolConfig.ts when the registry is loaded,
+ * falls back to hardcoded INDEX_MAP otherwise.
+ *
+ * Consumers: RiskGraphPanel, useRiskGraphCalculations
+ */
+import { resolveSpotKey as configResolve, getRegistryCache } from './symbolConfig';
+
+/** Hardcoded fallback for when registry hasn't loaded yet */
 const INDEX_MAP: Record<string, string> = {
   'SPX': 'I:SPX',
   'SPXW': 'I:SPX',
@@ -10,6 +20,8 @@ const INDEX_MAP: Record<string, string> = {
 };
 
 export function resolveSpotKey(positionSymbol: string): string {
+  const registry = getRegistryCache();
+  if (registry) return configResolve(positionSymbol, registry);
   return INDEX_MAP[positionSymbol] || positionSymbol;
 }
 

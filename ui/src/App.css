@@ -11105,6 +11105,118 @@ body {
   margin: 0;
 }
 
+/* Symbol Config Registry (Trading tab) */
+.symbol-config-section {
+  margin-bottom: 16px;
+}
+
+.symbol-config-subtitle {
+  font-size: calc(12px * var(--text-scale));
+  color: var(--text-secondary);
+  margin: 12px 0 8px 0;
+  font-weight: 600;
+}
+
+.symbol-config-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 8px;
+}
+
+.symbol-config-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: calc(11px * var(--text-scale));
+}
+
+.symbol-config-table th {
+  text-align: left;
+  padding: 4px 6px;
+  font-weight: 600;
+  color: var(--text-faint);
+  font-size: calc(10px * var(--text-scale));
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-default);
+  white-space: nowrap;
+}
+
+.symbol-config-table td {
+  padding: 3px 4px;
+  vertical-align: middle;
+}
+
+.symbol-config-label {
+  font-weight: 600;
+  color: var(--text-heading);
+  white-space: nowrap;
+  padding-right: 8px !important;
+}
+
+.symbol-config-input {
+  width: 60px;
+  padding: 4px 6px;
+  font-size: calc(11px * var(--text-scale));
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.symbol-config-input-wide {
+  width: 80px;
+}
+
+.symbol-config-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.symbol-config-input::placeholder {
+  color: var(--text-faint);
+}
+
+.symbol-config-select {
+  padding: 4px 6px;
+  font-size: calc(11px * var(--text-scale));
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.symbol-config-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.symbol-config-add-row .symbol-config-select {
+  min-width: 180px;
+}
+
+.symbol-config-save-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-default);
+}
+
+.symbol-config-saved {
+  color: #22c55e;
+  font-size: calc(11px * var(--text-scale));
+}
+
+.symbol-config-unsaved {
+  color: var(--text-faint);
+  font-size: calc(11px * var(--text-scale));
+  font-style: italic;
+}
+
 /* Settings Button in Header */
 .btn-settings {
   background: transparent;

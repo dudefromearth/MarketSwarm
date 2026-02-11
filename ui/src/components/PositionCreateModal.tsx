@@ -14,7 +14,7 @@ import type { PositionLeg, PositionType, CostBasisType } from '../types/riskGrap
 import { POSITION_TYPE_LABELS } from '../types/riskGraph';
 import { recognizePositionType } from '../utils/positionRecognition';
 import { formatLegsDisplay, formatPositionLabel } from '../utils/positionFormatting';
-import { resolveSpotKey } from '../utils/symbolResolver';
+import { useSymbolConfig, getCurrentExpiration, getNextExpiration } from '../utils/symbolConfig';
 import StrikeDropdown from './StrikeDropdown';
 import {
   parseScript,
@@ -24,14 +24,6 @@ import {
   type ParsedPosition,
   type ScriptFormat,
 } from '../utils/scriptParsers';
-
-const JOURNAL_API = '';
-
-interface AvailableSymbol {
-  symbol: string;
-  name: string;
-  enabled: boolean;
-}
 
 // Output format for created position
 export interface CreatedPosition {
@@ -140,58 +132,7 @@ function getDefaultDirection(type: PositionType): Direction {
   return SHORT_DEFAULT_TYPES.includes(type) ? 'short' : 'long';
 }
 
-// SPX/index options expire Mon, Wed, Fri
-// Returns true if the given date is an expiration day
-function isExpirationDay(date: Date): boolean {
-  const day = date.getDay();
-  return day === 1 || day === 3 || day === 5; // Mon, Wed, Fri
-}
-
-// Check if we're during market hours (9:30 AM - 4:00 PM ET)
-function isDuringMarketHours(): boolean {
-  const now = new Date();
-  // Convert to ET (approximate - doesn't handle DST perfectly)
-  const etHour = now.getUTCHours() - 5; // EST offset
-  const etMinutes = now.getUTCMinutes();
-  const totalMinutes = etHour * 60 + etMinutes;
-  // Market: 9:30 (570 min) to 16:00 (960 min)
-  return totalMinutes >= 570 && totalMinutes < 960;
-}
-
-// Get the current expiration date
-// If today is an expiration day and market is open, use today
-// Otherwise use the next expiration day
-function getCurrentExpiration(): Date {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  // If today is an expiration day and we're during market hours, use today
-  if (isExpirationDay(today) && isDuringMarketHours()) {
-    return today;
-  }
-
-  // Otherwise find the next expiration day
-  const next = new Date(today);
-  for (let i = 0; i < 7; i++) {
-    next.setDate(next.getDate() + 1);
-    if (isExpirationDay(next)) {
-      return next;
-    }
-  }
-  return next; // Fallback
-}
-
-// Get the next expiration after the current one
-function getNextExpiration(current: Date): Date {
-  const next = new Date(current);
-  for (let i = 0; i < 7; i++) {
-    next.setDate(next.getDate() + 1);
-    if (isExpirationDay(next)) {
-      return next;
-    }
-  }
-  return next; // Fallback
-}
+// isExpirationDay, getCurrentExpiration, getNextExpiration imported from symbolConfig.ts
 
 // Format date to YYYY-MM-DD
 function formatDate(date: Date): string {
@@ -206,7 +147,8 @@ function getDefaultLegs(
   width: number,
   expiration: string,
   right: 'call' | 'put',
-  direction: Direction
+  direction: Direction,
+  expirationPattern: 'daily' | 'weekly' | 'monthly' = 'daily'
 ): PositionLeg[] {
   // Direction multiplier: 1 for long, -1 for short
   const d = direction === 'long' ? 1 : -1;
@@ -277,7 +219,7 @@ function getDefaultLegs(
     case 'diagonal': {
       // For time spreads: sell near (current exp), buy far (next exp)
       const nearExp = expiration;
-      const farExp = formatDate(getNextExpiration(new Date(expiration + 'T00:00:00')));
+      const farExp = formatDate(getNextExpiration(new Date(expiration + 'T00:00:00'), expirationPattern));
       // Diagonal uses different strikes; calendar uses same strike
       const farStrike = positionType === 'diagonal' ? baseStrike + width : baseStrike;
       return [
@@ -299,7 +241,7 @@ export default function PositionCreateModal({
   atmStrike = 5900,
   spotData,
 }: PositionCreateModalProps) {
-  const [availableSymbols, setAvailableSymbols] = useState<AvailableSymbol[]>([]);
+  const { symbols: availableSymbols, getConfig, loading: configLoading } = useSymbolConfig();
   const [mode, setMode] = useState<CreateMode>('build');
 
   // Draggable modal
@@ -307,9 +249,6 @@ export default function PositionCreateModal({
     handleSelector: '.position-create-header',
     initialCentered: true,
   });
-
-  // Index symbols get $5 rounding; stocks get $1
-  const INDEX_SYMBOLS = ['SPX', 'SPXW', 'NDX', 'NDXP', 'VIX', 'RUT', 'XSP'];
 
   // Build mode state
   const [symbol, setSymbol] = useState(defaultSymbol);
@@ -319,20 +258,20 @@ export default function PositionCreateModal({
   const [costBasis, setCostBasis] = useState('');
   const [costBasisType, setCostBasisType] = useState<CostBasisType>('debit');
 
-  // Per-symbol ATM: resolve from spotData when available, fall back to legacy atmStrike
+  // Config-driven values from Symbol Config Registry
+  const symbolConfig = useMemo(() => getConfig(symbol), [symbol, getConfig]);
+  const { strikeIncrement, defaultWidth, strikeRange, expirationPattern } = symbolConfig;
+
+  // Per-symbol ATM: resolve from spotData via config spotKey
   const symbolAtm = useMemo(() => {
     if (spotData) {
-      const key = resolveSpotKey(symbol);
-      const val = spotData[key]?.value;
+      const val = spotData[symbolConfig.spotKey]?.value;
       if (val && val > 0) return val;
     }
     return atmStrike || 5900;
-  }, [symbol, spotData, atmStrike]);
+  }, [symbol, spotData, atmStrike, symbolConfig.spotKey]);
 
-  const isIndex = INDEX_SYMBOLS.includes(symbol);
-  const strikeIncrement = isIndex ? 5 : 1;
   const roundedAtm = Math.round(symbolAtm / strikeIncrement) * strikeIncrement;
-  const defaultWidth = isIndex ? 20 : 5;
 
   const [baseStrike, setBaseStrike] = useState(roundedAtm.toString());
   const [width, setWidth] = useState(defaultWidth.toString());
@@ -382,43 +321,30 @@ export default function PositionCreateModal({
   const [parseError, setParseError] = useState<string | null>(null);
   const [detectedFormat, setDetectedFormat] = useState<ScriptFormat>('unknown');
 
-  // Reset strike and width when symbol changes (dynamic ATM per symbol)
+  // Reset strike, width, and expiration when symbol changes (dynamic ATM + config per symbol)
   useEffect(() => {
     setBaseStrike(roundedAtm.toString());
     setWidth(defaultWidth.toString());
-  }, [symbol, roundedAtm, defaultWidth]);
+    setExpiration(formatDate(getCurrentExpiration(expirationPattern)));
+  }, [symbol, roundedAtm, defaultWidth, expirationPattern]);
 
-  // Fetch available symbols
+  // Set initial values when modal opens
   useEffect(() => {
     if (isOpen) {
-      fetch(`${JOURNAL_API}/api/symbols`, { credentials: 'include' })
-        .then(res => res.json())
-        .then(data => {
-          if (data.success && data.data) {
-            const enabled = data.data.filter((s: AvailableSymbol) => s.enabled);
-            setAvailableSymbols(enabled);
-          }
-        })
-        .catch(err => console.error('Failed to fetch symbols:', err));
-
-      // Set default expiration to current expiration
-      const currentExp = getCurrentExpiration();
-      setExpiration(formatDate(currentExp));
-
-      // Set base strike to ATM
+      setExpiration(formatDate(getCurrentExpiration(expirationPattern)));
       setBaseStrike(roundedAtm.toString());
     }
-  }, [isOpen, roundedAtm]);
+  }, [isOpen, roundedAtm, expirationPattern]);
 
   // Generate legs when build parameters change
   useEffect(() => {
     if (mode === 'build' && expiration) {
       const strike = parseFloat(baseStrike) || 5900;
-      const w = parseFloat(width) || 20;
-      const newLegs = getDefaultLegs(positionType, strike, w, expiration, primaryRight, direction);
+      const w = parseFloat(width) || defaultWidth;
+      const newLegs = getDefaultLegs(positionType, strike, w, expiration, primaryRight, direction, expirationPattern);
       setLegs(newLegs);
     }
-  }, [mode, positionType, baseStrike, width, expiration, primaryRight, direction]);
+  }, [mode, positionType, baseStrike, width, expiration, primaryRight, direction, expirationPattern, defaultWidth]);
 
   // Parse script when input changes
   useEffect(() => {
@@ -744,8 +670,8 @@ export default function PositionCreateModal({
                         value={leg.strike}
                         onChange={strike => updateLeg(index, { strike })}
                         atmStrike={roundedAtm}
-                        minStrike={roundedAtm - (isIndex ? 500 : 100)}
-                        maxStrike={roundedAtm + (isIndex ? 500 : 100)}
+                        minStrike={roundedAtm - strikeRange}
+                        maxStrike={roundedAtm + strikeRange}
                         strikeStep={strikeIncrement}
                         className="leg-strike-dropdown"
                       />

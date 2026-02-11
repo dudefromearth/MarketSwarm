@@ -3,6 +3,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { usePath } from '../contexts/PathContext';
 import { useTimezone } from '../contexts/TimezoneContext';
 import { useUserPreferences, type ThemeMode, type TextSize } from '../contexts/UserPreferencesContext';
+import {
+  HARDCODED_DEFAULTS,
+  type SymbolConfigRegistry,
+  type AssetTypeConfig,
+  type SymbolOverride,
+} from '../utils/symbolConfig';
 
 const JOURNAL_API = '';
 
@@ -139,6 +145,13 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [tagPage, setTagPage] = useState(1);
   const [tagPageSize, setTagPageSize] = useState<TagPageSize>(5);
 
+  // Symbol Config Registry state
+  const [symbolConfigRegistry, setSymbolConfigRegistry] = useState<SymbolConfigRegistry | null>(null);
+  const [symbolConfigDirty, setSymbolConfigDirty] = useState(false);
+  const [symbolConfigSaving, setSymbolConfigSaving] = useState(false);
+  const [symbolConfigSaved, setSymbolConfigSaved] = useState(false);
+  const [newOverrideSymbol, setNewOverrideSymbol] = useState('');
+
   const fetchSymbols = useCallback(async () => {
     try {
       const res = await fetch(`${JOURNAL_API}/api/symbols?include_disabled=true`);
@@ -225,14 +238,105 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     }
   }, []);
 
+  const fetchSymbolConfig = useCallback(async () => {
+    try {
+      const res = await fetch(`${JOURNAL_API}/api/settings/symbol_config_registry`, {
+        credentials: 'include',
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.data?.value) {
+          setSymbolConfigRegistry(data.data.value);
+          return;
+        }
+      }
+      // 404 or missing — seed defaults
+      setSymbolConfigRegistry({ ...HARDCODED_DEFAULTS });
+    } catch {
+      setSymbolConfigRegistry({ ...HARDCODED_DEFAULTS });
+    }
+  }, []);
+
+  const handleSaveSymbolConfig = async () => {
+    if (!symbolConfigRegistry) return;
+    setSymbolConfigSaving(true);
+    setSymbolConfigSaved(false);
+    try {
+      await fetch(`${JOURNAL_API}/api/settings/symbol_config_registry`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ value: symbolConfigRegistry, category: 'trading' }),
+      });
+      setSymbolConfigDirty(false);
+      setSymbolConfigSaved(true);
+      setTimeout(() => setSymbolConfigSaved(false), 2000);
+    } catch (err) {
+      console.error('Failed to save symbol config:', err);
+    } finally {
+      setSymbolConfigSaving(false);
+    }
+  };
+
+  const updateAssetDefault = (assetType: string, field: keyof AssetTypeConfig, value: any) => {
+    if (!symbolConfigRegistry) return;
+    setSymbolConfigRegistry({
+      ...symbolConfigRegistry,
+      assetTypeDefaults: {
+        ...symbolConfigRegistry.assetTypeDefaults,
+        [assetType]: {
+          ...symbolConfigRegistry.assetTypeDefaults[assetType],
+          [field]: value,
+        },
+      },
+    });
+    setSymbolConfigDirty(true);
+  };
+
+  const updateSymbolOverride = (sym: string, field: keyof SymbolOverride, value: any) => {
+    if (!symbolConfigRegistry) return;
+    const current = symbolConfigRegistry.symbolOverrides[sym] || {};
+    setSymbolConfigRegistry({
+      ...symbolConfigRegistry,
+      symbolOverrides: {
+        ...symbolConfigRegistry.symbolOverrides,
+        [sym]: { ...current, [field]: value === '' ? undefined : value },
+      },
+    });
+    setSymbolConfigDirty(true);
+  };
+
+  const addSymbolOverride = (sym: string) => {
+    if (!symbolConfigRegistry || !sym || symbolConfigRegistry.symbolOverrides[sym]) return;
+    setSymbolConfigRegistry({
+      ...symbolConfigRegistry,
+      symbolOverrides: {
+        ...symbolConfigRegistry.symbolOverrides,
+        [sym]: {},
+      },
+    });
+    setSymbolConfigDirty(true);
+    setNewOverrideSymbol('');
+  };
+
+  const removeSymbolOverride = (sym: string) => {
+    if (!symbolConfigRegistry) return;
+    const { [sym]: _, ...rest } = symbolConfigRegistry.symbolOverrides;
+    setSymbolConfigRegistry({
+      ...symbolConfigRegistry,
+      symbolOverrides: rest,
+    });
+    setSymbolConfigDirty(true);
+  };
+
   useEffect(() => {
     const loadData = async () => {
       setLoading(true);
-      await Promise.all([fetchSymbols(), fetchSettings(), fetchProfile(), fetchTags()]);
+      await Promise.all([fetchSymbols(), fetchSettings(), fetchProfile(), fetchTags(), fetchSymbolConfig()]);
       setLoading(false);
     };
     loadData();
-  }, [fetchSymbols, fetchSettings, fetchProfile, fetchTags]);
+  }, [fetchSymbols, fetchSettings, fetchProfile, fetchTags, fetchSymbolConfig]);
 
   const handleAddSymbol = async () => {
     setAddError(null);
@@ -1096,6 +1200,225 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                       <span className="setting-hint">Stop trading for the day after this loss</span>
                     </div>
                   </div>
+
+                  {/* Symbol Configuration */}
+                  {symbolConfigRegistry && (
+                    <div className="settings-group">
+                      <h4>Symbol Configuration</h4>
+                      <span className="setting-hint" style={{ marginBottom: 12, display: 'block' }}>
+                        Controls strike increments, spread widths, and expiration patterns in the position builder.
+                      </span>
+
+                      {/* Asset Type Defaults */}
+                      <div className="symbol-config-section">
+                        <h5 className="symbol-config-subtitle">Asset Type Defaults</h5>
+                        <div className="symbol-config-table-wrap">
+                          <table className="symbol-config-table">
+                            <thead>
+                              <tr>
+                                <th>Asset Type</th>
+                                <th>Strike Inc</th>
+                                <th>Width</th>
+                                <th>Min Width</th>
+                                <th>Range</th>
+                                <th>Expiration</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(symbolConfigRegistry.assetTypeDefaults).map(([type, cfg]) => (
+                                <tr key={type}>
+                                  <td className="symbol-config-label">{getAssetTypeLabel(type)}</td>
+                                  <td>
+                                    <input
+                                      type="number"
+                                      className="symbol-config-input"
+                                      value={cfg.strikeIncrement}
+                                      onChange={e => updateAssetDefault(type, 'strikeIncrement', parseFloat(e.target.value) || 1)}
+                                      min={0.5}
+                                      step={0.5}
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="number"
+                                      className="symbol-config-input"
+                                      value={cfg.defaultWidth}
+                                      onChange={e => updateAssetDefault(type, 'defaultWidth', parseFloat(e.target.value) || 1)}
+                                      min={1}
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="number"
+                                      className="symbol-config-input"
+                                      value={cfg.minWidth}
+                                      onChange={e => updateAssetDefault(type, 'minWidth', parseFloat(e.target.value) || 1)}
+                                      min={0.5}
+                                      step={0.5}
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="number"
+                                      className="symbol-config-input"
+                                      value={cfg.strikeRange}
+                                      onChange={e => updateAssetDefault(type, 'strikeRange', parseInt(e.target.value) || 50)}
+                                      min={10}
+                                      step={10}
+                                    />
+                                  </td>
+                                  <td>
+                                    <select
+                                      className="symbol-config-select"
+                                      value={cfg.expirationPattern}
+                                      onChange={e => updateAssetDefault(type, 'expirationPattern', e.target.value)}
+                                    >
+                                      <option value="daily">Daily</option>
+                                      <option value="weekly">Weekly</option>
+                                      <option value="monthly">Monthly</option>
+                                    </select>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+
+                      {/* Per-Symbol Overrides */}
+                      <div className="symbol-config-section">
+                        <h5 className="symbol-config-subtitle">Per-Symbol Overrides</h5>
+                        <span className="setting-hint" style={{ marginBottom: 8, display: 'block' }}>
+                          Blank fields inherit from asset type default.
+                        </span>
+                        <div className="symbol-config-table-wrap">
+                          <table className="symbol-config-table">
+                            <thead>
+                              <tr>
+                                <th>Symbol</th>
+                                <th>Spot Key</th>
+                                <th>Strike Inc</th>
+                                <th>Width</th>
+                                <th>Min Width</th>
+                                <th>Range</th>
+                                <th></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(symbolConfigRegistry.symbolOverrides).map(([sym, ovr]) => (
+                                <tr key={sym}>
+                                  <td className="symbol-config-label">{sym}</td>
+                                  <td>
+                                    <input
+                                      type="text"
+                                      className="symbol-config-input symbol-config-input-wide"
+                                      value={ovr.spotKey ?? ''}
+                                      onChange={e => updateSymbolOverride(sym, 'spotKey', e.target.value)}
+                                      placeholder={sym}
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="number"
+                                      className="symbol-config-input"
+                                      value={ovr.strikeIncrement ?? ''}
+                                      onChange={e => updateSymbolOverride(sym, 'strikeIncrement', e.target.value ? parseFloat(e.target.value) : '')}
+                                      placeholder="-"
+                                      min={0.5}
+                                      step={0.5}
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="number"
+                                      className="symbol-config-input"
+                                      value={ovr.defaultWidth ?? ''}
+                                      onChange={e => updateSymbolOverride(sym, 'defaultWidth', e.target.value ? parseFloat(e.target.value) : '')}
+                                      placeholder="-"
+                                      min={1}
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="number"
+                                      className="symbol-config-input"
+                                      value={ovr.minWidth ?? ''}
+                                      onChange={e => updateSymbolOverride(sym, 'minWidth', e.target.value ? parseFloat(e.target.value) : '')}
+                                      placeholder="-"
+                                      min={0.5}
+                                      step={0.5}
+                                    />
+                                  </td>
+                                  <td>
+                                    <input
+                                      type="number"
+                                      className="symbol-config-input"
+                                      value={ovr.strikeRange ?? ''}
+                                      onChange={e => updateSymbolOverride(sym, 'strikeRange', e.target.value ? parseInt(e.target.value) : '')}
+                                      placeholder="-"
+                                      min={10}
+                                      step={10}
+                                    />
+                                  </td>
+                                  <td>
+                                    <button
+                                      className="btn-delete-symbol"
+                                      onClick={() => removeSymbolOverride(sym)}
+                                      title="Remove override"
+                                    >
+                                      &times;
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Add Override */}
+                        <div className="symbol-config-add-row">
+                          <select
+                            className="symbol-config-select"
+                            value={newOverrideSymbol}
+                            onChange={e => setNewOverrideSymbol(e.target.value)}
+                          >
+                            <option value="">Select symbol...</option>
+                            {symbols
+                              .filter(s => !symbolConfigRegistry.symbolOverrides[s.symbol])
+                              .map(s => (
+                                <option key={s.symbol} value={s.symbol}>
+                                  {s.symbol} - {s.name}
+                                </option>
+                              ))}
+                          </select>
+                          <button
+                            className="btn-add-symbol"
+                            onClick={() => addSymbolOverride(newOverrideSymbol)}
+                            disabled={!newOverrideSymbol}
+                          >
+                            + Add Override
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Save Button */}
+                      <div className="symbol-config-save-row">
+                        <button
+                          className="btn-save"
+                          onClick={handleSaveSymbolConfig}
+                          disabled={!symbolConfigDirty || symbolConfigSaving}
+                        >
+                          {symbolConfigSaving ? 'Saving...' : 'Save Symbol Config'}
+                        </button>
+                        {symbolConfigSaved && (
+                          <span className="symbol-config-saved">Saved!</span>
+                        )}
+                        {symbolConfigDirty && !symbolConfigSaving && (
+                          <span className="symbol-config-unsaved">Unsaved changes</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
