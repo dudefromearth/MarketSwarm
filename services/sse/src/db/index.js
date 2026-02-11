@@ -123,68 +123,60 @@ async function createTables() {
 
   try {
     await pool.execute(createUsersTable);
-
-    // Create activity tracking tables (separate try-catch so users table still works if these fail)
-    try {
-      await pool.execute(createActivitySnapshotsTable);
-      await pool.execute(createHourlyAggregatesTable);
-      console.log("[db] Activity tracking tables ready");
-    } catch (activityErr) {
-      console.error("[db] Failed to create activity tracking tables:", activityErr.message);
-      console.log("[db] Activity tracking will be disabled");
-    }
-
-    // Add subscription_tier column if table already exists without it
-    try {
-      await pool.execute(`
-        ALTER TABLE users ADD COLUMN subscription_tier VARCHAR(128) DEFAULT NULL
-      `);
-      console.log("[db] Added subscription_tier column");
-    } catch (alterErr) {
-      // Column likely already exists, ignore duplicate column error
-    }
-
-    // Add timezone column for user preference (defaults to browser-detected)
-    try {
-      await pool.execute(`
-        ALTER TABLE users ADD COLUMN timezone VARCHAR(64) DEFAULT NULL
-      `);
-      console.log("[db] Added timezone column");
-    } catch (alterErr) {
-      // Column likely already exists, ignore duplicate column error
-    }
-
-    // Add leaderboard columns (screen_name, show_screen_name) if they don't exist
-    try {
-      await pool.execute(`
-        ALTER TABLE users ADD COLUMN screen_name VARCHAR(100) DEFAULT NULL
-      `);
-      console.log("[db] Added screen_name column");
-    } catch (alterErr) {
-      // Column likely already exists
-    }
-
-    try {
-      await pool.execute(`
-        ALTER TABLE users ADD COLUMN show_screen_name TINYINT DEFAULT 1
-      `);
-      console.log("[db] Added show_screen_name column");
-    } catch (alterErr) {
-      // Column likely already exists
-    }
-
     console.log("[db] Users table ready");
+  } catch (e) {
+    // Table likely already exists or strict mode issue - not fatal
+    if (!e.message.includes("already exists")) {
+      console.warn("[db] Users table creation skipped:", e.message);
+    }
+  }
 
-    // Dealer Gravity config tables
+  // Create activity tracking tables (separate try-catch so other tables still work if these fail)
+  try {
+    await pool.execute(createActivitySnapshotsTable);
+    await pool.execute(createHourlyAggregatesTable);
+    console.log("[db] Activity tracking tables ready");
+  } catch (activityErr) {
+    if (!activityErr.message.includes("already exists")) {
+      console.warn("[db] Activity tracking tables skipped:", activityErr.message);
+    }
+  }
+
+  // Add columns if they don't exist (each in its own try-catch)
+  const alterations = [
+    ["subscription_tier VARCHAR(128) DEFAULT NULL", "subscription_tier"],
+    ["timezone VARCHAR(64) DEFAULT NULL", "timezone"],
+    ["screen_name VARCHAR(100) DEFAULT NULL", "screen_name"],
+    ["show_screen_name TINYINT DEFAULT 1", "show_screen_name"],
+  ];
+  for (const [colDef, colName] of alterations) {
+    try {
+      await pool.execute(`ALTER TABLE users ADD COLUMN ${colDef}`);
+      console.log(`[db] Added ${colName} column`);
+    } catch (_) {
+      // Column likely already exists
+    }
+  }
+
+  // Dealer Gravity config tables
+  try {
     await createDealerGravityTables();
+  } catch (e) {
+    console.error("[db] Failed to create Dealer Gravity tables:", e.message);
+  }
 
-    // Positions table (leg-based model)
+  // Positions table (leg-based model)
+  try {
     await createPositionsTables();
+  } catch (e) {
+    console.error("[db] Failed to create positions table:", e.message);
+  }
 
-    // Economic indicators registry
+  // Economic indicators registry
+  try {
     await createEconomicIndicatorsTables();
   } catch (e) {
-    console.error("[db] Failed to create tables:", e.message);
+    console.error("[db] Failed to create economic_indicators tables:", e.message);
   }
 }
 
