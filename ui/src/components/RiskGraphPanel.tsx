@@ -861,6 +861,19 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                                   )}
                                 </span>
                                 <span className="cost-type-label">{isCredit ? 'Credit' : 'Debit'}</span>
+                                {isLocked && theoValue != null && (() => {
+                                  // P&L: for debits, lower theo = loss, higher = gain
+                                  // For credits, the signs are already negative, so compare directly
+                                  const lockedVal = costBasis ?? 0;
+                                  const pnl = theoValue - lockedVal; // positive = position gained value
+                                  const pnlColor = Math.abs(pnl) < 0.005 ? 'var(--text-faint)' : pnl > 0 ? '#22c55e' : '#ef4444';
+                                  const theoIsCredit = theoValue < 0;
+                                  return (
+                                    <span className="natural-price" style={{ color: pnlColor }}>
+                                      ${Math.abs(theoValue).toFixed(2)} {theoIsCredit ? 'Cr' : 'Dr'}
+                                    </span>
+                                  );
+                                })()}
                               </span>
                             </div>
 

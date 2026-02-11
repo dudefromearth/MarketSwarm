@@ -3694,6 +3694,17 @@ body {
   font-weight: 500;
 }
 
+/* Natural (theo) price shown below locked price */
+.natural-price {
+  display: block;
+  text-align: right;
+  font-size: calc(10px * var(--text-scale));
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  margin-top: 1px;
+  opacity: 0.9;
+}
+
 .position-cost-basis .debit-input {
   width: 52px;
   background: transparent;
