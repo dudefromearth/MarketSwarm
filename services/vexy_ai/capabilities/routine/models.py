@@ -78,6 +78,52 @@ class MarketReadinessResponse(BaseModel):
     error: Optional[str] = None
 
 
+class MarketStateEventItem(BaseModel):
+    """Single economic event."""
+    time_et: str
+    name: str
+    impact: str
+
+
+class MarketStateBigPicture(BaseModel):
+    """Big Picture Volatility lens."""
+    vix: float
+    regime_key: str
+    regime_label: str
+    decay_profile: str
+    gamma_sensitivity: str
+
+
+class MarketStateLocalVol(BaseModel):
+    """Localized Volatility lens."""
+    dealer_posture: str
+    intraday_expansion_probability: str
+    localized_vol_label: str
+
+
+class MarketStateEventEnergy(BaseModel):
+    """Event Risk & Potential Energy lens."""
+    events: List[MarketStateEventItem]
+    event_posture: str
+
+
+class MarketStateConvexity(BaseModel):
+    """Convexity Temperature lens."""
+    temperature: str
+    summary: str
+
+
+class MarketStateResponse(BaseModel):
+    """SoM v2 — State of the Market response."""
+    schema_version: str
+    generated_at: str
+    context_phase: str
+    big_picture_volatility: Optional[MarketStateBigPicture] = None
+    localized_volatility: Optional[MarketStateLocalVol] = None
+    event_energy: Optional[MarketStateEventEnergy] = None
+    convexity_temperature: Optional[MarketStateConvexity] = None
+
+
 class LogHealthSignal(BaseModel):
     """Log health signal for routine context."""
     type: str

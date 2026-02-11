@@ -714,6 +714,305 @@
   margin-top: 8px;
 }
 
+/* ========== State of the Market (SoM v2) ========== */
+.som-container {
+  margin-bottom: 8px;
+}
+
+.som-header {
+  margin-bottom: 20px;
+}
+
+.som-title {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--routine-text-muted);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.som-subtitle {
+  font-size: 11px;
+  color: var(--routine-text-dim);
+  margin-top: 4px;
+}
+
+.som-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 0;
+  font-size: 12px;
+  color: var(--routine-text-dim);
+}
+
+.som-error {
+  font-size: 12px;
+  color: var(--routine-text-dim);
+  padding: 12px 0;
+}
+
+/* ── SoM Lens ─────────────────────── */
+.som-lens {
+  margin-bottom: 22px;
+}
+
+.som-lens-title {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--routine-text-dim);
+  margin-bottom: 8px;
+}
+
+.som-lens-content {
+  font-size: 14px;
+  color: var(--routine-text-warm);
+  line-height: 1.8;
+}
+
+/* ── VIX Row ──────────────────────── */
+.som-vix-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.som-vix-value {
+  font-size: 14px;
+  color: var(--routine-text-warm);
+  font-weight: 500;
+}
+
+/* ── Regime Badges (no red — Routine is never urgent) ── */
+.som-regime-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.som-regime-compression {
+  background: rgba(100, 116, 130, 0.2);
+  color: #8a9baa;
+}
+
+.som-regime-goldilocks-i {
+  background: rgba(80, 170, 160, 0.15);
+  color: #6bb8af;
+}
+
+.som-regime-goldilocks-ii {
+  background: rgba(212, 160, 32, 0.2);
+  color: var(--routine-text-muted);
+}
+
+.som-regime-elevated {
+  background: rgba(210, 150, 60, 0.25);
+  color: #d0a050;
+}
+
+.som-regime-chaos {
+  background: rgba(200, 120, 50, 0.3);
+  color: #c88040;
+}
+
+/* ── Detail Rows ──────────────────── */
+.som-detail {
+  font-size: 13px;
+  color: var(--routine-text-muted);
+  line-height: 1.7;
+}
+
+.som-detail.som-clean {
+  font-style: italic;
+  color: var(--routine-text-dim);
+}
+
+.som-detail.som-posture {
+  margin-top: 8px;
+}
+
+/* ── Event Rows ───────────────────── */
+.som-events {
+  margin-bottom: 4px;
+}
+
+.som-event-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 13px;
+  color: var(--routine-text-muted);
+}
+
+.som-event-time {
+  color: var(--routine-text-dim);
+  min-width: 44px;
+  flex-shrink: 0;
+}
+
+.som-event-name {
+  flex: 1;
+}
+
+.som-event-impact {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--routine-text-dim);
+}
+
+.som-impact-high {
+  color: var(--routine-text-muted);
+}
+
+.som-impact-very-high {
+  color: var(--routine-gold);
+}
+
+/* ── Convexity Temperature ────────── */
+.som-lens-temperature {
+  padding-top: 14px;
+  border-top: 1px solid rgba(58, 53, 37, 0.3);
+}
+
+.som-temp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.som-temp-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.som-temp-cold {
+  background: rgba(100, 116, 130, 0.2);
+  color: #8a9baa;
+}
+
+.som-temp-cool {
+  background: rgba(80, 170, 160, 0.15);
+  color: #6bb8af;
+}
+
+.som-temp-warm {
+  background: rgba(212, 160, 32, 0.2);
+  color: var(--routine-text-muted);
+}
+
+.som-temp-hot {
+  background: rgba(210, 150, 60, 0.3);
+  color: #d0a050;
+}
+
+.som-temp-summary {
+  font-size: 13px;
+  color: var(--routine-text-muted);
+  font-style: italic;
+  line-height: 1.6;
+}
+
+/* ── SoM Light Theme ──────────────── */
+[data-theme="light"] .som-title {
+  font-size: 12.5px;
+  color: #48484a;
+}
+
+[data-theme="light"] .som-subtitle {
+  color: #86868b;
+}
+
+[data-theme="light"] .som-lens-title {
+  font-size: 12.5px;
+}
+
+[data-theme="light"] .som-lens-content {
+  font-size: 15.5px;
+}
+
+[data-theme="light"] .som-vix-value {
+  font-size: 15.5px;
+}
+
+[data-theme="light"] .som-detail {
+  font-size: 14.5px;
+}
+
+[data-theme="light"] .som-event-row {
+  font-size: 14.5px;
+}
+
+[data-theme="light"] .som-temp-summary {
+  font-size: 14.5px;
+}
+
+[data-theme="light"] .som-regime-compression {
+  background: rgba(100, 116, 130, 0.1);
+  color: #6e7b85;
+}
+
+[data-theme="light"] .som-regime-goldilocks-i {
+  background: rgba(52, 199, 89, 0.1);
+  color: #248a3d;
+}
+
+[data-theme="light"] .som-regime-goldilocks-ii {
+  background: rgba(139, 105, 20, 0.1);
+  color: #8b6914;
+}
+
+[data-theme="light"] .som-regime-elevated {
+  background: rgba(255, 149, 0, 0.1);
+  color: #c77c00;
+}
+
+[data-theme="light"] .som-regime-chaos {
+  background: rgba(210, 120, 50, 0.12);
+  color: #b06020;
+}
+
+[data-theme="light"] .som-temp-cold {
+  background: rgba(100, 116, 130, 0.1);
+  color: #6e7b85;
+}
+
+[data-theme="light"] .som-temp-cool {
+  background: rgba(52, 199, 89, 0.1);
+  color: #248a3d;
+}
+
+[data-theme="light"] .som-temp-warm {
+  background: rgba(139, 105, 20, 0.1);
+  color: #8b6914;
+}
+
+[data-theme="light"] .som-temp-hot {
+  background: rgba(255, 149, 0, 0.1);
+  color: #c77c00;
+}
+
+[data-theme="light"] .som-lens-temperature {
+  border-top-color: #e5e5ea;
+}
+
+[data-theme="light"] .som-impact-very-high {
+  color: #8b6914;
+}
+
 /* ========== Legacy styles (for backwards compatibility) ========== */
 .routine-spacer {
   height: 32px;

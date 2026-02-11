@@ -17,6 +17,7 @@ export const API = {
     routineBriefing: '/api/vexy/routine-briefing',
     orientation: '/api/vexy/routine/orientation',
     marketReadiness: (userId: number) => `/api/vexy/routine/market-readiness/${userId}`,
+    marketState: '/api/vexy/market-state',
     processEcho: (userId: number) => `/api/vexy/process-echo/${userId}`,
 
     // Journal
@@ -49,6 +50,11 @@ export type RoutineContextPhase =
   | 'holiday';
 
 /**
- * VIX Regime types
+ * VIX Regime types (legacy 4-regime)
  */
 export type VixRegime = 'zombieland' | 'goldilocks' | 'elevated' | 'chaos';
+
+/**
+ * SoM v2 — 5-regime VIX classification
+ */
+export type MarketStateRegime = 'compression' | 'goldilocks_i' | 'goldilocks_ii' | 'elevated' | 'chaos';

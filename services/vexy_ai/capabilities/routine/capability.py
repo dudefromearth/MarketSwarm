@@ -23,6 +23,7 @@ from .models import (
     RoutineOrientationRequest,
     RoutineOrientationResponse,
     MarketReadinessResponse,
+    MarketStateResponse,
     LogHealthContextRequest,
     LogHealthContextResponse,
 )
@@ -35,7 +36,8 @@ class RoutineCapability(BaseCapability):
     Provides endpoints for:
     - GET /api/vexy/routine/context-phase - Current routine context phase
     - POST /api/vexy/routine/orientation - Mode A orientation message
-    - GET /api/vexy/routine/market-readiness/{user_id} - Market readiness artifact
+    - GET /api/vexy/routine/market-readiness/{user_id} - Market readiness artifact (legacy)
+    - GET /api/vexy/market-state - State of the Market v2
     - POST /api/vexy/routine-briefing - Full routine briefing
     - POST /api/vexy/context/log-health - Ingest log health context
     - GET /api/vexy/context/log-health/{user_id} - Get log health context
@@ -94,6 +96,17 @@ class RoutineCapability(BaseCapability):
             """
             result = self.service.get_market_readiness(user_id)
             return MarketReadinessResponse(**result)
+
+        @router.get("/api/vexy/market-state", response_model=MarketStateResponse)
+        async def get_market_state():
+            """
+            State of the Market v2 — deterministic 4-lens synthesis.
+
+            No query params, no user_id. Redis reads + deterministic logic only.
+            Returns: schema_version, context_phase, 4 lenses (null on weekends/holidays).
+            """
+            result = self.service.get_market_state()
+            return MarketStateResponse(**result)
 
         @router.post("/api/vexy/routine-briefing", response_model=RoutineBriefingResponse)
         async def routine_briefing(request: RoutineBriefingRequest):

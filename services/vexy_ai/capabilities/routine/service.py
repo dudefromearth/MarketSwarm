@@ -83,6 +83,58 @@ class RoutineService:
             "data": payload,
         }
 
+    def get_market_state(self) -> Dict[str, Any]:
+        """
+        State of the Market v2 — deterministic synthesis.
+
+        Reads from market-redis (spot, GEX), returns 4-lens market state.
+        No LLM, no external API. Target: < 40ms.
+        """
+        import redis
+        from services.vexy_ai.intel.market_reader import MarketReader
+        from services.vexy_ai.market_state import MarketStateEngine
+
+        try:
+            buses = self.config.get("buses", {}) or {}
+            market_url = buses.get("market-redis", {}).get("url", "redis://127.0.0.1:6380")
+            r_market = redis.from_url(market_url, decode_responses=True)
+            reader = MarketReader(r_market, self.logger)
+            engine = MarketStateEngine(reader, self.logger)
+            return engine.get_full_state()
+        except Exception as e:
+            self.logger.error(f"MarketStateEngine failed: {e}", emoji="💥")
+            # Graceful degradation — return minimal valid envelope
+            from services.vexy_ai.market_state import MarketStateEngine, ALL_HOLIDAYS
+            from services.vexy_ai.routine_panel import get_routine_context_phase, RoutineContextPhase
+            import pytz
+            et = pytz.timezone("America/New_York")
+            now = datetime.now(et)
+            phase = get_routine_context_phase(now=now, holidays=ALL_HOLIDAYS)
+            # Use same mapping as MarketStateEngine
+            weekend_phases = {
+                RoutineContextPhase.FRIDAY_NIGHT,
+                RoutineContextPhase.WEEKEND_MORNING,
+                RoutineContextPhase.WEEKEND_AFTERNOON,
+                RoutineContextPhase.WEEKEND_EVENING,
+            }
+            if phase == RoutineContextPhase.HOLIDAY:
+                ctx = "holiday"
+            elif phase in weekend_phases:
+                ctx = "weekend"
+            elif phase == RoutineContextPhase.WEEKDAY_INTRADAY:
+                ctx = "weekday_live"
+            else:
+                ctx = "weekday_premarket"
+            return {
+                "schema_version": "som.v2",
+                "generated_at": now.isoformat(),
+                "context_phase": ctx,
+                "big_picture_volatility": None,
+                "localized_volatility": None,
+                "event_energy": None,
+                "convexity_temperature": None,
+            }
+
     def generate_briefing(
         self,
         mode: str,

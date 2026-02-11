@@ -25,7 +25,7 @@ import WhatsNew from '../WhatsNew';
 
 import VexyRoutinePanel from './VexyRoutinePanel';
 import ReadinessTagSelector from './ReadinessTagSelector';
-import MarketReadiness from './MarketReadiness';
+import StateOfTheMarket from './StateOfTheMarket';
 import MicroPause from './MicroPause';
 import { useRoutineState } from '../../hooks/useRoutineState';
 import { useReadinessTags } from '../../hooks/useReadinessTags';
@@ -129,8 +129,8 @@ export default function RoutineDrawer({ isOpen, onClose, marketContext }: Routin
           {/* Domain separation */}
           <div className="routine-domain-spacer" />
 
-          {/* Market Readiness Domain */}
-          <MarketReadiness isOpen={isOpen} />
+          {/* State of the Market */}
+          <StateOfTheMarket isOpen={isOpen} />
         </div>
       </div>
     </>
