@@ -2838,8 +2838,8 @@ body {
 }
 
 .risk-graph-sidebar {
-  width: 290px;
-  min-width: 290px;
+  width: 310px;
+  min-width: 310px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -3706,7 +3706,7 @@ body {
 }
 
 .position-cost-basis .debit-input {
-  width: 52px;
+  width: 64px;
   background: transparent;
   border: none;
   color: inherit;
