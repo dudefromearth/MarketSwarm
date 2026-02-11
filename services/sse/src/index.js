@@ -19,6 +19,7 @@ import dealerGravityRoutes from "./routes/dealerGravity.js";
 import positionsRoutes from "./routes/positions.js";
 import aiRoutes from "./routes/ai.js";
 import importsRoutes from "./routes/imports.js";
+import econIndicatorsRoutes from "./routes/econIndicators.js";
 import { authMiddleware, logAuthConfig } from "./auth.js";
 import { initDb, closeDb } from "./db/index.js";
 
@@ -70,6 +71,7 @@ app.use("/api/dealer-gravity", dealerGravityRoutes);
 app.use("/api/positions", positionsRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/imports", importsRoutes);
+app.use("/api/admin/economic-indicators", econIndicatorsRoutes);
 
 // Proxy journal endpoints to journal service (port 3002)
 // This handles /api/logs/*, /api/trades/*, /api/playbooks/*, /api/journals/*

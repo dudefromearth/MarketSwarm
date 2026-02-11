@@ -358,6 +358,13 @@ export default function AdminPage() {
               </svg>
               VP Editor
             </button>
+            <button className="nav-btn" onClick={() => navigate("/admin/economic-indicators")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 3v18h18" />
+                <path d="M18 17V9M13 17V5M8 17v-3" />
+              </svg>
+              Indicators
+            </button>
           </div>
         </div>
 

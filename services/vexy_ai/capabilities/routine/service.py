@@ -83,6 +83,18 @@ class RoutineService:
             "data": payload,
         }
 
+    def _get_registry(self):
+        """Lazy-load the EconomicIndicatorRegistry (singleton)."""
+        if not hasattr(self, "_registry"):
+            from services.vexy_ai.economic_indicators import EconomicIndicatorRegistry
+            self._registry = EconomicIndicatorRegistry(self.config, self.logger)
+            try:
+                self._registry.load_from_db()
+                self._registry.start_subscription()
+            except Exception as e:
+                self.logger.warning(f"Indicator registry init failed: {e}", emoji="⚠️")
+        return self._registry
+
     def get_market_state(self) -> Dict[str, Any]:
         """
         State of the Market v2 — deterministic synthesis.
@@ -99,7 +111,8 @@ class RoutineService:
             market_url = buses.get("market-redis", {}).get("url", "redis://127.0.0.1:6380")
             r_market = redis.from_url(market_url, decode_responses=True)
             reader = MarketReader(r_market, self.logger)
-            engine = MarketStateEngine(reader, self.logger)
+            registry = self._get_registry()
+            engine = MarketStateEngine(reader, self.logger, registry=registry, market_redis=r_market)
             return engine.get_full_state()
         except Exception as e:
             self.logger.error(f"MarketStateEngine failed: {e}", emoji="💥")

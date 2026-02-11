@@ -860,21 +860,46 @@
   flex: 1;
 }
 
-.som-event-impact {
+/* ── Rating Dot (colored circle + number) ── */
+.som-rating-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.som-rating-circle {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.som-rating-red { background: #ef4444; box-shadow: 0 0 4px rgba(239, 68, 68, 0.4); }
+.som-rating-orange { background: #f97316; box-shadow: 0 0 4px rgba(249, 115, 22, 0.4); }
+.som-rating-yellow { background: #eab308; box-shadow: 0 0 4px rgba(234, 179, 8, 0.3); }
+.som-rating-gray { background: #6b7280; }
+
+.som-rating-number {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--routine-text-dim);
+  min-width: 12px;
+  text-align: center;
+}
+
+/* ── Event Result (beat/met/missed) ── */
+.som-event-result {
   font-size: 10px;
   font-weight: 500;
   letter-spacing: 0.3px;
-  text-transform: uppercase;
-  color: var(--routine-text-dim);
+  white-space: nowrap;
 }
 
-.som-impact-high {
-  color: var(--routine-text-muted);
-}
-
-.som-impact-very-high {
-  color: var(--routine-gold);
-}
+.som-result-beat { color: #22c55e; }
+.som-result-met { color: var(--routine-text-dim); }
+.som-result-missed { color: #f59e0b; }
 
 /* ── Convexity Temperature ────────── */
 .som-lens-temperature {
@@ -1009,9 +1034,12 @@
   border-top-color: #e5e5ea;
 }
 
-[data-theme="light"] .som-impact-very-high {
-  color: #8b6914;
-}
+[data-theme="light"] .som-rating-red { background: #dc2626; box-shadow: none; }
+[data-theme="light"] .som-rating-orange { background: #ea580c; box-shadow: none; }
+[data-theme="light"] .som-rating-yellow { background: #ca8a04; box-shadow: none; }
+[data-theme="light"] .som-rating-gray { background: #9ca3af; }
+[data-theme="light"] .som-result-beat { color: #16a34a; }
+[data-theme="light"] .som-result-missed { color: #d97706; }
 
 /* ========== Legacy styles (for backwards compatibility) ========== */
 .routine-spacer {

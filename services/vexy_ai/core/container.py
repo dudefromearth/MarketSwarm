@@ -146,9 +146,10 @@ class Container:
         @router.get("/api/vexy/market-state")
         async def market_state():
             """State of the Market v2 — deterministic 4-lens synthesis."""
-            from services.vexy_ai.capabilities.routine.service import RoutineService
-            svc = RoutineService(self.config, self.logger)
-            return svc.get_market_state()
+            if not hasattr(self, "_routine_svc"):
+                from services.vexy_ai.capabilities.routine.service import RoutineService
+                self._routine_svc = RoutineService(self.config, self.logger)
+            return self._routine_svc.get_market_state()
 
         self._vexy.app.include_router(router)
 

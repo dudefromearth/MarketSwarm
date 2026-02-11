@@ -1,0 +1,331 @@
+[
+  {
+    "key": "nfp",
+    "name": "Non-Farm Payrolls (NFP)",
+    "rating": 10,
+    "description": "Monthly report on the number of jobs added or lost in the US economy.",
+    "aliases": ["NFP", "Non-Farm Payrolls", "Nonfarm Payrolls", "Jobs Report"]
+  },
+  {
+    "key": "gdp",
+    "name": "Gross Domestic Product (GDP)",
+    "rating": 10,
+    "description": "Quarterly report on the total value of goods and services produced in the US economy.",
+    "aliases": ["GDP", "Gross Domestic Product", "GDP Advance", "GDP Preliminary", "GDP Final"]
+  },
+  {
+    "key": "avg_hourly_earnings",
+    "name": "Average Hourly Earnings m/m",
+    "rating": 9,
+    "description": "Monthly report on the change in the average hourly earnings of employees, indicating wage inflation.",
+    "aliases": ["Average Hourly Earnings", "Avg Hourly Earnings", "Wage Growth"]
+  },
+  {
+    "key": "unemployment_rate",
+    "name": "Unemployment Rate",
+    "rating": 9,
+    "description": "Monthly report on the percentage of the total workforce that is unemployed and actively seeking work.",
+    "aliases": ["Unemployment Rate", "Unemployment"]
+  },
+  {
+    "key": "cpi",
+    "name": "Consumer Price Index (CPI)",
+    "rating": 9,
+    "description": "Monthly report on the change in prices of goods and services purchased by consumers.",
+    "aliases": ["CPI", "Consumer Price Index", "Core CPI", "CPI m/m", "CPI y/y"]
+  },
+  {
+    "key": "ppi",
+    "name": "Producer Price Index (PPI)",
+    "rating": 9,
+    "description": "Monthly report on the change in prices received by domestic producers for their goods and services.",
+    "aliases": ["PPI", "Producer Price Index", "Core PPI", "PPI m/m", "PPI y/y"]
+  },
+  {
+    "key": "fomc",
+    "name": "Federal Reserve Interest Rate Decisions",
+    "rating": 9,
+    "description": "The Federal Reserve's decisions on interest rates which can affect borrowing costs and inflation.",
+    "aliases": ["FOMC", "FOMC Rate Decision", "Fed Rate Decision", "Federal Funds Rate", "Interest Rate Decision"]
+  },
+  {
+    "key": "retail_sales",
+    "name": "Retail Sales",
+    "rating": 8,
+    "description": "Monthly report on the total amount of sales at retail establishments.",
+    "aliases": ["Retail Sales", "Retail Sales m/m"]
+  },
+  {
+    "key": "ism_services",
+    "name": "ISM Services PMI",
+    "rating": 8,
+    "description": "A monthly survey of purchasing managers in the services sector, providing insights into economic conditions.",
+    "aliases": ["ISM Services", "ISM Services PMI", "ISM Non-Manufacturing", "Services PMI"]
+  },
+  {
+    "key": "ism_manufacturing",
+    "name": "ISM Manufacturing Index",
+    "rating": 8,
+    "description": "Monthly report on the level of activity in the manufacturing sector.",
+    "aliases": ["ISM Manufacturing", "ISM Manufacturing Index", "ISM Manufacturing PMI", "ISM PMI"]
+  },
+  {
+    "key": "core_retail_sales",
+    "name": "Core Retail Sales m/m",
+    "rating": 8,
+    "description": "Monthly report on the change in the total value of sales at the retail level, excluding automobiles.",
+    "aliases": ["Core Retail Sales", "Core Retail Sales m/m"]
+  },
+  {
+    "key": "flash_mfg_pmi",
+    "name": "Flash Manufacturing PMI",
+    "rating": 7,
+    "description": "Monthly survey of purchasing managers in the manufacturing sector to gauge business conditions.",
+    "aliases": ["Flash Manufacturing PMI", "Flash Mfg PMI", "S&P Flash Manufacturing PMI"]
+  },
+  {
+    "key": "flash_services_pmi",
+    "name": "Flash Services PMI",
+    "rating": 7,
+    "description": "Monthly survey of purchasing managers in the services sector to gauge business conditions.",
+    "aliases": ["Flash Services PMI", "S&P Flash Services PMI"]
+  },
+  {
+    "key": "housing_starts",
+    "name": "Housing Starts",
+    "rating": 7,
+    "description": "Monthly report on the number of new residential construction projects started.",
+    "aliases": ["Housing Starts", "Building Permits"]
+  },
+  {
+    "key": "durable_goods",
+    "name": "Durable Goods Orders",
+    "rating": 7,
+    "description": "Monthly report on the total value of new orders for long-lasting goods.",
+    "aliases": ["Durable Goods", "Durable Goods Orders", "Durable Goods Orders m/m"]
+  },
+  {
+    "key": "core_durable_goods",
+    "name": "Core Durable Goods Orders m/m",
+    "rating": 7,
+    "description": "Measures the change in the total value of new orders for US manufactured durable goods, excluding transportation items.",
+    "aliases": ["Core Durable Goods", "Core Durable Goods Orders"]
+  },
+  {
+    "key": "eci",
+    "name": "Employment Cost Index q/q",
+    "rating": 6,
+    "description": "Measures the quarterly change in the price businesses and the government pay for labor, including wages and benefits.",
+    "aliases": ["ECI", "Employment Cost Index"]
+  },
+  {
+    "key": "consumer_confidence",
+    "name": "Consumer Confidence",
+    "rating": 6,
+    "description": "Monthly report on the level of confidence consumers have in the economy.",
+    "aliases": ["Consumer Confidence", "CB Consumer Confidence"]
+  },
+  {
+    "key": "prelim_uom_sentiment",
+    "name": "Prelim UoM Consumer Sentiment",
+    "rating": 6,
+    "description": "Early estimate of the state of consumer confidence in the US.",
+    "aliases": ["Prelim UoM Consumer Sentiment", "Prelim Michigan Sentiment", "UoM Consumer Sentiment Prelim"]
+  },
+  {
+    "key": "revised_uom_sentiment",
+    "name": "Revised UoM Consumer Sentiment",
+    "rating": 6,
+    "description": "Updated and final measure of consumer confidence in the US, following the preliminary estimate.",
+    "aliases": ["Revised UoM Consumer Sentiment", "UoM Consumer Sentiment Final", "Michigan Sentiment Final"]
+  },
+  {
+    "key": "adp_employment",
+    "name": "ADP Non-Farm Employment Change",
+    "rating": 6,
+    "description": "Monthly report that provides an early estimate of employment changes in the non-farm private sector.",
+    "aliases": ["ADP Employment", "ADP Non-Farm Employment", "ADP Employment Change"]
+  },
+  {
+    "key": "initial_claims",
+    "name": "Initial Jobless Claims",
+    "rating": 6,
+    "description": "Weekly report on the number of individuals who have filed for unemployment insurance for the first time.",
+    "aliases": ["Initial Claims", "Initial Jobless Claims", "Jobless Claims", "Unemployment Claims"]
+  },
+  {
+    "key": "jolts",
+    "name": "JOLTS Job Openings",
+    "rating": 6,
+    "description": "Monthly report on the number of job openings during the reported month, excluding the farming industry.",
+    "aliases": ["JOLTS", "JOLTS Job Openings", "Job Openings"]
+  },
+  {
+    "key": "goods_trade_balance",
+    "name": "Goods Trade Balance",
+    "rating": 6,
+    "description": "Monthly report on the difference in value between imported and exported goods.",
+    "aliases": ["Goods Trade Balance", "Advance Goods Trade Balance"]
+  },
+  {
+    "key": "personal_income",
+    "name": "Personal Income m/m",
+    "rating": 5,
+    "description": "Monthly change in the total income earned by individuals.",
+    "aliases": ["Personal Income", "Personal Income m/m"]
+  },
+  {
+    "key": "personal_spending",
+    "name": "Personal Spending m/m",
+    "rating": 5,
+    "description": "Monthly change in consumption expenditures by individuals.",
+    "aliases": ["Personal Spending", "Personal Spending m/m", "PCE"]
+  },
+  {
+    "key": "revised_uom_inflation",
+    "name": "Revised UoM Inflation Expectations",
+    "rating": 5,
+    "description": "Updated inflation expectations based on consumer sentiment data.",
+    "aliases": ["Revised UoM Inflation Expectations", "UoM Inflation Expectations"]
+  },
+  {
+    "key": "rcm_tipp",
+    "name": "RCM/TIPP Economic Optimism",
+    "rating": 5,
+    "description": "Index derived from a national survey that gauges the economic sentiment and optimism of consumers.",
+    "aliases": ["RCM/TIPP Economic Optimism", "IBD/TIPP Economic Optimism", "TIPP Economic Optimism"]
+  },
+  {
+    "key": "beige_book",
+    "name": "Beige Book",
+    "rating": 5,
+    "description": "Provides qualitative information on current economic conditions across 12 Federal Reserve Districts.",
+    "aliases": ["Beige Book", "Fed Beige Book"]
+  },
+  {
+    "key": "chicago_pmi",
+    "name": "Chicago PMI",
+    "rating": 5,
+    "description": "Measures the level of a diffusion index based on surveyed purchasing managers in Chicago.",
+    "aliases": ["Chicago PMI", "Chicago Purchasing Managers Index"]
+  },
+  {
+    "key": "philly_fed",
+    "name": "Philly Fed Manufacturing Index",
+    "rating": 5,
+    "description": "Surveys manufacturers in the Philadelphia Federal Reserve district to gauge business conditions.",
+    "aliases": ["Philly Fed", "Philly Fed Manufacturing Index", "Philadelphia Fed"]
+  },
+  {
+    "key": "challenger_job_cuts",
+    "name": "Challenger Job Cuts y/y",
+    "rating": 5,
+    "description": "Measures the change in the number of job cuts announced by employers compared to the same month the previous year.",
+    "aliases": ["Challenger Job Cuts", "Challenger Job Cuts y/y"]
+  },
+  {
+    "key": "trade_balance",
+    "name": "Trade Balance",
+    "rating": 4,
+    "description": "Monthly report on the difference between a country's exports and imports.",
+    "aliases": ["Trade Balance", "Trade Deficit"]
+  },
+  {
+    "key": "new_home_sales",
+    "name": "New Home Sales",
+    "rating": 4,
+    "description": "Monthly report on the number of new homes sold.",
+    "aliases": ["New Home Sales"]
+  },
+  {
+    "key": "existing_home_sales",
+    "name": "Existing Home Sales",
+    "rating": 4,
+    "description": "Monthly report on the number of existing homes sold.",
+    "aliases": ["Existing Home Sales"]
+  },
+  {
+    "key": "pending_home_sales",
+    "name": "Pending Home Sales",
+    "rating": 4,
+    "description": "Measures the change in the number of homes under contract to be sold but still awaiting the closing transaction.",
+    "aliases": ["Pending Home Sales", "Pending Home Sales m/m"]
+  },
+  {
+    "key": "empire_state",
+    "name": "Empire State Manufacturing Index",
+    "rating": 4,
+    "description": "Monthly report on business activity in the New York region.",
+    "aliases": ["Empire State", "Empire State Manufacturing", "NY Empire State Index"]
+  },
+  {
+    "key": "richmond_mfg",
+    "name": "Richmond Manufacturing Index",
+    "rating": 4,
+    "description": "Measures the level of manufacturing activity in the Richmond Federal Reserve district.",
+    "aliases": ["Richmond Manufacturing", "Richmond Manufacturing Index", "Richmond Fed"]
+  },
+  {
+    "key": "sp_cs_hpi",
+    "name": "S&P/CS Composite-20 HPI y/y",
+    "rating": 4,
+    "description": "Year-over-year change in the value of residential real estate in 20 metropolitan regions of the US.",
+    "aliases": ["S&P/CS HPI", "Case-Shiller", "S&P/CS Composite-20 HPI"]
+  },
+  {
+    "key": "hpi",
+    "name": "HPI m/m",
+    "rating": 4,
+    "description": "Monthly change in the purchase price of houses with mortgages backed by Fannie Mae and Freddie Mac.",
+    "aliases": ["HPI", "HPI m/m", "House Price Index"]
+  },
+  {
+    "key": "nahb",
+    "name": "NAHB Housing Market Index",
+    "rating": 4,
+    "description": "Assesses the sentiment of homebuilders and is a leading indicator for the housing sector.",
+    "aliases": ["NAHB", "NAHB Housing Market Index", "Housing Market Index"]
+  },
+  {
+    "key": "wholesale_inventories",
+    "name": "Wholesale Inventories",
+    "rating": 3,
+    "description": "Monthly report on the level of inventories held by wholesalers.",
+    "aliases": ["Wholesale Inventories", "Wholesale Inventories m/m"]
+  },
+  {
+    "key": "industrial_production",
+    "name": "Industrial Production and Capacity Utilization",
+    "rating": 3,
+    "description": "Monthly report on the level of output and capacity utilization in the US industrial sector.",
+    "aliases": ["Industrial Production", "Industrial Production m/m"]
+  },
+  {
+    "key": "crude_oil_inventories",
+    "name": "Crude Oil Inventories",
+    "rating": 3,
+    "description": "Weekly report on the change in the number of barrels of crude oil held in inventory by commercial firms.",
+    "aliases": ["Crude Oil Inventories", "EIA Crude Oil Inventories"]
+  },
+  {
+    "key": "natural_gas_storage",
+    "name": "Natural Gas Storage",
+    "rating": 3,
+    "description": "Weekly report detailing the changes in the amount of natural gas held in storage.",
+    "aliases": ["Natural Gas Storage", "EIA Natural Gas Storage"]
+  },
+  {
+    "key": "capacity_utilization",
+    "name": "Capacity Utilization Rate",
+    "rating": 3,
+    "description": "Measures the rate at which potential output levels are being met or used.",
+    "aliases": ["Capacity Utilization", "Capacity Utilization Rate"]
+  },
+  {
+    "key": "chicago_pmi_legacy",
+    "name": "Chicago Purchasing Managers Index (PMI)",
+    "rating": 2,
+    "description": "Monthly report on business activity in the Chicago region.",
+    "aliases": ["Chicago Purchasing Managers", "MNI Chicago PMI"]
+  }
+]

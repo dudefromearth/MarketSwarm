@@ -11,6 +11,7 @@ import AdminPage from './pages/Admin.tsx'
 import AdminVexyPage from './pages/AdminVexy.tsx'
 import MLLabPage from './pages/MLLab.tsx'
 import VPLineEditor from './pages/VPLineEditor.tsx'
+import AdminEconIndicatorsPage from './pages/AdminEconIndicators.tsx'
 import { AlertProvider } from './contexts/AlertContext.tsx'
 import { SystemNotificationsProvider } from './contexts/SystemNotificationsContext.tsx'
 import { PathProvider } from './contexts/PathContext.tsx'
@@ -66,6 +67,7 @@ createRoot(document.getElementById('root')!).render(
                 <Route path="/admin" element={<AdminPage />} />
                 <Route path="/admin/ml-lab" element={<MLLabPage />} />
                 <Route path="/admin/vexy" element={<AdminVexyPage />} />
+                <Route path="/admin/economic-indicators" element={<AdminEconIndicatorsPage />} />
                 <Route path="/admin/vp-editor" element={
                   <TradingProviders>
                     <VPLineEditor />

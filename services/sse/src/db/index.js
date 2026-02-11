@@ -2,6 +2,10 @@
 // MySQL database connection and initialization
 
 import mysql from "mysql2/promise";
+import { randomUUID } from "crypto";
+import { readFileSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
 import { getConfig } from "../config.js";
 
 let pool = null;
@@ -176,6 +180,9 @@ async function createTables() {
 
     // Positions table (leg-based model)
     await createPositionsTables();
+
+    // Economic indicators registry
+    await createEconomicIndicatorsTables();
   } catch (e) {
     console.error("[db] Failed to create tables:", e.message);
   }
@@ -340,6 +347,107 @@ async function createPositionsTables() {
     console.log("[db] positions table ready");
   } catch (e) {
     console.error("[db] Failed to create positions table:", e.message);
+  }
+}
+
+/**
+ * Create Economic Indicators tables and seed if empty
+ */
+async function createEconomicIndicatorsTables() {
+  if (!pool) return;
+
+  const createIndicatorsTable = `
+    CREATE TABLE IF NOT EXISTS economic_indicators (
+      id CHAR(36) PRIMARY KEY,
+      \`key\` VARCHAR(64) UNIQUE NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      rating INT NOT NULL,
+      tier VARCHAR(16) NOT NULL,
+      description TEXT NULL,
+      is_active TINYINT NOT NULL DEFAULT 1,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      CHECK (rating BETWEEN 1 AND 10),
+      CHECK (tier IN ('critical','high','medium','low'))
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+
+  const createAliasesTable = `
+    CREATE TABLE IF NOT EXISTS economic_indicator_aliases (
+      id CHAR(36) PRIMARY KEY,
+      indicator_id CHAR(36) NOT NULL,
+      alias VARCHAR(255) NOT NULL,
+      created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (indicator_id) REFERENCES economic_indicators(id) ON DELETE CASCADE,
+      INDEX idx_alias (alias)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+
+  try {
+    await pool.execute(createIndicatorsTable);
+    await pool.execute(createAliasesTable);
+    console.log("[db] economic_indicators tables ready");
+
+    // Seed if empty
+    const [rows] = await pool.execute("SELECT COUNT(*) as count FROM economic_indicators");
+    if (rows[0].count === 0) {
+      await seedEconomicIndicators();
+    }
+  } catch (e) {
+    console.error("[db] Failed to create economic_indicators tables:", e.message);
+  }
+}
+
+/**
+ * Compute tier from rating
+ */
+function ratingToTier(rating) {
+  if (rating >= 9) return "critical";
+  if (rating >= 7) return "high";
+  if (rating >= 5) return "medium";
+  return "low";
+}
+
+/**
+ * Seed economic indicators from JSON file
+ */
+async function seedEconomicIndicators() {
+  if (!pool) return;
+
+  try {
+    // Read seed file from vexy_ai service directory
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const seedPath = join(__dirname, "../../../../services/vexy_ai/economic_indicators_seed.json");
+    const seedData = JSON.parse(readFileSync(seedPath, "utf-8"));
+
+    console.log(`[db] Seeding ${seedData.length} economic indicators...`);
+
+    for (const item of seedData) {
+      const id = randomUUID();
+      const tier = ratingToTier(Math.round(item.rating));
+      const rating = Math.round(item.rating);
+
+      await pool.execute(
+        `INSERT INTO economic_indicators (id, \`key\`, name, rating, tier, description, is_active)
+         VALUES (?, ?, ?, ?, ?, ?, 1)`,
+        [id, item.key, item.name, rating, tier, item.description || null]
+      );
+
+      // Insert aliases
+      if (item.aliases && item.aliases.length > 0) {
+        for (const alias of item.aliases) {
+          const aliasId = randomUUID();
+          await pool.execute(
+            `INSERT INTO economic_indicator_aliases (id, indicator_id, alias) VALUES (?, ?, ?)`,
+            [aliasId, id, alias]
+          );
+        }
+      }
+    }
+
+    console.log(`[db] Seeded ${seedData.length} economic indicators with aliases`);
+  } catch (e) {
+    console.error("[db] Failed to seed economic indicators:", e.message);
   }
 }
 

@@ -23,10 +23,18 @@ type SomRegimeKey = 'compression' | 'goldilocks_i' | 'goldilocks_ii' | 'elevated
 
 type ConvexityTemp = 'cold' | 'cool' | 'warm' | 'hot';
 
+interface SomEventResult {
+  actual: string;
+  expected: string;
+  status: 'beat' | 'met' | 'missed';
+}
+
 interface SomEvent {
   time_et: string;
   name: string;
   impact: string;
+  rating?: number;
+  result?: SomEventResult;
 }
 
 interface SomPayload {
@@ -110,6 +118,22 @@ const TEMP_LABELS: Record<ConvexityTemp, string> = {
   cool: 'Cool',
   warm: 'Warm',
   hot: 'Hot',
+};
+
+// ── Rating dot color class ───────────────────────────────────────────
+
+function ratingColorClass(rating: number | undefined): string {
+  if (!rating) return 'som-rating-gray';
+  if (rating >= 9) return 'som-rating-red';
+  if (rating >= 7) return 'som-rating-orange';
+  if (rating >= 5) return 'som-rating-yellow';
+  return 'som-rating-gray';
+}
+
+const RESULT_STATUS_LABELS: Record<string, { label: string; cls: string }> = {
+  beat: { label: 'Beat', cls: 'som-result-beat' },
+  met: { label: 'Met', cls: 'som-result-met' },
+  missed: { label: 'Missed', cls: 'som-result-missed' },
 };
 
 // ── Component ────────────────────────────────────────────────────────
@@ -222,15 +246,24 @@ export default function StateOfTheMarket({ isOpen }: StateOfTheMarketProps) {
           <div className="som-lens-content">
             {ee.events.length > 0 ? (
               <div className="som-events">
-                {ee.events.map((evt, idx) => (
-                  <div key={idx} className="som-event-row">
-                    <span className="som-event-time">{evt.time_et}</span>
-                    <span className="som-event-name">{evt.name}</span>
-                    <span className={`som-event-impact som-impact-${evt.impact.toLowerCase().replace(' ', '-')}`}>
-                      {evt.impact}
-                    </span>
-                  </div>
-                ))}
+                {ee.events.map((evt, idx) => {
+                  const resultInfo = evt.result ? RESULT_STATUS_LABELS[evt.result.status] : null;
+                  return (
+                    <div key={idx} className="som-event-row">
+                      <span className="som-event-time">{evt.time_et}</span>
+                      <span className="som-event-name">{evt.name}</span>
+                      {evt.result && resultInfo && (
+                        <span className={`som-event-result ${resultInfo.cls}`}>
+                          {evt.result.actual} (exp {evt.result.expected}) {resultInfo.label}
+                        </span>
+                      )}
+                      <span className="som-rating-dot">
+                        <span className={`som-rating-circle ${ratingColorClass(evt.rating)}`} />
+                        <span className="som-rating-number">{evt.rating ?? '?'}</span>
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <div className="som-detail som-clean">No scheduled events</div>

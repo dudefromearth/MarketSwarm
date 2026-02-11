@@ -12,9 +12,10 @@ Target: < 40ms response.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, date
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import pytz
 
@@ -24,6 +25,9 @@ from services.vexy_ai.routine_panel import (
     RoutineContextPhase,
     US_MARKET_HOLIDAYS_2025,
 )
+
+if TYPE_CHECKING:
+    from services.vexy_ai.economic_indicators import EconomicIndicatorRegistry
 
 # ── VIX Regime Constants (frozen boundaries) ──────────────────────────
 
@@ -53,102 +57,104 @@ _FORBIDDEN_RE = re.compile(
 
 ECONOMIC_CALENDAR: Dict[str, List[Dict[str, str]]] = {
     # ── 2025 ──
-    "2025-01-10": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-01-14": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-01-15": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-01-29": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2025-02-07": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-02-12": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-02-13": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-03-03": [{"time_et": "10:00", "name": "ISM Manufacturing", "impact": "High"}],
-    "2025-03-07": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-03-12": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-03-13": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-03-19": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2025-04-02": [{"time_et": "08:30", "name": "ADP Employment", "impact": "Medium"}],
-    "2025-04-04": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-04-10": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-04-11": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-05-01": [{"time_et": "10:00", "name": "ISM Manufacturing", "impact": "High"}],
-    "2025-05-02": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-05-07": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2025-05-13": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-05-14": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-06-02": [{"time_et": "10:00", "name": "ISM Manufacturing", "impact": "High"}],
-    "2025-06-06": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-06-11": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-06-12": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-06-18": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2025-07-03": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-07-10": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-07-11": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-07-30": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2025-08-01": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-08-12": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-08-13": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-09-05": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-09-10": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-09-11": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-09-17": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2025-10-03": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-10-14": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-10-15": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-10-29": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2025-11-07": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-11-12": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-11-13": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-12-05": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2025-12-10": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2025-12-11": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2025-12-17": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
+    # Impact/rating now resolved dynamically from EconomicIndicatorRegistry.
+    # Only time_et and name are stored here.
+    "2025-01-10": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-01-14": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-01-15": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-01-29": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2025-02-07": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-02-12": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-02-13": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-03-03": [{"time_et": "10:00", "name": "ISM Manufacturing"}],
+    "2025-03-07": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-03-12": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-03-13": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-03-19": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2025-04-02": [{"time_et": "08:30", "name": "ADP Employment"}],
+    "2025-04-04": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-04-10": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-04-11": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-05-01": [{"time_et": "10:00", "name": "ISM Manufacturing"}],
+    "2025-05-02": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-05-07": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2025-05-13": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-05-14": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-06-02": [{"time_et": "10:00", "name": "ISM Manufacturing"}],
+    "2025-06-06": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-06-11": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-06-12": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-06-18": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2025-07-03": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-07-10": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-07-11": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-07-30": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2025-08-01": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-08-12": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-08-13": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-09-05": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-09-10": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-09-11": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-09-17": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2025-10-03": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-10-14": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-10-15": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-10-29": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2025-11-07": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-11-12": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-11-13": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-12-05": [{"time_et": "08:30", "name": "NFP"}],
+    "2025-12-10": [{"time_et": "08:30", "name": "CPI"}],
+    "2025-12-11": [{"time_et": "08:30", "name": "PPI"}],
+    "2025-12-17": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
 
     # ── 2026 ──
-    "2026-01-09": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-01-14": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2026-01-15": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2026-01-28": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2026-02-06": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-02-11": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2026-02-12": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2026-03-06": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-03-11": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2026-03-12": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2026-03-18": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2026-04-03": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-04-14": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2026-04-15": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2026-05-01": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-05-06": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2026-05-12": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2026-05-13": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2026-06-05": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-06-10": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2026-06-11": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2026-06-17": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2026-07-02": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-07-14": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2026-07-15": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2026-07-29": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2026-08-07": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-08-12": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2026-08-13": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2026-09-04": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-09-16": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
+    "2026-01-09": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-01-14": [{"time_et": "08:30", "name": "CPI"}],
+    "2026-01-15": [{"time_et": "08:30", "name": "PPI"}],
+    "2026-01-28": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2026-02-06": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-02-11": [{"time_et": "08:30", "name": "CPI"}],
+    "2026-02-12": [{"time_et": "08:30", "name": "PPI"}],
+    "2026-03-06": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-03-11": [{"time_et": "08:30", "name": "CPI"}],
+    "2026-03-12": [{"time_et": "08:30", "name": "PPI"}],
+    "2026-03-18": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2026-04-03": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-04-14": [{"time_et": "08:30", "name": "CPI"}],
+    "2026-04-15": [{"time_et": "08:30", "name": "PPI"}],
+    "2026-05-01": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-05-06": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2026-05-12": [{"time_et": "08:30", "name": "CPI"}],
+    "2026-05-13": [{"time_et": "08:30", "name": "PPI"}],
+    "2026-06-05": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-06-10": [{"time_et": "08:30", "name": "CPI"}],
+    "2026-06-11": [{"time_et": "08:30", "name": "PPI"}],
+    "2026-06-17": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2026-07-02": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-07-14": [{"time_et": "08:30", "name": "CPI"}],
+    "2026-07-15": [{"time_et": "08:30", "name": "PPI"}],
+    "2026-07-29": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2026-08-07": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-08-12": [{"time_et": "08:30", "name": "CPI"}],
+    "2026-08-13": [{"time_et": "08:30", "name": "PPI"}],
+    "2026-09-04": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-09-16": [{"time_et": "08:30", "name": "CPI"}],
     "2026-09-17": [
-        {"time_et": "08:30", "name": "PPI", "impact": "Medium"},
-        {"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"},
+        {"time_et": "08:30", "name": "PPI"},
+        {"time_et": "14:00", "name": "FOMC Rate Decision"},
     ],
-    "2026-10-02": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-10-13": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2026-10-14": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2026-10-28": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
-    "2026-11-06": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-11-10": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2026-11-12": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2026-12-04": [{"time_et": "08:30", "name": "NFP", "impact": "Very High"}],
-    "2026-12-09": [{"time_et": "08:30", "name": "CPI", "impact": "Very High"}],
-    "2026-12-10": [{"time_et": "08:30", "name": "PPI", "impact": "Medium"}],
-    "2026-12-16": [{"time_et": "14:00", "name": "FOMC Rate Decision", "impact": "Very High"}],
+    "2026-10-02": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-10-13": [{"time_et": "08:30", "name": "CPI"}],
+    "2026-10-14": [{"time_et": "08:30", "name": "PPI"}],
+    "2026-10-28": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
+    "2026-11-06": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-11-10": [{"time_et": "08:30", "name": "CPI"}],
+    "2026-11-12": [{"time_et": "08:30", "name": "PPI"}],
+    "2026-12-04": [{"time_et": "08:30", "name": "NFP"}],
+    "2026-12-09": [{"time_et": "08:30", "name": "CPI"}],
+    "2026-12-10": [{"time_et": "08:30", "name": "PPI"}],
+    "2026-12-16": [{"time_et": "14:00", "name": "FOMC Rate Decision"}],
 }
 
 # 2026 holidays
@@ -202,9 +208,17 @@ _CONVEXITY_SUMMARIES = {
 class MarketStateEngine:
     """Deterministic market-state synthesis for the Routine panel."""
 
-    def __init__(self, market_reader: MarketReader, logger):
+    def __init__(
+        self,
+        market_reader: MarketReader,
+        logger,
+        registry: Optional["EconomicIndicatorRegistry"] = None,
+        market_redis=None,
+    ):
         self.market_reader = market_reader
         self.logger = logger
+        self.registry = registry
+        self._market_redis = market_redis
 
     # ── Lens 1: Big Picture Volatility ─────────────────────────────
 
@@ -293,23 +307,76 @@ class MarketStateEngine:
     # ── Lens 3: Event Risk & Potential Energy ─────────────────────
 
     def get_event_energy(self) -> Dict[str, Any]:
-        """Look up today's economic events and classify posture."""
+        """Look up today's economic events and classify posture.
+
+        Resolves rating/impact dynamically from the indicator registry.
+        Optionally attaches post-release result data from Redis.
+        """
         et = pytz.timezone("America/New_York")
         today_str = datetime.now(et).strftime("%Y-%m-%d")
-        events = ECONOMIC_CALENDAR.get(today_str, [])
+        raw_events = ECONOMIC_CALENDAR.get(today_str, [])
 
-        if not events:
+        if not raw_events:
             return {
                 "events": [],
                 "event_posture": "clean_morning",
             }
 
-        posture = self._classify_event_posture(events)
+        # Resolve rating + impact from registry (or fall back to defaults)
+        enriched: List[Dict[str, Any]] = []
+        for evt in raw_events:
+            entry = dict(evt)  # shallow copy
+            name = entry["name"]
+
+            if self.registry and self.registry.is_loaded:
+                rating = self.registry.get_rating(name)
+                impact = self.registry.get_impact_label(rating)
+            else:
+                # Fallback: hardcoded defaults for known events
+                rating = 5
+                impact = "Medium"
+
+            entry["rating"] = rating
+            entry["impact"] = impact
+
+            # Look up post-release result from Redis
+            result = self._get_econ_result(today_str, name)
+            if result:
+                entry["result"] = result
+
+            enriched.append(entry)
+
+        posture = self._classify_event_posture(enriched)
 
         return {
-            "events": events,
+            "events": enriched,
             "event_posture": posture,
         }
+
+    def _get_econ_result(self, date_str: str, event_name: str) -> Optional[Dict[str, str]]:
+        """Read post-release result from Redis for a given event."""
+        if not self._market_redis:
+            return None
+
+        # Try to find the indicator key from the registry
+        indicator_key = None
+        if self.registry and self.registry.is_loaded:
+            ind = self.registry.get_by_name(event_name)
+            if ind:
+                indicator_key = ind["key"]
+
+        if not indicator_key:
+            # Fallback: slugify the event name
+            indicator_key = event_name.lower().replace(" ", "_")
+
+        redis_key = f"massive:econ:result:{date_str}:{indicator_key}"
+        try:
+            raw = self._market_redis.get(redis_key)
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
+        return None
 
     def _classify_event_posture(self, events: List[Dict[str, str]]) -> str:
         """Classify event posture from today's events."""

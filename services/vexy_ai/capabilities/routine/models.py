@@ -78,11 +78,20 @@ class MarketReadinessResponse(BaseModel):
     error: Optional[str] = None
 
 
+class MarketStateEventResult(BaseModel):
+    """Post-release economic event result."""
+    actual: str
+    expected: str
+    status: str  # "beat" | "met" | "missed"
+
+
 class MarketStateEventItem(BaseModel):
     """Single economic event."""
     time_et: str
     name: str
     impact: str
+    rating: Optional[int] = None
+    result: Optional[MarketStateEventResult] = None
 
 
 class MarketStateBigPicture(BaseModel):
