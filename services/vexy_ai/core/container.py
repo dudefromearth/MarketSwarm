@@ -17,6 +17,7 @@ Usage:
         await container.shutdown()
 """
 
+import asyncio
 import importlib
 from typing import Any, Dict, List, Optional, Type
 
@@ -87,12 +88,18 @@ class Container:
             # 2. Create AI adapter
             self._ai_adapter = self._create_ai_adapter()
 
+            # 2.5 Create shared MarketIntelProvider
+            from ..market_intel import MarketIntelProvider
+            self._market_intel = MarketIntelProvider(self.config, self.logger)
+            self._market_intel.initialize()
+
             # 3. Create Vexy core
             self._vexy = Vexy(
                 config=self.config,
                 logger=self.logger,
                 buses=self._bus_adapter,
                 ai=self._ai_adapter,
+                market_intel=self._market_intel,
             )
 
             # 4. Register health endpoint (always available)
@@ -143,20 +150,21 @@ class Container:
         async def status():
             return self._vexy.get_status()
 
-        @router.get("/api/vexy/market-state")
-        async def market_state():
-            """State of the Market v2 — deterministic 4-lens synthesis."""
-            if not hasattr(self, "_routine_svc"):
-                from services.vexy_ai.capabilities.routine.service import RoutineService
-                self._routine_svc = RoutineService(self.config, self.logger)
-            return self._routine_svc.get_market_state()
-
         self._vexy.app.include_router(router)
+
+        # Market-state route owned by MarketIntelProvider
+        self._market_intel.register_routes(self._vexy.app)
 
         # Register admin routes (prompt management)
         from ..adapters.http.routes.admin import create_admin_router
         admin_router = create_admin_router()
         self._vexy.app.include_router(admin_router)
+
+        # Start RSS relevance scoring background loop
+        @self._vexy.app.on_event("startup")
+        async def _start_rss_relevance():
+            task = asyncio.create_task(self._rss_relevance_loop())
+            self._vexy._background_tasks.append(task)
 
     async def _load_capabilities(self) -> None:
         """Load and register capabilities based on configuration."""
@@ -242,11 +250,39 @@ class Container:
             await self._bus_adapter.close()
             self._bus_adapter = None
 
+        # Clean up MarketIntelProvider
+        if hasattr(self, '_market_intel') and self._market_intel:
+            self._market_intel.shutdown()
+            self._market_intel = None
+
         # AI adapter doesn't need cleanup (stateless)
         self._ai_adapter = None
 
         self._initialized = False
         self.logger.info("Container shutdown complete", emoji="✓")
+
+    async def _rss_relevance_loop(self) -> None:
+        """Background task: score RSS articles for SoM relevance every 60s."""
+        await asyncio.sleep(10)  # Let other services start first
+
+        while True:
+            try:
+                import redis as sync_redis
+                from services.vexy_ai.intel.rss_relevance import RSSRelevanceEngine
+
+                buses = self.config.get("buses", {}) or {}
+                intel_url = buses.get("intel-redis", {}).get("url", "redis://127.0.0.1:6381")
+                market_url = buses.get("market-redis", {}).get("url", "redis://127.0.0.1:6380")
+
+                r_intel = sync_redis.from_url(intel_url, decode_responses=True)
+                r_market = sync_redis.from_url(market_url, decode_responses=True)
+
+                engine = RSSRelevanceEngine(r_intel, r_market, self.logger)
+                engine.score_and_cache()
+            except Exception as e:
+                self.logger.warning(f"RSS relevance loop error: {e}", emoji="⚠️")
+
+            await asyncio.sleep(60)
 
     @property
     def vexy(self) -> Optional[Vexy]:
