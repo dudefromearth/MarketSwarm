@@ -49,7 +49,6 @@ export default function RoutineDrawer({ isOpen, onClose, marketContext }: Routin
   const {
     markRoutineOpened,
     markOrientationShown,
-    setAskVexyOpen,
   } = useRoutineState();
 
   const {
@@ -112,7 +111,6 @@ export default function RoutineDrawer({ isOpen, onClose, marketContext }: Routin
             isOpen={isOpen}
             marketContext={marketContext}
             onOrientationShown={markOrientationShown}
-            onAskVexyOpenChange={setAskVexyOpen}
           />
 
           {/* Domain separation */}
@@ -130,7 +128,7 @@ export default function RoutineDrawer({ isOpen, onClose, marketContext }: Routin
           <div className="routine-domain-spacer" />
 
           {/* State of the Market */}
-          <StateOfTheMarket isOpen={isOpen} />
+          <StateOfTheMarket isOpen={isOpen} marketContext={marketContext} />
         </div>
       </div>
     </>

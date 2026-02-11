@@ -44,7 +44,10 @@ export default function ReadinessTagSelector({
   if (loading) {
     return (
       <div className="personal-readiness">
-        <div className="routine-lens-header">Personal Readiness</div>
+        <div className="som-header">
+          <div className="som-title">Personal Readiness</div>
+          <div className="som-subtitle">What you notice here enters your journal.</div>
+        </div>
         <div style={{ padding: '12px 0', opacity: 0.5, fontSize: 12 }}>Loading...</div>
       </div>
     );
@@ -60,7 +63,10 @@ export default function ReadinessTagSelector({
 
   return (
     <div className="personal-readiness">
-      <div className="routine-lens-header">Personal Readiness</div>
+      <div className="som-header">
+        <div className="som-title">Personal Readiness</div>
+        <div className="som-subtitle">What you notice here enters your journal.</div>
+      </div>
 
       <div className="personal-readiness-qualities">
         {GROUP_ORDER.map(group => {

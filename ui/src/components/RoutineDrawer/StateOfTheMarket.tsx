@@ -11,9 +11,10 @@
  * Calibrates posture — never recommends trades.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { API } from '../../config/api';
 import { useSingleFetch } from '../../hooks/useSingleFetch';
+import type { MarketContext } from './index';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -65,6 +66,7 @@ interface SomPayload {
 
 interface StateOfTheMarketProps {
   isOpen: boolean;
+  marketContext?: MarketContext;
 }
 
 // ── Regime badge CSS class mapping ───────────────────────────────────
@@ -130,15 +132,17 @@ function ratingColorClass(rating: number | undefined): string {
   return 'som-rating-gray';
 }
 
-const RESULT_STATUS_LABELS: Record<string, { label: string; cls: string }> = {
-  beat: { label: 'Beat', cls: 'som-result-beat' },
-  met: { label: 'Met', cls: 'som-result-met' },
-  missed: { label: 'Missed', cls: 'som-result-missed' },
-};
+function vixToRegime(vix: number): { key: SomRegimeKey; label: string } {
+  if (vix <= 13) return { key: 'compression', label: 'Compression' };
+  if (vix <= 18) return { key: 'goldilocks_i', label: 'Goldilocks I' };
+  if (vix <= 25) return { key: 'goldilocks_ii', label: 'Goldilocks II' };
+  if (vix <= 35) return { key: 'elevated', label: 'Elevated' };
+  return { key: 'chaos', label: 'Chaos' };
+}
 
 // ── Component ────────────────────────────────────────────────────────
 
-export default function StateOfTheMarket({ isOpen }: StateOfTheMarketProps) {
+export default function StateOfTheMarket({ isOpen, marketContext }: StateOfTheMarketProps) {
   const fetchMarketState = useCallback(async (signal: AbortSignal): Promise<SomPayload | null> => {
     try {
       const response = await fetch(API.vexy.marketState, {
@@ -200,6 +204,14 @@ export default function StateOfTheMarket({ isOpen }: StateOfTheMarketProps) {
   const ee = payload.event_energy;
   const ct = payload.convexity_temperature;
 
+  // Prefer live VIX from SSE over stale fetched value
+  const liveVix = marketContext?.vixLevel;
+  const effectiveVix = liveVix ?? bpv?.vix ?? null;
+  const liveRegime = useMemo(
+    () => (effectiveVix != null ? vixToRegime(effectiveVix) : null),
+    [effectiveVix]
+  );
+
   // If all lenses are null (graceful degradation), hide
   if (!bpv && !lv && !ee && !ct) return null;
 
@@ -217,9 +229,11 @@ export default function StateOfTheMarket({ isOpen }: StateOfTheMarketProps) {
           <div className="som-lens-title">Big Picture Volatility</div>
           <div className="som-lens-content">
             <div className="som-vix-row">
-              <span className="som-vix-value">VIX {bpv.vix.toFixed(1)}</span>
-              <span className={`som-regime-badge ${REGIME_CSS[bpv.regime_key]}`}>
-                {bpv.regime_label}
+              <span className="som-vix-value">
+                VIX {effectiveVix != null ? effectiveVix.toFixed(1) : bpv.vix.toFixed(1)}
+              </span>
+              <span className={`som-regime-badge ${REGIME_CSS[liveRegime?.key ?? bpv.regime_key]}`}>
+                {liveRegime?.label ?? bpv.regime_label}
               </span>
             </div>
             <div className="som-detail">Decay: {bpv.decay_profile}</div>
@@ -246,24 +260,27 @@ export default function StateOfTheMarket({ isOpen }: StateOfTheMarketProps) {
           <div className="som-lens-content">
             {ee.events.length > 0 ? (
               <div className="som-events">
-                {ee.events.map((evt, idx) => {
-                  const resultInfo = evt.result ? RESULT_STATUS_LABELS[evt.result.status] : null;
-                  return (
-                    <div key={idx} className="som-event-row">
-                      <span className="som-event-time">{evt.time_et}</span>
-                      <span className="som-event-name">{evt.name}</span>
-                      {evt.result && resultInfo && (
-                        <span className={`som-event-result ${resultInfo.cls}`}>
-                          {evt.result.actual} (exp {evt.result.expected}) {resultInfo.label}
-                        </span>
-                      )}
-                      <span className="som-rating-dot">
-                        <span className={`som-rating-circle ${ratingColorClass(evt.rating)}`} />
-                        <span className="som-rating-number">{evt.rating ?? '?'}</span>
-                      </span>
-                    </div>
-                  );
-                })}
+                {ee.events.map((evt, idx) => (
+                  <div key={idx} className="som-event-row">
+                    <span className="som-rating-dot">
+                      <span className={`som-rating-circle ${ratingColorClass(evt.rating)}`} />
+                      <span className="som-rating-number">{evt.rating ?? '?'}</span>
+                    </span>
+                    <span className="som-event-time">{evt.time_et}</span>
+                    <span className="som-event-name">{evt.name}</span>
+                    {evt.result ? (
+                      <>
+                        <span className="som-event-actual">{evt.result.actual}</span>
+                        <span className="som-event-forecast">{evt.result.expected}</span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="som-event-actual">&mdash;</span>
+                        <span className="som-event-forecast">&mdash;</span>
+                      </>
+                    )}
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="som-detail som-clean">No scheduled events</div>
