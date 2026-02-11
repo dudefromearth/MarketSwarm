@@ -26,7 +26,7 @@ from .models_v2 import (
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 21
+    SCHEMA_VERSION = 22
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -98,6 +98,30 @@ class JournalDBv2:
         {'name': 'lesson learned', 'description': 'Key takeaway worth remembering'},
         {'name': 'worked as expected', 'description': 'Outcome matched thesis'},
         {'name': 'failed as expected', 'description': 'Loss was within anticipated scenario'},
+    ]
+
+    # Day-texture tags for Personal Readiness (server-backed)
+    DEFAULT_DAY_TEXTURE_TAGS = [
+        # Sleep group
+        {'name': 'Short Sleep', 'group': 'sleep'},
+        {'name': 'Adequate Sleep', 'group': 'sleep'},
+        {'name': 'Strong Sleep', 'group': 'sleep'},
+        # Focus group
+        {'name': 'Scattered', 'group': 'focus'},
+        {'name': 'Centered', 'group': 'focus'},
+        # Distractions group
+        {'name': 'Low Distractions', 'group': 'distractions'},
+        {'name': 'Medium Distractions', 'group': 'distractions'},
+        {'name': 'High Distractions', 'group': 'distractions'},
+        # Body group
+        {'name': 'Tight', 'group': 'body'},
+        {'name': 'Neutral', 'group': 'body'},
+        {'name': 'Energized', 'group': 'body'},
+        # Friction group (multi-select)
+        {'name': 'Carryover', 'group': 'friction'},
+        {'name': 'Noise', 'group': 'friction'},
+        {'name': 'Tension', 'group': 'friction'},
+        {'name': 'Time Pressure', 'group': 'friction'},
     ]
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
@@ -238,6 +262,9 @@ class JournalDBv2:
 
             if current_version < 21:
                 self._migrate_to_v21(conn)
+
+            if current_version < 22:
+                self._migrate_to_v22(conn)
 
             conn.commit()
         finally:
@@ -1924,6 +1951,25 @@ class JournalDBv2:
         finally:
             cursor.close()
 
+    def _migrate_to_v22(self, conn):
+        """Migrate to v22: Add category/group/system columns to tags for day-texture readiness."""
+        cursor = conn.cursor()
+        try:
+            # Check if columns already exist
+            cursor.execute("""
+                SELECT COUNT(*) FROM information_schema.columns
+                WHERE table_schema = DATABASE() AND table_name = 'tags' AND column_name = 'category'
+            """)
+            if cursor.fetchone()[0] == 0:
+                cursor.execute("ALTER TABLE tags ADD COLUMN category VARCHAR(50) DEFAULT NULL")
+                cursor.execute("ALTER TABLE tags ADD COLUMN `group` VARCHAR(50) DEFAULT NULL")
+                cursor.execute("ALTER TABLE tags ADD COLUMN `system` TINYINT DEFAULT 0")
+                cursor.execute("CREATE INDEX idx_tags_user_category ON tags (user_id, category)")
+
+            self._set_schema_version(conn, 22)
+        finally:
+            cursor.close()
+
     # ==================== Algo Alert CRUD ====================
 
     def create_algo_alert(self, alert_id: str, user_id: int, name: str, mode: str,
@@ -3098,21 +3144,23 @@ class JournalDBv2:
 
     # ==================== Tags (Vocabulary System) ====================
 
-    def list_tags(self, user_id: int, include_retired: bool = False) -> List[Tag]:
-        """List all tags for a user, optionally including retired tags."""
+    def list_tags(self, user_id: int, include_retired: bool = False, category: Optional[str] = None) -> List[Tag]:
+        """List all tags for a user, optionally including retired tags and filtering by category."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
-            if include_retired:
-                cursor.execute(
-                    "SELECT * FROM tags WHERE user_id = %s ORDER BY last_used_at DESC, created_at DESC",
-                    (user_id,)
-                )
-            else:
-                cursor.execute(
-                    "SELECT * FROM tags WHERE user_id = %s AND is_retired = 0 ORDER BY last_used_at DESC, created_at DESC",
-                    (user_id,)
-                )
+            query = "SELECT * FROM tags WHERE user_id = %s"
+            params: List[Any] = [user_id]
+
+            if not include_retired:
+                query += " AND is_retired = 0"
+
+            if category is not None:
+                query += " AND category = %s"
+                params.append(category)
+
+            query += " ORDER BY last_used_at DESC, created_at DESC"
+            cursor.execute(query, params)
             rows = cursor.fetchall()
             return [Tag.from_dict(self._row_to_dict(cursor, row)) for row in rows]
         finally:
@@ -3156,7 +3204,7 @@ class JournalDBv2:
         cursor = conn.cursor()
         try:
             data = tag.to_dict()
-            columns = ', '.join(data.keys())
+            columns = ', '.join(f'`{k}`' for k in data.keys())
             placeholders = ', '.join(['%s'] * len(data))
 
             cursor.execute(
@@ -3226,13 +3274,13 @@ class JournalDBv2:
             conn.close()
 
     def delete_tag(self, tag_id: str) -> bool:
-        """Delete a tag (only if usage_count is 0)."""
+        """Delete a tag (only if usage_count is 0 and not a system tag)."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
-            # Only delete if tag has never been used
+            # Only delete if tag has never been used and is not a system tag
             cursor.execute(
-                "DELETE FROM tags WHERE id = %s AND usage_count = 0",
+                "DELETE FROM tags WHERE id = %s AND usage_count = 0 AND `system` = 0",
                 (tag_id,)
             )
             conn.commit()
@@ -3282,7 +3330,50 @@ class JournalDBv2:
                     updated_at=now
                 )
                 data = tag.to_dict()
-                columns = ', '.join(data.keys())
+                columns = ', '.join(f'`{k}`' for k in data.keys())
+                placeholders = ', '.join(['%s'] * len(data))
+                cursor.execute(
+                    f"INSERT INTO tags ({columns}) VALUES ({placeholders})",
+                    list(data.values())
+                )
+                created_tags.append(tag)
+
+            conn.commit()
+            return created_tags
+        finally:
+            cursor.close()
+            conn.close()
+
+    def seed_day_texture_tags(self, user_id: int) -> List[Tag]:
+        """Seed default day-texture tags for readiness if none exist."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT COUNT(*) FROM tags WHERE user_id = %s AND category = 'day-texture'",
+                (user_id,)
+            )
+            if cursor.fetchone()[0] > 0:
+                return []
+
+            now = datetime.utcnow().isoformat()
+            created_tags = []
+
+            for tag_data in self.DEFAULT_DAY_TEXTURE_TAGS:
+                tag = Tag(
+                    id=Tag.new_id(),
+                    user_id=user_id,
+                    name=tag_data['name'],
+                    description=None,
+                    is_example=True,
+                    category='day-texture',
+                    group=tag_data['group'],
+                    system=True,
+                    created_at=now,
+                    updated_at=now
+                )
+                data = tag.to_dict()
+                columns = ', '.join(f'`{k}`' for k in data.keys())
                 placeholders = ', '.join(['%s'] * len(data))
                 cursor.execute(
                     f"INSERT INTO tags ({columns}) VALUES ({placeholders})",

@@ -688,6 +688,9 @@ class Tag:
     description: Optional[str] = None  # What this tag means to the trader
     is_retired: bool = False  # Hidden from suggestions but preserved on history
     is_example: bool = False  # True for seeded example tags
+    category: Optional[str] = None   # 'day-texture' for readiness, None for behavioral
+    group: Optional[str] = None      # 'sleep','focus','distractions','body','friction'
+    system: bool = False              # system tags can't be deleted/renamed
     usage_count: int = 0  # Read-only, auto-incremented when tag is applied
     last_used_at: Optional[str] = None  # Auto-updated when tag is applied
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
@@ -703,6 +706,7 @@ class Tag:
         d = asdict(self)
         d['is_retired'] = 1 if d['is_retired'] else 0
         d['is_example'] = 1 if d['is_example'] else 0
+        d['system'] = 1 if d['system'] else 0
         return d
 
     @classmethod
@@ -714,6 +718,11 @@ class Tag:
             d['is_retired'] = bool(d['is_retired'])
         if 'is_example' in d:
             d['is_example'] = bool(d['is_example'])
+        if 'system' in d:
+            d['system'] = bool(d['system'])
+        d.setdefault('category', None)
+        d.setdefault('group', None)
+        d.setdefault('system', False)
         return cls(**d)
 
     def to_api_dict(self) -> dict:

@@ -24,10 +24,11 @@ import './RoutineDrawer.css';
 import WhatsNew from '../WhatsNew';
 
 import VexyRoutinePanel from './VexyRoutinePanel';
-import PersonalReadiness from './PersonalReadiness';
+import ReadinessTagSelector from './ReadinessTagSelector';
 import MarketReadiness from './MarketReadiness';
 import MicroPause from './MicroPause';
 import { useRoutineState } from '../../hooks/useRoutineState';
+import { useReadinessTags } from '../../hooks/useReadinessTags';
 
 export interface MarketContext {
   spxPrice?: number | null;
@@ -46,14 +47,17 @@ export default function RoutineDrawer({ isOpen, onClose, marketContext }: Routin
   const wasOpenRef = useRef(false);
 
   const {
-    personalReadiness,
-    friction,
-    togglePersonalReadiness,
-    toggleFriction,
     markRoutineOpened,
     markOrientationShown,
     setAskVexyOpen,
   } = useRoutineState();
+
+  const {
+    readinessTags,
+    selectedTagIds,
+    toggleReadinessTag,
+    loading: readinessLoading,
+  } = useReadinessTags();
 
   // Micro-pause on open/close transitions
   useEffect(() => {
@@ -115,11 +119,11 @@ export default function RoutineDrawer({ isOpen, onClose, marketContext }: Routin
           <div className="routine-domain-spacer" />
 
           {/* Personal Readiness Domain */}
-          <PersonalReadiness
-            personalReadiness={personalReadiness}
-            friction={friction}
-            onToggleQuality={togglePersonalReadiness}
-            onToggleFriction={toggleFriction}
+          <ReadinessTagSelector
+            readinessTags={readinessTags}
+            selectedTagIds={selectedTagIds}
+            onToggleTag={toggleReadinessTag}
+            loading={readinessLoading}
           />
 
           {/* Domain separation */}

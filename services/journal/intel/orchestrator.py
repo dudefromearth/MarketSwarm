@@ -1555,13 +1555,17 @@ class JournalOrchestrator:
 
             params = request.query
             include_retired = params.get('include_retired', '').lower() == 'true'
+            category = params.get('category', None)
 
             # Check if user has any tags, seed if not
             tag_count = self.db.count_tags(user['id'])
             if tag_count == 0:
                 self.db.seed_example_tags(user['id'])
 
-            tags = self.db.list_tags(user['id'], include_retired=include_retired)
+            # Always ensure day-texture tags exist
+            self.db.seed_day_texture_tags(user['id'])
+
+            tags = self.db.list_tags(user['id'], include_retired=include_retired, category=category)
 
             return self._json_response({
                 'success': True,
@@ -1651,6 +1655,10 @@ class JournalOrchestrator:
                 return self._error_response("Tag not found", 404)
 
             body = await request.json()
+
+            # System tags cannot be renamed
+            if tag.system and 'name' in body:
+                return self._error_response("System tags cannot be renamed", 403)
 
             # If renaming, check for duplicate
             if 'name' in body and body['name'].strip() != tag.name:
@@ -1744,6 +1752,10 @@ class JournalOrchestrator:
             # Verify ownership
             if tag.user_id != user['id']:
                 return self._error_response("Tag not found", 404)
+
+            # System tags cannot be deleted
+            if tag.system:
+                return self._error_response("System tags cannot be deleted", 403)
 
             # Check if tag has been used
             if tag.usage_count > 0:

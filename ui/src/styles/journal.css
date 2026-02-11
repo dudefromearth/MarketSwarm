@@ -1959,6 +1959,57 @@
   background: #1e4d7a;
 }
 
+/* ========== Readiness Tags in Journal ========== */
+.tags-subsection-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #8a8a8e;
+  margin: 8px 0 6px;
+}
+
+.tags-readiness-section {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.tags-readiness-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.tags-readiness-group-label {
+  font-size: 11px;
+  color: #8a8a8e;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.tags-readiness-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-chip.readiness {
+  border-radius: 999px;
+  padding: 3px 12px;
+}
+
+.tag-chip.readiness.friction.selected {
+  background: rgba(180, 140, 40, 0.2);
+  border-color: rgba(180, 140, 40, 0.4);
+  color: #d4a020;
+}
+
+.tags-behavior-section {
+  margin-top: 4px;
+}
+
 /* ========== Light Theme ========== */
 [data-theme="light"] .journal-view {
   background: #ffffff;
@@ -2749,4 +2800,22 @@
 
 [data-theme="light"] .tag-chip.selected:hover {
   background: rgba(0, 122, 255, 0.15);
+}
+
+[data-theme="light"] .tags-subsection-label {
+  color: #86868b;
+}
+
+[data-theme="light"] .tags-readiness-section {
+  border-bottom-color: #d1d1d6;
+}
+
+[data-theme="light"] .tags-readiness-group-label {
+  color: #86868b;
+}
+
+[data-theme="light"] .tag-chip.readiness.friction.selected {
+  background: #e5e5ea;
+  border-color: transparent;
+  color: #48484a;
 }

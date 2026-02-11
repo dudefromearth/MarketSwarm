@@ -61,9 +61,9 @@
 [data-theme="light"] .process-echo-message { font-size: 15.5px; }
 [data-theme="light"] .process-echo.quiet .process-echo-message { font-size: 14.5px; }
 [data-theme="light"] .ask-vexy-response { font-size: 15.5px; }
-[data-theme="light"] .day-quality-label { font-size: 13.5px; }
-[data-theme="light"] .day-quality-chip { font-size: 13.5px; border-radius: 6px; }
-[data-theme="light"] .day-quality-chip.friction.selected { background: #d1d1d6; border-color: transparent; }
+[data-theme="light"] .readiness-tag-label { font-size: 13.5px; }
+[data-theme="light"] .readiness-tag { font-size: 13.5px; border-radius: 999px; }
+[data-theme="light"] .readiness-tag.friction.selected { background: #d1d1d6; border-color: transparent; }
 [data-theme="light"] .vix-level { font-size: 15.5px; }
 [data-theme="light"] .volatility-implication { font-size: 14.5px; }
 [data-theme="light"] .gex-posture { font-size: 14.5px; }
@@ -533,18 +533,14 @@
   margin-bottom: 20px;
 }
 
-.personal-readiness-friction {
-  padding-top: 8px;
-}
-
-/* ========== Day Quality Row ========== */
-.day-quality-row {
+/* ========== Readiness Tag Row ========== */
+.readiness-tag-row {
   display: flex;
   align-items: flex-start;
   gap: 12px;
 }
 
-.day-quality-label {
+.readiness-tag-label {
   font-size: 12px;
   color: var(--routine-text-muted);
   min-width: 100px;
@@ -552,18 +548,18 @@
   padding-top: 6px;
 }
 
-.day-quality-options {
+.readiness-tag-options {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
 
-/* ========== Day Quality Chip ========== */
-.day-quality-chip {
+/* ========== Readiness Tag Pill ========== */
+.readiness-tag {
   background: var(--routine-chip-unselected);
   border: 1px solid transparent;
-  border-radius: 3px;
-  padding: 5px 10px;
+  border-radius: 999px;
+  padding: 5px 14px;
   font-size: 12px;
   font-family: 'SF Mono', 'Menlo', monospace;
   color: var(--routine-text-dim);
@@ -571,17 +567,17 @@
   transition: all 150ms ease;
 }
 
-.day-quality-chip:hover {
+.readiness-tag:hover {
   color: var(--routine-text-muted);
 }
 
-.day-quality-chip.selected {
+.readiness-tag.selected {
   background: var(--routine-chip-selected);
   border-color: var(--routine-chip-border-selected);
   color: var(--routine-text-warm);
 }
 
-.day-quality-chip.friction.selected {
+.readiness-tag.friction.selected {
   background: rgba(180, 140, 40, 0.12);
   border-color: rgba(180, 140, 40, 0.3);
 }

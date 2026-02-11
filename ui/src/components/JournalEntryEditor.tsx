@@ -27,6 +27,9 @@ interface Tag {
   description: string | null;
   is_example: boolean;
   usage_count: number;
+  category: string | null;
+  group: string | null;
+  system: boolean;
 }
 
 // Props for daily entry mode
@@ -684,9 +687,23 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
     }
   }, [editor, isPlaybook, selectedTagIds, isEntryMode, onSave, onSaveRetro, retroType, periodStart, periodEnd]);
 
-  // Tag toggle handler
+  // Tag toggle handler (with day-texture group exclusivity)
+  const EXCLUSIVE_GROUPS = new Set(['sleep', 'focus', 'distractions', 'body']);
+
   const handleToggleTag = (tagId: string) => {
+    const tag = availableTags.find(t => t.id === tagId);
+
     setSelectedTagIds(prev => {
+      // Day-texture exclusive groups: deselect others in same group
+      if (tag?.category === 'day-texture' && tag.group && EXCLUSIVE_GROUPS.has(tag.group)) {
+        const groupTagIds = availableTags
+          .filter(t => t.group === tag.group)
+          .map(t => t.id);
+        const withoutGroup = prev.filter(id => !groupTagIds.includes(id));
+        return prev.includes(tagId) ? withoutGroup : [...withoutGroup, tagId];
+      }
+
+      // Default: simple toggle
       if (prev.includes(tagId)) {
         return prev.filter(id => id !== tagId);
       } else {
@@ -1061,18 +1078,76 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
               ) : availableTags.length === 0 ? (
                 <div className="tags-empty">No tags available. Create tags in Settings.</div>
               ) : (
-                <div className="tags-grid">
-                  {availableTags.map(tag => (
-                    <button
-                      key={tag.id}
-                      className={`tag-chip ${selectedTagIds.includes(tag.id) ? 'selected' : ''}`}
-                      onClick={() => handleToggleTag(tag.id)}
-                      title={tag.description || tag.name}
-                    >
-                      {tag.name}
-                    </button>
-                  ))}
-                </div>
+                <>
+                  {/* Readiness (day-texture) tags */}
+                  {(() => {
+                    const readinessTags = availableTags.filter(t => t.category === 'day-texture');
+                    if (readinessTags.length === 0) return null;
+
+                    const GROUP_ORDER = ['sleep', 'focus', 'distractions', 'body', 'friction'];
+                    const GROUP_LABELS: Record<string, string> = {
+                      sleep: 'Sleep:', focus: 'Focus:', distractions: 'Distractions:',
+                      body: 'Body:', friction: 'Friction:',
+                    };
+                    const grouped = new Map<string, Tag[]>();
+                    for (const tag of readinessTags) {
+                      const g = tag.group || 'other';
+                      const list = grouped.get(g) || [];
+                      list.push(tag);
+                      grouped.set(g, list);
+                    }
+
+                    return (
+                      <div className="tags-readiness-section">
+                        <div className="tags-subsection-label">Readiness</div>
+                        {GROUP_ORDER.map(group => {
+                          const tags = grouped.get(group);
+                          if (!tags) return null;
+                          return (
+                            <div key={group} className="tags-readiness-row">
+                              <span className="tags-readiness-group-label">{GROUP_LABELS[group]}</span>
+                              <div className="tags-readiness-pills">
+                                {tags.map(tag => (
+                                  <button
+                                    key={tag.id}
+                                    className={`tag-chip readiness${group === 'friction' ? ' friction' : ''}${selectedTagIds.includes(tag.id) ? ' selected' : ''}`}
+                                    onClick={() => handleToggleTag(tag.id)}
+                                    title={tag.name}
+                                  >
+                                    {tag.name.replace(/ Sleep$/, '').replace(/ Distractions$/, '')}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Behavioral tags */}
+                  {(() => {
+                    const behaviorTags = availableTags.filter(t => t.category !== 'day-texture');
+                    if (behaviorTags.length === 0) return null;
+                    return (
+                      <div className="tags-behavior-section">
+                        <div className="tags-subsection-label">Behavioral</div>
+                        <div className="tags-grid">
+                          {behaviorTags.map(tag => (
+                            <button
+                              key={tag.id}
+                              className={`tag-chip ${selectedTagIds.includes(tag.id) ? 'selected' : ''}`}
+                              onClick={() => handleToggleTag(tag.id)}
+                              title={tag.description || tag.name}
+                            >
+                              {tag.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </>
               )}
             </div>
           )}
