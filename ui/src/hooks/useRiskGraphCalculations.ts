@@ -1503,7 +1503,9 @@ export function useRiskGraphCalculations({
     for (const strat of visibleStrategies) {
       let realDays: number;
       if (strat.expiration) {
-        const expClose = new Date(strat.expiration + 'T16:00:00-05:00');
+        // Normalize to YYYY-MM-DD (handles ISO datetime strings like "2026-02-12T05:00:00.000Z")
+        const expDateStr = String(strat.expiration).split('T')[0];
+        const expClose = new Date(expDateStr + 'T16:00:00-05:00');
         realDays = (expClose.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
       } else {
         const fallbackDte = strat.dte ?? 30;

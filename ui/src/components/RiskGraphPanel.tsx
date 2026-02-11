@@ -449,7 +449,9 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   if (expirations.length > 0) {
     // Parse expiration dates with 4pm ET close, find the minimum
     const hoursPerExpiration = expirations.map(exp => {
-      const expClose = new Date(exp + 'T16:00:00-05:00');
+      // Normalize to YYYY-MM-DD (handles ISO datetime strings from API)
+      const expDateStr = String(exp).split('T')[0];
+      const expClose = new Date(expDateStr + 'T16:00:00-05:00');
       return (expClose.getTime() - now.getTime()) / (1000 * 60 * 60);
     });
     actualHoursRemaining = Math.max(0.5, Math.max(...hoursPerExpiration));

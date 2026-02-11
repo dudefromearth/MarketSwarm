@@ -100,12 +100,17 @@ export function RiskGraphProvider({ children }: RiskGraphProviderProps) {
   const sseRef = useRef<RiskGraphSSESubscription | null>(null);
 
   // Convert server strategies to legacy format
+  // Keep showing serverStrategies even when temporarily disconnected
+  // (prevents flash-to-empty during SSE reconnects or StrictMode double-mount)
   const strategies = useMemo((): LegacyRiskGraphStrategy[] => {
-    if (!USE_SERVER_RISK_GRAPH || !connected) {
+    if (!USE_SERVER_RISK_GRAPH) {
       return localStrategies;
     }
-    return serverStrategies.map(toLegacyStrategy);
-  }, [serverStrategies, localStrategies, connected]);
+    if (serverStrategies.length > 0) {
+      return serverStrategies.map(toLegacyStrategy);
+    }
+    return localStrategies;
+  }, [serverStrategies, localStrategies]);
 
   // Fetch initial data from server
   const fetchStrategies = useCallback(async () => {

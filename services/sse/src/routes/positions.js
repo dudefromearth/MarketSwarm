@@ -87,7 +87,9 @@ function rowToPosition(row) {
     positionType: row.position_type,
     direction: row.direction,
     legs,
-    primaryExpiration: row.primary_expiration,
+    primaryExpiration: row.primary_expiration instanceof Date
+      ? row.primary_expiration.toISOString().split('T')[0]
+      : row.primary_expiration,
     dte: row.dte,
     costBasis: row.cost_basis ? parseFloat(row.cost_basis) : null,
     costBasisType: row.cost_basis_type,
