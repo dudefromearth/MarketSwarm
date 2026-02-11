@@ -110,10 +110,18 @@ class MarketStateLocalVol(BaseModel):
     localized_vol_label: str
 
 
+class MarketStateUnscheduledEvent(BaseModel):
+    """Unscheduled RSS-derived development."""
+    headline: str
+    summary: str
+    impact: str  # "mild" | "structural" | "shock"
+
+
 class MarketStateEventEnergy(BaseModel):
     """Event Risk & Potential Energy lens."""
     events: List[MarketStateEventItem]
     event_posture: str
+    unscheduled_events: Optional[List[MarketStateUnscheduledEvent]] = None
 
 
 class MarketStateConvexity(BaseModel):

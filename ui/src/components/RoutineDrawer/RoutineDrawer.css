@@ -882,6 +882,18 @@
   color: var(--routine-text-dim);
 }
 
+/* ── Unscheduled Developments ────── */
+.som-unscheduled { margin-top: 10px; }
+.som-unscheduled-title { font-size: 10px; color: var(--routine-text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.som-unscheduled-row { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; font-size: 12px; color: var(--routine-text-muted); line-height: 1.5; }
+.som-unscheduled-text { flex: 1; }
+
+/* ── RSS Impact Badges ──────────── */
+.som-rss-badge { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 9px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.4px; flex-shrink: 0; margin-top: 1px; }
+.som-rss-mild { background: rgba(234, 179, 8, 0.2); color: #eab308; }
+.som-rss-structural { background: rgba(249, 115, 22, 0.2); color: #f97316; }
+.som-rss-shock { background: rgba(239, 68, 68, 0.25); color: #ef4444; }
+
 /* ── Convexity Temperature ────────── */
 .som-lens-temperature {
   padding-top: 14px;
@@ -1010,6 +1022,10 @@
   background: rgba(255, 149, 0, 0.1);
   color: #c77c00;
 }
+
+[data-theme="light"] .som-rss-mild { background: rgba(202, 138, 4, 0.1); color: #a16207; }
+[data-theme="light"] .som-rss-structural { background: rgba(234, 88, 12, 0.1); color: #c2410c; }
+[data-theme="light"] .som-rss-shock { background: rgba(220, 38, 38, 0.1); color: #dc2626; }
 
 [data-theme="light"] .som-lens-temperature {
   border-top-color: #e5e5ea;

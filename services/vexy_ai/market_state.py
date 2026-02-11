@@ -306,6 +306,18 @@ class MarketStateEngine:
 
     # ── Lens 3: Event Risk & Potential Energy ─────────────────────
 
+    def get_unscheduled_developments(self) -> List[Dict[str, str]]:
+        """Read cached unscheduled developments from market-redis."""
+        if not self._market_redis:
+            return []
+        try:
+            raw = self._market_redis.get("som:unscheduled_developments")
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
+        return []
+
     def get_event_energy(self) -> Dict[str, Any]:
         """Look up today's economic events and classify posture.
 
@@ -317,10 +329,14 @@ class MarketStateEngine:
         raw_events = ECONOMIC_CALENDAR.get(today_str, [])
 
         if not raw_events:
-            return {
+            result: Dict[str, Any] = {
                 "events": [],
                 "event_posture": "clean_morning",
             }
+            unscheduled = self.get_unscheduled_developments()
+            if unscheduled:
+                result["unscheduled_events"] = unscheduled
+            return result
 
         # Resolve rating + impact from registry (or fall back to defaults)
         enriched: List[Dict[str, Any]] = []
@@ -348,10 +364,14 @@ class MarketStateEngine:
 
         posture = self._classify_event_posture(enriched)
 
-        return {
+        result: Dict[str, Any] = {
             "events": enriched,
             "event_posture": posture,
         }
+        unscheduled = self.get_unscheduled_developments()
+        if unscheduled:
+            result["unscheduled_events"] = unscheduled
+        return result
 
     def _get_econ_result(self, date_str: str, event_name: str) -> Optional[Dict[str, str]]:
         """Read post-release result from Redis for a given event."""

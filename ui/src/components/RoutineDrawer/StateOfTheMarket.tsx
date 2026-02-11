@@ -38,6 +38,12 @@ interface SomEvent {
   result?: SomEventResult;
 }
 
+interface SomUnscheduledEvent {
+  headline: string;
+  summary: string;
+  impact: 'mild' | 'structural' | 'shock';
+}
+
 interface SomPayload {
   schema_version: string;
   generated_at: string;
@@ -57,6 +63,7 @@ interface SomPayload {
   event_energy: {
     events: SomEvent[];
     event_posture: string;
+    unscheduled_events?: SomUnscheduledEvent[];
   } | null;
   convexity_temperature: {
     temperature: ConvexityTemp;
@@ -120,6 +127,20 @@ const TEMP_LABELS: Record<ConvexityTemp, string> = {
   cool: 'Cool',
   warm: 'Warm',
   hot: 'Hot',
+};
+
+// ── Unscheduled development impact badges ────────────────────────────
+
+const IMPACT_CSS: Record<string, string> = {
+  mild: 'som-rss-mild',
+  structural: 'som-rss-structural',
+  shock: 'som-rss-shock',
+};
+
+const IMPACT_LABELS: Record<string, string> = {
+  mild: 'Mild',
+  structural: 'Structural',
+  shock: 'Shock',
 };
 
 // ── Rating dot color class ───────────────────────────────────────────
@@ -285,6 +306,21 @@ export default function StateOfTheMarket({ isOpen, marketContext }: StateOfTheMa
               </div>
             ) : (
               <div className="som-detail som-clean">No scheduled events</div>
+            )}
+            {ee.unscheduled_events && ee.unscheduled_events.length > 0 && (
+              <div className="som-unscheduled">
+                <div className="som-unscheduled-title">Unscheduled Developments</div>
+                {ee.unscheduled_events.map((dev, idx) => (
+                  <div key={idx} className="som-unscheduled-row">
+                    <span className={`som-rss-badge ${IMPACT_CSS[dev.impact]}`}>
+                      {IMPACT_LABELS[dev.impact]}
+                    </span>
+                    <span className="som-unscheduled-text">
+                      {dev.headline} — {dev.summary}
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
             <div className="som-detail som-posture">
               Event Posture: {EVENT_POSTURE_LABELS[ee.event_posture] || ee.event_posture}

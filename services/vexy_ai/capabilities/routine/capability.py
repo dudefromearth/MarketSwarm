@@ -11,7 +11,7 @@ Philosophy: Help the trader arrive, not complete tasks.
 Train how to begin, not what to do.
 """
 
-from typing import Optional
+from typing import Callable, List, Optional
 
 from fastapi import APIRouter, HTTPException
 
@@ -152,3 +152,32 @@ class RoutineCapability(BaseCapability):
             return self.service.get_log_health_context(user_id)
 
         return router
+
+    def get_background_tasks(self) -> List[Callable]:
+        """Return background tasks to run."""
+        return [self._run_rss_relevance_loop]
+
+    async def _run_rss_relevance_loop(self) -> None:
+        """Background task: score RSS articles for SoM relevance every 60s."""
+        import asyncio
+
+        await asyncio.sleep(10)  # Let other services start first
+
+        while True:
+            try:
+                import redis as sync_redis
+                from services.vexy_ai.intel.rss_relevance import RSSRelevanceEngine
+
+                buses = self.config.get("buses", {}) or {}
+                intel_url = buses.get("intel-redis", {}).get("url", "redis://127.0.0.1:6381")
+                market_url = buses.get("market-redis", {}).get("url", "redis://127.0.0.1:6380")
+
+                r_intel = sync_redis.from_url(intel_url, decode_responses=True)
+                r_market = sync_redis.from_url(market_url, decode_responses=True)
+
+                engine = RSSRelevanceEngine(r_intel, r_market, self.logger)
+                engine.score_and_cache()
+            except Exception as e:
+                self.logger.warning(f"RSS relevance loop error: {e}", emoji="⚠️")
+
+            await asyncio.sleep(60)
