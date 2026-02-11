@@ -1047,8 +1047,56 @@ router.post("/tracking/params/:version/activate", requireAdmin, async (req, res)
 });
 
 // =============================================================================
-// RSS Intel Review
+// RSS Intel Review — Relevance Scoring (mirrors rss_relevance.py)
 // =============================================================================
+
+const CATEGORY_RELEVANCE = {
+  geopolitics: 5, macro: 5, rates: 4, politics: 4,
+  energy: 3, commodities: 3, equities: 2,
+};
+const DEFAULT_RELEVANCE = 1;
+const RELEVANCE_BOOST_ENTITIES = new Set(["Fed", "FOMC", "Treasury", "VIX", "SPX"]);
+const SHOCK_KEYWORDS = ["military", "war", "sanctions", "attack", "nuclear"];
+const STRUCTURAL_CATEGORIES = new Set(["macro", "rates", "treasury_liquidity"]);
+const STRUCTURAL_ENTITIES = new Set(["Fed", "FOMC", "Treasury"]);
+
+function scoreRelevance(article) {
+  const category = (article.category || "").toLowerCase();
+  let base = CATEGORY_RELEVANCE[category] ?? DEFAULT_RELEVANCE;
+  const entities = article.entities || [];
+  if (entities.some((e) => RELEVANCE_BOOST_ENTITIES.has(e))) base += 1;
+  return Math.min(base, 5);
+}
+
+function scoreUrgency(article, nowSec) {
+  const enrichedTs = article._enriched_ts_sec || 0;
+  const ageMin = enrichedTs ? (nowSec - enrichedTs) / 60 : Infinity;
+  let score;
+  if (ageMin < 30) score = 5;
+  else if (ageMin < 60) score = 4;
+  else if (ageMin < 120) score = 3;
+  else if (ageMin < 180) score = 2;
+  else if (ageMin < 240) score = 1;
+  else score = 0;
+
+  const category = (article.category || "").toLowerCase();
+  if (category === "geopolitics" || category === "macro") score += 1;
+  return Math.min(score, 5);
+}
+
+function classifyImpact(article, relevance) {
+  const category = (article.category || "").toLowerCase();
+  const entities = new Set(article.entities || []);
+  const textLower = ((article.title || "") + " " + (article.summary || "")).toLowerCase();
+
+  if (category === "geopolitics" && SHOCK_KEYWORDS.some((kw) => textLower.includes(kw))) {
+    return "shock";
+  }
+  if (STRUCTURAL_CATEGORIES.has(category)) return "structural";
+  if ([...STRUCTURAL_ENTITIES].some((e) => entities.has(e))) return "structural";
+  if (["politics", "energy", "commodities"].includes(category) && relevance >= 3) return "mild";
+  return "none";
+}
 
 /**
  * GET /api/admin/rss-articles
@@ -1103,7 +1151,7 @@ router.get("/rss-articles", requireAdmin, async (req, res) => {
       const enrichedTs = parseFloat(hash.enriched_ts) || parseFloat(hash.published_ts) || 0;
       const ageMinutes = enrichedTs ? Math.round((nowSec - enrichedTs) / 60) : null;
 
-      articles.push({
+      const art = {
         uid: uids[i],
         title: hash.title,
         url: hash.url || null,
@@ -1118,10 +1166,25 @@ router.get("/rss-articles", requireAdmin, async (req, res) => {
         enriched_ts: enrichedTs * 1000,
         published_ts: (parseFloat(hash.published_ts) || 0) * 1000,
         age_minutes: ageMinutes,
-      });
+        _enriched_ts_sec: enrichedTs, // raw seconds for scoring
+      };
+
+      // Compute relevance scores
+      const relevance = scoreRelevance(art);
+      const urgency = scoreUrgency(art, nowSec);
+      const impact = classifyImpact(art, relevance);
+      art.relevance = relevance;
+      art.urgency = urgency;
+      art.impact = impact;
+      art.total_score = relevance + urgency;
+      delete art._enriched_ts_sec;
+
+      articles.push(art);
     }
 
-    // Already sorted newest-first by zrevrangebyscore
+    // Sort by total_score descending (then by enriched_ts descending as tiebreak)
+    articles.sort((a, b) => b.total_score - a.total_score || b.enriched_ts - a.enriched_ts);
+
     res.json({ articles, count: articles.length, hours });
   } catch (err) {
     console.error("[admin] RSS articles error:", err);

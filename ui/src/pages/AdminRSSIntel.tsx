@@ -13,6 +13,10 @@ interface Article {
   summary: string | null;
   sentiment: string | null;
   quality_score: number;
+  relevance: number;
+  urgency: number;
+  total_score: number;
+  impact: string;
   entities: string[] | null;
   tickers: string[] | null;
   takeaways: string[] | null;
@@ -20,6 +24,9 @@ interface Article {
   published_ts: number;
   age_minutes: number | null;
 }
+
+type SortKey = "total_score" | "relevance" | "urgency" | "quality_score" | "age_minutes";
+type SortDir = "asc" | "desc";
 
 const CATEGORY_COLORS: Record<string, { bg: string; color: string }> = {
   macro: { bg: "rgba(59, 130, 246, 0.15)", color: "#60a5fa" },
@@ -61,6 +68,8 @@ export default function AdminRSSIntelPage() {
   const [error, setError] = useState<string | null>(null);
   const [expandedUid, setExpandedUid] = useState<string | null>(null);
   const [hours, setHours] = useState(24);
+  const [sortKey, setSortKey] = useState<SortKey>("total_score");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
 
   const fetchArticles = useCallback(async () => {
     setLoading(true);
@@ -86,6 +95,21 @@ export default function AdminRSSIntelPage() {
   const toggleExpand = (uid: string) => {
     setExpandedUid((prev) => (prev === uid ? null : uid));
   };
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  };
+
+  const sortedArticles = [...articles].sort((a, b) => {
+    const av = a[sortKey] ?? 0;
+    const bv = b[sortKey] ?? 0;
+    return sortDir === "desc" ? (bv as number) - (av as number) : (av as number) - (bv as number);
+  });
 
   if (loading) {
     return (
@@ -145,22 +169,34 @@ export default function AdminRSSIntelPage() {
           <table className="rss-table">
             <thead>
               <tr>
-                <th style={{ width: "70px" }}>Age</th>
-                <th style={{ width: "100px" }}>Category</th>
-                <th style={{ width: "60px" }}>Quality</th>
+                <th style={{ width: "60px" }}>Age</th>
+                <th style={{ width: "90px" }}>Category</th>
+                <th className="sortable-th" style={{ width: "40px" }} onClick={() => toggleSort("relevance")}>
+                  Rel{sortKey === "relevance" ? (sortDir === "desc" ? " ▼" : " ▲") : ""}
+                </th>
+                <th className="sortable-th" style={{ width: "40px" }} onClick={() => toggleSort("urgency")}>
+                  Urg{sortKey === "urgency" ? (sortDir === "desc" ? " ▼" : " ▲") : ""}
+                </th>
+                <th className="sortable-th" style={{ width: "40px" }} onClick={() => toggleSort("total_score")}>
+                  Tot{sortKey === "total_score" ? (sortDir === "desc" ? " ▼" : " ▲") : ""}
+                </th>
+                <th style={{ width: "72px" }}>Impact</th>
+                <th className="sortable-th" style={{ width: "50px" }} onClick={() => toggleSort("quality_score")}>
+                  Qual{sortKey === "quality_score" ? (sortDir === "desc" ? " ▼" : " ▲") : ""}
+                </th>
                 <th style={{ width: "80px" }}>Sentiment</th>
                 <th>Title</th>
-                <th style={{ width: "140px" }}>Entities</th>
-                <th style={{ width: "100px" }}>Tickers</th>
+                <th style={{ width: "120px" }}>Entities</th>
+                <th style={{ width: "80px" }}>Tickers</th>
               </tr>
             </thead>
             <tbody>
-              {articles.map((article) => {
+              {sortedArticles.map((article) => {
                 const catStyle = getCategoryStyle(article.category);
                 const isExpanded = expandedUid === article.uid;
                 return (
                   <tr key={article.uid} className="article-row-group">
-                    <td colSpan={7} style={{ padding: 0, border: "none" }}>
+                    <td colSpan={11} style={{ padding: 0, border: "none" }}>
                       <div
                         className={`article-row ${isExpanded ? "expanded" : ""}`}
                         onClick={() => toggleExpand(article.uid)}
@@ -174,9 +210,29 @@ export default function AdminRSSIntelPage() {
                             {article.category || "unknown"}
                           </span>
                         </div>
+                        <div className="cell cell-score">
+                          <span className={`score-num ${article.relevance >= 4 ? "high" : article.relevance >= 2 ? "mid" : "low"}`}>
+                            {article.relevance}
+                          </span>
+                        </div>
+                        <div className="cell cell-score">
+                          <span className={`score-num ${article.urgency >= 4 ? "high" : article.urgency >= 2 ? "mid" : "low"}`}>
+                            {article.urgency}
+                          </span>
+                        </div>
+                        <div className="cell cell-score">
+                          <span className={`score-num total ${article.total_score >= 7 ? "high" : article.total_score >= 4 ? "mid" : "low"}`}>
+                            {article.total_score}
+                          </span>
+                        </div>
+                        <div className="cell cell-impact">
+                          <span className={`impact-badge impact-${article.impact}`}>
+                            {article.impact}
+                          </span>
+                        </div>
                         <div className="cell cell-quality">
                           <span className={`quality-num ${article.quality_score >= 0.6 ? "high" : article.quality_score >= 0.4 ? "mid" : "low"}`}>
-                            {article.quality_score.toFixed(2)}
+                            {article.quality_score.toFixed(1)}
                           </span>
                         </div>
                         <div className="cell cell-sentiment">
@@ -261,7 +317,7 @@ export default function AdminRSSIntelPage() {
               })}
               {articles.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="empty-state">
+                  <td colSpan={11} className="empty-state">
                     No enriched articles found in the last {hours} hours
                   </td>
                 </tr>
@@ -426,7 +482,7 @@ const styles = `
 
   .article-row {
     display: grid;
-    grid-template-columns: 70px 100px 60px 80px 1fr 140px 100px;
+    grid-template-columns: 60px 90px 40px 40px 40px 72px 50px 80px 1fr 120px 80px;
     align-items: center;
     padding: 0.625rem 0.75rem;
     cursor: pointer;
@@ -467,6 +523,42 @@ const styles = `
   .quality-num.high { color: #22c55e; }
   .quality-num.mid { color: #eab308; }
   .quality-num.low { color: #9ca3af; }
+
+  .sortable-th {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .sortable-th:hover { color: var(--text-primary); }
+
+  .cell-score {
+    text-align: center;
+  }
+
+  .score-num {
+    font-family: 'SF Mono', monospace;
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+  .score-num.high { color: #22c55e; }
+  .score-num.mid { color: #eab308; }
+  .score-num.low { color: #6b7280; }
+  .score-num.total { font-weight: 700; }
+
+  .cell-impact { text-align: center; }
+
+  .impact-badge {
+    display: inline-block;
+    padding: 0.0625rem 0.375rem;
+    border-radius: 0.25rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: capitalize;
+  }
+  .impact-shock { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+  .impact-structural { background: rgba(249, 115, 22, 0.2); color: #fb923c; }
+  .impact-mild { background: rgba(234, 179, 8, 0.2); color: #facc15; }
+  .impact-none { background: rgba(107, 114, 128, 0.15); color: #6b7280; }
 
   .cell-sentiment {
     font-size: 0.8125rem;
