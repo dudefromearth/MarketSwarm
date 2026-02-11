@@ -130,7 +130,7 @@ class Container:
         return adapter
 
     def _register_health_routes(self) -> None:
-        """Register basic health check and admin routes."""
+        """Register basic health check, status, and market-state routes."""
         from fastapi import APIRouter
 
         router = APIRouter()
@@ -142,6 +142,13 @@ class Container:
         @router.get("/api/vexy/status")
         async def status():
             return self._vexy.get_status()
+
+        @router.get("/api/vexy/market-state")
+        async def market_state():
+            """State of the Market v2 — deterministic 4-lens synthesis."""
+            from services.vexy_ai.capabilities.routine.service import RoutineService
+            svc = RoutineService(self.config, self.logger)
+            return svc.get_market_state()
 
         self._vexy.app.include_router(router)
 
