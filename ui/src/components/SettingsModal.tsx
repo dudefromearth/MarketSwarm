@@ -26,6 +26,8 @@ interface Tag {
   user_id: number;
   name: string;
   description: string | null;
+  category: string | null;
+  group: string | null;
   is_retired: boolean;
   is_example: boolean;
   usage_count: number;
@@ -75,6 +77,16 @@ const TIMEZONE_OPTIONS = [
   { value: 'Pacific/Auckland', label: 'Auckland (NZST) UTC+12', group: 'Asia/Pacific' },
 ];
 type AssetTypeFilter = 'all' | 'index_option' | 'etf_option' | 'future' | 'stock';
+type TagPageSize = 5 | 10 | 15;
+
+const TAG_CATEGORIES: { value: string | null; label: string }[] = [
+  { value: null, label: 'All' },
+  { value: 'behavior', label: 'Behavior' },
+  { value: 'context', label: 'Context' },
+  { value: 'process', label: 'Process' },
+  { value: 'insight', label: 'Insight' },
+  { value: 'custom', label: 'Custom' },
+];
 
 export default function SettingsModal({ onClose }: SettingsModalProps) {
   const { tourCompleted, resetTour } = usePath();
@@ -119,6 +131,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [tagError, setTagError] = useState<string | null>(null);
   const [editingTagId, setEditingTagId] = useState<string | null>(null);
   const [editingTagData, setEditingTagData] = useState({ name: '', description: '' });
+  const [tagCategory, setTagCategory] = useState<string | null>(null);
+  const [tagPage, setTagPage] = useState(1);
+  const [tagPageSize, setTagPageSize] = useState<TagPageSize>(5);
 
   const fetchSymbols = useCallback(async () => {
     try {
@@ -425,9 +440,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     setTagError(null);
   };
 
-  // Filter and sort tags
-  const activeTags = tags.filter(t => !t.is_retired);
-  const retiredTags = tags.filter(t => t.is_retired);
+  // Filter and sort tags — exclude day-texture (managed via Readiness drawer)
+  const activeTags = tags.filter(t => !t.is_retired && t.category !== 'day-texture');
+  const retiredTags = tags.filter(t => t.is_retired && t.category !== 'day-texture');
 
   const sortedActiveTags = [...activeTags].sort((a, b) => {
     if (tagsSortBy === 'alpha') {
@@ -441,6 +456,27 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     if (b.last_used_at) return 1;
     return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
   });
+
+  // Category filter
+  const filteredByCategory = tagCategory === null
+    ? sortedActiveTags
+    : tagCategory === 'custom'
+      ? sortedActiveTags.filter(t => t.category === null)
+      : sortedActiveTags.filter(t => t.category === tagCategory);
+
+  // Category counts (for pills)
+  const tagCategoryCounts: Record<string, number> = {};
+  for (const t of sortedActiveTags) {
+    const cat = t.category ?? 'custom';
+    tagCategoryCounts[cat] = (tagCategoryCounts[cat] || 0) + 1;
+  }
+  tagCategoryCounts['all'] = sortedActiveTags.length;
+
+  // Pagination
+  const totalTagPages = Math.max(1, Math.ceil(filteredByCategory.length / tagPageSize));
+  const safeTagPage = Math.min(tagPage, totalTagPages);
+  const tagStartIdx = (safeTagPage - 1) * tagPageSize;
+  const paginatedTags = filteredByCategory.slice(tagStartIdx, tagStartIdx + tagPageSize);
 
   const filteredSymbols = symbols.filter(s =>
     assetFilter === 'all' || s.asset_type === assetFilter
@@ -794,6 +830,23 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                     </button>
                   </div>
 
+                  <div className="tags-category-filter">
+                    {TAG_CATEGORIES.map(cat => {
+                      const key = cat.value ?? 'all';
+                      const count = tagCategoryCounts[key] || 0;
+                      if (key !== 'all' && count === 0) return null;
+                      return (
+                        <button
+                          key={key}
+                          className={`category-pill${tagCategory === cat.value ? ' active' : ''}`}
+                          onClick={() => { setTagCategory(cat.value); setTagPage(1); }}
+                        >
+                          {cat.label} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+
                   {showAddTag && (
                     <div className="add-tag-form">
                       <h4>Create Tag</h4>
@@ -834,12 +887,12 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                   ) : (
                     <>
                       <div className="tags-list">
-                        {sortedActiveTags.length === 0 ? (
+                        {filteredByCategory.length === 0 ? (
                           <div className="tags-empty">
                             <p>No tags yet. Create your first tag to start building your vocabulary.</p>
                           </div>
                         ) : (
-                          sortedActiveTags.map(tag => (
+                          paginatedTags.map(tag => (
                             <div key={tag.id} className={`tag-item ${tag.is_example ? 'example' : ''}`}>
                               {editingTagId === tag.id ? (
                                 <div className="tag-edit-form">
@@ -907,6 +960,32 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                           ))
                         )}
                       </div>
+
+                      {filteredByCategory.length > tagPageSize && (
+                        <div className="tags-pagination">
+                          <span className="pagination-info">
+                            Showing {tagStartIdx + 1}–{Math.min(tagStartIdx + tagPageSize, filteredByCategory.length)} of {filteredByCategory.length}
+                          </span>
+                          <div className="pagination-controls">
+                            <button className="pagination-btn" disabled={safeTagPage <= 1} onClick={() => setTagPage(1)}>«</button>
+                            <button className="pagination-btn" disabled={safeTagPage <= 1} onClick={() => setTagPage(p => p - 1)}>‹</button>
+                            <span className="pagination-current">Page {safeTagPage} of {totalTagPages}</span>
+                            <button className="pagination-btn" disabled={safeTagPage >= totalTagPages} onClick={() => setTagPage(p => p + 1)}>›</button>
+                            <button className="pagination-btn" disabled={safeTagPage >= totalTagPages} onClick={() => setTagPage(totalTagPages)}>»</button>
+                          </div>
+                          <div className="pagination-size">
+                            {([5, 10, 15] as TagPageSize[]).map(size => (
+                              <button
+                                key={size}
+                                className={`size-btn${tagPageSize === size ? ' active' : ''}`}
+                                onClick={() => { setTagPageSize(size); setTagPage(1); }}
+                              >
+                                {size}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {retiredTags.length > 0 && (
                         <div className="retired-tags-section">

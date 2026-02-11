@@ -10712,9 +10712,28 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border-default);
+}
+
+/* Tag Category Filter */
+.tags-category-filter { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.tags-category-filter .category-pill {
+  padding: 4px 12px; border-radius: 12px; font-size: 11px;
+  background: var(--bg-surface-alt); border: 1px solid var(--border-default);
+  color: var(--text-secondary); cursor: pointer;
+}
+.tags-category-filter .category-pill:hover { background: var(--bg-hover); }
+.tags-category-filter .category-pill.active {
+  background: rgba(0, 122, 255, 0.12); border-color: #007aff; color: #007aff; font-weight: 600;
+}
+
+/* Tags Pagination */
+.tags-pagination {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 0; border-top: 1px solid var(--border-default);
+  margin-top: 8px; font-size: 11px;
 }
 
 .tags-sort {

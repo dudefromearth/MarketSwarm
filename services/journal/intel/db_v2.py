@@ -26,7 +26,7 @@ from .models_v2 import (
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 22
+    SCHEMA_VERSION = 23
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -66,38 +66,38 @@ class JournalDBv2:
     # These are behavioral, contextual, non-judgmental, non-outcome-based
     DEFAULT_TAGS = [
         # A. Behavior & Decision Quality - train self-awareness without shame
-        {'name': 'overtrading', 'description': 'Took more trades than planned'},
-        {'name': 'forced trade', 'description': 'Entered without clear thesis'},
-        {'name': 'late entry', 'description': 'Hesitated, entered after optimal point'},
-        {'name': 'early exit', 'description': 'Closed before thesis played out'},
-        {'name': 'hesitation', 'description': 'Delayed action when signal was clear'},
-        {'name': 'impatience', 'description': 'Rushed into or out of position'},
-        {'name': 'conviction trade', 'description': 'High confidence, sized appropriately'},
-        {'name': 'stayed disciplined', 'description': 'Followed the plan despite pressure'},
+        {'name': 'overtrading', 'description': 'Took more trades than planned', 'category': 'behavior'},
+        {'name': 'forced trade', 'description': 'Entered without clear thesis', 'category': 'behavior'},
+        {'name': 'late entry', 'description': 'Hesitated, entered after optimal point', 'category': 'behavior'},
+        {'name': 'early exit', 'description': 'Closed before thesis played out', 'category': 'behavior'},
+        {'name': 'hesitation', 'description': 'Delayed action when signal was clear', 'category': 'behavior'},
+        {'name': 'impatience', 'description': 'Rushed into or out of position', 'category': 'behavior'},
+        {'name': 'conviction trade', 'description': 'High confidence, sized appropriately', 'category': 'behavior'},
+        {'name': 'stayed disciplined', 'description': 'Followed the plan despite pressure', 'category': 'behavior'},
 
         # B. Context & Environment - teach thinking in regimes
-        {'name': 'volatility mismatch', 'description': "Strategy didn't match vol regime"},
-        {'name': 'regime shift', 'description': 'Market character changed mid-trade'},
-        {'name': 'thin liquidity', 'description': 'Slippage or poor fills due to low volume'},
-        {'name': 'event-driven', 'description': 'Trade around scheduled catalyst'},
-        {'name': 'post-news distortion', 'description': 'Price action skewed by recent news'},
-        {'name': 'compressed volatility', 'description': 'Low vol environment, premium cheap'},
-        {'name': 'expanding volatility', 'description': 'Rising vol, premium expensive'},
+        {'name': 'volatility mismatch', 'description': "Strategy didn't match vol regime", 'category': 'context'},
+        {'name': 'regime shift', 'description': 'Market character changed mid-trade', 'category': 'context'},
+        {'name': 'thin liquidity', 'description': 'Slippage or poor fills due to low volume', 'category': 'context'},
+        {'name': 'event-driven', 'description': 'Trade around scheduled catalyst', 'category': 'context'},
+        {'name': 'post-news distortion', 'description': 'Price action skewed by recent news', 'category': 'context'},
+        {'name': 'compressed volatility', 'description': 'Low vol environment, premium cheap', 'category': 'context'},
+        {'name': 'expanding volatility', 'description': 'Rising vol, premium expensive', 'category': 'context'},
 
         # C. Process & Execution - anchor routine and mechanics
-        {'name': 'thesis drift', 'description': 'Changed rationale mid-trade'},
-        {'name': 'ignored context', 'description': 'Traded against broader conditions'},
-        {'name': 'followed process', 'description': 'Executed according to plan'},
-        {'name': 'broke rules', 'description': 'Deviated from established guidelines'},
-        {'name': 'sizing issue', 'description': 'Position size was inappropriate'},
-        {'name': 'risk misread', 'description': 'Misjudged the risk/reward'},
+        {'name': 'thesis drift', 'description': 'Changed rationale mid-trade', 'category': 'process'},
+        {'name': 'ignored context', 'description': 'Traded against broader conditions', 'category': 'process'},
+        {'name': 'followed process', 'description': 'Executed according to plan', 'category': 'process'},
+        {'name': 'broke rules', 'description': 'Deviated from established guidelines', 'category': 'process'},
+        {'name': 'sizing issue', 'description': 'Position size was inappropriate', 'category': 'process'},
+        {'name': 'risk misread', 'description': 'Misjudged the risk/reward', 'category': 'process'},
 
         # D. Insight & Learning Moments - reinforce positive pattern recognition
-        {'name': 'clarity moment', 'description': 'Saw something clearly for the first time'},
-        {'name': 'pattern recognized', 'description': 'Identified a recurring setup'},
-        {'name': 'lesson learned', 'description': 'Key takeaway worth remembering'},
-        {'name': 'worked as expected', 'description': 'Outcome matched thesis'},
-        {'name': 'failed as expected', 'description': 'Loss was within anticipated scenario'},
+        {'name': 'clarity moment', 'description': 'Saw something clearly for the first time', 'category': 'insight'},
+        {'name': 'pattern recognized', 'description': 'Identified a recurring setup', 'category': 'insight'},
+        {'name': 'lesson learned', 'description': 'Key takeaway worth remembering', 'category': 'insight'},
+        {'name': 'worked as expected', 'description': 'Outcome matched thesis', 'category': 'insight'},
+        {'name': 'failed as expected', 'description': 'Loss was within anticipated scenario', 'category': 'insight'},
     ]
 
     # Day-texture tags for Personal Readiness (server-backed)
@@ -265,6 +265,9 @@ class JournalDBv2:
 
             if current_version < 22:
                 self._migrate_to_v22(conn)
+
+            if current_version < 23:
+                self._migrate_to_v23(conn)
 
             conn.commit()
         finally:
@@ -1970,6 +1973,38 @@ class JournalDBv2:
         finally:
             cursor.close()
 
+    def _migrate_to_v23(self, conn):
+        """Migrate to v23: Assign categories to existing default tags."""
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE tags SET category = 'behavior'
+                WHERE name IN ('overtrading','forced trade','late entry','early exit',
+                               'hesitation','impatience','conviction trade','stayed disciplined')
+                AND category IS NULL
+            """)
+            cursor.execute("""
+                UPDATE tags SET category = 'context'
+                WHERE name IN ('volatility mismatch','regime shift','thin liquidity','event-driven',
+                               'post-news distortion','compressed volatility','expanding volatility')
+                AND category IS NULL
+            """)
+            cursor.execute("""
+                UPDATE tags SET category = 'process'
+                WHERE name IN ('thesis drift','ignored context','followed process','broke rules',
+                               'sizing issue','risk misread')
+                AND category IS NULL
+            """)
+            cursor.execute("""
+                UPDATE tags SET category = 'insight'
+                WHERE name IN ('clarity moment','pattern recognized','lesson learned',
+                               'worked as expected','failed as expected')
+                AND category IS NULL
+            """)
+            self._set_schema_version(conn, 23)
+        finally:
+            cursor.close()
+
     # ==================== Algo Alert CRUD ====================
 
     def create_algo_alert(self, alert_id: str, user_id: int, name: str, mode: str,
@@ -3325,6 +3360,7 @@ class JournalDBv2:
                     user_id=user_id,
                     name=tag_data['name'],
                     description=tag_data['description'],
+                    category=tag_data.get('category'),
                     is_example=True,
                     created_at=now,
                     updated_at=now
