@@ -419,16 +419,19 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     });
 
     // AI Theta/Gamma zone lines
-    alerts.filter(a => a.enabled && a.type === 'ai_theta_gamma' && a.isZoneActive && a.zoneLow && a.zoneHigh).forEach(alert => {
+    alerts.filter(a => a.enabled && a.type === 'ai_theta_gamma').forEach(alert => {
+      if (!('zoneLow' in alert) || !('zoneHigh' in alert)) return;
+      const tgAlert = alert as import('../types/alerts').AIThetaGammaAlert;
+      if (!tgAlert.isZoneActive || !tgAlert.zoneLow || !tgAlert.zoneHigh) return;
       lines.push({
-        price: alert.zoneLow!,
-        color: alert.color || '#f59e0b',
-        label: `Zone ${alert.zoneLow!.toFixed(0)}`,
+        price: tgAlert.zoneLow,
+        color: tgAlert.color || '#f59e0b',
+        label: `Zone ${tgAlert.zoneLow.toFixed(0)}`,
       });
       lines.push({
-        price: alert.zoneHigh!,
-        color: alert.color || '#f59e0b',
-        label: `Zone ${alert.zoneHigh!.toFixed(0)}`,
+        price: tgAlert.zoneHigh,
+        color: tgAlert.color || '#f59e0b',
+        label: `Zone ${tgAlert.zoneHigh.toFixed(0)}`,
       });
     });
 
@@ -783,7 +786,6 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                       // Negative value = credit in both locked and unlocked modes
                       const activeValue = isLocked ? costBasis : theoValue;
                       const isCredit = activeValue != null ? activeValue < 0 : (strat.costBasisType === 'credit');
-                      const displayPrice = activeValue != null ? Math.abs(activeValue) : null;
 
                       return (
                         <div key={strat.id} className={`risk-graph-position-item ${!strat.visible ? 'hidden-position' : ''} ${strat.visible && !pnlChartData.activeStrategyIds.includes(strat.id) ? 'sim-expired' : ''} ${isCredit ? 'credit-tint' : 'debit-tint'}`}>

@@ -241,7 +241,7 @@ export default function PositionCreateModal({
   atmStrike = 5900,
   spotData,
 }: PositionCreateModalProps) {
-  const { symbols: availableSymbols, getConfig, loading: configLoading } = useSymbolConfig();
+  const { symbols: availableSymbols, getConfig } = useSymbolConfig();
   const [mode, setMode] = useState<CreateMode>('build');
 
   // Fetch all spot prices once when modal opens (REST baseline)

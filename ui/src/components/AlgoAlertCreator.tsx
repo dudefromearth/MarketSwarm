@@ -11,6 +11,7 @@
 import { useState, useCallback } from 'react';
 import type {
   AlgoAlertMode,
+  FilterCondition,
   FilterDataSource,
   FilterOperator,
   CreateAlgoAlertInput,
@@ -301,7 +302,7 @@ export default function AlgoAlertCreator({ onSave, onCancel, positionIds }: Algo
   );
 }
 
-function parseFilterValue(raw: string, operator: FilterOperator): number | string | boolean | number[] {
+function parseFilterValue(raw: string, operator: FilterOperator): FilterCondition['value'] {
   if (operator === 'between') {
     const parts = raw.split(',').map(s => parseFloat(s.trim()));
     if (parts.length === 2 && parts.every(p => !isNaN(p))) {

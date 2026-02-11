@@ -82,7 +82,7 @@ export interface FilterCondition {
   dataSource: FilterDataSource;
   field: string;
   operator: FilterOperator;
-  value: number | string | boolean | number[];  // number[] for 'between', string for 'in'/'eq' on enums
+  value: number | string | boolean | number[] | string[];  // number[] for 'between', string[] for 'in'/'not_in', string for 'eq' on enums
   required: boolean;  // If true, missing data → filter fails (fail-closed)
 }
 

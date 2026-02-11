@@ -16,10 +16,8 @@ import AlgoAlertCreator from './AlgoAlertCreator';
 import ProposalCard from './ProposalCard';
 import type {
   AlgoAlert,
-  AlgoProposal,
   CreateAlgoAlertInput,
   FilterEvaluationResult,
-  SuggestedPosition,
 } from '../types/algoAlerts';
 import {
   ALGO_ALERT_STATUS_STYLES,
@@ -34,7 +32,6 @@ interface AlgoAlertPanelProps {
 export default function AlgoAlertPanel({ positionIds }: AlgoAlertPanelProps) {
   const {
     algoAlerts,
-    proposals,
     createAlgoAlert,
     updateAlgoAlert,
     deleteAlgoAlert,
@@ -47,7 +44,7 @@ export default function AlgoAlertPanel({ positionIds }: AlgoAlertPanelProps) {
   const { addPosition } = usePositionsContext();
 
   const [showCreator, setShowCreator] = useState(false);
-  const [createMgmtAlert, setCreateMgmtAlert] = useState(true);
+  const [createMgmtAlert] = useState(true);
   const activeProposals = getActiveProposals();
 
   const handleSave = useCallback(async (input: CreateAlgoAlertInput) => {

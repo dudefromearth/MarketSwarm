@@ -24,6 +24,7 @@ export interface TradeEntryData {
   source?: string;
   notes?: string;
   tags?: string[];
+  quantity?: number;
 }
 
 interface MarketQuote {

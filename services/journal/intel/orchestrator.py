@@ -4480,28 +4480,31 @@ class JournalOrchestrator:
         win_rate = float(win_rate) if win_rate else 0.0
         avg_r = float(avg_r) if avg_r else 0.0
 
-        # Win rate: 0-100% maps to 0-20 points
-        win_rate_pts = min(win_rate / 100 * 20, 20)
+        has_r_data = avg_r != 0.0
 
-        # Avg R-Multiple: -2 to +3 maps to 0-17.5 points
-        # Clamp to reasonable range and normalize
-        r_clamped = max(-2.0, min(3.0, avg_r))
-        r_normalized = (r_clamped + 2) / 5  # 0 to 1
-        r_pts = r_normalized * 17.5
-
-        # P&L percentile: 0-100% maps to 0-12.5 points
-        pnl_pts = pnl_percentile / 100 * 12.5
+        if has_r_data:
+            # Full scoring: win_rate(20) + r_multiple(17.5) + pnl_percentile(12.5) = 50
+            win_rate_pts = min(win_rate / 100 * 20, 20)
+            r_clamped = max(-2.0, min(3.0, avg_r))
+            r_normalized = (r_clamped + 2) / 5  # 0 to 1
+            r_pts = r_normalized * 17.5
+            pnl_pts = pnl_percentile / 100 * 12.5
+        else:
+            # No R-multiple data — redistribute to win_rate(30) + pnl_percentile(20) = 50
+            win_rate_pts = min(win_rate / 100 * 30, 30)
+            r_pts = 0.0
+            pnl_pts = pnl_percentile / 100 * 20
 
         return win_rate_pts + r_pts + pnl_pts
 
     def _get_min_trades_for_period(self, period_type: str) -> int:
         """Get minimum trades required for performance score."""
         if period_type == 'weekly':
-            return 3
+            return 1
         elif period_type == 'monthly':
-            return 10
+            return 3
         else:
-            return 25
+            return 5
 
     async def calculate_leaderboard(self, period_type: str) -> int:
         """Calculate leaderboard scores for all users in a period. Returns count of users scored."""
@@ -4533,8 +4536,11 @@ class JournalOrchestrator:
         for data in user_data:
             pnl = data['performance']['total_pnl']
             if len(sorted_pnl) > 1:
-                # Find percentile rank
-                rank = sorted_pnl.index(pnl)
+                # Find percentile rank using bisect for fair tie handling
+                from bisect import bisect_left, bisect_right
+                lo = bisect_left(sorted_pnl, pnl)
+                hi = bisect_right(sorted_pnl, pnl)
+                rank = (lo + hi - 1) / 2  # midpoint rank for ties
                 pnl_percentile = (rank / (len(sorted_pnl) - 1)) * 100
             else:
                 pnl_percentile = 50.0
@@ -4670,6 +4676,28 @@ class JournalOrchestrator:
         except Exception as e:
             self.logger.error(f"trigger_leaderboard_calculation error: {e}")
             return self._error_response(str(e), 500, request)
+
+    async def _leaderboard_scheduler(self):
+        """Background task: recalculate all leaderboard periods every hour."""
+        # Initial calculation on startup (wait for DB to be ready)
+        await asyncio.sleep(15)
+        self.logger.info("Leaderboard scheduler: running initial calculation", emoji="🏆")
+        for period in ('weekly', 'monthly', 'all_time'):
+            try:
+                count = await self.calculate_leaderboard(period)
+                self.logger.info(f"Leaderboard [{period}]: {count} users scored", emoji="🏆")
+            except Exception as e:
+                self.logger.error(f"Leaderboard [{period}] initial calc error: {e}")
+
+        # Then recalculate every hour
+        while True:
+            await asyncio.sleep(3600)
+            for period in ('weekly', 'monthly', 'all_time'):
+                try:
+                    count = await self.calculate_leaderboard(period)
+                    self.logger.info(f"Leaderboard [{period}]: {count} users scored", emoji="🏆")
+                except Exception as e:
+                    self.logger.error(f"Leaderboard [{period}] scheduler error: {e}")
 
     # ==================== Risk Graph Service ====================
 
@@ -5314,7 +5342,7 @@ class JournalOrchestrator:
     async def list_positions(self, request: web.Request) -> web.Response:
         """GET /api/positions - List positions for user."""
         try:
-            user_id = request['user_id']
+            user_id = request['user']['id']
             status = request.query.get('status')  # 'planned', 'open', 'closed'
             limit = int(request.query.get('limit', 100))
             offset = int(request.query.get('offset', 0))
@@ -5335,7 +5363,7 @@ class JournalOrchestrator:
     async def get_position(self, request: web.Request) -> web.Response:
         """GET /api/positions/:id - Get a single position with legs."""
         try:
-            user_id = request['user_id']
+            user_id = request['user']['id']
             position_id = request.match_info['id']
 
             position = self.db.get_position(position_id, user_id, include_legs=True, include_fills=True)
@@ -5356,7 +5384,7 @@ class JournalOrchestrator:
     async def get_position_snapshot(self, request: web.Request) -> web.Response:
         """GET /api/positions/:id/snapshot - Get complete position snapshot for RiskGraph."""
         try:
-            user_id = request['user_id']
+            user_id = request['user']['id']
             position_id = request.match_info['id']
 
             snapshot = self.db.get_position_snapshot(position_id, user_id)
@@ -5377,7 +5405,7 @@ class JournalOrchestrator:
     async def create_position(self, request: web.Request) -> web.Response:
         """POST /api/positions - Create a new position with legs."""
         try:
-            user_id = request['user_id']
+            user_id = request['user']['id']
 
             # Check idempotency
             idem_key, cached = self._check_idempotency(request, user_id)
@@ -5444,20 +5472,19 @@ class JournalOrchestrator:
 
     @require_auth
     async def update_position(self, request: web.Request) -> web.Response:
-        """PATCH /api/positions/:id - Update position (requires If-Match version)."""
+        """PATCH /api/positions/:id - Update position (If-Match version optional)."""
         try:
-            user_id = request['user_id']
+            user_id = request['user']['id']
             position_id = request.match_info['id']
 
-            # Get version from If-Match header
+            # Get version from If-Match header (optional - skip version check if not provided)
             version_header = request.headers.get('If-Match')
-            if not version_header:
-                return self._error_response('If-Match header required for updates', 428, request)
-
-            try:
-                version = int(version_header)
-            except ValueError:
-                return self._error_response('Invalid If-Match header', 400, request)
+            version = None
+            if version_header:
+                try:
+                    version = int(version_header)
+                except ValueError:
+                    return self._error_response('Invalid If-Match header', 400, request)
 
             body = await request.json()
 
@@ -5465,6 +5492,8 @@ class JournalOrchestrator:
             updates = {}
             if 'status' in body:
                 updates['status'] = body['status']
+            if 'visible' in body:
+                updates['visible'] = body['visible']
             if 'tags' in body:
                 updates['tags'] = body['tags']
             if 'campaignId' in body:
@@ -5505,10 +5534,39 @@ class JournalOrchestrator:
             return self._error_response(str(e), 500, request)
 
     @require_auth
+    async def delete_position(self, request: web.Request) -> web.Response:
+        """DELETE /api/positions/:id - Delete a position."""
+        try:
+            user_id = request['user']['id']
+            position_id = request.match_info['id']
+
+            deleted = self.db.delete_position(position_id, user_id)
+
+            if not deleted:
+                return self._error_response('Position not found', 404, request)
+
+            # Publish event
+            await self._publish_trade_log_event(
+                user_id=user_id,
+                event_type='PositionDeleted',
+                aggregate_id=position_id,
+                aggregate_version=0,
+                payload={'id': position_id}
+            )
+
+            return self._json_response({
+                'success': True
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"delete_position error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
     async def record_fill(self, request: web.Request) -> web.Response:
         """POST /api/positions/:id/fills - Record a fill for a position leg."""
         try:
-            user_id = request['user_id']
+            user_id = request['user']['id']
             position_id = request.match_info['id']
 
             # Check idempotency
@@ -5585,7 +5643,7 @@ class JournalOrchestrator:
     async def close_position(self, request: web.Request) -> web.Response:
         """POST /api/positions/:id/close - Close a position (requires If-Match version)."""
         try:
-            user_id = request['user_id']
+            user_id = request['user']['id']
             position_id = request.match_info['id']
 
             # Get version from If-Match header
@@ -5632,7 +5690,7 @@ class JournalOrchestrator:
     async def list_journal_entries_for_position(self, request: web.Request) -> web.Response:
         """GET /api/journal_entries?position_id=... - Get journal entries for a position."""
         try:
-            user_id = request['user_id']
+            user_id = request['user']['id']
             position_id = request.query.get('position_id')
 
             if not position_id:
@@ -5665,7 +5723,7 @@ class JournalOrchestrator:
     async def create_journal_entry_for_position(self, request: web.Request) -> web.Response:
         """POST /api/journal_entries - Create a journal entry for a position."""
         try:
-            user_id = request['user_id']
+            user_id = request['user']['id']
             body = await request.json()
 
             position_id = body.get('positionId') or body.get('position_id')
@@ -6722,6 +6780,7 @@ class JournalOrchestrator:
         app.router.add_get('/api/positions/{id}/snapshot', self.get_position_snapshot)
         app.router.add_post('/api/positions', self.create_position)
         app.router.add_patch('/api/positions/{id}', self.update_position)
+        app.router.add_delete('/api/positions/{id}', self.delete_position)
         app.router.add_post('/api/positions/{id}/fills', self.record_fill)
         app.router.add_post('/api/positions/{id}/close', self.close_position)
 
@@ -6794,12 +6853,19 @@ async def run(config: Dict[str, Any], logger) -> None:
     orchestrator = JournalOrchestrator(config, logger)
     runner = await orchestrator.start()
 
+    # Start leaderboard scheduler as background task
+    leaderboard_task = asyncio.create_task(
+        orchestrator._leaderboard_scheduler(),
+        name="leaderboard-scheduler",
+    )
+
     try:
         # Run forever until cancelled
         while True:
             await asyncio.sleep(1)
     except asyncio.CancelledError:
         logger.info("Orchestrator cancelled", emoji="🛑")
+        leaderboard_task.cancel()
     finally:
         logger.info("Shutting down API server", emoji="🛑")
         await runner.cleanup()

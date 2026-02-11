@@ -1456,44 +1456,6 @@ function getStrategyStrikeValues(strategy: Strategy): number[] {
 }
 
 /**
- * Get all critical strike prices from strategies
- * These are prices where the expiration P&L curve changes slope
- */
-function getCriticalStrikes(strategies: Strategy[]): number[] {
-  const strikes = new Set<number>();
-
-  for (const s of strategies) {
-    if (!s.visible) continue;
-
-    // If legs are provided, extract strikes from legs
-    if (s.legs && s.legs.length > 0) {
-      for (const leg of s.legs) {
-        strikes.add(leg.strike);
-      }
-      continue;
-    }
-
-    // Legacy: extract strikes from strategy type
-    switch (s.strategy) {
-      case 'single':
-        strikes.add(s.strike);
-        break;
-      case 'vertical':
-        strikes.add(s.strike);
-        strikes.add(s.side === 'call' ? s.strike + s.width : s.strike - s.width);
-        break;
-      case 'butterfly':
-        strikes.add(s.strike - s.width);
-        strikes.add(s.strike);
-        strikes.add(s.strike + s.width);
-        break;
-    }
-  }
-
-  return Array.from(strikes).sort((a, b) => a - b);
-}
-
-/**
  * Generate price points for the P&L curve
  * Ensures critical strikes are included for accurate expiration corners
  */
@@ -1710,10 +1672,6 @@ export function useRiskGraphCalculations({
       const raw = strategyTimeDaysMap.get(stratId) ?? baseTimeDays;
       return Math.max(raw - timeOffsetDays, 0.001) / 365;
     };
-
-    // Global effective time (for range calculations and backward compat)
-    const effectiveDaysToExpiry = Math.max(0, baseTimeDays - timeOffsetDays);
-    const timeToExpiryYears = Math.max(effectiveDaysToExpiry, 0.001) / 365;
 
     // Risk-free rate
     const riskFreeRate = 0.05;

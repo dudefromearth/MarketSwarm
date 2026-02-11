@@ -10,6 +10,27 @@
 
 import { useState, useCallback, useEffect } from 'react';
 
+// Types used by RoutineDrawer sections
+export type IntentType = 'observe_only' | 'manage_existing' | 'one_trade_max' | 'full_participation' | 'test_hypothesis';
+
+export interface IntentDeclarationData {
+  intent: IntentType | null;
+  note: string;
+}
+
+export interface RiskOrientationData {
+  widthPosture: 'narrow' | 'normal' | 'wide' | null;
+  capitalPosture: 'defensive' | 'neutral' | 'offensive' | null;
+  optionalityPosture: 'patience' | 'speed' | 'observation' | null;
+}
+
+export interface StateResetData {
+  focus: 'low' | 'medium' | 'high' | null;
+  energy: 'low' | 'medium' | 'high' | null;
+  emotionalLoad: 'calm' | 'charged' | 'distracted' | null;
+  freeText: string;
+}
+
 // Full routine state
 export interface RoutineState {
   routineOpenedAt: string | null;

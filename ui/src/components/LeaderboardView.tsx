@@ -1,5 +1,5 @@
 // src/components/LeaderboardView.tsx
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import type {
   LeaderboardPeriod,
   LeaderboardScore,
@@ -8,6 +8,7 @@ import type {
 import LeaderboardSettingsModal from './LeaderboardSettingsModal';
 
 const JOURNAL_API = '';
+const PAGE_SIZE = 10;
 
 interface LeaderboardViewProps {
   onClose: () => void;
@@ -22,6 +23,22 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const filteredRankings = useMemo(() => {
+    if (!searchQuery.trim()) return rankings;
+    const q = searchQuery.toLowerCase();
+    return rankings.filter(s =>
+      (s.displayName || `User #${s.user_id}`).toLowerCase().includes(q)
+    );
+  }, [rankings, searchQuery]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredRankings.length / PAGE_SIZE));
+  const paginatedRankings = filteredRankings.slice(
+    (currentPage - 1) * PAGE_SIZE,
+    currentPage * PAGE_SIZE
+  );
 
   const fetchLeaderboard = useCallback(async (selectedPeriod: LeaderboardPeriod) => {
     try {
@@ -29,7 +46,7 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
       setError(null);
 
       const res = await fetch(
-        `${JOURNAL_API}/api/leaderboard?period=${selectedPeriod}&limit=50`,
+        `${JOURNAL_API}/api/leaderboard?period=${selectedPeriod}&limit=200`,
         { credentials: 'include' }
       );
 
@@ -55,6 +72,11 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
   useEffect(() => {
     fetchLeaderboard(period);
   }, [period, fetchLeaderboard]);
+
+  // Reset page when period or search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [period, searchQuery]);
 
   const handleRefresh = () => {
     fetchLeaderboard(period);
@@ -141,6 +163,21 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
           <span className="participant-count">{totalParticipants} participants</span>
         </div>
 
+        <div className="leaderboard-search">
+          <input
+            type="text"
+            className="leaderboard-search-input"
+            placeholder="Search by name..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+          />
+          {searchQuery && (
+            <button className="leaderboard-search-clear" onClick={() => setSearchQuery('')}>
+              &times;
+            </button>
+          )}
+        </div>
+
         <div className="modal-body leaderboard-body">
           {loading ? (
             <div className="loading-state">Loading rankings...</div>
@@ -150,6 +187,10 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
             <div className="empty-state">
               <p>No rankings yet for this period.</p>
               <p className="hint">Log trades, write journal entries, and use tags to earn points!</p>
+            </div>
+          ) : filteredRankings.length === 0 ? (
+            <div className="empty-state">
+              <p>No results for "{searchQuery}"</p>
             </div>
           ) : (
             <>
@@ -165,7 +206,7 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
                   </tr>
                 </thead>
                 <tbody>
-                  {rankings.map((score) => (
+                  {paginatedRankings.map((score) => (
                     <tr
                       key={score.user_id}
                       className={isCurrentUser(score) ? 'current-user-row' : ''}
@@ -209,8 +250,8 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
                 </tbody>
               </table>
 
-              {/* Sticky current user row if not in top rankings */}
-              {currentUserRank && !rankings.some(r => r.user_id === currentUserRank.user_id) && (
+              {/* Sticky current user row if not visible on current page */}
+              {currentUserRank && !paginatedRankings.some(r => r.user_id === currentUserRank.user_id) && !searchQuery && (
                 <div className="sticky-user-row">
                   <div className="sticky-separator">...</div>
                   <table className="leaderboard-table">
@@ -257,9 +298,41 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
         </div>
 
         <div className="leaderboard-footer">
+          {totalPages > 1 && (
+            <div className="leaderboard-pagination">
+              <button
+                className="pagination-btn"
+                disabled={currentPage <= 1}
+                onClick={() => setCurrentPage(p => p - 1)}
+              >
+                Prev
+              </button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
+                <button
+                  key={page}
+                  className={`pagination-btn ${page === currentPage ? 'active' : ''}`}
+                  onClick={() => setCurrentPage(page)}
+                >
+                  {page}
+                </button>
+              ))}
+              <button
+                className="pagination-btn"
+                disabled={currentPage >= totalPages}
+                onClick={() => setCurrentPage(p => p + 1)}
+              >
+                Next
+              </button>
+            </div>
+          )}
           <div className="scoring-info">
             <span className="info-label">Scoring:</span>
             <span className="info-item">Activity (0-50) + Performance (0-50) = Total (0-100)</span>
+            {searchQuery && (
+              <span className="info-item search-count">
+                {filteredRankings.length} of {rankings.length} shown
+              </span>
+            )}
           </div>
         </div>
       </div>

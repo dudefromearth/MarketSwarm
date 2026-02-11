@@ -16447,6 +16447,51 @@ body {
   color: var(--text-muted);
 }
 
+.leaderboard-search {
+  position: relative;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.leaderboard-search-input {
+  width: 100%;
+  padding: 8px 32px 8px 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+
+.leaderboard-search-input:focus {
+  border-color: #f59e0b;
+}
+
+.leaderboard-search-input::placeholder {
+  color: var(--text-muted);
+}
+
+.leaderboard-search-clear {
+  position: absolute;
+  right: 28px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.leaderboard-search-clear:hover {
+  color: var(--text-primary);
+}
+
 .leaderboard-body {
   flex: 1;
   overflow-y: auto;
@@ -16606,6 +16651,49 @@ body {
 .scoring-info .info-label {
   font-weight: 600;
   margin-right: 8px;
+}
+
+.scoring-info .search-count {
+  margin-left: 12px;
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+.leaderboard-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.pagination-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+  min-width: 32px;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background: var(--bg-hover-alt);
+  color: var(--text-primary);
+}
+
+.pagination-btn.active {
+  background: #f59e0b;
+  border-color: #f59e0b;
+  color: white;
+  font-weight: 600;
+}
+
+.pagination-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .empty-state {
