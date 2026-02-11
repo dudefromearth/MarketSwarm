@@ -22,6 +22,7 @@ NGINX_CONF_PATH="${NGINX_CONF_PATH:-/etc/nginx/sites-available/marketswarm.conf}
 LOG_FILE="${MARKETSWARM_DIR}/deploy/deploy.log"
 NODE_ADMIN_PORT="${NODE_ADMIN_PORT:-8099}"
 NODE_ADMIN_URL="http://localhost:${NODE_ADMIN_PORT}"
+PYTHON="${MARKETSWARM_DIR}/.venv/bin/python3"
 
 # Colors for output
 RED='\033[0;31m'
@@ -85,8 +86,13 @@ check_prereqs() {
         error "Not a git repository: $MARKETSWARM_DIR"
     fi
 
+    if [[ ! -x "$PYTHON" ]]; then
+        error "Python venv not found: $PYTHON"
+    fi
+
     success "MarketSwarm directory exists"
     success "Git repository found"
+    success "Python venv: $PYTHON"
 }
 
 git_pull() {
@@ -231,16 +237,16 @@ restart_services_direct() {
 
         case "$service" in
             journal)
-                nohup python services/journal/main.py >> logs/journal.log 2>&1 &
+                nohup "$PYTHON" services/journal/main.py >> logs/journal.log 2>&1 &
                 ;;
             vexy_ai)
-                nohup python services/vexy_ai/main.py >> logs/vexy_ai.log 2>&1 &
+                nohup "$PYTHON" services/vexy_ai/main.py >> logs/vexy_ai.log 2>&1 &
                 ;;
             rss_agg)
-                nohup python services/rss_agg/main.py >> logs/rss_agg.log 2>&1 &
+                nohup "$PYTHON" services/rss_agg/main.py >> logs/rss_agg.log 2>&1 &
                 ;;
             copilot)
-                nohup python services/copilot/main.py >> logs/copilot.log 2>&1 &
+                nohup "$PYTHON" services/copilot/main.py >> logs/copilot.log 2>&1 &
                 ;;
         esac
 
