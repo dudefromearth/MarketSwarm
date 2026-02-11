@@ -4,7 +4,7 @@
 import { Router } from "express";
 import { getPool, isDbAvailable } from "../db/index.js";
 import { getCurrentUser, isAdmin as checkIsAdmin } from "../auth.js";
-import { getMarketRedis } from "../redis.js";
+import { getMarketRedis, getIntelRedis } from "../redis.js";
 import { getKeys } from "../keys.js";
 
 const router = Router();
@@ -1043,6 +1043,89 @@ router.post("/tracking/params/:version/activate", requireAdmin, async (req, res)
   } catch (err) {
     console.error("[admin] activate params error:", err.message);
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// =============================================================================
+// RSS Intel Review
+// =============================================================================
+
+/**
+ * GET /api/admin/rss-articles
+ * Browse enriched RSS articles from intel-redis
+ * Query params: hours (default 24), limit (default 200)
+ */
+router.get("/rss-articles", requireAdmin, async (req, res) => {
+  const redis = getIntelRedis();
+  if (!redis) {
+    return res.status(503).json({ error: "Intel-redis not available" });
+  }
+
+  const hours = parseInt(req.query.hours) || 24;
+  const limit = Math.min(parseInt(req.query.limit) || 200, 500);
+
+  try {
+    const now = Date.now();
+    const minScore = now - hours * 60 * 60 * 1000;
+
+    // Get UIDs from the enriched index (sorted set, newest first)
+    const uids = await redis.zrevrangebyscore(
+      "rss:article_enriched_index",
+      "+inf",
+      minScore,
+      "LIMIT",
+      0,
+      limit
+    );
+
+    if (!uids.length) {
+      return res.json({ articles: [], count: 0, hours });
+    }
+
+    // Fetch each article hash in parallel
+    const pipeline = redis.pipeline();
+    for (const uid of uids) {
+      pipeline.hgetall(`rss:article_enriched:${uid}`);
+    }
+    const results = await pipeline.exec();
+
+    const articles = [];
+    for (let i = 0; i < results.length; i++) {
+      const [err, hash] = results[i];
+      if (err || !hash || !hash.title) continue;
+
+      // Parse JSON fields safely
+      const parseJSON = (val) => {
+        if (!val) return null;
+        try { return JSON.parse(val); } catch { return null; }
+      };
+
+      const enrichedTs = parseFloat(hash.enriched_ts) || parseFloat(hash.published_ts) || 0;
+      const ageMinutes = enrichedTs ? Math.round((now - enrichedTs) / 60000) : null;
+
+      articles.push({
+        uid: uids[i],
+        title: hash.title,
+        url: hash.url || null,
+        source: hash.source || null,
+        category: hash.category || null,
+        summary: hash.summary || null,
+        sentiment: hash.sentiment || null,
+        quality_score: parseFloat(hash.quality_score) || 0,
+        entities: parseJSON(hash.entities),
+        tickers: parseJSON(hash.tickers),
+        takeaways: parseJSON(hash.takeaways),
+        enriched_ts: enrichedTs,
+        published_ts: parseFloat(hash.published_ts) || 0,
+        age_minutes: ageMinutes,
+      });
+    }
+
+    // Already sorted newest-first by zrevrangebyscore
+    res.json({ articles, count: articles.length, hours });
+  } catch (err) {
+    console.error("[admin] RSS articles error:", err);
+    res.status(500).json({ error: "Failed to fetch RSS articles" });
   }
 });
 
