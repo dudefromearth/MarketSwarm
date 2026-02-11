@@ -167,6 +167,15 @@ export default function StateOfTheMarket({ isOpen, marketContext }: StateOfTheMa
     fetchMarketState
   );
 
+  // Prefer live VIX from SSE over stale fetched value (hook must be above early returns)
+  const liveVix = marketContext?.vixLevel;
+  const fetchedVix = payload?.big_picture_volatility?.vix ?? null;
+  const effectiveVix = liveVix ?? fetchedVix;
+  const liveRegime = useMemo(
+    () => (effectiveVix != null ? vixToRegime(effectiveVix) : null),
+    [effectiveVix]
+  );
+
   // Loading state
   if (loading) {
     return (
@@ -203,14 +212,6 @@ export default function StateOfTheMarket({ isOpen, marketContext }: StateOfTheMa
   const lv = payload.localized_volatility;
   const ee = payload.event_energy;
   const ct = payload.convexity_temperature;
-
-  // Prefer live VIX from SSE over stale fetched value
-  const liveVix = marketContext?.vixLevel;
-  const effectiveVix = liveVix ?? bpv?.vix ?? null;
-  const liveRegime = useMemo(
-    () => (effectiveVix != null ? vixToRegime(effectiveVix) : null),
-    [effectiveVix]
-  );
 
   // If all lenses are null (graceful degradation), hide
   if (!bpv && !lv && !ee && !ct) return null;
