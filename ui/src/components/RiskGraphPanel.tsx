@@ -208,7 +208,12 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   const [hasAnalyzerInteraction, setHasAnalyzerInteraction] = useState(false);
 
   // Lock/unlock state for position pricing (locked = user-entered, unlocked = model theo value)
-  const [priceLocked, setPriceLocked] = useState<Record<string, boolean>>({});
+  const [priceLocked, setPriceLocked] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem('riskGraph_priceLocked');
+      return saved ? JSON.parse(saved) : {};
+    } catch { return {}; }
+  });
 
   // Backdrop visibility controls (off by default - user can enable as needed)
   const [showVolumeProfile, setShowVolumeProfile] = useState(false);
@@ -307,7 +312,9 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   const togglePriceLock = useCallback((id: string) => {
     setPriceLocked(prev => {
       const currentlyLocked = prev[id] ?? false;
-      return { ...prev, [id]: !currentlyLocked };
+      const next = { ...prev, [id]: !currentlyLocked };
+      try { localStorage.setItem('riskGraph_priceLocked', JSON.stringify(next)); } catch {}
+      return next;
     });
   }, []);
 
