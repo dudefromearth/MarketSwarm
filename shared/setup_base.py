@@ -109,9 +109,13 @@ class SetupBase:
         if env_declared:
             overridden = 0
             for key, default_value in env_declared.items():
-                value = os.getenv(key, default_value)
+                shell_val = os.getenv(key)
+                # Skip unresolved ${VAR} templates from shell env
+                if shell_val and shell_val.startswith("${") and shell_val.endswith("}"):
+                    shell_val = None
+                value = shell_val if shell_val is not None else default_value
                 cfg[key] = value
-                if os.getenv(key) is not None:
+                if shell_val is not None:
                     overridden += 1
 
             self.log(

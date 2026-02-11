@@ -27,7 +27,6 @@ import { API, type RoutineContextPhase } from '../../config/api';
 interface AskVexyAffordanceProps {
   isOpen: boolean;
   contextPhase?: RoutineContextPhase;
-  onOpenChange?: (isOpen: boolean) => void;
 }
 
 interface ChatResponse {
@@ -40,43 +39,21 @@ interface ChatResponse {
 export default function AskVexyAffordance({
   isOpen: drawerOpen,
   contextPhase,
-  onOpenChange,
 }: AskVexyAffordanceProps) {
-  const [expanded, setExpanded] = useState(false);
   const [message, setMessage] = useState('');
   const [response, setResponse] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Focus input when expanded
-  useEffect(() => {
-    if (expanded && inputRef.current) {
-      inputRef.current.focus();
-    }
-  }, [expanded]);
-
-  // Close when drawer closes
+  // Reset when drawer closes
   useEffect(() => {
     if (!drawerOpen) {
-      setExpanded(false);
       setMessage('');
       setResponse(null);
       setError(null);
     }
   }, [drawerOpen]);
-
-  const handleToggle = () => {
-    const newState = !expanded;
-    setExpanded(newState);
-    onOpenChange?.(newState);
-
-    if (!newState) {
-      setMessage('');
-      setResponse(null);
-      setError(null);
-    }
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -123,10 +100,10 @@ export default function AskVexyAffordance({
     }
   };
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      handleToggle();
-    }
+  const handleClear = () => {
+    setResponse(null);
+    setError(null);
+    inputRef.current?.focus();
   };
 
   // Render response as sanitized markdown
@@ -135,31 +112,20 @@ export default function AskVexyAffordance({
     return <div dangerouslySetInnerHTML={{ __html: html }} />;
   };
 
-  if (!expanded) {
-    return (
-      <div className="ask-vexy-affordance">
-        <button
-          type="button"
-          className="ask-vexy-trigger"
-          onClick={handleToggle}
-        >
-          Ask Vexy
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div className="ask-vexy-affordance expanded">
+    <div className="ask-vexy-affordance">
       <div className="ask-vexy-header">
         <span className="ask-vexy-title">Ask Vexy</span>
-        <button
-          type="button"
-          className="ask-vexy-close"
-          onClick={handleToggle}
-        >
-          ×
-        </button>
+        {response && (
+          <button
+            type="button"
+            className="ask-vexy-clear"
+            onClick={handleClear}
+            title="Clear"
+          >
+            ×
+          </button>
+        )}
       </div>
 
       {response && (
@@ -180,8 +146,7 @@ export default function AskVexyAffordance({
           type="text"
           value={message}
           onChange={(e) => setMessage(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="What's on your mind?"
+          placeholder="Ask about context, regimes, structure..."
           className="ask-vexy-input"
           disabled={loading}
         />
@@ -193,10 +158,6 @@ export default function AskVexyAffordance({
           {loading ? '...' : '→'}
         </button>
       </form>
-
-      <div className="ask-vexy-hint">
-        Context recall, clarification, light synthesis only.
-      </div>
     </div>
   );
 }

@@ -35,31 +35,26 @@ class AIClientConfig:
     openai_model: str = "gpt-4o-mini"
 
 
+def _resolve_key(config: Dict[str, Any], key_name: str) -> str:
+    """Resolve an API key from config, skipping unresolved ${VAR} templates."""
+    env = config.get("env", {}) or {}
+    for val in [config.get(key_name), env.get(key_name), os.getenv(key_name)]:
+        if val and not (val.startswith("${") and val.endswith("}")):
+            return val
+    return ""
+
+
 def get_api_keys(config: Dict[str, Any]) -> Tuple[str, str]:
     """
     Get API keys using triple-fallback pattern.
 
     Priority: config dict → config.env dict → environment variable
+    Skips unresolved ${VAR} template references.
 
     Returns:
         Tuple of (xai_key, openai_key)
     """
-    env = config.get("env", {}) or {}
-
-    xai_key = (
-        config.get("XAI_API_KEY") or
-        env.get("XAI_API_KEY") or
-        os.getenv("XAI_API_KEY") or
-        ""
-    )
-    openai_key = (
-        config.get("OPENAI_API_KEY") or
-        env.get("OPENAI_API_KEY") or
-        os.getenv("OPENAI_API_KEY") or
-        ""
-    )
-
-    return xai_key, openai_key
+    return _resolve_key(config, "XAI_API_KEY"), _resolve_key(config, "OPENAI_API_KEY")
 
 
 def _parse_xai_response(data: Dict[str, Any]) -> Tuple[str, int, bool]:

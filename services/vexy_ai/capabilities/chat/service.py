@@ -400,6 +400,7 @@ class ChatService:
                 max_tokens=600,
                 enable_web_search=True,
             ),
+            logger=self.logger,
         )
 
         # AIResponse is a dataclass, access attributes directly

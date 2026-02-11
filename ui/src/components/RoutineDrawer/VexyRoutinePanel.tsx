@@ -22,14 +22,12 @@ interface VexyRoutinePanelProps {
   isOpen: boolean;
   marketContext?: MarketContext;
   onOrientationShown?: () => void;
-  onAskVexyOpenChange?: (isOpen: boolean) => void;
 }
 
 export default function VexyRoutinePanel({
   isOpen,
   marketContext,
   onOrientationShown,
-  onAskVexyOpenChange,
 }: VexyRoutinePanelProps) {
   return (
     <div className="vexy-routine-panel">
@@ -43,11 +41,8 @@ export default function VexyRoutinePanel({
       {/* ProcessEcho - quieter weight, below Orientation */}
       <ProcessEcho isOpen={isOpen} />
 
-      {/* Ask Vexy (Mode B) - subtle trigger */}
-      <AskVexyAffordance
-        isOpen={isOpen}
-        onOpenChange={onAskVexyOpenChange}
-      />
+      {/* Ask Vexy - always visible input */}
+      <AskVexyAffordance isOpen={isOpen} />
     </div>
   );
 }
