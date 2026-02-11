@@ -22,9 +22,10 @@ class RoutineService:
     - Log health context
     """
 
-    def __init__(self, config: Dict[str, Any], logger: Any):
+    def __init__(self, config: Dict[str, Any], logger: Any, market_intel=None):
         self.config = config
         self.logger = logger
+        self.market_intel = market_intel
         self._synthesizer = None
         self._log_health_cache: Dict[str, List[Dict]] = {}
 
@@ -83,70 +84,17 @@ class RoutineService:
             "data": payload,
         }
 
-    def _get_registry(self):
-        """Lazy-load the EconomicIndicatorRegistry (singleton)."""
-        if not hasattr(self, "_registry"):
-            from services.vexy_ai.economic_indicators import EconomicIndicatorRegistry
-            self._registry = EconomicIndicatorRegistry(self.config, self.logger)
-            try:
-                self._registry.load_from_db()
-                self._registry.start_subscription()
-            except Exception as e:
-                self.logger.warning(f"Indicator registry init failed: {e}", emoji="⚠️")
-        return self._registry
-
     def get_market_state(self) -> Dict[str, Any]:
         """
-        State of the Market v2 — deterministic synthesis.
-
-        Reads from market-redis (spot, GEX), returns 4-lens market state.
-        No LLM, no external API. Target: < 40ms.
+        State of the Market v2 — delegates to shared MarketIntelProvider.
         """
-        import redis
-        from services.vexy_ai.intel.market_reader import MarketReader
-        from services.vexy_ai.market_state import MarketStateEngine
-
-        try:
-            buses = self.config.get("buses", {}) or {}
-            market_url = buses.get("market-redis", {}).get("url", "redis://127.0.0.1:6380")
-            r_market = redis.from_url(market_url, decode_responses=True)
-            reader = MarketReader(r_market, self.logger)
-            registry = self._get_registry()
-            engine = MarketStateEngine(reader, self.logger, registry=registry, market_redis=r_market)
-            return engine.get_full_state()
-        except Exception as e:
-            self.logger.error(f"MarketStateEngine failed: {e}", emoji="💥")
-            # Graceful degradation — return minimal valid envelope
-            from services.vexy_ai.market_state import MarketStateEngine, ALL_HOLIDAYS
-            from services.vexy_ai.routine_panel import get_routine_context_phase, RoutineContextPhase
-            import pytz
-            et = pytz.timezone("America/New_York")
-            now = datetime.now(et)
-            phase = get_routine_context_phase(now=now, holidays=ALL_HOLIDAYS)
-            # Use same mapping as MarketStateEngine
-            weekend_phases = {
-                RoutineContextPhase.FRIDAY_NIGHT,
-                RoutineContextPhase.WEEKEND_MORNING,
-                RoutineContextPhase.WEEKEND_AFTERNOON,
-                RoutineContextPhase.WEEKEND_EVENING,
-            }
-            if phase == RoutineContextPhase.HOLIDAY:
-                ctx = "holiday"
-            elif phase in weekend_phases:
-                ctx = "weekend"
-            elif phase == RoutineContextPhase.WEEKDAY_INTRADAY:
-                ctx = "weekday_live"
-            else:
-                ctx = "weekday_premarket"
-            return {
-                "schema_version": "som.v2",
-                "generated_at": now.isoformat(),
-                "context_phase": ctx,
-                "big_picture_volatility": None,
-                "localized_volatility": None,
-                "event_energy": None,
-                "convexity_temperature": None,
-            }
+        if self.market_intel:
+            return self.market_intel.get_som()
+        # Fallback (should not happen in normal operation)
+        self.logger.warning("No market_intel provider, returning degraded envelope", emoji="⚠️")
+        from services.vexy_ai.market_intel import MarketIntelProvider
+        stub = MarketIntelProvider(self.config, self.logger)
+        return stub._degraded_envelope()
 
     def generate_briefing(
         self,

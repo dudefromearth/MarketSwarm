@@ -154,9 +154,9 @@ function ratingColorClass(rating: number | undefined): string {
 }
 
 function vixToRegime(vix: number): { key: SomRegimeKey; label: string } {
-  if (vix <= 13) return { key: 'compression', label: 'Compression' };
-  if (vix <= 18) return { key: 'goldilocks_i', label: 'Goldilocks I' };
-  if (vix <= 25) return { key: 'goldilocks_ii', label: 'Goldilocks II' };
+  if (vix <= 15) return { key: 'compression', label: 'Compression' };
+  if (vix <= 20) return { key: 'goldilocks_i', label: 'Goldilocks I' };
+  if (vix <= 28) return { key: 'goldilocks_ii', label: 'Goldilocks II' };
   if (vix <= 35) return { key: 'elevated', label: 'Elevated' };
   return { key: 'chaos', label: 'Chaos' };
 }

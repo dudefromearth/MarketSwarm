@@ -28,10 +28,11 @@ class ChatService:
     - AI calls
     """
 
-    def __init__(self, config: Dict[str, Any], logger: Any, buses: Any = None):
+    def __init__(self, config: Dict[str, Any], logger: Any, buses: Any = None, market_intel=None):
         self.config = config
         self.logger = logger
         self.buses = buses
+        self.market_intel = market_intel
         # Daily usage tracking (in production, stored in Redis)
         self._usage_cache: Dict[str, int] = {}
 
@@ -180,10 +181,60 @@ class ChatService:
 
         return "".join(prompt_parts)
 
+    def _get_som_context(self) -> str:
+        """Format current SoM lenses into markdown for chat prompt enrichment."""
+        if not self.market_intel:
+            return ""
+        try:
+            som = self.market_intel.get_som()
+            if not som:
+                return ""
+
+            bpv = som.get("big_picture_volatility")
+            lv = som.get("localized_volatility")
+            ee = som.get("event_energy")
+            ct = som.get("convexity_temperature")
+
+            # Weekend/holiday: all lenses null
+            if not bpv and not ct:
+                return ""
+
+            lines = ["## Market Intelligence (SoM)"]
+
+            if bpv:
+                vix = bpv.get("vix", "?")
+                regime = bpv.get("regime_label", "?")
+                decay = bpv.get("decay_profile", "?")
+                gamma = bpv.get("gamma_sensitivity", "?")
+                lines.append(f"VIX: {vix} | Regime: {regime} | Decay: {decay} | Gamma: {gamma}")
+
+            if lv:
+                dealer = lv.get("dealer_posture", "?")
+                expansion = lv.get("intraday_expansion_probability", "?")
+                lines.append(f"Dealer: {dealer} | Expansion: {expansion}")
+
+            if ee:
+                events = ee.get("events", [])
+                posture = ee.get("event_posture", "clean_morning")
+                event_names = ", ".join(e.get("name", "?") for e in events) if events else "None"
+                lines.append(f"Events: {event_names} | Posture: {posture}")
+
+            if ct:
+                temp = ct.get("temperature", "?")
+                summary = ct.get("summary", "")
+                lines.append(f"Temperature: {temp} — {summary}")
+
+            return "\n".join(lines)
+        except Exception as e:
+            self.logger.debug(f"SoM context unavailable for chat: {e}")
+            return ""
+
     def format_context(self, context: Optional[ChatContext]) -> str:
         """Format comprehensive chat context for the prompt."""
         if not context:
-            return ""
+            # Even without client context, append SoM if available
+            som_context = self._get_som_context()
+            return som_context
 
         parts = []
 
@@ -344,6 +395,11 @@ class ChatService:
 
             if ui_parts:
                 parts.append("## UI State\n" + ", ".join(ui_parts))
+
+        # Append server-side SoM lenses (regime, temperature, posture)
+        som_context = self._get_som_context()
+        if som_context:
+            parts.append(som_context)
 
         return "\n\n".join(parts) if parts else ""
 

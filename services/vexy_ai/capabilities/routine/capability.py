@@ -54,7 +54,8 @@ class RoutineCapability(BaseCapability):
 
     async def start(self) -> None:
         """Initialize Routine service."""
-        self.service = RoutineService(self.config, self.logger)
+        market_intel = getattr(self.vexy, 'market_intel', None)
+        self.service = RoutineService(self.config, self.logger, market_intel=market_intel)
         self.logger.info("Routine capability started", emoji="🌅")
 
     async def stop(self) -> None:

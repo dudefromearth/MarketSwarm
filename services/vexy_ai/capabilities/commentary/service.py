@@ -27,10 +27,11 @@ class CommentaryService:
     - Synthesizes and publishes commentary
     """
 
-    def __init__(self, config: Dict[str, Any], logger: Any, buses: Any = None):
+    def __init__(self, config: Dict[str, Any], logger: Any, buses: Any = None, market_intel=None):
         self.config = config
         self.logger = logger
         self.buses = buses
+        self.market_intel = market_intel
 
         # State tracking
         self.last_epoch_name: Optional[str] = None
@@ -249,8 +250,21 @@ class CommentaryService:
                 self.last_epoch_name = epoch["name"]
                 self.logger.info(f"[Digest] {commentary[:80]}...", emoji="🎙️")
         else:
-            # Trading day epoch
-            market_state = market_reader.get_market_state()
+            # Trading day epoch — prefer market_intel for raw state
+            if self.market_intel:
+                market_state = self.market_intel.get_raw_state()
+                # Enrich with SoM lenses (additive, existing keys preserved)
+                try:
+                    som = self.market_intel.get_som()
+                    market_state["som_lenses"] = {
+                        "vix_regime": (som.get("big_picture_volatility") or {}).get("regime_key"),
+                        "event_posture": (som.get("event_energy") or {}).get("event_posture"),
+                        "temperature": (som.get("convexity_temperature") or {}).get("temperature"),
+                    }
+                except Exception:
+                    pass
+            else:
+                market_state = market_reader.get_market_state()
             recent_articles = article_reader.get_recent_articles(max_count=8, max_age_hours=6)
             articles_text = article_reader.format_for_prompt(recent_articles)
 
