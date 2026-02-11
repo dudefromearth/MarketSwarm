@@ -27,9 +27,11 @@ interface Tag {
   description: string | null;
   is_example: boolean;
   usage_count: number;
-  category: string | null;
+  category: string;
   group: string | null;
   system: boolean;
+  is_locked: boolean;
+  visibility_scopes: string[];
 }
 
 // Props for daily entry mode
@@ -687,15 +689,15 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
     }
   }, [editor, isPlaybook, selectedTagIds, isEntryMode, onSave, onSaveRetro, retroType, periodStart, periodEnd]);
 
-  // Tag toggle handler (with day-texture group exclusivity)
+  // Tag toggle handler (with state group exclusivity)
   const EXCLUSIVE_GROUPS = new Set(['sleep', 'focus', 'distractions', 'body']);
 
   const handleToggleTag = (tagId: string) => {
     const tag = availableTags.find(t => t.id === tagId);
 
     setSelectedTagIds(prev => {
-      // Day-texture exclusive groups: deselect others in same group
-      if (tag?.category === 'day-texture' && tag.group && EXCLUSIVE_GROUPS.has(tag.group)) {
+      // State tag exclusive groups: deselect others in same group
+      if (tag?.category === 'state' && tag.group && EXCLUSIVE_GROUPS.has(tag.group)) {
         const groupTagIds = availableTags
           .filter(t => t.group === tag.group)
           .map(t => t.id);
@@ -1079,9 +1081,9 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
                 <div className="tags-empty">No tags available. Create tags in Settings.</div>
               ) : (
                 <>
-                  {/* Readiness (day-texture) tags */}
+                  {/* Readiness (state) tags */}
                   {(() => {
-                    const readinessTags = availableTags.filter(t => t.category === 'day-texture');
+                    const readinessTags = availableTags.filter(t => t.category === 'state');
                     if (readinessTags.length === 0) return null;
 
                     const GROUP_ORDER = ['sleep', 'focus', 'distractions', 'body', 'friction'];
@@ -1127,7 +1129,7 @@ export default function JournalEntryEditor(props: JournalEntryEditorProps) {
 
                   {/* Behavioral tags */}
                   {(() => {
-                    const behaviorTags = availableTags.filter(t => t.category !== 'day-texture');
+                    const behaviorTags = availableTags.filter(t => t.category !== 'state');
                     if (behaviorTags.length === 0) return null;
                     return (
                       <div className="tags-behavior-section">

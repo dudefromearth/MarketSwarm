@@ -1,5 +1,5 @@
 /**
- * useReadinessTags - Server-backed readiness state via day-texture tags
+ * useReadinessTags - Server-backed readiness state via state tags
  *
  * Replaces the old localStorage-based PersonalReadiness/Friction system.
  * Tags are stored on the Journal entry for the current day, making them
@@ -16,6 +16,8 @@ export interface ReadinessTag {
   category: string;
   group: string;
   system: boolean;
+  is_locked: boolean;
+  visibility_scopes: string[];
 }
 
 // Groups where only one tag can be selected at a time
@@ -57,8 +59,8 @@ export function useReadinessTags() {
     const init = async () => {
       setLoading(true);
       try {
-        // Fetch day-texture tags
-        const tagsRes = await fetch(`${JOURNAL_API}/api/tags?category=day-texture`, {
+        // Fetch state (readiness) tags
+        const tagsRes = await fetch(`${JOURNAL_API}/api/tags?category=state`, {
           credentials: 'include',
         });
         const tagsData = await tagsRes.json();
@@ -89,11 +91,11 @@ export function useReadinessTags() {
               is_playbook_material: entry.is_playbook_material,
               tags: entry.tags || [],
             };
-            // Extract day-texture tag IDs from entry
-            const dayTextureIds = (entry.tags || []).filter(
+            // Extract state (readiness) tag IDs from entry
+            const stateTagIds = (entry.tags || []).filter(
               (id: string) => readinessTagIdsRef.current.has(id)
             );
-            setSelectedTagIds(dayTextureIds);
+            setSelectedTagIds(stateTagIds);
           }
         } else if (entryRes.status === 404) {
           currentEntryRef.current = null;

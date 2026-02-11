@@ -26,10 +26,12 @@ interface Tag {
   user_id: number;
   name: string;
   description: string | null;
-  category: string | null;
+  category: string;
   group: string | null;
   is_retired: boolean;
   is_example: boolean;
+  is_locked: boolean;
+  visibility_scopes: string[];
   usage_count: number;
   last_used_at: string | null;
   created_at: string;
@@ -85,6 +87,8 @@ const TAG_CATEGORIES: { value: string | null; label: string }[] = [
   { value: 'context', label: 'Context' },
   { value: 'process', label: 'Process' },
   { value: 'insight', label: 'Insight' },
+  { value: 'state', label: 'State' },
+  { value: 'strategy', label: 'Strategy' },
   { value: 'custom', label: 'Custom' },
 ];
 
@@ -127,7 +131,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const [tagsSortBy, setTagsSortBy] = useState<'recent' | 'alpha'>('recent');
   const [showRetiredTags, setShowRetiredTags] = useState(false);
   const [showAddTag, setShowAddTag] = useState(false);
-  const [newTag, setNewTag] = useState({ name: '', description: '' });
+  const [newTag, setNewTag] = useState({ name: '', description: '', category: 'custom' });
   const [tagError, setTagError] = useState<string | null>(null);
   const [editingTagId, setEditingTagId] = useState<string | null>(null);
   const [editingTagData, setEditingTagData] = useState({ name: '', description: '' });
@@ -327,7 +331,8 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
         credentials: 'include',
         body: JSON.stringify({
           name: newTag.name.trim(),
-          description: newTag.description.trim() || null
+          description: newTag.description.trim() || null,
+          category: newTag.category,
         })
       });
       const data = await res.json();
@@ -335,7 +340,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
       if (data.success) {
         setTags([data.data, ...tags]);
         setShowAddTag(false);
-        setNewTag({ name: '', description: '' });
+        setNewTag({ name: '', description: '', category: 'custom' });
       } else {
         setTagError(data.error || 'Failed to add tag');
       }
@@ -440,9 +445,9 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
     setTagError(null);
   };
 
-  // Filter and sort tags — exclude day-texture (managed via Readiness drawer)
-  const activeTags = tags.filter(t => !t.is_retired && t.category !== 'day-texture');
-  const retiredTags = tags.filter(t => t.is_retired && t.category !== 'day-texture');
+  // Filter and sort tags — exclude state tags (managed via Readiness drawer)
+  const activeTags = tags.filter(t => !t.is_retired && t.category !== 'state');
+  const retiredTags = tags.filter(t => t.is_retired && t.category !== 'state');
 
   const sortedActiveTags = [...activeTags].sort((a, b) => {
     if (tagsSortBy === 'alpha') {
@@ -460,14 +465,12 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   // Category filter
   const filteredByCategory = tagCategory === null
     ? sortedActiveTags
-    : tagCategory === 'custom'
-      ? sortedActiveTags.filter(t => t.category === null)
-      : sortedActiveTags.filter(t => t.category === tagCategory);
+    : sortedActiveTags.filter(t => t.category === tagCategory);
 
   // Category counts (for pills)
   const tagCategoryCounts: Record<string, number> = {};
   for (const t of sortedActiveTags) {
-    const cat = t.category ?? 'custom';
+    const cat = t.category;
     tagCategoryCounts[cat] = (tagCategoryCounts[cat] || 0) + 1;
   }
   tagCategoryCounts['all'] = sortedActiveTags.length;
@@ -870,9 +873,23 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                           placeholder="What this tag means to you"
                         />
                       </div>
+                      <div className="form-group">
+                        <label>Category</label>
+                        <select
+                          value={newTag.category}
+                          onChange={e => setNewTag({ ...newTag, category: e.target.value })}
+                        >
+                          <option value="behavior">Behavior</option>
+                          <option value="process">Process</option>
+                          <option value="context">Context</option>
+                          <option value="insight">Insight</option>
+                          <option value="strategy">Strategy</option>
+                          <option value="custom">Custom</option>
+                        </select>
+                      </div>
                       {tagError && <div className="form-error">{tagError}</div>}
                       <div className="form-actions">
-                        <button className="btn-cancel" onClick={() => { setShowAddTag(false); setNewTag({ name: '', description: '' }); setTagError(null); }}>
+                        <button className="btn-cancel" onClick={() => { setShowAddTag(false); setNewTag({ name: '', description: '', category: 'custom' }); setTagError(null); }}>
                           Cancel
                         </button>
                         <button className="btn-save" onClick={handleAddTag}>
@@ -893,7 +910,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                           </div>
                         ) : (
                           paginatedTags.map(tag => (
-                            <div key={tag.id} className={`tag-item ${tag.is_example ? 'example' : ''}`}>
+                            <div key={tag.id} className="tag-item">
                               {editingTagId === tag.id ? (
                                 <div className="tag-edit-form">
                                   <div className="form-group">
@@ -922,29 +939,38 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                               ) : (
                                 <>
                                   <div className="tag-info">
-                                    <span className="tag-name">{tag.name}</span>
-                                    {tag.is_example && <span className="tag-example-badge">(example)</span>}
+                                    <span className="tag-name">
+                                      {tag.is_locked && <span className="tag-locked-icon" title="Locked">&#x1F512;</span>}
+                                      {tag.name}
+                                    </span>
+                                    <span className="tag-origin-badge">
+                                      {tag.is_example ? 'admin' : `${profile?.display_name || 'you'} · ${new Date(tag.created_at).toLocaleDateString()}`}
+                                    </span>
                                     <span className="tag-usage">{tag.usage_count} uses</span>
                                   </div>
                                   {tag.description && (
                                     <div className="tag-description">{tag.description}</div>
                                   )}
                                   <div className="tag-actions">
-                                    <button
-                                      className="btn-edit-tag"
-                                      onClick={() => startEditingTag(tag)}
-                                      title="Edit tag"
-                                    >
-                                      Edit
-                                    </button>
-                                    <button
-                                      className="btn-retire-tag"
-                                      onClick={() => handleRetireTag(tag.id)}
-                                      title="Retire tag"
-                                    >
-                                      Retire
-                                    </button>
-                                    {tag.usage_count === 0 && (
+                                    {!tag.is_locked && (
+                                      <button
+                                        className="btn-edit-tag"
+                                        onClick={() => startEditingTag(tag)}
+                                        title="Edit tag"
+                                      >
+                                        Edit
+                                      </button>
+                                    )}
+                                    {!tag.is_locked && (
+                                      <button
+                                        className="btn-retire-tag"
+                                        onClick={() => handleRetireTag(tag.id)}
+                                        title="Retire tag"
+                                      >
+                                        Retire
+                                      </button>
+                                    )}
+                                    {tag.usage_count === 0 && !tag.is_locked && (
                                       <button
                                         className="btn-delete-tag"
                                         onClick={() => handleDeleteTag(tag)}

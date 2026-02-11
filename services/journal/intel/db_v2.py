@@ -19,14 +19,16 @@ from .models_v2 import (
     MLDecision, PnLEvent, DailyPerformance, MLFeatureSnapshot,
     TrackedIdeaSnapshot, UserTradeAction, MLModel, MLExperiment,
     # Import batch model
-    ImportBatch
+    ImportBatch,
+    # Tag schema v2 constants
+    DEFAULT_SCOPES_BY_CATEGORY,
 )
 
 
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 23
+    SCHEMA_VERSION = 24
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -268,6 +270,9 @@ class JournalDBv2:
 
             if current_version < 23:
                 self._migrate_to_v23(conn)
+
+            if current_version < 24:
+                self._migrate_to_v24(conn)
 
             conn.commit()
         finally:
@@ -2005,6 +2010,49 @@ class JournalDBv2:
         finally:
             cursor.close()
 
+    def _migrate_to_v24(self, conn):
+        """Migrate to v24: Tag Schema v2 — add is_locked, visibility_scopes; rename day-texture→state."""
+        cursor = conn.cursor()
+        try:
+            # 1. Add columns (idempotent via information_schema check)
+            cursor.execute("""
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tags' AND COLUMN_NAME = 'visibility_scopes'
+            """)
+            if cursor.fetchone()[0] == 0:
+                cursor.execute("ALTER TABLE tags ADD COLUMN visibility_scopes TEXT")
+                cursor.execute("UPDATE tags SET visibility_scopes = '[]' WHERE visibility_scopes IS NULL")
+
+            cursor.execute("""
+                SELECT COUNT(*) FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'tags' AND COLUMN_NAME = 'is_locked'
+            """)
+            if cursor.fetchone()[0] == 0:
+                cursor.execute("ALTER TABLE tags ADD COLUMN is_locked TINYINT DEFAULT 0")
+
+            # 2. Rename day-texture → state
+            cursor.execute("UPDATE tags SET category = 'state' WHERE category = 'day-texture'")
+
+            # 3. Backfill NULL → custom
+            cursor.execute("UPDATE tags SET category = 'custom' WHERE category IS NULL")
+
+            # 4. Backfill is_locked from system
+            cursor.execute("UPDATE tags SET is_locked = `system` WHERE is_locked = 0 AND `system` = 1")
+
+            # 5. Backfill visibility_scopes by category
+            for category, scopes in DEFAULT_SCOPES_BY_CATEGORY.items():
+                cursor.execute(
+                    "UPDATE tags SET visibility_scopes = %s WHERE category = %s AND visibility_scopes = '[]'",
+                    (json.dumps(scopes), category)
+                )
+
+            # 6. Enforce NOT NULL on category
+            cursor.execute("ALTER TABLE tags MODIFY COLUMN category VARCHAR(50) NOT NULL DEFAULT 'custom'")
+
+            self._set_schema_version(conn, 24)
+        finally:
+            cursor.close()
+
     # ==================== Algo Alert CRUD ====================
 
     def create_algo_alert(self, alert_id: str, user_id: int, name: str, mode: str,
@@ -3179,8 +3227,9 @@ class JournalDBv2:
 
     # ==================== Tags (Vocabulary System) ====================
 
-    def list_tags(self, user_id: int, include_retired: bool = False, category: Optional[str] = None) -> List[Tag]:
-        """List all tags for a user, optionally including retired tags and filtering by category."""
+    def list_tags(self, user_id: int, include_retired: bool = False,
+                  category: Optional[str] = None, scope: Optional[str] = None) -> List[Tag]:
+        """List all tags for a user, optionally filtering by category and/or visibility scope."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
@@ -3193,6 +3242,10 @@ class JournalDBv2:
             if category is not None:
                 query += " AND category = %s"
                 params.append(category)
+
+            if scope is not None:
+                query += " AND JSON_CONTAINS(visibility_scopes, %s)"
+                params.append(json.dumps(scope))
 
             query += " ORDER BY last_used_at DESC, created_at DESC"
             cursor.execute(query, params)
@@ -3253,13 +3306,15 @@ class JournalDBv2:
             conn.close()
 
     def update_tag(self, tag_id: str, updates: Dict[str, Any]) -> Optional[Tag]:
-        """Update a tag's editable fields (name, description)."""
+        """Update a tag's editable fields."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
-            # Only allow updating name and description
-            allowed = {'name', 'description'}
+            allowed = {'name', 'description', 'category', 'visibility_scopes'}
             updates = {k: v for k, v in updates.items() if k in allowed}
+            # Serialize visibility_scopes for storage
+            if 'visibility_scopes' in updates:
+                updates['visibility_scopes'] = json.dumps(updates['visibility_scopes'])
 
             if not updates:
                 return self.get_tag(tag_id)
@@ -3355,13 +3410,15 @@ class JournalDBv2:
             created_tags = []
 
             for tag_data in self.DEFAULT_TAGS:
+                cat = tag_data.get('category', 'custom')
                 tag = Tag(
                     id=Tag.new_id(),
                     user_id=user_id,
                     name=tag_data['name'],
                     description=tag_data['description'],
-                    category=tag_data.get('category'),
+                    category=cat,
                     is_example=True,
+                    visibility_scopes=DEFAULT_SCOPES_BY_CATEGORY.get(cat, ['journal']),
                     created_at=now,
                     updated_at=now
                 )
@@ -3381,12 +3438,12 @@ class JournalDBv2:
             conn.close()
 
     def seed_day_texture_tags(self, user_id: int) -> List[Tag]:
-        """Seed default day-texture tags for readiness if none exist."""
+        """Seed default state (readiness) tags if none exist."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "SELECT COUNT(*) FROM tags WHERE user_id = %s AND category = 'day-texture'",
+                "SELECT COUNT(*) FROM tags WHERE user_id = %s AND category = 'state'",
                 (user_id,)
             )
             if cursor.fetchone()[0] > 0:
@@ -3402,9 +3459,11 @@ class JournalDBv2:
                     name=tag_data['name'],
                     description=None,
                     is_example=True,
-                    category='day-texture',
+                    category='state',
                     group=tag_data['group'],
                     system=True,
+                    is_locked=True,
+                    visibility_scopes=['routine'],
                     created_at=now,
                     updated_at=now
                 )

@@ -10838,9 +10838,6 @@ body {
   padding: 12px;
 }
 
-.tag-item.example {
-  border-left: 2px solid #3b82f6;
-}
 
 .tag-item.retired {
   opacity: 0.6;
@@ -10859,10 +10856,16 @@ body {
   font-size: 14px;
 }
 
-.tag-example-badge {
+.tag-locked-icon {
+  font-size: 11px;
+  margin-right: 4px;
+  opacity: 0.5;
+}
+
+.tag-origin-badge {
   font-size: 10px;
-  color: #3b82f6;
-  background: rgba(59, 130, 246, 0.1);
+  color: var(--text-faint);
+  background: var(--bg-secondary, rgba(100, 100, 100, 0.1));
   padding: 2px 6px;
   border-radius: 3px;
 }

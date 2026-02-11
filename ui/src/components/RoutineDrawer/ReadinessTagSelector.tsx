@@ -1,5 +1,5 @@
 /**
- * ReadinessTagSelector - Server-backed day-texture tag pills
+ * ReadinessTagSelector - Server-backed state tag pills
  *
  * Replaces the old PersonalReadiness + DayQuality chip system.
  * Tags are grouped by: sleep → focus → distractions → body → friction

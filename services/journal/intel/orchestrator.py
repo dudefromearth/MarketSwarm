@@ -28,6 +28,7 @@ from .models_v2 import (
     MLDecision, PnLEvent, DailyPerformance, MLFeatureSnapshot,
     TrackedIdeaSnapshot, UserTradeAction, MLModel, MLExperiment,
     PositionJournalEntry,
+    VALID_TAG_CATEGORIES, VALID_TAG_SCOPES, DEFAULT_SCOPES_BY_CATEGORY,
 )
 from .analytics_v2 import AnalyticsV2
 from .auth import JournalAuth, require_auth, optional_auth
@@ -1556,16 +1557,22 @@ class JournalOrchestrator:
             params = request.query
             include_retired = params.get('include_retired', '').lower() == 'true'
             category = params.get('category', None)
+            scope = params.get('scope', None)
+
+            # Backward compat: day-texture → state
+            if category == 'day-texture':
+                category = 'state'
 
             # Check if user has any tags, seed if not
             tag_count = self.db.count_tags(user['id'])
             if tag_count == 0:
                 self.db.seed_example_tags(user['id'])
 
-            # Always ensure day-texture tags exist
+            # Always ensure state (readiness) tags exist
             self.db.seed_day_texture_tags(user['id'])
 
-            tags = self.db.list_tags(user['id'], include_retired=include_retired, category=category)
+            tags = self.db.list_tags(user['id'], include_retired=include_retired,
+                                     category=category, scope=scope)
 
             return self._json_response({
                 'success': True,
@@ -1615,6 +1622,20 @@ class JournalOrchestrator:
 
             name = body['name'].strip()
 
+            # Validate category
+            category = body.get('category', 'custom')
+            if category not in VALID_TAG_CATEGORIES:
+                return self._error_response(f"Invalid category: {category}", 400)
+
+            # Validate visibility_scopes
+            scopes = body.get('visibility_scopes', DEFAULT_SCOPES_BY_CATEGORY.get(category, ['journal']))
+            if not isinstance(scopes, list) or len(scopes) == 0:
+                return self._error_response("visibility_scopes must be a non-empty list", 400)
+            if any(s not in VALID_TAG_SCOPES for s in scopes):
+                return self._error_response(f"Invalid scope values. Valid: {sorted(VALID_TAG_SCOPES)}", 400)
+            if 'global' in scopes and len(scopes) > 1:
+                return self._error_response("'global' scope must be exclusive", 400)
+
             # Check for duplicate name
             existing = self.db.get_tag_by_name(user['id'], name)
             if existing:
@@ -1624,7 +1645,9 @@ class JournalOrchestrator:
                 id=Tag.new_id(),
                 user_id=user['id'],
                 name=name,
-                description=body.get('description', '').strip() or None
+                description=body.get('description', '').strip() or None,
+                category=category,
+                visibility_scopes=scopes,
             )
 
             created = self.db.create_tag(tag)
@@ -1638,7 +1661,7 @@ class JournalOrchestrator:
             return self._error_response(str(e), 500)
 
     async def update_tag(self, request: web.Request) -> web.Response:
-        """PUT /api/tags/:id - Update a tag (name, description)."""
+        """PUT /api/tags/:id - Update a tag."""
         try:
             user = await self.auth.get_request_user(request)
             if not user:
@@ -1656,6 +1679,12 @@ class JournalOrchestrator:
 
             body = await request.json()
 
+            # Locked tags: only description can be updated
+            if tag.is_locked:
+                restricted = {'name', 'category', 'visibility_scopes'} & set(body.keys())
+                if restricted:
+                    return self._error_response("Locked tags can only have their description updated", 403)
+
             # System tags cannot be renamed
             if tag.system and 'name' in body:
                 return self._error_response("System tags cannot be renamed", 403)
@@ -1666,11 +1695,29 @@ class JournalOrchestrator:
                 if existing:
                     return self._error_response(f"Tag '{body['name']}' already exists", 409)
 
+            # Validate category if provided
+            if 'category' in body and body['category'] not in VALID_TAG_CATEGORIES:
+                return self._error_response(f"Invalid category: {body['category']}", 400)
+
+            # Validate scopes if provided
+            if 'visibility_scopes' in body:
+                scopes = body['visibility_scopes']
+                if not isinstance(scopes, list) or len(scopes) == 0:
+                    return self._error_response("visibility_scopes must be a non-empty list", 400)
+                if any(s not in VALID_TAG_SCOPES for s in scopes):
+                    return self._error_response(f"Invalid scope values. Valid: {sorted(VALID_TAG_SCOPES)}", 400)
+                if 'global' in scopes and len(scopes) > 1:
+                    return self._error_response("'global' scope must be exclusive", 400)
+
             updates = {}
             if 'name' in body:
                 updates['name'] = body['name'].strip()
             if 'description' in body:
                 updates['description'] = body['description'].strip() or None
+            if 'category' in body:
+                updates['category'] = body['category']
+            if 'visibility_scopes' in body:
+                updates['visibility_scopes'] = body['visibility_scopes']
 
             updated = self.db.update_tag(tag_id, updates)
 

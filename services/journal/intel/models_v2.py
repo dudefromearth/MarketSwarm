@@ -675,6 +675,19 @@ class PlaybookSourceRef:
         return asdict(self)
 
 
+VALID_TAG_CATEGORIES = {'behavior', 'process', 'context', 'insight', 'state', 'strategy', 'custom'}
+VALID_TAG_SCOPES = {'routine', 'journal', 'process', 'retro', 'strategy', 'global'}
+DEFAULT_SCOPES_BY_CATEGORY = {
+    'state': ['routine'],
+    'behavior': ['journal', 'retro', 'process'],
+    'process': ['journal', 'retro', 'process'],
+    'context': ['journal', 'retro', 'strategy'],
+    'insight': ['retro', 'journal'],
+    'strategy': ['strategy'],
+    'custom': ['journal'],
+}
+
+
 @dataclass
 class Tag:
     """A semantic tag representing trader vocabulary.
@@ -688,9 +701,11 @@ class Tag:
     description: Optional[str] = None  # What this tag means to the trader
     is_retired: bool = False  # Hidden from suggestions but preserved on history
     is_example: bool = False  # True for seeded example tags
-    category: Optional[str] = None   # 'day-texture' for readiness, None for behavioral
+    category: str = 'custom'  # behavior, process, context, insight, state, strategy, custom
     group: Optional[str] = None      # 'sleep','focus','distractions','body','friction'
     system: bool = False              # system tags can't be deleted/renamed
+    is_locked: bool = False           # locked tags can't be edited (name/category/scopes)
+    visibility_scopes: List[str] = field(default_factory=lambda: ['journal'])
     usage_count: int = 0  # Read-only, auto-incremented when tag is applied
     last_used_at: Optional[str] = None  # Auto-updated when tag is applied
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
@@ -707,6 +722,8 @@ class Tag:
         d['is_retired'] = 1 if d['is_retired'] else 0
         d['is_example'] = 1 if d['is_example'] else 0
         d['system'] = 1 if d['system'] else 0
+        d['is_locked'] = 1 if d['is_locked'] else 0
+        d['visibility_scopes'] = json.dumps(d['visibility_scopes'])
         return d
 
     @classmethod
@@ -720,9 +737,23 @@ class Tag:
             d['is_example'] = bool(d['is_example'])
         if 'system' in d:
             d['system'] = bool(d['system'])
-        d.setdefault('category', None)
+        if 'is_locked' in d:
+            d['is_locked'] = bool(d['is_locked'])
+        # Parse visibility_scopes from JSON string
+        scopes = d.get('visibility_scopes', '[]')
+        if isinstance(scopes, str):
+            try:
+                d['visibility_scopes'] = json.loads(scopes)
+            except (json.JSONDecodeError, TypeError):
+                d['visibility_scopes'] = ['journal']
+        # Default category to 'custom' for legacy NULL values
+        if d.get('category') is None:
+            d['category'] = 'custom'
+        d.setdefault('category', 'custom')
         d.setdefault('group', None)
         d.setdefault('system', False)
+        d.setdefault('is_locked', False)
+        d.setdefault('visibility_scopes', ['journal'])
         return cls(**d)
 
     def to_api_dict(self) -> dict:
