@@ -148,6 +148,9 @@ export interface RiskGraphPanelProps {
 
   // GEX data for backdrop (from App.tsx)
   gexByStrike?: Record<number, { calls: number; puts: number }>;
+
+  // Full spot data map for per-symbol pricing (from SSE spot channel)
+  spotData?: Record<string, { value: number; [key: string]: any }>;
 }
 
 export interface RiskGraphPanelHandle {
@@ -185,6 +188,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   pendingOrderCount = 0,
   openTradeCount = 0,
   gexByStrike,
+  spotData,
 }, ref) {
   // Get alerts from shared context
   const {
@@ -266,6 +270,16 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     }
   }, [handleVixInputBlur]);
 
+  // Build spotPrices map from spotData for per-symbol pricing
+  const spotPrices = useMemo(() => {
+    if (!spotData) return undefined;
+    const map: Record<string, number> = {};
+    for (const [key, data] of Object.entries(spotData)) {
+      if (data?.value) map[key] = data.value;
+    }
+    return Object.keys(map).length > 0 ? map : undefined;
+  }, [spotData]);
+
   // Map strategies to the format expected by useRiskGraphCalculations
   const chartStrategies: Strategy[] = useMemo(() =>
     strategies.map(s => ({
@@ -278,6 +292,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
       visible: s.visible,
       dte: s.dte,
       expiration: s.expiration,
+      symbol: s.symbol,
       // Include leg-based fields for accurate multi-leg position rendering
       legs: s.legs,
       positionType: s.positionType,
@@ -291,6 +306,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     strategies: chartStrategies,
     spotPrice: spotPrice,
     vix: vix,
+    spotPrices,
     timeMachineEnabled,
     simVolatilityOffset,
     simTimeOffsetHours,

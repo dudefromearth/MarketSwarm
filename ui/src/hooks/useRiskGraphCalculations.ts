@@ -10,6 +10,7 @@
  */
 
 import { useMemo } from 'react';
+import { resolveSpotKey } from '../utils/symbolResolver';
 
 // ============================================================
 // Market Regime Types & Presets
@@ -207,6 +208,7 @@ export interface Strategy {
   visible: boolean;
   dte?: number;
   expiration?: string;
+  symbol?: string;  // Underlying symbol for per-symbol spot lookup
   // New leg-based fields (optional for backward compat)
   legs?: PositionLeg[];
   positionType?: PositionType;
@@ -247,6 +249,7 @@ interface UseRiskGraphCalculationsProps {
   strategies: Strategy[];
   spotPrice: number;
   vix: number;
+  spotPrices?: Record<string, number>;  // symbol -> spot price map for per-symbol pricing
   timeMachineEnabled?: boolean;
   simVolatilityOffset?: number;
   simTimeOffsetHours?: number;
@@ -1421,6 +1424,7 @@ export function useRiskGraphCalculations({
   strategies,
   spotPrice,
   vix,
+  spotPrices,
   timeMachineEnabled = false,
   simVolatilityOffset = 0,
   simTimeOffsetHours = 0,
@@ -1436,18 +1440,32 @@ export function useRiskGraphCalculations({
   return useMemo(() => {
     const visibleStrategies = strategies.filter(s => s.visible);
 
+    // Guard: ensure spotPrice is always a valid positive number
+    const safeSpot = (spotPrice && Number.isFinite(spotPrice) && spotPrice > 0)
+      ? spotPrice
+      : 6000; // sensible fallback for SPX-class underlyings
+
     // Calculate simulated spot price for theoretical curve
-    const simulatedSpot = timeMachineEnabled ? spotPrice + simSpotOffset : spotPrice;
+    const simulatedSpot = timeMachineEnabled ? safeSpot + simSpotOffset : safeSpot;
+
+    // Resolve per-strategy spot price from the spotPrices map
+    // Falls back to the global spotPrice when a symbol has no dedicated spot data
+    const getStrategySpot = (strat: Strategy): number => {
+      if (!spotPrices || !strat.symbol) return safeSpot;
+      const key = resolveSpotKey(strat.symbol);
+      const val = spotPrices[key];
+      return (val && Number.isFinite(val) && val > 0) ? val : safeSpot;
+    };
 
     // Empty state
-    if (visibleStrategies.length === 0 || !spotPrice) {
+    if (visibleStrategies.length === 0) {
       return {
         expirationPoints: [],
         theoreticalPoints: [],
-        minPrice: spotPrice - 100,
-        maxPrice: spotPrice + 100,
-        fullMinPrice: spotPrice - 200,
-        fullMaxPrice: spotPrice + 200,
+        minPrice: safeSpot - 100,
+        maxPrice: safeSpot + 100,
+        fullMinPrice: safeSpot - 200,
+        fullMaxPrice: safeSpot + 200,
         minPnL: -100,
         maxPnL: 100,
         expirationBreakevens: [],
@@ -1457,12 +1475,16 @@ export function useRiskGraphCalculations({
         gamma: 0,
         delta: 0,
         allStrikes: [],
-        centerPrice: spotPrice,
+        centerPrice: safeSpot,
         activeStrategyIds: [],
         expiredExpirationPoints: [],
         expiredTheoreticalPoints: [],
       };
     }
+
+    // Wrap the main calculation in try/catch so a pricing error
+    // surfaces as an empty graph instead of crashing the component tree
+    try {
 
     // Get all critical strikes
     const allStrikes = getCriticalStrikes(visibleStrategies);
@@ -1583,10 +1605,11 @@ export function useRiskGraphCalculations({
       }
       expirationPoints.push({ price, pnl: expPnL });
 
-      // Theoretical P&L (Black-Scholes with volatility skew, per-strategy time)
+      // Theoretical P&L (Black-Scholes with volatility skew, per-strategy time and spot)
       let theoPnL = 0;
       for (const strat of activeStrategies) {
-        theoPnL += calculateTheoreticalPnL(strat, price, volatility, riskFreeRate, getStrategyTimeYears(strat.id), spotPrice, pricingParams);
+        const stratSpot = getStrategySpot(strat);
+        theoPnL += calculateTheoreticalPnL(strat, price, volatility, riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams);
       }
       theoreticalPoints.push({ price, pnl: theoPnL });
 
@@ -1633,29 +1656,33 @@ export function useRiskGraphCalculations({
     };
     let theoreticalPnLAtSpot = 0;
     for (const strat of activeStrategies) {
+      const stratSpot = getStrategySpot(strat);
+      const stratSimulatedSpot = timeMachineEnabled ? stratSpot + simSpotOffset : stratSpot;
       theoreticalPnLAtSpot += calculateTheoreticalPnL(
         strat,
-        simulatedSpot,
+        stratSimulatedSpot,
         volatility,
         riskFreeRate,
         getStrategyTimeYears(strat.id),
-        spotPrice,
+        stratSpot,
         spotPricingParams
       );
     }
 
-    // Calculate aggregate Greeks at simulated spot (with skew, per-strategy time)
+    // Calculate aggregate Greeks at simulated spot (with skew, per-strategy time and spot)
     let totalDelta = 0;
     let totalGamma = 0;
     let totalTheta = 0;
     for (const strat of activeStrategies) {
+      const stratSpot = getStrategySpot(strat);
+      const stratSimulatedSpot = timeMachineEnabled ? stratSpot + simSpotOffset : stratSpot;
       const greeks = calculateStrategyGreeks(
         strat,
-        simulatedSpot,
+        stratSimulatedSpot,
         volatility,
         riskFreeRate,
         getStrategyTimeYears(strat.id),
-        spotPrice,
+        stratSpot,
         regimeConfig
       );
       totalDelta += greeks.delta;
@@ -1684,7 +1711,34 @@ export function useRiskGraphCalculations({
       expiredExpirationPoints,
       expiredTheoreticalPoints,
     };
-  }, [strategies, spotPrice, vix, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotOffset, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths]);
+
+    } catch (err) {
+      // Catch any calculation error (NaN propagation, bad price data, etc.)
+      // and return safe empty-state defaults so the component still renders
+      console.error('[RiskGraph] calculation error, returning empty state:', err);
+      return {
+        expirationPoints: [],
+        theoreticalPoints: [],
+        minPrice: safeSpot - 100,
+        maxPrice: safeSpot + 100,
+        fullMinPrice: safeSpot - 200,
+        fullMaxPrice: safeSpot + 200,
+        minPnL: -100,
+        maxPnL: 100,
+        expirationBreakevens: [],
+        theoreticalBreakevens: [],
+        theoreticalPnLAtSpot: 0,
+        theta: 0,
+        gamma: 0,
+        delta: 0,
+        allStrikes: [],
+        centerPrice: safeSpot,
+        activeStrategyIds: [],
+        expiredExpirationPoints: [],
+        expiredTheoreticalPoints: [],
+      };
+    }
+  }, [strategies, spotPrice, vix, spotPrices, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotOffset, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths]);
 }
 
 // Export calculation functions for use elsewhere

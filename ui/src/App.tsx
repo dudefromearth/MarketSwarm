@@ -3530,6 +3530,7 @@ function App() {
             setAlertModalInitialCondition(condition);
           }}
           spotPrice={currentSpot || 6000}
+          spotData={spot || undefined}
           vix={spot?.['I:VIX']?.value || 20}
           timeMachineEnabled={timeMachineEnabled}
           onTimeMachineToggle={() => setTimeMachineEnabled(!timeMachineEnabled)}

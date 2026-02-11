@@ -15,6 +15,7 @@ from .model_builders.gex import GexModelBuilder
 from .model_builders.bias_lfi import BiasLfiModelBuilder
 from .model_builders.trade_selector import TradeSelectorModelBuilder
 from .volume_profile.vp_worker import VolumeProfileWorker
+from .workers.stock_ws_worker import StockWsWorker
 
 
 async def run(config: Dict[str, Any], logger) -> None:
@@ -35,7 +36,7 @@ async def run(config: Dict[str, Any], logger) -> None:
     tasks = []
 
     logger.info(
-        "orchestrator starting (spot + chain + snapshot + builder + model + gex + bias_lfi + trade_selector + ws + vp)",
+        "orchestrator starting (spot + chain + snapshot + builder + model + gex + bias_lfi + trade_selector + ws + vp + stock_ws)",
         emoji="🚀",
     )
 
@@ -107,6 +108,12 @@ async def run(config: Dict[str, Any], logger) -> None:
         vp_worker = VolumeProfileWorker(config, logger)
         tasks.append(
             asyncio.create_task(vp_worker.run(stop_event), name="massive-volume-profile")
+        )
+
+        # 13. StockWsWorker (real-time spot prices for stocks/ETFs via Polygon WS)
+        stock_ws = StockWsWorker(config, logger)
+        tasks.append(
+            asyncio.create_task(stock_ws.run(stop_event), name="massive-stock-ws")
         )
 
         # Wire direct injection: snapshot → builder → model_publisher
