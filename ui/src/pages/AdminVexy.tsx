@@ -383,8 +383,8 @@ export default function AdminVexyPage() {
 const styles = `
   .admin-vexy-page {
     min-height: 100vh;
-    background: #09090b;
-    color: #f1f5f9;
+    background: var(--bg-base);
+    color: var(--text-primary);
     padding: 1.5rem;
   }
 
@@ -449,17 +449,17 @@ const styles = `
     align-items: center;
     gap: 0.375rem;
     padding: 0.5rem 0.875rem;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: var(--bg-hover);
+    border: 1px solid var(--border-default);
     border-radius: 0.5rem;
-    color: #a1a1aa;
+    color: var(--text-secondary);
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
   }
 
-  .back-btn:hover { background: rgba(255, 255, 255, 0.08); color: #e4e4e7; }
+  .back-btn:hover { background: var(--bg-hover); color: var(--text-bright); }
   .back-btn svg { width: 1rem; height: 1rem; }
 
   .save-btn {
@@ -506,7 +506,7 @@ const styles = `
     display: flex;
     gap: 0.25rem;
     padding: 0.25rem;
-    background: rgba(255, 255, 255, 0.03);
+    background: var(--bg-surface-alt);
     border-radius: 0.5rem;
     margin-bottom: 1.5rem;
     width: fit-content;
@@ -517,17 +517,17 @@ const styles = `
     background: none;
     border: none;
     border-radius: 0.375rem;
-    color: #71717a;
+    color: var(--text-secondary);
     font-size: 0.875rem;
     font-weight: 500;
     cursor: pointer;
     transition: all 0.15s;
   }
 
-  .tab-btn:hover { color: #a1a1aa; }
+  .tab-btn:hover { color: var(--text-secondary); }
   .tab-btn.active {
-    background: rgba(255, 255, 255, 0.08);
-    color: #f1f5f9;
+    background: var(--bg-hover);
+    color: var(--text-primary);
   }
 
   /* Content Layout */
@@ -540,8 +540,8 @@ const styles = `
 
   /* Sidebar */
   .sidebar {
-    background: rgba(24, 24, 27, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
     border-radius: 0.75rem;
     padding: 1rem;
     height: fit-content;
@@ -550,7 +550,7 @@ const styles = `
   .sidebar-header {
     font-size: 0.75rem;
     font-weight: 600;
-    color: #a1a1aa;
+    color: var(--text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.05em;
     margin-bottom: 0.25rem;
@@ -558,7 +558,7 @@ const styles = `
 
   .sidebar-desc {
     font-size: 0.75rem;
-    color: #52525b;
+    color: var(--text-muted);
     margin-bottom: 1rem;
     line-height: 1.4;
   }
@@ -577,7 +577,7 @@ const styles = `
     background: none;
     border: 1px solid transparent;
     border-radius: 0.5rem;
-    color: #a1a1aa;
+    color: var(--text-secondary);
     font-size: 0.875rem;
     text-align: left;
     cursor: pointer;
@@ -585,8 +585,8 @@ const styles = `
   }
 
   .sidebar-item:hover {
-    background: rgba(255, 255, 255, 0.03);
-    color: #e4e4e7;
+    background: var(--bg-hover);
+    color: var(--text-bright);
   }
 
   .sidebar-item.active {
@@ -609,8 +609,8 @@ const styles = `
 
   /* Editor Panel */
   .editor-panel {
-    background: rgba(24, 24, 27, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
     border-radius: 0.75rem;
     display: flex;
     flex-direction: column;
@@ -621,7 +621,7 @@ const styles = `
     align-items: center;
     justify-content: space-between;
     padding: 1rem 1.25rem;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .editor-title h2 {
@@ -648,9 +648,9 @@ const styles = `
   .editor-description {
     padding: 0.75rem 1.25rem;
     font-size: 0.8125rem;
-    color: #71717a;
-    background: rgba(255, 255, 255, 0.02);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    color: var(--text-secondary);
+    background: var(--bg-surface-alt);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
   .editor-textarea {
@@ -658,7 +658,7 @@ const styles = `
     padding: 1rem 1.25rem;
     background: transparent;
     border: none;
-    color: #e4e4e7;
+    color: var(--text-bright);
     font-family: 'SF Mono', 'Consolas', 'Monaco', monospace;
     font-size: 0.8125rem;
     line-height: 1.6;
@@ -671,20 +671,20 @@ const styles = `
   }
 
   .editor-textarea::placeholder {
-    color: #52525b;
+    color: var(--text-muted);
   }
 
   .editor-footer {
     display: flex;
     gap: 1rem;
     padding: 0.75rem 1.25rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(255, 255, 255, 0.02);
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-surface-alt);
   }
 
   .char-count, .line-count {
     font-size: 0.75rem;
-    color: #52525b;
+    color: var(--text-muted);
   }
 
   @media (max-width: 768px) {
@@ -701,3 +701,4 @@ const styles = `
     }
   }
 `;
+

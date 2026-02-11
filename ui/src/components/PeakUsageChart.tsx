@@ -129,8 +129,17 @@ export default function PeakUsageChart({ days = 7 }: Props) {
   useEffect(() => {
     if (!chartRef.current || heatmapData.length === 0) return;
 
+    // Read CSS variable values for canvas-rendered elements
+    const cs = getComputedStyle(document.documentElement);
+    const cssVar = (name: string) => cs.getPropertyValue(name).trim();
+    const bgBase = cssVar("--bg-base");
+    const bgRaised = cssVar("--bg-raised");
+    const textSecondary = cssVar("--text-secondary");
+    const textBright = cssVar("--text-bright");
+    const borderDefault = cssVar("--border-default");
+
     if (!chartInstance.current) {
-      chartInstance.current = echarts.init(chartRef.current, "dark");
+      chartInstance.current = echarts.init(chartRef.current);
     }
 
     const chart = chartInstance.current;
@@ -146,9 +155,9 @@ export default function PeakUsageChart({ days = 7 }: Props) {
           const hourLabel = hour === 0 ? "12:00 AM" : hour < 12 ? `${hour}:00 AM` : hour === 12 ? "12:00 PM" : `${hour - 12}:00 PM`;
           return `<strong>${day}</strong> at ${hourLabel}<br/><span style="color: #60a5fa">~${count.toFixed(1)}</span> avg users`;
         },
-        backgroundColor: "rgba(24, 24, 27, 0.95)",
-        borderColor: "rgba(255, 255, 255, 0.1)",
-        textStyle: { color: "#e4e4e7", fontSize: 12 },
+        backgroundColor: bgRaised,
+        borderColor: borderDefault,
+        textStyle: { color: textBright, fontSize: 12 },
       },
       grid: {
         top: 10,
@@ -162,7 +171,7 @@ export default function PeakUsageChart({ days = 7 }: Props) {
         splitArea: { show: true, areaStyle: { color: ["transparent", "rgba(255,255,255,0.01)"] } },
         axisLabel: {
           fontSize: 9,
-          color: "#71717a",
+          color: textSecondary,
           interval: 2,
         },
         axisLine: { show: false },
@@ -174,7 +183,7 @@ export default function PeakUsageChart({ days = 7 }: Props) {
         splitArea: { show: true, areaStyle: { color: ["transparent", "rgba(255,255,255,0.01)"] } },
         axisLabel: {
           fontSize: 10,
-          color: "#71717a",
+          color: textSecondary,
         },
         axisLine: { show: false },
         axisTick: { show: false },
@@ -188,7 +197,7 @@ export default function PeakUsageChart({ days = 7 }: Props) {
         bottom: 0,
         show: false,
         inRange: {
-          color: ["#18181b", "#1e3a5f", "#1d4ed8", "#3b82f6", "#60a5fa", "#93c5fd"],
+          color: [bgBase, "#1e3a5f", "#1d4ed8", "#3b82f6", "#60a5fa", "#93c5fd"],
         },
       },
       series: [
@@ -203,7 +212,7 @@ export default function PeakUsageChart({ days = 7 }: Props) {
             },
           },
           itemStyle: {
-            borderColor: "#09090b",
+            borderColor: bgBase,
             borderWidth: 1,
             borderRadius: 3,
           },
@@ -316,8 +325,8 @@ export default function PeakUsageChart({ days = 7 }: Props) {
 
 const styles = `
   .peak-usage-chart {
-    background: rgba(24, 24, 27, 0.6);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
     border-radius: 0.75rem;
     padding: 1rem;
     margin-bottom: 1.5rem;
@@ -340,7 +349,7 @@ const styles = `
     margin: 0;
     font-size: 0.875rem;
     font-weight: 600;
-    color: #f1f5f9;
+    color: var(--text-primary);
   }
 
   .timezone-badge {
@@ -368,7 +377,7 @@ const styles = `
   }
 
   .stat-label {
-    color: #71717a;
+    color: var(--text-secondary);
   }
 
   .stat-value {
@@ -383,12 +392,12 @@ const styles = `
     gap: 0.5rem;
     margin-top: 0.5rem;
     padding-top: 0.5rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.05);
+    border-top: 1px solid var(--border-subtle);
   }
 
   .legend-label {
     font-size: 0.625rem;
-    color: #52525b;
+    color: var(--text-muted);
     text-transform: uppercase;
   }
 
@@ -406,7 +415,7 @@ const styles = `
     align-items: center;
     justify-content: center;
     height: 220px;
-    color: #71717a;
+    color: var(--text-secondary);
     font-size: 0.875rem;
   }
 
