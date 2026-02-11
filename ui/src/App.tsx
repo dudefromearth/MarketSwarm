@@ -626,6 +626,7 @@ function App() {
 
   // Popup state
   const [selectedTile, setSelectedTile] = useState<SelectedStrategy | null>(null);
+  const [tileQty, setTileQty] = useState(1);
   const [riskGraphAlerts, setRiskGraphAlerts] = useState<RiskGraphAlert[]>(() => {
     try {
       const saved = localStorage.getItem('riskGraphAlerts');
@@ -1048,7 +1049,7 @@ function App() {
     setTimeout(() => setTosCopied(false), 2000);
   };
 
-  // Add strategy to risk graph list
+  // Add strategy to risk graph list (with quantity support)
   const addToRiskGraph = async () => {
     if (!selectedTile) return;
     if (!selectedTile.expiration) {
@@ -1056,11 +1057,42 @@ function App() {
       return;
     }
     try {
+      // Build legs with quantity multiplier
+      const q = tileQty;
+      const { strike, width, side: tileSide, expiration: tileExp, strategy: strat } = selectedTile;
+      const right = tileSide as 'call' | 'put';
+      let legs: Array<{ strike: number; expiration: string; right: 'call' | 'put'; quantity: number }> | undefined;
+
+      if (q !== 1) {
+        if (strat === 'butterfly') {
+          legs = [
+            { strike: strike - width, expiration: tileExp, right, quantity: 1 * q },
+            { strike, expiration: tileExp, right, quantity: -2 * q },
+            { strike: strike + width, expiration: tileExp, right, quantity: 1 * q },
+          ];
+        } else if (strat === 'vertical') {
+          if (tileSide === 'call') {
+            legs = [
+              { strike, expiration: tileExp, right, quantity: 1 * q },
+              { strike: strike + width, expiration: tileExp, right, quantity: -1 * q },
+            ];
+          } else {
+            legs = [
+              { strike, expiration: tileExp, right, quantity: 1 * q },
+              { strike: strike - width, expiration: tileExp, right, quantity: -1 * q },
+            ];
+          }
+        } else {
+          legs = [{ strike, expiration: tileExp, right, quantity: 1 * q }];
+        }
+      }
+
       await contextAddStrategy({
         ...selectedTile,
         width: selectedTile.width || 0,
-      });
-      setSelectedTile(null);
+        ...(legs ? { legs } : {}),
+      } as any);
+      closePopup();
     } catch (err) {
       console.error('Failed to add strategy:', err);
     }
@@ -1149,7 +1181,7 @@ function App() {
   };
 
   // Close popup
-  const closePopup = () => setSelectedTile(null);
+  const closePopup = () => { setSelectedTile(null); setTileQty(1); };
 
   // Handle trade recommendation selection
   const handleTradeRecommendationSelect = useCallback((rec: TradeRecommendation) => {
@@ -3811,24 +3843,46 @@ function App() {
               <span className="form-value">{selectedTile.dte}</span>
             </div>
             <div className="form-row">
+              <span className="form-label">Qty</span>
+              <span className="form-value">
+                <div className="tile-qty-selector">
+                  <button
+                    className="tile-qty-btn"
+                    onClick={() => setTileQty(q => Math.max(1, q - 1))}
+                    disabled={tileQty <= 1}
+                  >-</button>
+                  <span className="tile-qty-value">{tileQty}</span>
+                  <button
+                    className="tile-qty-btn"
+                    onClick={() => setTileQty(q => Math.min(99, q + 1))}
+                  >+</button>
+                </div>
+              </span>
+            </div>
+            <div className="form-row">
               <span className="form-label">Debit</span>
               <span className="form-value" style={{ color: '#fbbf24' }}>
-                {selectedTile.debit !== null ? `$${selectedTile.debit.toFixed(2)}` : '-'}
+                {selectedTile.debit !== null ? `$${(selectedTile.debit * tileQty).toFixed(2)}` : '-'}
+                {tileQty > 1 && selectedTile.debit !== null && (
+                  <span style={{ color: 'var(--text-faint)', fontSize: '0.85em', marginLeft: 4 }}>
+                    (${selectedTile.debit.toFixed(2)} ea)
+                  </span>
+                )}
               </span>
             </div>
 
             {selectedTile.strategy === 'butterfly' && (
               <div className="strategy-legs">
                 <div className="strategy-leg">
-                  <span className="leg-action buy">BUY 1x</span>
+                  <span className="leg-action buy">BUY {1 * tileQty}x</span>
                   <span>{selectedTile.strike - selectedTile.width} {selectedTile.side.toUpperCase()}</span>
                 </div>
                 <div className="strategy-leg">
-                  <span className="leg-action sell">SELL 2x</span>
+                  <span className="leg-action sell">SELL {2 * tileQty}x</span>
                   <span>{selectedTile.strike} {selectedTile.side.toUpperCase()}</span>
                 </div>
                 <div className="strategy-leg">
-                  <span className="leg-action buy">BUY 1x</span>
+                  <span className="leg-action buy">BUY {1 * tileQty}x</span>
                   <span>{selectedTile.strike + selectedTile.width} {selectedTile.side.toUpperCase()}</span>
                 </div>
               </div>
@@ -3837,11 +3891,11 @@ function App() {
             {selectedTile.strategy === 'vertical' && (
               <div className="strategy-legs">
                 <div className="strategy-leg">
-                  <span className="leg-action buy">BUY 1x</span>
+                  <span className="leg-action buy">BUY {1 * tileQty}x</span>
                   <span>{selectedTile.strike} {selectedTile.side.toUpperCase()}</span>
                 </div>
                 <div className="strategy-leg">
-                  <span className="leg-action sell">SELL 1x</span>
+                  <span className="leg-action sell">SELL {1 * tileQty}x</span>
                   <span>
                     {selectedTile.side === 'call'
                       ? selectedTile.strike + selectedTile.width
@@ -3876,9 +3930,10 @@ function App() {
                     strike: selectedTile.strike,
                     width: selectedTile.width,
                     dte: selectedTile.dte,
-                    entry_price: selectedTile.debit || undefined,
+                    entry_price: selectedTile.debit ? selectedTile.debit * tileQty : undefined,
                     entry_spot: currentSpot || undefined,
-                    source: 'heatmap'
+                    source: 'heatmap',
+                    quantity: tileQty,
                   });
                   closePopup();
                 }}

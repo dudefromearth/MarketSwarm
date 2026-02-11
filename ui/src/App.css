@@ -2365,6 +2365,52 @@ body {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* Tile Qty Selector (heatmap popup) */
+.tile-qty-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.tile-qty-btn {
+  width: 28px;
+  height: 26px;
+  background: var(--bg-secondary);
+  border: none;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.1s;
+  font-family: inherit;
+}
+
+.tile-qty-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.tile-qty-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.tile-qty-value {
+  width: 32px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-heading);
+  border-left: 1px solid var(--border-strong);
+  border-right: 1px solid var(--border-strong);
+  line-height: 26px;
+}
+
 /* TOS Script */
 .tos-script {
   margin-top: 16px;

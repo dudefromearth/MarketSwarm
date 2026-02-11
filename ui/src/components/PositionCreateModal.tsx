@@ -244,6 +244,24 @@ export default function PositionCreateModal({
   const { symbols: availableSymbols, getConfig, loading: configLoading } = useSymbolConfig();
   const [mode, setMode] = useState<CreateMode>('build');
 
+  // Fetch all spot prices once when modal opens (REST baseline)
+  const [fetchedSpot, setFetchedSpot] = useState<Record<string, { value: number }>>({});
+  useEffect(() => {
+    if (isOpen) {
+      fetch('/api/models/spot', { credentials: 'include' })
+        .then(r => r.json())
+        .then(d => {
+          if (d.success && d.data) setFetchedSpot(d.data);
+        })
+        .catch(() => {});
+    }
+  }, [isOpen]);
+
+  // Merge: live SSE spotData overlays on top of fetched baseline
+  const allSpot = useMemo(() => {
+    return { ...fetchedSpot, ...spotData };
+  }, [fetchedSpot, spotData]);
+
   // Draggable modal
   const { dragHandleProps, containerStyle, isDragging } = useDraggable({
     handleSelector: '.position-create-header',
@@ -262,14 +280,13 @@ export default function PositionCreateModal({
   const symbolConfig = useMemo(() => getConfig(symbol), [symbol, getConfig]);
   const { strikeIncrement, defaultWidth, strikeRange, expirationPattern } = symbolConfig;
 
-  // Per-symbol ATM: resolve from spotData via config spotKey
+  // Per-symbol ATM: resolve from merged spot data (fetched + live SSE)
   const symbolAtm = useMemo(() => {
-    if (spotData) {
-      const val = spotData[symbolConfig.spotKey]?.value;
-      if (val && val > 0) return val;
-    }
+    const key = symbolConfig.spotKey;
+    const val = allSpot[key]?.value;
+    if (val && val > 0) return val;
     return atmStrike || 5900;
-  }, [symbol, spotData, atmStrike, symbolConfig.spotKey]);
+  }, [symbol, allSpot, atmStrike, symbolConfig.spotKey]);
 
   const roundedAtm = Math.round(symbolAtm / strikeIncrement) * strikeIncrement;
 

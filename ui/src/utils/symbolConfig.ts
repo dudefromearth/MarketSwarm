@@ -50,13 +50,13 @@ export const HARDCODED_DEFAULTS: SymbolConfigRegistry = {
     future:       { strikeIncrement: 5, defaultWidth: 20, minWidth: 5, strikeRange: 200, expirationPattern: 'monthly' },
   },
   symbolOverrides: {
-    SPX:  { spotKey: 'I:SPX' },
-    SPXW: { spotKey: 'I:SPX' },
-    NDX:  { spotKey: 'I:NDX', strikeIncrement: 25 },
-    NDXP: { spotKey: 'I:NDX', strikeIncrement: 25 },
-    VIX:  { spotKey: 'I:VIX', strikeIncrement: 1, defaultWidth: 2, minWidth: 1, strikeRange: 30 },
-    RUT:  { spotKey: 'I:RUT' },
-    XSP:  { spotKey: 'I:XSP', strikeIncrement: 1, defaultWidth: 2, minWidth: 1, strikeRange: 50 },
+    SPX:  { spotKey: 'I:SPX', strikeIncrement: 5, defaultWidth: 20, minWidth: 5, strikeRange: 500, expirationPattern: 'daily' },
+    SPXW: { spotKey: 'I:SPX', strikeIncrement: 5, defaultWidth: 20, minWidth: 5, strikeRange: 500, expirationPattern: 'daily' },
+    NDX:  { spotKey: 'I:NDX', strikeIncrement: 25, defaultWidth: 50, minWidth: 25, strikeRange: 500, expirationPattern: 'daily' },
+    NDXP: { spotKey: 'I:NDX', strikeIncrement: 25, defaultWidth: 50, minWidth: 25, strikeRange: 500, expirationPattern: 'daily' },
+    VIX:  { spotKey: 'I:VIX', strikeIncrement: 1, defaultWidth: 2, minWidth: 1, strikeRange: 30, expirationPattern: 'daily' },
+    RUT:  { spotKey: 'I:RUT', strikeIncrement: 5, defaultWidth: 20, minWidth: 5, strikeRange: 500, expirationPattern: 'daily' },
+    XSP:  { spotKey: 'I:XSP', strikeIncrement: 1, defaultWidth: 2, minWidth: 1, strikeRange: 50, expirationPattern: 'daily' },
   },
 };
 
@@ -151,27 +151,44 @@ export function isExpirationDay(date: Date, pattern: 'daily' | 'weekly' | 'month
   }
 }
 
-/** Check if we're during market hours (9:30 AM - 4:00 PM ET) */
-function isDuringMarketHours(): boolean {
+/**
+ * Get current Eastern Time minutes since midnight.
+ * Uses Intl to handle EST/EDT automatically.
+ */
+function getETMinutes(): number {
   const now = new Date();
-  const etHour = now.getUTCHours() - 5;
-  const etMinutes = now.getUTCMinutes();
-  const totalMinutes = etHour * 60 + etMinutes;
-  return totalMinutes >= 570 && totalMinutes < 960;
+  const etStr = now.toLocaleString('en-US', { timeZone: 'America/New_York', hour12: false });
+  // Format: "M/D/YYYY, HH:MM:SS"
+  const timePart = etStr.split(', ')[1];
+  const [h, m] = timePart.split(':').map(Number);
+  return h * 60 + m;
 }
 
-/** Get the current (or next) expiration date for a pattern */
+/** Has the market already closed for the day? (past 4:00 PM ET) */
+function isAfterMarketClose(): boolean {
+  return getETMinutes() >= 960; // 16:00 ET
+}
+
+/**
+ * Get the current (or next) expiration date for a pattern.
+ *
+ * Rules:
+ * - If today is an expiration day and market has NOT yet closed → use today
+ *   (includes pre-market: you're building a position for today's expiration)
+ * - If today is an expiration day but market already closed → next expiration
+ * - If today is not an expiration day → next expiration
+ */
 export function getCurrentExpiration(pattern: 'daily' | 'weekly' | 'monthly'): Date {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
-  if (isExpirationDay(today, pattern) && isDuringMarketHours()) {
+  if (isExpirationDay(today, pattern) && !isAfterMarketClose()) {
     return today;
   }
 
   // Find next expiration day
   const next = new Date(today);
-  for (let i = 0; i < 35; i++) { // up to 35 days for monthly
+  for (let i = 0; i < 35; i++) {
     next.setDate(next.getDate() + 1);
     if (isExpirationDay(next, pattern)) {
       return next;
