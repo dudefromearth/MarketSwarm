@@ -46,6 +46,7 @@ class Vexy:
         logger: Any,
         buses: "BusPort",
         ai: Optional["AIPort"] = None,
+        market_intel=None,
     ):
         """
         Initialize Vexy core.
@@ -55,11 +56,13 @@ class Vexy:
             logger: LogUtil instance
             buses: Bus port providing access to all Redis buses
             ai: AI port for LLM calls (optional, some capabilities don't need it)
+            market_intel: Shared MarketIntelProvider instance
         """
         self.config = config
         self.logger = logger
         self.buses = buses
         self.ai = ai
+        self.market_intel = market_intel
 
         # Capability registry
         self._capabilities: Dict[str, "BaseCapability"] = {}
