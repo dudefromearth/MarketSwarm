@@ -17,11 +17,21 @@ import ChatMessage, { type Message } from './ChatMessage';
 import ChatInput from './ChatInput';
 import TierBadge, { type UserTier } from './TierBadge';
 import { type VexyFullContext, formatContextForApi } from '../../hooks/useVexyContext';
+import { useVexyInteraction } from '../../hooks/useVexyInteraction';
+import VexyInteractionProgress from './VexyInteractionProgress';
+import TrialIndicator from './TrialIndicator';
+import RestrictedBanner from './RestrictedBanner';
+import ElevationHint from './ElevationHint';
+
+// Feature flag: set to true to use the new async interaction system
+const USE_INTERACTION_API = true;
 
 interface UserProfile {
   display_name?: string;
   user_id?: number;
   is_admin?: boolean;
+  created_at?: string;
+  roles?: string[];
 }
 
 interface VexyChatProps {
@@ -234,9 +244,19 @@ export default function VexyChat({
   const [remainingMessages, setRemainingMessages] = useState<number | undefined>(undefined);
   const [showSettings, setShowSettings] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [lastElevationHint, setLastElevationHint] = useState<string | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const tierConfig = TIER_CONFIG[userTier] || TIER_CONFIG.observer;
+
+  // Interaction hook (only active when feature flag is on)
+  const interaction = useVexyInteraction({
+    origin: 'chat',
+    reflectionDial,
+    context: context ? formatContextForApi(context) : {},
+    userProfile: userProfile as Record<string, unknown>,
+    marketContext: context?.market ? (context.market as unknown as Record<string, unknown>) : {},
+  });
 
   // Scroll to bottom when new messages arrive
   useEffect(() => {
@@ -254,10 +274,66 @@ export default function VexyChat({
     }
   }, [showSettings]);
 
+  // When interaction result arrives, add it as a message
+  useEffect(() => {
+    if (USE_INTERACTION_API && interaction.hasResult && interaction.result) {
+      const vexyMessage: Message = {
+        id: `vexy-${Date.now()}`,
+        role: 'vexy',
+        content: interaction.result.text,
+        timestamp: new Date(),
+        agent: interaction.result.agent,
+        interactionId: interaction.result.interaction_id,
+        meta: {
+          elevation_hint: interaction.result.elevation_hint,
+          tokens_used: interaction.result.tokens_used,
+          remaining_today: interaction.result.remaining_today,
+        },
+      };
+      setMessages(prev => [...prev, vexyMessage]);
+      setLastElevationHint(interaction.result.elevation_hint);
+
+      if (interaction.result.remaining_today >= 0) {
+        setRemainingMessages(interaction.result.remaining_today);
+      }
+      if (interaction.remainingToday >= 0) {
+        setRemainingMessages(interaction.remainingToday);
+      }
+
+      interaction.reset();
+    }
+  }, [interaction.hasResult, interaction.result]);
+
+  // Handle interaction errors
+  useEffect(() => {
+    if (USE_INTERACTION_API && interaction.isFailed && interaction.error) {
+      setError(interaction.error);
+    }
+  }, [interaction.isFailed, interaction.error]);
+
+  // Handle refusals as Vexy messages
+  useEffect(() => {
+    if (USE_INTERACTION_API && interaction.isRefused && interaction.ackMessage) {
+      const refusalMessage: Message = {
+        id: `vexy-refuse-${Date.now()}`,
+        role: 'vexy',
+        content: interaction.ackMessage,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, refusalMessage]);
+
+      if (interaction.remainingToday >= 0) {
+        setRemainingMessages(interaction.remainingToday);
+      }
+
+      interaction.reset();
+    }
+  }, [interaction.isRefused, interaction.ackMessage]);
+
   const sendMessage = useCallback(async (content: string) => {
     if (!content.trim()) return;
 
-    // Add user message
+    // Add user message immediately
     const userMessage: Message = {
       id: `user-${Date.now()}`,
       role: 'user',
@@ -265,50 +341,55 @@ export default function VexyChat({
       timestamp: new Date(),
     };
     setMessages(prev => [...prev, userMessage]);
-    setIsLoading(true);
     setError(null);
+    setLastElevationHint(undefined);
 
-    try {
-      const response = await fetch('/api/vexy/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          message: content,
-          reflection_dial: reflectionDial,
-          context: context ? formatContextForApi(context) : {},
-          user_profile: userProfile,
-        }),
-      });
+    if (USE_INTERACTION_API) {
+      // New: async interaction system
+      await interaction.send(content);
+    } else {
+      // Legacy: blocking fetch to /api/vexy/chat
+      setIsLoading(true);
+      try {
+        const response = await fetch('/api/vexy/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({
+            message: content,
+            reflection_dial: reflectionDial,
+            context: context ? formatContextForApi(context) : {},
+            user_profile: userProfile,
+          }),
+        });
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || `Request failed: ${response.status}`);
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.detail || `Request failed: ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        const vexyMessage: Message = {
+          id: `vexy-${Date.now()}`,
+          role: 'vexy',
+          content: data.response,
+          timestamp: new Date(),
+          agent: data.agent,
+        };
+        setMessages(prev => [...prev, vexyMessage]);
+
+        if (data.remaining_today !== undefined) {
+          setRemainingMessages(data.remaining_today);
+        }
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to send message';
+        setError(errorMessage);
+      } finally {
+        setIsLoading(false);
       }
-
-      const data = await response.json();
-
-      // Add Vexy response
-      const vexyMessage: Message = {
-        id: `vexy-${Date.now()}`,
-        role: 'vexy',
-        content: data.response,
-        timestamp: new Date(),
-        agent: data.agent,
-      };
-      setMessages(prev => [...prev, vexyMessage]);
-
-      // Update remaining messages
-      if (data.remaining_today !== undefined) {
-        setRemainingMessages(data.remaining_today);
-      }
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to send message';
-      setError(errorMessage);
-    } finally {
-      setIsLoading(false);
     }
-  }, [reflectionDial, context, userProfile]);
+  }, [reflectionDial, context, userProfile, interaction.send]);
 
   const clearHistory = useCallback(() => {
     setMessages([]);
@@ -358,6 +439,12 @@ export default function VexyChat({
               <span className={`vexy-echo-dot ${tierConfig.echoEnabled ? 'active' : ''}`} />
               <span>Echo: {tierConfig.echoEnabled ? 'Active' : 'Inactive'}</span>
             </div>
+            {USE_INTERACTION_API && (
+              <TrialIndicator
+                tier={interaction.tier || userTier}
+                createdAt={userProfile?.created_at as string | undefined}
+              />
+            )}
           </div>
         </div>
         <div className="vexy-chat-header-actions">
@@ -402,6 +489,11 @@ export default function VexyChat({
         )}
       </div>
 
+      {/* Restricted banner */}
+      {USE_INTERACTION_API && (
+        <RestrictedBanner tier={interaction.tier || userTier} />
+      )}
+
       {/* Message area */}
       {messages.length === 0 ? (
         <div className="vexy-chat-empty">
@@ -414,9 +506,24 @@ export default function VexyChat({
       ) : (
         <div className="vexy-chat-messages">
           {messages.map((msg) => (
-            <ChatMessage key={msg.id} message={msg} />
+            <div key={msg.id}>
+              <ChatMessage message={msg} />
+              {USE_INTERACTION_API && msg.role === 'vexy' && msg.meta?.elevation_hint && (
+                <ElevationHint hint={msg.meta.elevation_hint} />
+              )}
+            </div>
           ))}
-          {isLoading && (
+          {/* Loading: interaction progress or legacy typing dots */}
+          {USE_INTERACTION_API && interaction.isWorking && (
+            <VexyInteractionProgress
+              phase={interaction.phase}
+              ackMessage={interaction.ackMessage}
+              currentStage={interaction.currentStage}
+              error={interaction.error}
+              onCancel={interaction.cancel}
+            />
+          )}
+          {!USE_INTERACTION_API && isLoading && (
             <div className="vexy-typing-indicator">
               <span className="vexy-typing-dot" />
               <span className="vexy-typing-dot" />
@@ -440,7 +547,7 @@ export default function VexyChat({
       {/* Input area */}
       <ChatInput
         onSend={sendMessage}
-        disabled={isLoading}
+        disabled={USE_INTERACTION_API ? interaction.isWorking : isLoading}
         reflectionDial={reflectionDial}
         onReflectionDialChange={handleReflectionDialChange}
         showReflectionDial={tierConfig.showReflectionDial}

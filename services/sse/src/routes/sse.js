@@ -44,6 +44,7 @@ const clients = {
   positions: new Map(), // userId -> Set of clients
   logs: new Map(), // userId -> Set of clients (lifecycle events)
   dealer_gravity: new Set(), // Dealer Gravity artifact updates
+  vexy_interaction: new Map(), // userId -> Set of clients (interaction progress)
   all: new Set(),
 };
 
@@ -470,6 +471,32 @@ router.get("/logs", (req, res) => {
     // Clean up empty user entry
     if (clients.logs.get(userId)?.size === 0) {
       clients.logs.delete(userId);
+    }
+  });
+});
+
+// GET /sse/vexy-interaction - User-scoped Vexy interaction progress + results
+router.get("/vexy-interaction", (req, res) => {
+  const userId = req.dbUserId;
+  if (!userId) {
+    res.status(401).json({ error: "Authentication required" });
+    return;
+  }
+  sseHeaders(res);
+
+  // Track this client for user-scoped broadcasting
+  if (!clients.vexy_interaction.has(userId)) {
+    clients.vexy_interaction.set(userId, new Set());
+  }
+  clients.vexy_interaction.get(userId).add(res);
+
+  sendEvent(res, "connected", { channel: "vexy-interaction", userId, ts: Date.now() });
+
+  req.on("close", () => {
+    clients.vexy_interaction.get(userId)?.delete(res);
+    // Clean up empty user entry
+    if (clients.vexy_interaction.get(userId)?.size === 0) {
+      clients.vexy_interaction.delete(userId);
     }
   });
 });
@@ -1116,6 +1143,47 @@ export function subscribeLogLifecyclePubSub() {
   });
 }
 
+// Subscribe to vexy_interaction pub/sub for user-scoped interaction progress + results
+// Uses psubscribe pattern: vexy_interaction:* (where * is userId)
+export function subscribeVexyInteractionPubSub() {
+  const sub = getMarketRedisSub();
+
+  sub.psubscribe("vexy_interaction:*", (err, count) => {
+    if (err) {
+      console.error("[sse] Failed to subscribe to vexy_interaction:*:", err.message);
+    } else {
+      console.log(`[sse] Subscribed to vexy_interaction:* (${count} patterns)`);
+    }
+  });
+
+  sub.on("pmessage", (pattern, channel, message) => {
+    if (pattern === "vexy_interaction:*") {
+      try {
+        // Extract userId from channel (vexy_interaction:123)
+        const userId = channel.split(":")[1];
+        const event = JSON.parse(message);
+
+        // Event types: stage, result, error
+        const eventType = `vexy_interaction_${event.event || "update"}`;
+
+        // Broadcast only to this user's connected clients
+        const userClients = clients.vexy_interaction.get(userId);
+        if (userClients && userClients.size > 0) {
+          for (const client of userClients) {
+            try {
+              sendEvent(client, eventType, event);
+            } catch (err) {
+              userClients.delete(client);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("[sse] vexy_interaction parse error:", err.message);
+      }
+    }
+  });
+}
+
 // Stats tracking
 let diffStats = {
   received: 0,
@@ -1271,6 +1339,10 @@ export function getClientStats() {
   for (const set of clients.positions.values()) {
     positionsCount += set.size;
   }
+  let vexyInteractionCount = 0;
+  for (const set of clients.vexy_interaction.values()) {
+    vexyInteractionCount += set.size;
+  }
 
   return {
     clients: {
@@ -1286,8 +1358,9 @@ export function getClientStats() {
       trade_log: tradeLogCount,
       positions: positionsCount,
       dealer_gravity: clients.dealer_gravity.size,
+      vexy_interaction: vexyInteractionCount,
       all: clients.all.size,
-      total: clients.spot.size + gexCount + heatmapCount + candlesCount + tradeSelectorCount + clients.vexy.size + clients.bias_lfi.size + clients.alerts.size + riskGraphCount + tradeLogCount + clients.dealer_gravity.size + clients.all.size,
+      total: clients.spot.size + gexCount + heatmapCount + candlesCount + tradeSelectorCount + clients.vexy.size + clients.bias_lfi.size + clients.alerts.size + riskGraphCount + tradeLogCount + clients.dealer_gravity.size + vexyInteractionCount + clients.all.size,
     },
   };
 }

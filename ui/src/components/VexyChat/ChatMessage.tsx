@@ -8,12 +8,20 @@
 import { useState } from 'react';
 import { marked } from 'marked';
 
+export interface MessageMeta {
+  elevation_hint?: string;
+  tokens_used?: number;
+  remaining_today?: number;
+}
+
 export interface Message {
   id: string;
   role: 'vexy' | 'user';
   content: string;
   timestamp: Date;
   agent?: string;
+  interactionId?: string;
+  meta?: MessageMeta;
 }
 
 interface ChatMessageProps {

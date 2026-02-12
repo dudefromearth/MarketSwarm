@@ -11,7 +11,7 @@ import { loadConfig, getFallbackConfig, getConfig } from "./config.js";
 import { initRedis, closeRedis } from "./redis.js";
 import { startHeartbeat, stopHeartbeat } from "./heartbeat.js";
 import { setConfig as setKeyConfig } from "./keys.js";
-import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, subscribeAlertsPubSub, subscribeRiskGraphPubSub, subscribeTradeLogPubSub, subscribeDealerGravityPubSub, subscribePositionsPubSub, subscribeLogLifecyclePubSub, stopPolling, getClientStats } from "./routes/sse.js";
+import sseRoutes, { startPolling, subscribeVexyPubSub, subscribeHeatmapDiffs, subscribeAlertsPubSub, subscribeRiskGraphPubSub, subscribeTradeLogPubSub, subscribeDealerGravityPubSub, subscribePositionsPubSub, subscribeLogLifecyclePubSub, subscribeVexyInteractionPubSub, stopPolling, getClientStats } from "./routes/sse.js";
 import modelsRoutes from "./routes/models.js";
 import authRoutes from "./routes/auth.js";
 import adminRoutes, { startActivityTracking, stopActivityTracking } from "./routes/admin.js";
@@ -232,6 +232,7 @@ async function main() {
   subscribeDealerGravityPubSub();
   subscribePositionsPubSub();
   subscribeLogLifecyclePubSub();
+  subscribeVexyInteractionPubSub();
 
   // Start economic schedule builder (daily + on-demand)
   startScheduleBuilder();
@@ -281,6 +282,7 @@ async function main() {
     console.log(`   GET /sse/trade-log          - Stream trade log events`);
     console.log(`   GET /sse/dealer-gravity     - Stream DG artifact updates`);
     console.log(`   GET /sse/positions          - Stream position updates`);
+    console.log(`   GET /sse/vexy-interaction   - Stream Vexy interaction progress`);
     console.log(`   GET /sse/all                - Combined stream`);
     console.log(" Dealer Gravity Endpoints:");
     console.log(`   GET /api/dealer-gravity/artifact  - Visualization artifact`);

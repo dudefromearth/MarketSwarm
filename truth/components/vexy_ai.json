@@ -39,7 +39,7 @@
     "massive",
     "vigil"
   ],
-  "capabilities": ["chat"],
+  "capabilities": ["chat", "routine", "journal", "playbook", "commentary", "interaction"],
   "env": {
     "VEXY_MODE": "full",
     "VEXY_LOOP_SLEEP_SEC": "60",

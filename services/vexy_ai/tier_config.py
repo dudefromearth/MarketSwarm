@@ -9,8 +9,9 @@ Defines tier-specific configurations for Vexy Chat access:
 - Administrator: Full access with system diagnostics
 """
 
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 # =============================================================================
@@ -157,6 +158,28 @@ ALL_AGENTS = [
 ]
 
 
+OBSERVER_RESTRICTED_PROMPT = """
+## Observer Restricted Mode — Post-Trial Semantic Scope
+
+You are in Observer Restricted mode. Trial period has ended.
+Responses are brief and orienting only.
+
+### What You May Do
+- Offer a single sentence of reflection on what is present
+- Acknowledge the question without elaborating
+- Orient to surfaces by name
+
+### What You Must NOT Do
+- Everything listed in Observer restrictions, plus:
+- Multi-sentence responses
+- Pattern recognition of any kind
+- Echo or continuity references
+
+### Tone
+Minimal. Present. One line maximum.
+"""
+
+
 @dataclass
 class TierConfig:
     """Configuration for a user tier."""
@@ -172,6 +195,10 @@ class TierConfig:
     vix_scaled_disruptor: bool
     system_diagnostics: bool
     system_prompt_suffix: str
+    # Interaction system fields
+    playbooks_enabled: bool = True
+    max_concurrent_jobs: int = 2
+    max_tokens: int = 600
 
 
 # Tier configurations
@@ -189,6 +216,26 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
         vix_scaled_disruptor=False,
         system_diagnostics=False,
         system_prompt_suffix=OBSERVER_PROMPT,
+        playbooks_enabled=False,
+        max_concurrent_jobs=1,
+        max_tokens=300,
+    ),
+    "observer_restricted": TierConfig(
+        name="Observer Restricted",
+        daily_limit=3,
+        agents=["observer"],
+        reflection_dial_min=0.3,
+        reflection_dial_max=0.3,
+        echo_enabled=False,
+        echo_days=0,
+        despair_detection=False,
+        fp_protocol=False,
+        vix_scaled_disruptor=False,
+        system_diagnostics=False,
+        system_prompt_suffix=OBSERVER_RESTRICTED_PROMPT,
+        playbooks_enabled=False,
+        max_concurrent_jobs=1,
+        max_tokens=150,
     ),
     "activator": TierConfig(
         name="Activator",
@@ -203,6 +250,9 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
         vix_scaled_disruptor=False,
         system_diagnostics=False,
         system_prompt_suffix=ACTIVATOR_PROMPT,
+        playbooks_enabled=True,
+        max_concurrent_jobs=2,
+        max_tokens=600,
     ),
     "navigator": TierConfig(
         name="Navigator",
@@ -217,6 +267,7 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
         vix_scaled_disruptor=True,
         system_diagnostics=False,
         system_prompt_suffix=NAVIGATOR_PROMPT,
+        max_concurrent_jobs=3,
     ),
     "coaching": TierConfig(
         name="Coaching",
@@ -231,6 +282,7 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
         vix_scaled_disruptor=True,
         system_diagnostics=False,
         system_prompt_suffix=NAVIGATOR_PROMPT,
+        max_concurrent_jobs=3,
     ),
     "administrator": TierConfig(
         name="Administrator",
@@ -245,6 +297,7 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
         vix_scaled_disruptor=True,
         system_diagnostics=True,
         system_prompt_suffix=ADMIN_PROMPT,
+        max_concurrent_jobs=5,
     ),
 }
 
@@ -358,3 +411,56 @@ def tier_from_roles(roles: Optional[List[str]]) -> str:
         return "activator"
 
     return "observer"
+
+
+# Trial expiration threshold
+OBSERVER_TRIAL_DAYS = 28
+
+
+def tier_from_roles_with_trial_check(
+    roles: Optional[List[str]],
+    created_at: Optional[str] = None,
+) -> str:
+    """
+    Determine tier with observer trial expiration check.
+
+    If base tier is "observer" and account is older than OBSERVER_TRIAL_DAYS,
+    returns "observer_restricted".
+
+    Args:
+        roles: List of user roles
+        created_at: ISO date string of account creation (from user profile)
+
+    Returns:
+        Tier name (may be "observer_restricted" if trial expired)
+    """
+    base_tier = tier_from_roles(roles)
+
+    if base_tier != "observer":
+        return base_tier
+
+    if not created_at:
+        return base_tier
+
+    try:
+        # Parse created_at (handle various formats)
+        if isinstance(created_at, str):
+            # Remove trailing Z and parse
+            clean = created_at.rstrip("Z")
+            if "T" in clean:
+                created = datetime.fromisoformat(clean).replace(tzinfo=timezone.utc)
+            else:
+                created = datetime.strptime(clean, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        else:
+            return base_tier
+
+        now = datetime.now(timezone.utc)
+        days_since = (now - created).days
+
+        if days_since > OBSERVER_TRIAL_DAYS:
+            return "observer_restricted"
+
+    except (ValueError, TypeError):
+        pass
+
+    return base_tier

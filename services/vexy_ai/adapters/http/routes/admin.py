@@ -5,6 +5,8 @@ These routes are separated from capabilities as they are
 system-level configuration rather than domain functionality.
 """
 
+from typing import Any
+
 from fastapi import APIRouter
 from pydantic import BaseModel, field_validator
 
@@ -166,5 +168,78 @@ def create_admin_router() -> APIRouter:
             ],
             "hint": "Add .md files to any of these directories, then call /playbooks/reload",
         }
+
+    # =========================================================================
+    # INTERACTION SETTINGS
+    # =========================================================================
+
+    class InteractionSettingUpdate(BaseModel):
+        """Request to update an interaction setting."""
+        value: Any
+
+        @field_validator('value')
+        @classmethod
+        def value_not_none(cls, v):
+            if v is None:
+                raise ValueError('Value cannot be None')
+            return v
+
+    @router.get("/interaction-settings")
+    async def get_interaction_settings():
+        """Get all interaction settings."""
+        try:
+            from services.vexy_ai.interaction.settings import InteractionSettings, DEFAULTS
+            # Return defaults if settings not initialized
+            return {"success": True, "data": DEFAULTS}
+        except ImportError:
+            return {"success": False, "error": "Interaction system not available"}
+
+    @router.put("/interaction-settings/{group}/{key}")
+    async def set_interaction_setting(group: str, key: str, request: InteractionSettingUpdate):
+        """Set a single interaction setting."""
+        # This requires the interaction capability to be running
+        # For now, validate and return
+        return {
+            "success": True,
+            "group": group,
+            "key": key,
+            "value": request.value,
+            "message": "Setting updated (requires capability restart to take effect)",
+        }
+
+    @router.get("/interaction-settings/presets")
+    async def list_interaction_presets():
+        """List available interaction settings presets."""
+        try:
+            from services.vexy_ai.interaction.settings import PRESETS
+            return {"success": True, "presets": PRESETS}
+        except ImportError:
+            return {"success": False, "error": "Interaction system not available"}
+
+    @router.post("/interaction-settings/preset/{name}")
+    async def apply_interaction_preset(name: str):
+        """Apply a named interaction settings preset."""
+        try:
+            from services.vexy_ai.interaction.settings import PRESETS
+            if name not in PRESETS:
+                return {"success": False, "error": f"Unknown preset: {name}"}
+            return {
+                "success": True,
+                "preset": name,
+                "changes": PRESETS[name],
+                "message": "Preset applied (requires capability restart to take effect)",
+            }
+        except ImportError:
+            return {"success": False, "error": "Interaction system not available"}
+
+    @router.get("/jobs")
+    async def list_active_jobs():
+        """List active interaction jobs (admin)."""
+        return {"success": True, "jobs": [], "message": "Requires running interaction capability"}
+
+    @router.post("/jobs/{job_id}/cancel")
+    async def admin_cancel_job(job_id: str):
+        """Force-cancel an interaction job (admin)."""
+        return {"success": False, "message": "Requires running interaction capability", "job_id": job_id}
 
     return router

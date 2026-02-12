@@ -38,6 +38,7 @@ CAPABILITY_REGISTRY: Dict[str, str] = {
     "health_monitor": "capabilities.health_monitor.capability.HealthMonitorCapability",
     "healer": "capabilities.healer.capability.HealerCapability",
     "mesh": "capabilities.mesh.capability.MeshCapability",
+    "interaction": "capabilities.interaction.capability.InteractionCapability",
 }
 
 
