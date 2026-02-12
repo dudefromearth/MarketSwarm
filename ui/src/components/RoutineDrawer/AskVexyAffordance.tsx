@@ -128,6 +128,15 @@ export default function AskVexyAffordance({
         )}
       </div>
 
+      {loading && (
+        <div className="ask-vexy-thinking">
+          <span className="ask-vexy-thinking-dots">
+            <span /><span /><span />
+          </span>
+          <span className="ask-vexy-thinking-label">Vexy is thinking</span>
+        </div>
+      )}
+
       {response && (
         <div className="ask-vexy-response">
           {renderResponse(response)}
