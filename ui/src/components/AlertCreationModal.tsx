@@ -1,12 +1,12 @@
 // src/components/AlertCreationModal.tsx
 import { useState, useEffect } from 'react';
 import '../styles/alert-modal.css';
-import type { AlertType, AlertCondition, AlertBehavior, SupportType } from '../types/alerts';
+import type { AlertType, AlertCondition, AlertBehavior, SupportType, GreekName } from '../types/alerts';
 import ButterflyEntryAlertCreator from './ButterflyEntryAlertCreator';
 import { useDraggable } from '../hooks/useDraggable';
 
 // Alert types supported by this modal UI (subset of all AlertType)
-type SupportedAlertType = 'price' | 'debit' | 'profit_target' | 'trailing_stop' | 'ai_theta_gamma' | 'butterfly_entry' | 'butterfly_profit_mgmt';
+type SupportedAlertType = 'price' | 'debit' | 'profit_target' | 'trailing_stop' | 'ai_theta_gamma' | 'butterfly_entry' | 'butterfly_profit_mgmt' | 'portfolio_pnl' | 'portfolio_trailing' | 'greeks_threshold';
 
 // Conditions supported by this modal UI (subset of AlertCondition)
 type SupportedCondition = 'above' | 'below' | 'at';
@@ -40,6 +40,8 @@ interface AlertCreationModalProps {
     label?: string;
     // Butterfly profit mgmt specific
     mgmtActivationThreshold?: number;
+    // Greeks threshold specific
+    greekName?: GreekName;
   }) => void;
   strategyLabel: string;
   currentSpot: number | null;
@@ -47,6 +49,7 @@ interface AlertCreationModalProps {
   // Pre-fill from right-click on chart
   initialPrice?: number | null;
   initialCondition?: SupportedCondition;
+  initialType?: SupportedAlertType;
   // For editing existing alerts
   editingAlert?: EditingAlertData | null;
 }
@@ -56,7 +59,7 @@ const ALERT_COLORS = [
   '#14b8a6', '#3b82f6', '#8b5cf6', '#ec4899',
 ];
 
-const ALERT_TYPES: { value: SupportedAlertType; label: string; description: string }[] = [
+const ALERT_TYPES: { value: SupportedAlertType; label: string; description: string; isPortfolio?: boolean }[] = [
   { value: 'ai_theta_gamma', label: 'AI Theta/Gamma', description: 'Dynamic safe zone based on theta decay and gamma risk' },
   { value: 'butterfly_entry', label: 'Butterfly Entry', description: 'Detect support + reversal for OTM butterfly entries' },
   { value: 'butterfly_profit_mgmt', label: 'Butterfly Profit', description: 'Track HWM, assess risk, recommend EXIT/HOLD' },
@@ -64,6 +67,9 @@ const ALERT_TYPES: { value: SupportedAlertType; label: string; description: stri
   { value: 'profit_target', label: 'Profit Target', description: 'Alert when position profit reaches target' },
   { value: 'trailing_stop', label: 'Trailing Stop', description: 'Alert that follows profit and triggers on pullback' },
   { value: 'debit', label: 'Debit', description: 'Alert based on position debit/credit' },
+  { value: 'portfolio_pnl', label: 'Portfolio P&L', description: 'Alert when total portfolio P&L crosses a threshold', isPortfolio: true },
+  { value: 'portfolio_trailing', label: 'Portfolio Trailing', description: 'Alert on drawdown from portfolio session high', isPortfolio: true },
+  { value: 'greeks_threshold', label: 'Greeks Threshold', description: 'Alert when aggregate Greek exceeds a level', isPortfolio: true },
 ];
 
 export default function AlertCreationModal({
@@ -75,6 +81,7 @@ export default function AlertCreationModal({
   currentDebit: _currentDebit,
   initialPrice,
   initialCondition,
+  initialType,
   editingAlert,
 }: AlertCreationModalProps) {
   const [type, setType] = useState<SupportedAlertType>('ai_theta_gamma');
@@ -83,6 +90,7 @@ export default function AlertCreationModal({
   const [color, setColor] = useState(ALERT_COLORS[5]); // Blue default
   const [behavior, setBehavior] = useState<AlertBehavior>('once_only');
   const [minProfitThreshold, setMinProfitThreshold] = useState('50');
+  const [greekName, setGreekName] = useState<'delta' | 'gamma' | 'theta'>('delta');
 
   // Draggable modal
   const { dragHandleProps, containerStyle, isDragging } = useDraggable({
@@ -92,7 +100,7 @@ export default function AlertCreationModal({
 
   // Supported types/conditions for this modal UI
   const isSupportedType = (t: AlertType): t is SupportedAlertType =>
-    ['price', 'debit', 'profit_target', 'trailing_stop', 'ai_theta_gamma', 'butterfly_entry', 'butterfly_profit_mgmt'].includes(t);
+    ['price', 'debit', 'profit_target', 'trailing_stop', 'ai_theta_gamma', 'butterfly_entry', 'butterfly_profit_mgmt', 'portfolio_pnl', 'portfolio_trailing', 'greeks_threshold'].includes(t);
   const isSupportedCondition = (c: AlertCondition): c is SupportedCondition =>
     ['above', 'below', 'at'].includes(c);
 
@@ -113,14 +121,14 @@ export default function AlertCreationModal({
       }
       // If opened from right-click with price, default to 'price' type
       else if (initialPrice !== undefined && initialPrice !== null) {
-        setType('price');
+        setType(initialType || 'price');
         setTargetValue(initialPrice.toFixed(0));
-        setCondition(initialCondition || 'below');
+        setCondition(initialCondition || (initialPrice > (currentSpot || 0) ? 'above' : 'below'));
         setColor(ALERT_COLORS[5]);
         setBehavior('once_only');
         setMinProfitThreshold('50');
       } else {
-        setType('ai_theta_gamma');
+        setType(initialType || 'ai_theta_gamma');
         setTargetValue(currentSpot?.toFixed(0) || '');
         setCondition('below');
         setColor(ALERT_COLORS[5]);
@@ -128,13 +136,14 @@ export default function AlertCreationModal({
         setMinProfitThreshold('50');
       }
     }
-  }, [isOpen, currentSpot, initialPrice, initialCondition, editingAlert]);
+  }, [isOpen, currentSpot, initialPrice, initialCondition, initialType, editingAlert]);
 
   if (!isOpen) return null;
 
   const handleSave = () => {
-    const value = type === 'ai_theta_gamma' || type === 'butterfly_entry' || type === 'butterfly_profit_mgmt' ? 0 : parseFloat(targetValue);
-    if (type === 'ai_theta_gamma' || type === 'butterfly_entry' || type === 'butterfly_profit_mgmt' || !isNaN(value)) {
+    const noValueTypes: SupportedAlertType[] = ['ai_theta_gamma', 'butterfly_entry', 'butterfly_profit_mgmt'];
+    const value = noValueTypes.includes(type) ? 0 : parseFloat(targetValue);
+    if (noValueTypes.includes(type) || !isNaN(value)) {
       onSave({
         id: editingAlert?.id, // Include id when editing
         type,
@@ -144,6 +153,8 @@ export default function AlertCreationModal({
         behavior,
         minProfitThreshold: type === 'ai_theta_gamma' ? parseFloat(minProfitThreshold) / 100 : undefined,
         mgmtActivationThreshold: type === 'butterfly_profit_mgmt' ? parseFloat(minProfitThreshold) / 100 : undefined,
+        label: type === 'greeks_threshold' ? greekName : undefined,
+        greekName: type === 'greeks_threshold' ? greekName : undefined,
       });
       onClose();
     }
@@ -190,7 +201,9 @@ export default function AlertCreationModal({
       >
         <div className="alert-modal-header draggable-handle">
           <h3>{isEditing ? 'Edit Alert' : 'Create Alert'}</h3>
-          <span className="alert-modal-strategy">{strategyLabel}</span>
+          <span className="alert-modal-strategy">
+            {['portfolio_pnl', 'portfolio_trailing', 'greeks_threshold'].includes(type) ? 'Portfolio' : strategyLabel}
+          </span>
           <button className="alert-modal-close" onClick={onClose}>&times;</button>
         </div>
 
@@ -241,6 +254,81 @@ export default function AlertCreationModal({
                   ? 'Profit management activates when profit exceeds this threshold. Tracks HWM and assesses exit risk.'
                   : 'Zone appears when profit exceeds this threshold. Alerts when price exits the safe zone.'}
               </p>
+            </div>
+          ) : type === 'greeks_threshold' ? (
+            <div className="alert-settings-section">
+              <label className="alert-label">Greek</label>
+              <div className="alert-condition-row">
+                <select
+                  value={greekName}
+                  onChange={(e) => setGreekName(e.target.value as 'delta' | 'gamma' | 'theta')}
+                  className="alert-select"
+                >
+                  <option value="delta">Delta</option>
+                  <option value="gamma">Gamma</option>
+                  <option value="theta">Theta</option>
+                </select>
+              </div>
+              <label className="alert-label" style={{ marginTop: 8 }}>Condition</label>
+              <div className="alert-condition-row">
+                <select
+                  value={condition}
+                  onChange={(e) => setCondition(e.target.value as SupportedCondition)}
+                  className="alert-select"
+                >
+                  <option value="above">Rises above</option>
+                  <option value="below">Falls below</option>
+                </select>
+                <input
+                  type="number"
+                  value={targetValue}
+                  onChange={(e) => setTargetValue(e.target.value)}
+                  placeholder="0"
+                  step="0.1"
+                  className="alert-input"
+                />
+              </div>
+              <p className="alert-help">Alert when aggregate portfolio {greekName} crosses the threshold.</p>
+            </div>
+          ) : type === 'portfolio_pnl' ? (
+            <div className="alert-settings-section">
+              <label className="alert-label">Portfolio P&L Threshold</label>
+              <div className="alert-condition-row">
+                <select
+                  value={condition}
+                  onChange={(e) => setCondition(e.target.value as SupportedCondition)}
+                  className="alert-select"
+                >
+                  <option value="below">Drops below</option>
+                  <option value="above">Rises above</option>
+                </select>
+                <input
+                  type="number"
+                  value={targetValue}
+                  onChange={(e) => setTargetValue(e.target.value)}
+                  placeholder="-500"
+                  step="50"
+                  className="alert-input"
+                />
+              </div>
+              <p className="alert-help">Alert when aggregate P&L across all positions crosses this dollar threshold.</p>
+            </div>
+          ) : type === 'portfolio_trailing' ? (
+            <div className="alert-settings-section">
+              <label className="alert-label">Drawdown from Session High</label>
+              <div className="alert-condition-row">
+                <span className="alert-input-prefix">$</span>
+                <input
+                  type="number"
+                  value={targetValue}
+                  onChange={(e) => setTargetValue(e.target.value)}
+                  placeholder="200"
+                  step="50"
+                  min="0"
+                  className="alert-input"
+                />
+              </div>
+              <p className="alert-help">Alert when portfolio P&L drops this amount from the session high water mark.</p>
             </div>
           ) : (
             <div className="alert-settings-section">

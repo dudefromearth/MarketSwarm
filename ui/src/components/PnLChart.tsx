@@ -31,6 +31,17 @@ export interface BackdropRenderProps {
   spotPrice: number;
 }
 
+/** P&L zone annotation rendered on the chart */
+export interface PnLAlertZone {
+  type: 'profit_target' | 'trailing_stop_hwm' | 'trailing_stop_level' | 'theta_gamma_zone';
+  pnlValue?: number;       // For horizontal lines at P&L level
+  priceLow?: number;        // For vertical shaded zones
+  priceHigh?: number;
+  color: string;
+  label: string;
+  style: 'dashed' | 'solid' | 'shaded';
+}
+
 export interface PnLChartProps {
   expirationData: PnLPoint[];
   theoreticalData: PnLPoint[];
@@ -39,7 +50,9 @@ export interface PnLChartProps {
   theoreticalBreakevens: number[];
   strikes: number[];
   onOpenAlertDialog?: (price: number, type: PriceAlertType) => void;
-  alertLines?: { price: number; color: string; label?: string }[];
+  alertLines?: { price: number; color: string; label?: string; style?: 'dashed' | 'solid' | 'dimmed' }[];
+  /** P&L alert zones - horizontal lines and shaded regions */
+  pnlAlertZones?: PnLAlertZone[];
   /** Faded curves for sim-expired strategies */
   expiredExpirationData?: PnLPoint[];
   expiredTheoreticalData?: PnLPoint[];
@@ -69,6 +82,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
   strikes,
   onOpenAlertDialog,
   alertLines = [],
+  pnlAlertZones = [],
   expiredExpirationData = [],
   expiredTheoreticalData = [],
   renderBackdrop,
@@ -496,25 +510,80 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
       ctx.stroke();
     }
 
-    // Draw alert lines
+    // Draw alert lines with visual distinction
     alertLines.forEach(alert => {
       const x = toCanvasX(alert.price, width);
       if (x >= PADDING.left && x <= width - PADDING.right) {
+        const lineStyle = alert.style || 'dashed';
         ctx.strokeStyle = alert.color;
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
+        ctx.lineWidth = lineStyle === 'solid' ? 2 : 1;
+        ctx.globalAlpha = lineStyle === 'dimmed' ? 0.3 : 1;
+        if (lineStyle === 'dashed' || lineStyle === 'dimmed') {
+          ctx.setLineDash([4, 4]);
+        } else {
+          ctx.setLineDash([]);
+        }
         ctx.beginPath();
         ctx.moveTo(x, PADDING.top);
         ctx.lineTo(x, height - PADDING.bottom);
         ctx.stroke();
         ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
 
         // Label
         if (alert.label) {
           ctx.fillStyle = alert.color;
+          ctx.globalAlpha = lineStyle === 'dimmed' ? 0.3 : 1;
           ctx.font = '9px monospace';
           ctx.textAlign = 'center';
           ctx.fillText(alert.label, x, PADDING.top - 5);
+          ctx.globalAlpha = 1;
+        }
+      }
+    });
+
+    // Draw P&L alert zones (horizontal lines and shaded regions)
+    pnlAlertZones.forEach(zone => {
+      if (zone.style === 'shaded' && zone.priceLow != null && zone.priceHigh != null) {
+        // Vertical shaded zone between price levels
+        const x1 = toCanvasX(zone.priceLow, width);
+        const x2 = toCanvasX(zone.priceHigh, width);
+        const clampedX1 = Math.max(PADDING.left, Math.min(x1, width - PADDING.right));
+        const clampedX2 = Math.max(PADDING.left, Math.min(x2, width - PADDING.right));
+        ctx.fillStyle = zone.color;
+        ctx.globalAlpha = 0.1;
+        ctx.fillRect(clampedX1, PADDING.top, clampedX2 - clampedX1, chartHeight);
+        ctx.globalAlpha = 1;
+        // Label at top
+        const midX = (clampedX1 + clampedX2) / 2;
+        ctx.fillStyle = zone.color;
+        ctx.font = '8px monospace';
+        ctx.textAlign = 'center';
+        ctx.globalAlpha = 0.7;
+        ctx.fillText(zone.label, midX, PADDING.top + 12);
+        ctx.globalAlpha = 1;
+      } else if (zone.pnlValue != null) {
+        // Horizontal P&L line
+        const y = toCanvasY(zone.pnlValue, height);
+        if (y >= PADDING.top && y <= height - PADDING.bottom) {
+          ctx.strokeStyle = zone.color;
+          ctx.lineWidth = 1;
+          if (zone.style === 'dashed') {
+            ctx.setLineDash([6, 3]);
+          } else {
+            ctx.setLineDash([3, 3]);
+          }
+          ctx.beginPath();
+          ctx.moveTo(PADDING.left, y);
+          ctx.lineTo(width - PADDING.right, y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Label on right side
+          ctx.fillStyle = zone.color;
+          ctx.font = '8px monospace';
+          ctx.textAlign = 'right';
+          ctx.fillText(zone.label, width - PADDING.right - 4, y - 4);
         }
       }
     });
@@ -588,7 +657,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     ctx.fillStyle = themeColors.legendText;
     ctx.fillText('Real-Time', legendX + 20, legendY + 15);
 
-  }, [expirationData, theoreticalData, spotPrice, expirationBreakevens, theoreticalBreakevens, strikes, alertLines, expiredExpirationData, expiredTheoreticalData, toCanvasX, toCanvasY, renderBackdrop]);
+  }, [expirationData, theoreticalData, spotPrice, expirationBreakevens, theoreticalBreakevens, strikes, alertLines, pnlAlertZones, expiredExpirationData, expiredTheoreticalData, toCanvasX, toCanvasY, renderBackdrop]);
 
   // Animate expired curve opacity (500ms fade in/out)
   const hasExpired = expiredExpirationData.length > 0;

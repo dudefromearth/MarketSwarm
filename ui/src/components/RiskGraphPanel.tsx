@@ -9,8 +9,8 @@
  * - Summary stats (Real-Time P&L, Max Profit, Max Loss)
  */
 
-import { useRef, useMemo, useCallback, useState, forwardRef, useImperativeHandle } from 'react';
-import PnLChart, { type PnLChartHandle, type PriceAlertType, type BackdropRenderProps } from './PnLChart';
+import { useRef, useMemo, useCallback, useState, useEffect, forwardRef, useImperativeHandle } from 'react';
+import PnLChart, { type PnLChartHandle, type PriceAlertType, type BackdropRenderProps, type PnLAlertZone } from './PnLChart';
 import RiskGraphBackdrop from './RiskGraphBackdrop';
 import DealerGravitySettings from './DealerGravitySettings';
 import AlgoAlertPanel from './AlgoAlertPanel';
@@ -194,6 +194,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   // Get alerts from shared context
   const {
     alerts,
+    createAlert,
     deleteAlert,
     clearTriggeredAlerts,
     getTriggeredAlerts,
@@ -395,26 +396,28 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     };
   }, [pnlChartData]);
 
-  // Convert price alert lines to format expected by PnLChart
+  // Convert alerts to lines for PnLChart — all lines come from real alerts now
   const alertLinesForChart = useMemo(() => {
-    const lines: { price: number; color: string; label?: string }[] = [];
+    const lines: { price: number; color: string; label?: string; style?: 'dashed' | 'solid' | 'dimmed' }[] = [];
 
-    // Price alert lines
+    // Legacy price alert lines (will be migrated to real alerts)
     priceAlertLines.forEach(line => {
       lines.push({
         price: line.price,
         color: line.color,
         label: line.label,
+        style: 'dashed',
       });
     });
 
-    // Strategy price alerts
-    alerts.filter(a => a.enabled && a.type === 'price').forEach(alert => {
+    // Strategy price alerts — visual distinction by state
+    alerts.filter(a => a.type === 'price').forEach(alert => {
       const val = Number(alert.targetValue);
       lines.push({
         price: val,
         color: alert.color,
         label: val.toFixed(0),
+        style: !alert.enabled ? 'dimmed' : alert.triggered ? 'solid' : 'dashed',
       });
     });
 
@@ -427,16 +430,96 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
         price: tgAlert.zoneLow,
         color: tgAlert.color || '#f59e0b',
         label: `Zone ${tgAlert.zoneLow.toFixed(0)}`,
+        style: 'dashed',
       });
       lines.push({
         price: tgAlert.zoneHigh,
         color: tgAlert.color || '#f59e0b',
         label: `Zone ${tgAlert.zoneHigh.toFixed(0)}`,
+        style: 'dashed',
       });
     });
 
     return lines;
   }, [priceAlertLines, alerts]);
+
+  // Build P&L alert zones from alerts for chart rendering
+  const pnlAlertZones = useMemo(() => {
+    const zones: PnLAlertZone[] = [];
+
+    alerts.filter(a => a.enabled).forEach(alert => {
+      switch (alert.type) {
+        case 'profit_target': {
+          const tgt = alert as import('../types/alerts').ProfitTargetAlert;
+          if (tgt.entryDebit && tgt.targetValue) {
+            const targetPnL = tgt.entryDebit * tgt.targetValue;
+            zones.push({
+              type: 'profit_target',
+              pnlValue: targetPnL,
+              color: '#22c55e',
+              label: `Target ${(tgt.targetValue * 100).toFixed(0)}%`,
+              style: 'dashed',
+            });
+          }
+          break;
+        }
+        case 'trailing_stop': {
+          const ts = alert as import('../types/alerts').TrailingStopAlert;
+          if (ts.highWaterMark > 0) {
+            zones.push({
+              type: 'trailing_stop_hwm',
+              pnlValue: ts.highWaterMark,
+              color: '#3b82f6',
+              label: 'HWM',
+              style: 'solid',
+            });
+            zones.push({
+              type: 'trailing_stop_level',
+              pnlValue: ts.highWaterMark - ts.targetValue,
+              color: '#ef4444',
+              label: `Stop -$${ts.targetValue.toFixed(0)}`,
+              style: 'dashed',
+            });
+          }
+          break;
+        }
+        case 'ai_theta_gamma': {
+          const tg = alert as import('../types/alerts').AIThetaGammaAlert;
+          if (tg.isZoneActive && tg.zoneLow && tg.zoneHigh) {
+            zones.push({
+              type: 'theta_gamma_zone',
+              priceLow: tg.zoneLow,
+              priceHigh: tg.zoneHigh,
+              color: tg.color || '#f59e0b',
+              label: 'Safe Zone',
+              style: 'shaded',
+            });
+          }
+          break;
+        }
+      }
+    });
+
+    return zones;
+  }, [alerts]);
+
+  // Publish aggregate Greeks to backend for copilot alert evaluation (throttled)
+  const lastGreeksPublish = useRef(0);
+  useEffect(() => {
+    const now = Date.now();
+    if (now - lastGreeksPublish.current < 10000) return; // Throttle: max once per 10s
+    if (pnlChartData.delta === 0 && pnlChartData.gamma === 0 && pnlChartData.theta === 0) return;
+    lastGreeksPublish.current = now;
+    fetch('/api/services/sse/greeks-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        delta: pnlChartData.delta,
+        gamma: pnlChartData.gamma,
+        theta: pnlChartData.theta,
+      }),
+    }).catch(() => {}); // Fire-and-forget
+  }, [pnlChartData.delta, pnlChartData.gamma, pnlChartData.theta]);
 
   // Handle opening alert dialog from chart context menu
   const handleOpenAlertDialog = useCallback((price: number, type: PriceAlertType) => {
@@ -709,6 +792,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                   strikes={chartStrikes}
                   onOpenAlertDialog={handleOpenAlertDialog}
                   alertLines={alertLinesForChart}
+                  pnlAlertZones={pnlAlertZones}
                   expiredExpirationData={pnlChartData.expiredExpirationPoints}
                   expiredTheoreticalData={pnlChartData.expiredTheoreticalPoints}
                   renderBackdrop={renderBackdrop}
@@ -942,6 +1026,45 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                                 ×
                               </button>
                             </div>
+
+                            {/* Quick Profit Target Alerts — only shown when cost basis is locked */}
+                            {isLocked && costBasis != null && pnlChartData.maxPnL > 0 && (
+                              <div className="position-row-quick-alerts">
+                                <span className="quick-alert-label">Target:</span>
+                                {[25, 50, 75].map(pct => {
+                                  const targetPnL = pnlChartData.maxPnL * (pct / 100);
+                                  const existingAlert = alerts.find(
+                                    a => a.type === 'profit_target' && 'strategyId' in a && a.strategyId === strat.id
+                                      && Math.abs(a.targetValue - (pct / 100)) < 0.01
+                                  );
+                                  return (
+                                    <button
+                                      key={pct}
+                                      className={`btn-quick-alert ${existingAlert ? 'active' : ''}`}
+                                      disabled={!!existingAlert}
+                                      title={existingAlert
+                                        ? `${pct}% target already set`
+                                        : `Alert at ${pct}% max profit ($${targetPnL.toFixed(0)})`}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        createAlert({
+                                          type: 'profit_target',
+                                          source: { type: 'strategy', id: strat.id, label: positionLabel },
+                                          condition: 'above',
+                                          targetValue: pct / 100,
+                                          behavior: 'once_only',
+                                          color: pct === 25 ? '#eab308' : pct === 50 ? '#22c55e' : '#3b82f6',
+                                          strategyId: strat.id,
+                                          entryDebit: Math.abs(costBasis),
+                                        });
+                                      }}
+                                    >
+                                      {pct}%
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
                         </div>
                       );
@@ -993,6 +1116,14 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                             return 'Sentiment Shift';
                           case 'ai_risk_zone':
                             return 'Risk Zone Exit';
+                          case 'portfolio_pnl':
+                            return `Portfolio P&L ${alert.condition === 'below' ? '≤' : '≥'} $${val.toFixed(0)}`;
+                          case 'portfolio_trailing':
+                            return `Portfolio Trail -$${val.toFixed(0)}`;
+                          case 'greeks_threshold': {
+                            const gn = alert.label || 'delta';
+                            return `${gn.charAt(0).toUpperCase() + gn.slice(1)} ${alert.condition === 'above' ? '≥' : '≤'} ${val}`;
+                          }
                           default:
                             return alert.type;
                         }
@@ -1027,9 +1158,9 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                       );
                     })}
 
-                    {/* Price Line Alerts */}
+                    {/* Legacy price lines (pending migration) */}
                     {priceAlertLines.map(alert => (
-                      <div key={alert.id} className="alert-item price-line-alert" title="Visual price line (no notification)">
+                      <div key={alert.id} className="alert-item price-line-alert" title="Legacy price line (migrating...)">
                         <div className="alert-info">
                           <div
                             className="alert-color-dot"

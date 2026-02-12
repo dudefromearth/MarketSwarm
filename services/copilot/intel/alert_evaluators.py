@@ -1148,6 +1148,160 @@ class OrderQueueEvaluator:
         return auto_closed
 
 
+class PortfolioPnLEvaluator(BaseEvaluator):
+    """
+    Evaluates portfolio-level aggregate P&L alerts.
+    Sums P&L across all strategies and checks against threshold.
+    Fast loop, no AI.
+    """
+
+    @property
+    def alert_type(self) -> str:
+        return "portfolio_pnl"
+
+    @property
+    def is_ai_powered(self) -> bool:
+        return False
+
+    async def evaluate(self, alert: Alert, market_data: dict) -> AlertEvaluation:
+        strategies = market_data.get("strategies", {})
+        if not strategies:
+            return AlertEvaluation(
+                alert_id=alert.id,
+                should_trigger=False,
+                confidence=0.0,
+                reasoning="No strategy data available for portfolio P&L",
+            )
+
+        total_pnl = 0.0
+        for strat_id, strat in strategies.items():
+            current_debit = strat.get("current_debit") or strat.get("debit")
+            entry_debit = strat.get("entry_debit")
+            if current_debit is not None and entry_debit is not None:
+                total_pnl += entry_debit - current_debit
+
+        target = alert.target_value
+        condition = alert.condition
+
+        condition_met = False
+        if condition == "below":
+            condition_met = total_pnl < target
+        elif condition == "above":
+            condition_met = total_pnl > target
+
+        return AlertEvaluation(
+            alert_id=alert.id,
+            should_trigger=condition_met,
+            confidence=1.0 if condition_met else 0.0,
+            reasoning=f"Portfolio P&L ${total_pnl:.2f} {'crossed' if condition_met else 'has not crossed'} ${target:.2f} ({condition})",
+        )
+
+
+class PortfolioTrailingEvaluator(BaseEvaluator):
+    """
+    Evaluates portfolio-level trailing drawdown from session high water mark.
+    Tracks aggregate P&L HWM and triggers when drawdown exceeds threshold.
+    Fast loop, no AI.
+    """
+
+    @property
+    def alert_type(self) -> str:
+        return "portfolio_trailing"
+
+    @property
+    def is_ai_powered(self) -> bool:
+        return False
+
+    async def evaluate(self, alert: Alert, market_data: dict) -> AlertEvaluation:
+        strategies = market_data.get("strategies", {})
+        if not strategies:
+            return AlertEvaluation(
+                alert_id=alert.id,
+                should_trigger=False,
+                confidence=0.0,
+                reasoning="No strategy data available for portfolio trailing",
+            )
+
+        total_pnl = 0.0
+        for strat_id, strat in strategies.items():
+            current_debit = strat.get("current_debit") or strat.get("debit")
+            entry_debit = strat.get("entry_debit")
+            if current_debit is not None and entry_debit is not None:
+                total_pnl += entry_debit - current_debit
+
+        # Update high water mark
+        hwm = alert.high_water_mark or 0
+        if total_pnl > hwm:
+            alert.high_water_mark = total_pnl
+            hwm = total_pnl
+
+        drawdown = hwm - total_pnl if hwm > 0 else 0
+        stop_amount = alert.target_value
+
+        condition_met = drawdown >= stop_amount and hwm > 0
+
+        return AlertEvaluation(
+            alert_id=alert.id,
+            should_trigger=condition_met,
+            confidence=1.0 if condition_met else 0.0,
+            reasoning=f"Portfolio drawdown ${drawdown:.2f} from HWM ${hwm:.2f} {'exceeded' if condition_met else 'below'} stop ${stop_amount:.2f}",
+        )
+
+
+class GreeksThresholdEvaluator(BaseEvaluator):
+    """
+    Evaluates aggregate Greeks threshold alerts.
+    Checks delta, gamma, or theta against a numeric threshold.
+    Fast loop, deterministic, no AI.
+    """
+
+    @property
+    def alert_type(self) -> str:
+        return "greeks_threshold"
+
+    @property
+    def is_ai_powered(self) -> bool:
+        return False
+
+    async def evaluate(self, alert: Alert, market_data: dict) -> AlertEvaluation:
+        greeks = market_data.get("greeks", {})
+        if not greeks:
+            return AlertEvaluation(
+                alert_id=alert.id,
+                should_trigger=False,
+                confidence=0.0,
+                reasoning="No Greeks data available",
+            )
+
+        # alert.label stores which Greek to check (delta/gamma/theta)
+        greek_name = alert.label or "delta"
+        greek_value = greeks.get(greek_name)
+
+        if greek_value is None:
+            return AlertEvaluation(
+                alert_id=alert.id,
+                should_trigger=False,
+                confidence=0.0,
+                reasoning=f"Greek '{greek_name}' not available in market data",
+            )
+
+        target = alert.target_value
+        condition = alert.condition
+
+        condition_met = False
+        if condition == "above":
+            condition_met = greek_value > target
+        elif condition == "below":
+            condition_met = greek_value < target
+
+        return AlertEvaluation(
+            alert_id=alert.id,
+            should_trigger=condition_met,
+            confidence=1.0 if condition_met else 0.0,
+            reasoning=f"{greek_name} {greek_value:.4f} {'crossed' if condition_met else 'has not crossed'} {target} ({condition})",
+        )
+
+
 def create_all_evaluators(ai_manager: Optional[AIProviderManager] = None, logger=None) -> list:
     """
     Factory function to create all evaluators.
@@ -1177,4 +1331,7 @@ def create_all_evaluators(ai_manager: Optional[AIProviderManager] = None, logger
         ButterflyProfitMgmtEvaluator(ai_manager),
         PromptDrivenEvaluator(ai_manager, reference_service, logger),
         AlgoAlertEvaluator(logger=logger),
+        PortfolioPnLEvaluator(),
+        PortfolioTrailingEvaluator(),
+        GreeksThresholdEvaluator(),
     ]

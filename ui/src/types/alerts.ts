@@ -106,6 +106,9 @@ export function getDefaultAlertIntent(type: AlertType): AlertIntent {
     case 'ai_sentiment':
     case 'ai_risk_zone':
     case 'butterfly_profit_mgmt':
+    case 'portfolio_pnl':
+    case 'portfolio_trailing':
+    case 'greeks_threshold':
       return 'strategy_general';
     default:
       return 'position_specific';
@@ -722,7 +725,10 @@ export type AlertType =
   | 'time_boundary'         // EOD/EOW/EOM alerts
   | 'trade_closed'          // Trade closed notification
   | 'butterfly_entry'       // OTM butterfly entry detection
-  | 'butterfly_profit_mgmt'; // Butterfly profit management
+  | 'butterfly_profit_mgmt' // Butterfly profit management
+  | 'portfolio_pnl'         // Portfolio-level aggregate P&L threshold
+  | 'portfolio_trailing'    // Portfolio-level trailing drawdown from HWM
+  | 'greeks_threshold';     // Deterministic Greeks threshold (delta/gamma/theta)
 
 // Intent class - determines alert UX behavior
 // See fotw-alerts.md for philosophy
@@ -891,6 +897,25 @@ export interface ButterflyProfitMgmtAlert extends AlertBase {
   mgmtLastAssessment?: string;
 }
 
+// Portfolio P&L alert - aggregate P&L threshold
+export interface PortfolioPnLAlert extends AlertBase {
+  type: 'portfolio_pnl';
+}
+
+// Portfolio trailing alert - drawdown from session high water mark
+export interface PortfolioTrailingAlert extends AlertBase {
+  type: 'portfolio_trailing';
+  highWaterMark: number;
+}
+
+// Greeks threshold alert - deterministic threshold on aggregate Greeks
+export type GreekName = 'delta' | 'gamma' | 'theta';
+
+export interface GreeksThresholdAlert extends AlertBase {
+  type: 'greeks_threshold';
+  greekName: GreekName;
+}
+
 // Union type of all alerts
 export type Alert =
   | PriceAlert
@@ -901,7 +926,10 @@ export type Alert =
   | AISentimentAlert
   | AIRiskZoneAlert
   | ButterflyEntryAlert
-  | ButterflyProfitMgmtAlert;
+  | ButterflyProfitMgmtAlert
+  | PortfolioPnLAlert
+  | PortfolioTrailingAlert
+  | GreeksThresholdAlert;
 
 // Input type for creating alerts (id, timestamps auto-generated)
 export interface CreateAlertInput {
@@ -932,6 +960,9 @@ export interface CreateAlertInput {
   mgmtActivationThreshold?: number;
   mgmtInitialDte?: number;
   mgmtInitialGamma?: number;
+
+  // Greeks threshold specific
+  greekName?: GreekName;
 }
 
 // Input type for editing alerts

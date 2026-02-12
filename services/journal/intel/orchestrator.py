@@ -3275,7 +3275,7 @@ class JournalOrchestrator:
                 alert_type = body['type']
                 if alert_type in ('trade_closed', 'pattern_recurrence'):
                     intent_class = 'reflective'
-                elif alert_type.startswith('ai_'):
+                elif alert_type.startswith('ai_') or alert_type in ('portfolio_pnl', 'portfolio_trailing', 'greeks_threshold'):
                     intent_class = 'protective'
                 else:
                     intent_class = 'informational'

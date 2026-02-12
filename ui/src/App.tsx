@@ -638,6 +638,7 @@ function App() {
   const [alertModalStrategy, setAlertModalStrategy] = useState<string | null>(null); // strategyId for modal
   const [alertModalInitialPrice, setAlertModalInitialPrice] = useState<number | null>(null);
   const [alertModalInitialCondition, setAlertModalInitialCondition] = useState<'above' | 'below' | 'at'>('below');
+  const [alertModalInitialType, setAlertModalInitialType] = useState<string | undefined>(undefined);
   const [alertModalEditingAlert, setAlertModalEditingAlert] = useState<EditingAlertData | null>(null); // Alert being edited
 
   // Orphaned alert dialog state (shown when removing a position with bound alerts)
@@ -1354,6 +1355,27 @@ function App() {
     localStorage.setItem('priceAlertLines', JSON.stringify(priceAlertLines));
   }, [priceAlertLines]);
 
+  // Migrate legacy localStorage price alert lines to real server-side alerts
+  const hasMigratedPriceLines = useRef(false);
+  useEffect(() => {
+    if (hasMigratedPriceLines.current || priceAlertLines.length === 0) return;
+    hasMigratedPriceLines.current = true;
+    const currentSpotVal = currentSpot || 6000;
+    for (const line of priceAlertLines) {
+      contextCreateAlert({
+        type: 'price',
+        source: { type: 'chart', id: 'migrated', label: 'Price Line' },
+        condition: line.price > currentSpotVal ? 'above' : 'below',
+        targetValue: line.price,
+        color: line.color,
+        behavior: 'once_only',
+        label: line.label || `${line.price.toFixed(0)}`,
+      });
+    }
+    setPriceAlertLines([]);
+    localStorage.removeItem('priceAlertLines');
+  }, [priceAlertLines, contextCreateAlert, currentSpot]);
+
   // Fetch user profile for header greeting
   useEffect(() => {
     fetch('/api/profile/me', { credentials: 'include' })
@@ -1390,6 +1412,7 @@ function App() {
       minProfitThreshold,
     });
     setAlertModalInitialPrice(null); // Clear any right-click price
+    setAlertModalInitialType(undefined);
   };
 
   const startNewAlert = (strategyId: string) => {
@@ -1397,6 +1420,8 @@ function App() {
     if (!strategy) return;
     setAlertModalStrategy(strategyId);
     setAlertModalEditingAlert(null); // Clear any editing
+    setAlertModalInitialType(undefined);
+    setAlertModalInitialPrice(null);
   };
 
   // Update strategy debit (for when actual fill differs from quoted price)
@@ -3560,6 +3585,7 @@ function App() {
             setAlertModalStrategy(strategyId);
             setAlertModalInitialPrice(price);
             setAlertModalInitialCondition(condition);
+            setAlertModalInitialType('price');
           }}
           spotPrice={currentSpot || 6000}
           spotData={spot || undefined}
@@ -3962,14 +3988,18 @@ function App() {
         onClose={() => {
           setAlertModalStrategy(null);
           setAlertModalInitialPrice(null);
+          setAlertModalInitialType(undefined);
           setAlertModalEditingAlert(null);
         }}
         onSave={(alertData) => {
           if (alertModalStrategy) {
             const strategy = riskGraphStrategies.find(s => s.id === alertModalStrategy);
-            const strategyLabel = strategy
-              ? `${strategy.strategy === 'butterfly' ? 'BF' : strategy.strategy === 'vertical' ? 'VS' : 'SGL'} ${strategy.strike}${strategy.width > 0 ? '/' + strategy.width : ''} ${strategy.side.charAt(0).toUpperCase()}`
-              : 'Chart Alert';
+            const isPortfolioType = ['portfolio_pnl', 'portfolio_trailing', 'greeks_threshold'].includes(alertData.type);
+            const strategyLabel = isPortfolioType
+              ? 'Portfolio'
+              : strategy
+                ? `${strategy.strategy === 'butterfly' ? 'BF' : strategy.strategy === 'vertical' ? 'VS' : 'SGL'} ${strategy.strike}${strategy.width > 0 ? '/' + strategy.width : ''} ${strategy.side.charAt(0).toUpperCase()}`
+                : 'Chart Alert';
 
             if (alertData.id) {
               // Update existing alert via context
@@ -3987,17 +4017,19 @@ function App() {
               contextCreateAlert({
                 type: alertData.type,
                 source: {
-                  type: 'strategy',
-                  id: alertModalStrategy,
+                  type: isPortfolioType ? 'chart' : 'strategy',
+                  id: isPortfolioType ? 'portfolio' : alertModalStrategy,
                   label: strategyLabel,
                 },
                 condition: alertData.condition,
                 targetValue: alertData.targetValue,
                 color: alertData.color,
                 behavior: alertData.behavior,
-                strategyId: alertModalStrategy,
+                strategyId: isPortfolioType ? undefined : alertModalStrategy,
                 entryDebit: strategy?.debit || undefined,
                 minProfitThreshold: alertData.minProfitThreshold,
+                label: alertData.label,
+                greekName: alertData.greekName,
               });
               // Trigger Action phase - user armed a future trigger
               triggerActionPhase();
@@ -4014,6 +4046,7 @@ function App() {
         currentDebit={riskGraphStrategies.find(s => s.id === alertModalStrategy)?.debit || null}
         initialPrice={alertModalInitialPrice}
         initialCondition={alertModalInitialCondition}
+        initialType={alertModalInitialType as any}
         editingAlert={alertModalEditingAlert}
       />
 

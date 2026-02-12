@@ -1292,4 +1292,26 @@ export function getClientStats() {
   };
 }
 
+// Internal endpoint: UI publishes aggregate Greeks for copilot alert evaluation
+router.post("/greeks-update", async (req, res) => {
+  try {
+    const { delta, gamma, theta } = req.body || {};
+    if (delta == null && gamma == null && theta == null) {
+      return res.status(400).json({ error: "At least one Greek value required" });
+    }
+    const redis = getMarketRedis();
+    const data = JSON.stringify({
+      delta: delta ?? 0,
+      gamma: gamma ?? 0,
+      theta: theta ?? 0,
+      ts: Date.now(),
+    });
+    await redis.set("copilot:greeks:aggregate", data, "EX", 300); // 5 min TTL
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("greeks-update error:", err);
+    res.status(500).json({ error: "Failed to publish Greeks" });
+  }
+});
+
 export default router;

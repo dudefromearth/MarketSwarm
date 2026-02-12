@@ -459,6 +459,29 @@ export function AlertProvider({ children }: { children: ReactNode }) {
         } as Alert;
         break;
 
+      case 'portfolio_pnl':
+        optimisticAlert = {
+          ...baseAlert,
+          type: 'portfolio_pnl',
+        } as Alert;
+        break;
+
+      case 'portfolio_trailing':
+        optimisticAlert = {
+          ...baseAlert,
+          type: 'portfolio_trailing',
+          highWaterMark: 0,
+        } as Alert;
+        break;
+
+      case 'greeks_threshold':
+        optimisticAlert = {
+          ...baseAlert,
+          type: 'greeks_threshold',
+          greekName: input.greekName || 'delta',
+        } as Alert;
+        break;
+
       default:
         optimisticAlert = baseAlert as Alert;
     }

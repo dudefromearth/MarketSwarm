@@ -522,11 +522,24 @@ class CopilotOrchestrator:
         """Called after market data is updated - notifies alert engine."""
         if self.alert_engine:
             market_data = self.get_market_data()
-            # Use asyncio.create_task to avoid blocking the poll loop
+            # Enrich with aggregate Greeks from UI (published via Redis)
             asyncio.create_task(
-                self.alert_engine.update_market_data(market_data),
+                self._enrich_and_update_alerts(market_data),
                 name="alert-market-update"
             )
+
+    async def _enrich_and_update_alerts(self, market_data: dict) -> None:
+        """Enrich market data with UI-published Greeks, then update alert engine."""
+        try:
+            if self._redis:
+                greeks_raw = await self._redis.get("copilot:greeks:aggregate")
+                if greeks_raw:
+                    import json as _json
+                    greeks = _json.loads(greeks_raw)
+                    market_data["greeks"] = greeks
+        except Exception:
+            pass  # Non-critical - Greeks alerts just won't fire
+        await self.alert_engine.update_market_data(market_data)
 
     async def health_check(self, request: web.Request) -> web.Response:
         """Health check endpoint."""
