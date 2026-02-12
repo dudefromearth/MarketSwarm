@@ -2541,7 +2541,7 @@ body {
 /* Consolidated layout - CSS Grid for sidebar to span full height on LEFT */
 .echarts-risk-graph-panel .risk-graph-consolidated {
   display: grid;
-  grid-template-columns: 290px minmax(0, 1fr); /* minmax allows shrinking */
+  grid-template-columns: 340px minmax(0, 1fr); /* minmax allows shrinking */
   grid-template-rows: minmax(350px, 1fr) auto auto; /* First row has minimum height */
   gap: 12px;
   height: 100%;
@@ -2838,8 +2838,8 @@ body {
 }
 
 .risk-graph-sidebar {
-  width: 310px;
-  min-width: 310px;
+  width: 360px;
+  min-width: 360px;
   display: flex;
   flex-direction: column;
   gap: 8px;

@@ -33,6 +33,7 @@ async function apiCall<T>(
   const response = await fetch(url, {
     ...options,
     credentials: 'include',
+    signal: options.signal ?? AbortSignal.timeout(30_000),
     headers: {
       'Content-Type': 'application/json',
       ...options.headers,

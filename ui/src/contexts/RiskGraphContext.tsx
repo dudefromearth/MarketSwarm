@@ -145,15 +145,18 @@ export function RiskGraphProvider({ children }: RiskGraphProviderProps) {
         });
         break;
 
-      case 'strategy_updated':
+      case 'strategy_updated': {
+        const incoming = event.data as RiskGraphStrategy;
         setServerStrategies(prev =>
-          prev.map(s =>
-            s.id === (event.data as RiskGraphStrategy).id
-              ? (event.data as RiskGraphStrategy)
-              : s
-          )
+          prev.map(s => {
+            if (s.id !== incoming.id) return s;
+            // Reject stale SSE events — keep whichever has the newer updatedAt
+            if (s.updatedAt && incoming.updatedAt && s.updatedAt > incoming.updatedAt) return s;
+            return incoming;
+          })
         );
         break;
+      }
 
       case 'strategy_removed':
         setServerStrategies(prev =>
@@ -185,12 +188,12 @@ export function RiskGraphProvider({ children }: RiskGraphProviderProps) {
     };
   }, [fetchStrategies, handleSSEEvent]);
 
-  // Sync local strategies to localStorage when not using server
+  // Persist local strategies to localStorage (local-only mode OR offline fallback)
   useEffect(() => {
-    if (!USE_SERVER_RISK_GRAPH) {
+    if (!USE_SERVER_RISK_GRAPH || !connected) {
       saveLocalStrategies(localStrategies);
     }
-  }, [localStrategies]);
+  }, [localStrategies, connected]);
 
   // Keep localStrategies synced from server as a hot fallback.
   // Without this, SSE disconnect causes strategies memo to return
