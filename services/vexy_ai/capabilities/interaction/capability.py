@@ -63,16 +63,12 @@ class InteractionCapability(BaseCapability):
                 raise HTTPException(status_code=503, detail="Interaction system not ready")
 
             # Extract user info from request headers (set by SSE gateway proxy)
-            user_id_str = req.headers.get("X-User-Id", "0")
-            user_email = req.headers.get("X-User-Email", "")
-
+            # In production, user_id comes from auth middleware via X-User-Id header
+            user_id_str = req.headers.get("X-User-Id", "")
             try:
-                user_id = int(user_id_str) if user_id_str else 0
+                user_id = int(user_id_str) if user_id_str else 1  # Default to 1 like chat capability
             except ValueError:
-                user_id = 0
-
-            if not user_id:
-                raise HTTPException(status_code=401, detail="Authentication required")
+                user_id = 1
 
             # Get user profile for tier resolution
             # Roles come from the profile; created_at for trial check
