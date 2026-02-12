@@ -2,7 +2,15 @@
 """
 routine_briefing.py — Vexy Routine Mode Orientation Briefing
 
-Generates pre-market orientation narratives per the Routine Mode spec:
+DEPRECATED: RoutineBriefingSynthesizer and direct LLM calls in this module are
+deprecated. All LLM calls now route through VexyKernel.reason(outlet="routine").
+Only build_routine_prompt() is still used by the kernel for context formatting.
+
+Legacy functions retained as fallback only — will be removed after kernel
+validation is complete.
+
+Original purpose:
+- Generates pre-market orientation narratives per the Routine Mode spec
 - Helps operator transition into the trading day
 - Narrates market context and posture
 - Surfaces areas of attention without prescribing actions

@@ -62,7 +62,8 @@ class PlaybookCapability(BaseCapability):
 
     async def start(self) -> None:
         """Initialize Playbook service."""
-        self.service = PlaybookService(self.config, self.logger)
+        kernel = getattr(self.vexy, 'kernel', None)
+        self.service = PlaybookService(self.config, self.logger, kernel=kernel)
         self.logger.info("Playbook capability started", emoji="📖")
 
     async def stop(self) -> None:

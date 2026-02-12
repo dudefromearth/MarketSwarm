@@ -4,15 +4,12 @@ Chat Service - Business logic for Vexy Chat.
 Provides direct conversational access to Vexy with:
 - Tier-based access control
 - Rate limiting
-- Playbook awareness
-- Echo Memory integration
 - Rich context formatting
+- All LLM calls route through VexyKernel
 """
 
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
-
-from shared.ai_client import call_ai, AIClientConfig
 
 from .models import ChatContext, UserProfile
 
@@ -23,16 +20,20 @@ class ChatService:
 
     Handles all Chat-related business logic including:
     - Rate limiting
-    - Prompt building with tier awareness
     - Context formatting
-    - AI calls
+    - Kernel-routed AI calls (via VexyKernel.reason())
+
+    What moved to kernel: System prompt assembly, ORA validation,
+    forbidden language checking, despair detection, agent selection.
+    What stays here: Rate limiting, usage tracking, format_context().
     """
 
-    def __init__(self, config: Dict[str, Any], logger: Any, buses: Any = None, market_intel=None):
+    def __init__(self, config: Dict[str, Any], logger: Any, buses: Any = None, market_intel=None, kernel=None):
         self.config = config
         self.logger = logger
         self.buses = buses
         self.market_intel = market_intel
+        self.kernel = kernel
         # Daily usage tracking (in production, stored in Redis)
         self._usage_cache: Dict[str, int] = {}
 
@@ -90,96 +91,7 @@ class ChatService:
         cache_key = f"{user_id}:{date.today().isoformat()}"
         self._usage_cache[cache_key] = self._usage_cache.get(cache_key, 0) + 1
 
-    def build_system_prompt(
-        self,
-        tier: str,
-        user_id: int,
-        user_message: str = "",
-        user_profile: Optional[UserProfile] = None,
-    ) -> str:
-        """
-        Build system prompt for chat based on tier and user profile.
-
-        Includes:
-        - Chat outlet base prompt
-        - User identity context
-        - Tier-specific semantic guardrails
-        - Playbook awareness
-        - Echo Memory context
-        """
-        from services.vexy_ai.tier_config import get_tier_config
-        # Use dynamic playbook loader (includes file-based playbooks)
-        try:
-            from services.vexy_ai.playbook_loader import (
-                get_playbooks_for_tier_dynamic as get_playbooks_for_tier,
-                find_relevant_playbooks_dynamic as find_relevant_playbooks,
-            )
-        except ImportError:
-            from services.vexy_ai.playbook_manifest import (
-                get_playbooks_for_tier,
-                find_relevant_playbooks,
-            )
-
-        tier_config = get_tier_config(tier)
-
-        # Get prompts (check prompt_admin for custom versions)
-        try:
-            from services.vexy_ai.prompt_admin import get_prompt, get_tier_prompt
-            chat_prompt = get_prompt("chat")
-            tier_prompt = get_tier_prompt(tier)
-        except ImportError:
-            from services.vexy_ai.outlet_prompts import get_outlet_prompt
-            chat_prompt = get_outlet_prompt("chat")
-            tier_prompt = tier_config.system_prompt_suffix
-
-        prompt_parts = [chat_prompt]
-
-        # Add user identity context
-        if user_profile and user_profile.display_name:
-            prompt_parts.append("\n\n---\n")
-            prompt_parts.append(f"## User Identity\n")
-            prompt_parts.append(f"You are speaking with **{user_profile.display_name}**.\n")
-            if user_profile.is_admin:
-                prompt_parts.append("They have admin access to the system.\n")
-            prompt_parts.append("Use their name naturally in conversation when appropriate.\n")
-
-        # Add tier-specific semantic scope
-        prompt_parts.append("\n\n---\n")
-        prompt_parts.append(tier_prompt)
-
-        # Add Playbook awareness
-        accessible_playbooks = get_playbooks_for_tier(tier)
-        if accessible_playbooks:
-            relevant = find_relevant_playbooks(user_message, tier, max_results=3) if user_message else []
-
-            prompt_parts.append("\n\n---\n")
-
-            if relevant:
-                prompt_parts.append("## Relevant Playbooks for This Query\n")
-                for pb in relevant:
-                    prompt_parts.append(f"- **{pb.name}** ({pb.scope}): {pb.description}\n")
-                prompt_parts.append("\n")
-
-            prompt_parts.append("## All Accessible Playbooks\n")
-            for pb in accessible_playbooks:
-                prompt_parts.append(f"- {pb.name} ({pb.scope})\n")
-
-            prompt_parts.append("\n")
-            prompt_parts.append("**Instruction:** When relevant, reference these Playbooks by name rather than explaining their content inline. ")
-            prompt_parts.append("Playbooks hold structure; you hold presence. Prefer redirection to inline explanation.\n")
-
-        # Add Echo Memory if enabled
-        if tier_config.echo_enabled:
-            try:
-                from services.vexy_ai.intel.echo_memory import get_echo_context_for_prompt
-                echo_context = get_echo_context_for_prompt(user_id, days=tier_config.echo_days)
-                if echo_context and "No prior Echo" not in echo_context:
-                    prompt_parts.append("\n\n---\n")
-                    prompt_parts.append(echo_context)
-            except Exception as e:
-                self.logger.warn(f"Echo context unavailable: {e}", emoji="🔇")
-
-        return "".join(prompt_parts)
+    # build_system_prompt() removed — now handled by VexyKernel._assemble_system_prompt()
 
     def _get_som_context(self) -> str:
         """Format current SoM lenses into markdown for chat prompt enrichment."""
@@ -415,53 +327,40 @@ class ChatService:
         """
         Handle a Vexy chat message.
 
+        All LLM calls route through VexyKernel.reason().
         Returns response with tokens used and remaining quota.
         """
-        from services.vexy_ai.tier_config import get_tier_config, validate_reflection_dial
-
-        tier_config = get_tier_config(user_tier)
+        from services.vexy_ai.tier_config import validate_reflection_dial
 
         # Validate reflection dial
         reflection_dial = validate_reflection_dial(user_tier, reflection_dial)
 
-        # Build system prompt with user profile
-        system_prompt = self.build_system_prompt(user_tier, user_id, message, user_profile)
-
-        # Build user prompt with context
-        user_prompt_parts = []
-
-        # Add context
+        # Format context (stays in ChatService — domain-specific formatting)
         context_text = self.format_context(context)
+
+        # Build kernel request
+        from services.vexy_ai.kernel import ReasoningRequest
+
+        # Prepend formatted context to user message (kernel assembles system prompt)
+        user_message_parts = []
         if context_text:
-            user_prompt_parts.append(context_text)
-            user_prompt_parts.append("\n---\n")
+            user_message_parts.append(context_text)
+            user_message_parts.append("\n---\n")
+        user_message_parts.append(message)
+        full_user_message = "".join(user_message_parts)
 
-        # Add reflection dial guidance
-        if reflection_dial <= 0.4:
-            user_prompt_parts.append("(Reflection dial: Low. Keep response brief and observational.)\n\n")
-        elif reflection_dial >= 0.7:
-            user_prompt_parts.append("(Reflection dial: High. Probe deeper, challenge gently.)\n\n")
-
-        user_prompt_parts.append(message)
-        user_prompt = "".join(user_prompt_parts)
-
-        # Call AI
-        ai_response = await call_ai(
-            system_prompt=system_prompt,
-            user_message=user_prompt,
-            config=self.config,
-            ai_config=AIClientConfig(
-                timeout=90.0,
-                temperature=0.7,
-                max_tokens=600,
-                enable_web_search=True,
-            ),
-            logger=self.logger,
+        request = ReasoningRequest(
+            outlet="chat",
+            user_message=full_user_message,
+            user_id=user_id,
+            tier=user_tier,
+            reflection_dial=reflection_dial,
+            enable_web_search=True,
+            user_profile=user_profile,
         )
 
-        # AIResponse is a dataclass, access attributes directly
-        response_text = ai_response.text
-        tokens_used = ai_response.tokens_used
+        # Route through kernel
+        response = await self.kernel.reason(request)
 
         # Increment usage
         self.increment_usage(user_id)
@@ -469,12 +368,12 @@ class ChatService:
         # Get remaining quota
         _, remaining = self.check_rate_limit(user_id, user_tier)
 
-        self.logger.info(f"Chat response for user {user_id}: {len(response_text)} chars", emoji="🦋")
+        self.logger.info(f"Chat response for user {user_id}: {len(response.text)} chars", emoji="🦋")
 
         return {
-            "response": response_text.strip(),
-            "agent": None,  # TODO: Detect agent from response
-            "echo_updated": False,  # TODO: Implement echo update
-            "tokens_used": tokens_used,
+            "response": response.text,
+            "agent": response.agent_selected,
+            "echo_updated": response.echo_updated,
+            "tokens_used": response.tokens_used,
             "remaining_today": remaining if remaining >= 0 else -1,
         }

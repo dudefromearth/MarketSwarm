@@ -6,9 +6,12 @@ and provides a clean interface for the capability to use.
 
 Philosophy: Help the trader arrive, not complete tasks.
 Train how to begin, not what to do.
+
+All LLM calls route through VexyKernel.reason().
 """
 
-from datetime import datetime
+import uuid
+from datetime import datetime, UTC
 from typing import Any, Dict, List, Optional
 
 
@@ -17,24 +20,31 @@ class RoutineService:
     Routine Mode service.
 
     Handles all Routine-related business logic including:
-    - Routine briefings (Mode A orientation + full briefing)
+    - Routine briefings — via VexyKernel.reason()
     - Market readiness aggregation
     - Log health context
+
+    What moved to kernel: System prompt (ROUTINE_MODE_SYSTEM_PROMPT), LLM call,
+    Assistants API, direct httpx calls.
+    What stays here: build_routine_prompt() context formatting, orientation,
+    market readiness, log health.
     """
 
-    def __init__(self, config: Dict[str, Any], logger: Any, market_intel=None):
+    def __init__(self, config: Dict[str, Any], logger: Any, market_intel=None, kernel=None):
         self.config = config
         self.logger = logger
         self.market_intel = market_intel
-        self._synthesizer = None
+        self.kernel = kernel
         self._log_health_cache: Dict[str, List[Dict]] = {}
 
     def _get_synthesizer(self):
-        """Lazy-load the routine briefing synthesizer."""
-        if self._synthesizer is None:
-            from services.vexy_ai.intel.routine_briefing import RoutineBriefingSynthesizer
-            self._synthesizer = RoutineBriefingSynthesizer(self.config, self.logger)
-        return self._synthesizer
+        """
+        Lazy-load the legacy routine briefing synthesizer.
+
+        DEPRECATED: Only used as fallback if kernel is not available.
+        """
+        from services.vexy_ai.intel.routine_briefing import RoutineBriefingSynthesizer
+        return RoutineBriefingSynthesizer(self.config, self.logger)
 
     def get_orientation(
         self,
@@ -96,7 +106,7 @@ class RoutineService:
         stub = MarketIntelProvider(self.config, self.logger)
         return stub._degraded_envelope()
 
-    def generate_briefing(
+    async def generate_briefing(
         self,
         mode: str,
         timestamp: Optional[str],
@@ -109,8 +119,45 @@ class RoutineService:
         Generate a Routine Mode orientation briefing.
 
         Called explicitly by the UI when the Routine drawer opens.
+        Routes through VexyKernel.reason().
         """
+        # Fetch log health signals if user_id provided
+        log_health_signals = []
+        if user_id:
+            log_health_signals = self.get_log_health_signals(user_id)
+
+        # If kernel is available, use it
+        if self.kernel:
+            return await self._generate_briefing_via_kernel(
+                mode, timestamp, market_context, user_context,
+                open_loops, user_id, log_health_signals,
+            )
+
+        # Fallback to legacy synthesizer (deprecated)
+        self.logger.warn("Kernel not available, using legacy synthesizer", emoji="⚠️")
         synthesizer = self._get_synthesizer()
+        payload = {
+            "mode": mode,
+            "timestamp": timestamp,
+            "market_context": market_context or {},
+            "user_context": user_context or {},
+            "open_loops": open_loops or {},
+        }
+        return synthesizer.synthesize(payload, log_health_signals, user_id)
+
+    async def _generate_briefing_via_kernel(
+        self,
+        mode: str,
+        timestamp: Optional[str],
+        market_context: Optional[Dict[str, Any]],
+        user_context: Optional[Dict[str, Any]],
+        open_loops: Optional[Dict[str, Any]],
+        user_id: Optional[int],
+        log_health_signals: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        """Generate briefing via VexyKernel.reason()."""
+        from services.vexy_ai.intel.routine_briefing import build_routine_prompt
+        from services.vexy_ai.kernel import ReasoningRequest
 
         payload = {
             "mode": mode,
@@ -120,13 +167,34 @@ class RoutineService:
             "open_loops": open_loops or {},
         }
 
-        # Fetch log health signals if user_id provided
-        log_health_signals = []
-        if user_id:
-            log_health_signals = self.get_log_health_signals(user_id)
+        # Reuse build_routine_prompt for context formatting (stays in routine_briefing)
+        user_prompt = build_routine_prompt(payload, log_health_signals, user_id)
 
-        result = synthesizer.synthesize(payload, log_health_signals, user_id)
-        return result
+        request = ReasoningRequest(
+            outlet="routine",
+            user_message=user_prompt,
+            user_id=user_id or 1,
+            tier="navigator",  # TODO: pass actual tier
+            reflection_dial=0.6,
+            market_context=market_context,
+            user_context=user_context,
+            open_loops=open_loops,
+            log_health_signals=log_health_signals,
+        )
+
+        response = await self.kernel.reason(request)
+
+        if not response.text:
+            return None
+
+        return {
+            "briefing_id": str(uuid.uuid4()),
+            "mode": "routine",
+            "narrative": response.text,
+            "generated_at": datetime.now(UTC).isoformat(),
+            "model": f"vexy-kernel-v1 ({response.provider})",
+            "agent": response.agent_selected,
+        }
 
     def ingest_log_health_context(
         self,

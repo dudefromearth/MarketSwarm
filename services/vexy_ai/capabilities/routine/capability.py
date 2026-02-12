@@ -55,7 +55,8 @@ class RoutineCapability(BaseCapability):
     async def start(self) -> None:
         """Initialize Routine service."""
         market_intel = getattr(self.vexy, 'market_intel', None)
-        self.service = RoutineService(self.config, self.logger, market_intel=market_intel)
+        kernel = getattr(self.vexy, 'kernel', None)
+        self.service = RoutineService(self.config, self.logger, market_intel=market_intel, kernel=kernel)
         self.logger.info("Routine capability started", emoji="🌅")
 
     async def stop(self) -> None:
@@ -117,7 +118,7 @@ class RoutineCapability(BaseCapability):
             Called explicitly by the UI when the Routine drawer opens.
             Vexy does not "watch" the UI - the UI asks for a briefing.
             """
-            result = self.service.generate_briefing(
+            result = await self.service.generate_briefing(
                 mode=request.mode,
                 timestamp=request.timestamp,
                 market_context=request.market_context.model_dump() if request.market_context else None,

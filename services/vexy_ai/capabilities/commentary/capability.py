@@ -43,7 +43,8 @@ class CommentaryCapability(BaseCapability):
         """Initialize Commentary service."""
         buses = self.vexy.buses if hasattr(self.vexy, 'buses') else None
         market_intel = getattr(self.vexy, 'market_intel', None)
-        self.service = CommentaryService(self.config, self.logger, buses, market_intel=market_intel)
+        kernel = getattr(self.vexy, 'kernel', None)
+        self.service = CommentaryService(self.config, self.logger, buses, market_intel=market_intel, kernel=kernel)
         self.logger.info("Commentary capability started", emoji="🎙️")
 
     async def stop(self) -> None:

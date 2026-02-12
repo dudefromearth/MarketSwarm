@@ -43,7 +43,8 @@ class JournalCapability(BaseCapability):
 
     async def start(self) -> None:
         """Initialize Journal service."""
-        self.service = JournalService(self.config, self.logger)
+        kernel = getattr(self.vexy, 'kernel', None)
+        self.service = JournalService(self.config, self.logger, kernel=kernel)
         self.logger.info("Journal capability started", emoji="📓")
 
     async def stop(self) -> None:

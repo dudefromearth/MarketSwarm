@@ -2,6 +2,12 @@
 """
 path_os.py — The Path Operating System Configuration
 
+DEPRECATED: This module is no longer the canonical doctrine authority.
+PathRuntime (intel/path_runtime.py) now compiles Path v4.0 doctrine from
+/Users/ernie/path/*.md files and enforces it at runtime. This file is retained
+as a reconciliation reference only. It is NOT imported by the kernel or any
+capability. See PATH_V4_RECONCILIATION.md for the delta report.
+
 ================================================================================
                            THE PATH: UNIVERSAL KERNEL
 ================================================================================

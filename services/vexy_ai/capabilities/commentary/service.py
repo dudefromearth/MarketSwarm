@@ -27,11 +27,12 @@ class CommentaryService:
     - Synthesizes and publishes commentary
     """
 
-    def __init__(self, config: Dict[str, Any], logger: Any, buses: Any = None, market_intel=None):
+    def __init__(self, config: Dict[str, Any], logger: Any, buses: Any = None, market_intel=None, kernel=None):
         self.config = config
         self.logger = logger
         self.buses = buses
         self.market_intel = market_intel
+        self.kernel = kernel
 
         # State tracking
         self.last_epoch_name: Optional[str] = None
@@ -234,7 +235,9 @@ class CommentaryService:
                 max_age_hours=lookback,
             )
 
-            commentary = synthesizer.synthesize_weekend_digest(
+            commentary = await self._synthesize_digest_via_kernel(
+                recent_articles, epoch, prompt_focus,
+            ) if self.kernel else synthesizer.synthesize_weekend_digest(
                 recent_articles,
                 epoch_name=epoch["name"],
                 focus=prompt_focus,
@@ -268,7 +271,9 @@ class CommentaryService:
             recent_articles = article_reader.get_recent_articles(max_count=8, max_age_hours=6)
             articles_text = article_reader.format_for_prompt(recent_articles)
 
-            commentary = synthesizer.synthesize(epoch, market_state, articles_text)
+            commentary = await self._synthesize_epoch_via_kernel(
+                epoch, market_state, articles_text,
+            ) if self.kernel else synthesizer.synthesize(epoch, market_state, articles_text)
             if not commentary:
                 commentary = generate_epoch_commentary(epoch, market_state)
 
@@ -282,6 +287,82 @@ class CommentaryService:
             })
             self.last_epoch_name = epoch["name"]
             self.logger.info(f"[{epoch.get('voice', 'Observer')}] {commentary[:80]}...", emoji="🎙️")
+
+    async def _synthesize_epoch_via_kernel(
+        self,
+        epoch: Dict[str, Any],
+        market_state: Dict[str, Any],
+        articles_text: str,
+    ) -> Optional[str]:
+        """Synthesize epoch commentary via VexyKernel.reason()."""
+        from services.vexy_ai.kernel import ReasoningRequest
+
+        # Reuse synthesizer's formatting for market data
+        synthesizer = self._get_synthesizer()
+        user_prompt = synthesizer._build_user_prompt(epoch, market_state, articles_text)
+
+        request = ReasoningRequest(
+            outlet="commentary",
+            user_message=user_prompt,
+            user_id=1,
+            tier="navigator",
+            reflection_dial=epoch.get("reflection_dial", 0.4),
+            market_context=market_state,
+            articles_text=articles_text,
+        )
+
+        response = await self.kernel.reason(request)
+        return response.text if response.text else None
+
+    async def _synthesize_digest_via_kernel(
+        self,
+        articles: List[Dict[str, Any]],
+        epoch: Dict[str, Any],
+        focus: str,
+    ) -> Optional[str]:
+        """Synthesize weekend digest via VexyKernel.reason()."""
+        from services.vexy_ai.kernel import ReasoningRequest
+
+        if not articles:
+            return None
+
+        # Build article summary for prompt
+        story_lines = []
+        for i, article in enumerate(articles[:5], 1):
+            title = article.get("title", "")
+            summary = article.get("summary", "")
+            story_lines.append(f"{i}. {title}")
+            if summary:
+                short_summary = summary[:150] + "..." if len(summary) > 150 else summary
+                story_lines.append(f"   {short_summary}")
+
+        stories_text = "\n".join(story_lines)
+
+        if focus == "week_ahead_digest":
+            focus_instruction = "Focus on what matters for Monday's open. What should traders watch?"
+        elif focus == "developing_stories":
+            focus_instruction = "Any developing themes or stories gaining momentum?"
+        else:
+            focus_instruction = "Summarize the top stories. What's the market narrative?"
+
+        user_prompt = f"""Weekend Stories for Options Traders:
+
+{stories_text}
+
+{focus_instruction}
+
+Give a brief summary of what matters, then end with "Bottom line:" and a single sentence takeaway."""
+
+        request = ReasoningRequest(
+            outlet="commentary",
+            user_message=user_prompt,
+            user_id=1,
+            tier="navigator",
+            reflection_dial=0.3,
+        )
+
+        response = await self.kernel.reason(request)
+        return response.text if response.text else None
 
     def stop(self) -> None:
         """Signal the loop to stop."""

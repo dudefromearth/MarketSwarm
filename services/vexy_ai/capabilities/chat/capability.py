@@ -39,7 +39,8 @@ class ChatCapability(BaseCapability):
         """Initialize Chat service."""
         buses = self.vexy.buses if hasattr(self.vexy, 'buses') else None
         market_intel = getattr(self.vexy, 'market_intel', None)
-        self.service = ChatService(self.config, self.logger, buses, market_intel=market_intel)
+        kernel = getattr(self.vexy, 'kernel', None)
+        self.service = ChatService(self.config, self.logger, buses, market_intel=market_intel, kernel=kernel)
 
         # Initialize playbook system
         try:

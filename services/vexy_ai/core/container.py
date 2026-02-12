@@ -19,6 +19,7 @@ Usage:
 
 import asyncio
 import importlib
+import os
 from typing import Any, Dict, List, Optional, Type
 
 from .vexy import Vexy
@@ -66,6 +67,10 @@ class Container:
         # Core
         self._vexy: Optional[Vexy] = None
 
+        # Cognitive Kernel components
+        self._path_runtime = None
+        self._kernel = None
+
         # Track what we've created for cleanup
         self._initialized = False
 
@@ -93,6 +98,9 @@ class Container:
             self._market_intel = MarketIntelProvider(self.config, self.logger)
             self._market_intel.initialize()
 
+            # 2.6 Create PathRuntime and VexyKernel (Cognitive Kernel v1)
+            self._path_runtime, self._kernel = self._create_kernel()
+
             # 3. Create Vexy core
             self._vexy = Vexy(
                 config=self.config,
@@ -101,6 +109,9 @@ class Container:
                 ai=self._ai_adapter,
                 market_intel=self._market_intel,
             )
+
+            # Attach kernel to Vexy so capabilities can access it
+            self._vexy.kernel = self._kernel
 
             # 4. Register health endpoint (always available)
             self._register_health_routes()
@@ -135,6 +146,50 @@ class Container:
         adapter = AIAdapter(self.config, self.logger)
         self.logger.info("AI adapter ready", emoji="🤖")
         return adapter
+
+    def _create_kernel(self):
+        """Create PathRuntime + VexyKernel (Cognitive Kernel v1)."""
+        from ..intel.path_runtime import PathRuntime
+        from ..kernel import VexyKernel, ValidationMode
+
+        # Path doctrine directory — configurable, defaults to ~/path
+        path_dir = self.config.get("PATH_DOCTRINE_DIR") or str(
+            os.path.expanduser("~/path")
+        )
+
+        path_runtime = PathRuntime(path_dir=path_dir, logger=self.logger)
+        try:
+            path_runtime.load()
+        except FileNotFoundError as e:
+            self.logger.warn(f"PathRuntime load failed (non-fatal): {e}", emoji="⚠️")
+            # Create a minimal runtime that won't block startup
+            # Capabilities can still function without full doctrine
+
+        # Default to OBSERVE mode during rollout
+        mode_str = (
+            self.config.get("env", {}).get("VEXY_VALIDATION_MODE", "observe")
+            if isinstance(self.config.get("env"), dict)
+            else os.getenv("VEXY_VALIDATION_MODE", "observe")
+        )
+        validation_mode = (
+            ValidationMode.ENFORCE
+            if mode_str.lower() == "enforce"
+            else ValidationMode.OBSERVE
+        )
+
+        kernel = VexyKernel(
+            path_runtime=path_runtime,
+            config=self.config,
+            logger=self.logger,
+            market_intel=self._market_intel,
+            validation_mode=validation_mode,
+        )
+
+        self.logger.info(
+            f"Cognitive Kernel ready (mode={validation_mode.value})",
+            emoji="🧠"
+        )
+        return path_runtime, kernel
 
     def _register_health_routes(self) -> None:
         """Register basic health check, status, and market-state routes."""
@@ -288,6 +343,16 @@ class Container:
     def vexy(self) -> Optional[Vexy]:
         """Get the Vexy instance (None if not wired)."""
         return self._vexy
+
+    @property
+    def kernel(self):
+        """Get the VexyKernel instance (None if not wired)."""
+        return self._kernel
+
+    @property
+    def path_runtime(self):
+        """Get the PathRuntime instance (None if not wired)."""
+        return self._path_runtime
 
     @property
     def is_initialized(self) -> bool:

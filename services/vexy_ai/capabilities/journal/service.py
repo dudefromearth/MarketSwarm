@@ -5,12 +5,12 @@ Core Doctrine:
 - The Journal is not a place to perform work. It is a place to notice what occurred.
 - Vexy is silent by default. Presence is assumed. Speech is earned.
 - Silence is not a failure state. Silence is correct.
+
+All LLM calls route through VexyKernel.reason().
 """
 
 from datetime import datetime, date
 from typing import Any, Dict, List, Optional
-
-from shared.ai_client import call_ai, AIClientConfig
 
 
 class JournalService:
@@ -18,14 +18,18 @@ class JournalService:
     Journal Mode service.
 
     Handles all Journal-related business logic including:
-    - Daily Synopsis generation
-    - Reflective prompt generation
-    - Journal chat (Mode A and Mode B)
+    - Daily Synopsis generation (non-LLM)
+    - Reflective prompt generation (non-LLM)
+    - Journal chat (Mode A and Mode B) — via VexyKernel
+
+    What moved to kernel: System prompt, call_ai, response validation.
+    What stays here: generate_synopsis(), generate_prompts(), trade data formatting.
     """
 
-    def __init__(self, config: Dict[str, Any], logger: Any):
+    def __init__(self, config: Dict[str, Any], logger: Any, kernel=None):
         self.config = config
         self.logger = logger
+        self.kernel = kernel
 
     def generate_synopsis(
         self,
@@ -124,13 +128,15 @@ class JournalService:
         """
         Handle Vexy chat in Journal context.
 
+        All LLM calls route through VexyKernel.reason().
+
         Supports two modes:
         - Mode A: On-Demand Conversation (user asks directly)
         - Mode B: Responding to Prepared Prompts (user clicks a prompt)
         """
         from services.vexy_ai.journal_prompts import (
             build_daily_synopsis,
-            get_journal_prompt,
+            format_synopsis_text,
         )
 
         try:
@@ -144,38 +150,49 @@ class JournalService:
             market_context=market_context,
         )
 
-        # Build Journal-specific system prompt
+        # Build context string with synopsis and trade data
         mode = "prepared" if is_prepared_prompt else "direct"
-        system_prompt = get_journal_prompt(
-            synopsis=synopsis,
+        context_parts = [
+            f"## Journal Context ({mode} mode)\n",
+            f"Date: {parsed_date.isoformat()}\n",
+        ]
+
+        synopsis_text = format_synopsis_text(synopsis)
+        if synopsis_text:
+            context_parts.append(f"\n## Daily Synopsis\n{synopsis_text}\n")
+
+        if trades:
+            context_parts.append(f"\nTrades today: {len(trades)}\n")
+            for t in trades[:5]:
+                strategy = t.get("strategy", t.get("type", "trade"))
+                pnl = t.get("pnl", t.get("realized_pnl"))
+                context_parts.append(f"- {strategy}")
+                if pnl is not None:
+                    context_parts.append(f": ${pnl:+.0f}")
+                context_parts.append("\n")
+
+        context_text = "".join(context_parts)
+
+        # Route through kernel
+        from services.vexy_ai.kernel import ReasoningRequest
+
+        # Default user_id to 1 (journal doesn't currently pass user_id)
+        request = ReasoningRequest(
+            outlet="journal",
+            user_message=f"{context_text}\n---\n{message}",
+            user_id=1,  # TODO: pass user_id from capability
+            tier="navigator",  # TODO: pass tier from capability
+            reflection_dial=0.5,
             trades=trades,
-            mode=mode,
-            prepared_prompt_text=message if is_prepared_prompt else None,
         )
 
-        # Call AI with lower temperature for Journal's neutral tone
-        ai_response = await call_ai(
-            system_prompt=system_prompt,
-            user_message=message,
-            config=self.config,
-            ai_config=AIClientConfig(
-                timeout=60.0,
-                temperature=0.6,
-                max_tokens=400,
-                enable_web_search=False,
-            ),
-        )
+        response = await self.kernel.reason(request)
 
-        response_text = ai_response.get("text", "")
-
-        self.logger.info(f"Journal chat response: {len(response_text)} chars", emoji="📓")
+        self.logger.info(f"Journal chat response: {len(response.text)} chars", emoji="📓")
 
         return {
-            "response": response_text,
+            "response": response.text,
             "mode": mode,
         }
 
-    def validate_response(self, response: str) -> List[str]:
-        """Validate response for forbidden language."""
-        from services.vexy_ai.journal_prompts import validate_response_language
-        return validate_response_language(response)
+    # validate_response() removed — now handled by VexyKernel post-LLM validation

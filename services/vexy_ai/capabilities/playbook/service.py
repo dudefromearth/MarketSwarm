@@ -6,12 +6,12 @@ Core Doctrine:
 - Playbooks are written after reflection, not during action
 - Extraction, not invention
 - "What keeps appearing?" — not "What should your playbook say?"
+
+All LLM calls route through VexyKernel.reason().
 """
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
-
-from shared.ai_client import call_ai, AIClientConfig
 
 
 class PlaybookService:
@@ -21,14 +21,18 @@ class PlaybookService:
     Handles all Playbook-related business logic including:
     - Fodder marking
     - Authoring prompts
-    - Chat assistance
+    - Chat assistance (via VexyKernel)
     - Extraction eligibility
     - Candidate management
+
+    What moved to kernel: System prompt, call_ai, validate_vexy_response.
+    What stays here: Fodder management, extraction, promotion, authoring prompts.
     """
 
-    def __init__(self, config: Dict[str, Any], logger: Any):
+    def __init__(self, config: Dict[str, Any], logger: Any, kernel=None):
         self.config = config
         self.logger = logger
+        self.kernel = kernel
         # In-memory storage for candidates (would be persisted in production)
         self._candidates: Dict[str, Any] = {}
         self._fodder: Dict[str, Any] = {}
@@ -124,6 +128,8 @@ class PlaybookService:
         """
         Handle Vexy chat during playbook authoring.
 
+        All LLM calls route through VexyKernel.reason().
+
         Vexy may:
         - Reflect similarities across fodder
         - Point out repeated language
@@ -135,40 +141,39 @@ class PlaybookService:
         - Suggest optimization
         - Prescribe improvements
         """
-        from services.vexy_ai.playbook_authoring import (
-            get_vexy_playbook_prompt,
-            validate_vexy_response,
-        )
-
         fodder_objs = self._convert_fodder_items(fodder_items)
 
-        # Build system prompt
-        system_prompt = get_vexy_playbook_prompt(fodder_objs)
+        # Build context from fodder items
+        context_parts = ["## Fodder Items\n"]
+        for i, f in enumerate(fodder_objs[:10], 1):
+            context_parts.append(f"{i}. [{f.source.value}] {f.content[:200]}\n")
 
         # Add current sections context if provided
         if current_sections:
-            sections_text = "\n## Current Draft Sections\n"
+            context_parts.append("\n## Current Draft Sections\n")
             for section, content in current_sections.items():
                 if content:
-                    sections_text += f"\n**{section.replace('_', ' ').title()}:**\n{content[:300]}...\n"
-            system_prompt += sections_text
+                    context_parts.append(f"**{section.replace('_', ' ').title()}:** {content[:300]}...\n")
 
-        # Call AI with lower temperature for calm, sparse responses
-        ai_response = await call_ai(
-            system_prompt=system_prompt,
-            user_message=message,
-            config=self.config,
-            ai_config=AIClientConfig(
-                timeout=60.0,
-                temperature=0.5,
-                max_tokens=300,
-            ),
+        context_text = "".join(context_parts)
+
+        # Route through kernel
+        from services.vexy_ai.kernel import ReasoningRequest
+
+        request = ReasoningRequest(
+            outlet="playbook",
+            user_message=f"{context_text}\n---\n{message}",
+            user_id=1,  # TODO: pass user_id from capability
+            tier="navigator",  # TODO: pass tier from capability
+            reflection_dial=0.4,
+            fodder_items=fodder_items,
+            current_sections=current_sections,
         )
 
-        response_text = ai_response.get("text", "")
+        response = await self.kernel.reason(request)
 
-        # Validate for forbidden language
-        violations = validate_vexy_response(response_text)
+        # Violations now tracked in kernel response
+        violations = response.forbidden_violations
 
         if violations:
             self.logger.warn(
@@ -177,7 +182,7 @@ class PlaybookService:
             )
 
         return {
-            "response": response_text,
+            "response": response.text,
             "violations": violations,
         }
 

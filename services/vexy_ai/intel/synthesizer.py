@@ -2,12 +2,20 @@
 """
 synthesizer.py — LLM-powered commentary synthesis for Vexy AI
 
-Synthesizes epoch commentary using The Path framework:
+DEPRECATED: Direct LLM calls in this module (_synthesize_assistant, _synthesize_chat,
+_synthesize_chat_with_system) are deprecated. All LLM calls now route through
+VexyKernel.reason(outlet="commentary"). Data formatting methods (_format_market_data,
+_build_user_prompt, _build_voice_prompt, _build_partition_prompt) are still used by
+the kernel pathway for context formatting.
+
+Legacy synthesis retained as fallback only — will be removed after kernel
+validation is complete.
+
+Original purpose:
+  - Synthesizes epoch commentary using The Path framework
   - Voice agents (Sage, Socratic, Convexity, Observer, Mapper)
   - Response partitions (tldr, tension, context, structure, action)
   - Reflection dial (0.0-1.0) controls tone and depth
-
-Supports OpenAI Assistants API (preferred) or chat completions fallback.
 """
 
 from __future__ import annotations
