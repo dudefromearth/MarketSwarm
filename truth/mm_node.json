@@ -32,6 +32,7 @@
     "copilot",
     "sse",
     "mesh",
-    "healer"
+    "healer",
+    "vexy_proxy"
   ]
 }

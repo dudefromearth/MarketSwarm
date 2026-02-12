@@ -1,0 +1,23 @@
+{
+  "id": "vexy_proxy",
+  "meta": {
+    "name": "Vexy Proxy",
+    "description": "Lightweight auth proxy for Vexy AI. Bypasses SSE gateway for latency-sensitive HTTP paths."
+  },
+  "access_points": {
+    "subscribe_to": [],
+    "publish_to": [
+      { "bus": "system-redis", "key": "vexy_proxy:heartbeat" }
+    ]
+  },
+  "heartbeat": {
+    "interval_sec": 10,
+    "ttl_sec": 30
+  },
+  "dependencies": ["vexy_ai"],
+  "env": {
+    "VEXY_PROXY_PORT": "3006",
+    "TRUTH_REDIS_URL": "redis://127.0.0.1:6379",
+    "VEXY_TARGET": "http://localhost:3005"
+  }
+}

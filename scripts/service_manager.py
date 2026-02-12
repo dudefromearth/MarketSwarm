@@ -184,7 +184,7 @@ def load_services_from_truth() -> Dict[str, ServiceConfig]:
         dependencies = comp.get("dependencies", [])
 
         # Detect service type (Node.js vs Python)
-        is_python = name != "sse"
+        is_python = name not in {"sse", "vexy_proxy"}
 
         # Detect port from env vars
         port = 0
@@ -2439,6 +2439,7 @@ def create_web_app():
             "sse_gateway": "http://127.0.0.1:3001/api/health",
             "journal": "http://127.0.0.1:3002/api/health",
             "vexy_ai": "http://127.0.0.1:3005/api/vexy/health",
+            "vexy_proxy": "http://127.0.0.1:3006/health",
             "copilot": "http://127.0.0.1:8095/health",
         }
 
