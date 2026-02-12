@@ -385,6 +385,21 @@ async function createEconomicIndicatorsTables() {
     if (rows[0].count === 0) {
       await seedEconomicIndicators();
     }
+
+    // UERS v1.1: Add cadence/schedule columns
+    const econAlterations = [
+      ["release_time_et VARCHAR(5) NULL", "release_time_et"],
+      ["cadence VARCHAR(20) NULL", "cadence"],
+      ["rule_json TEXT NULL", "rule_json"],
+    ];
+    for (const [colDef, colName] of econAlterations) {
+      try {
+        await pool.execute(`ALTER TABLE economic_indicators ADD COLUMN ${colDef}`);
+        console.log(`[db] Added ${colName} column to economic_indicators`);
+      } catch (_) {
+        // Column likely already exists
+      }
+    }
   } catch (e) {
     console.error("[db] Failed to create economic_indicators tables:", e.message);
   }

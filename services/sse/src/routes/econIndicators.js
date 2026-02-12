@@ -6,6 +6,7 @@ import { randomUUID } from "crypto";
 import { getPool, isDbAvailable } from "../db/index.js";
 import { getMarketRedis } from "../redis.js";
 import { requireAdmin } from "./admin.js";
+import { buildRollingSchedule } from "../econ/scheduleBuilder.js";
 
 const router = Router();
 
@@ -45,7 +46,9 @@ router.get("/", requireAdmin, async (req, res) => {
 
   try {
     const [indicators] = await pool.execute(`
-      SELECT id, \`key\`, name, rating, tier, description, is_active, created_at, updated_at
+      SELECT id, \`key\`, name, rating, tier, description, is_active,
+             release_time_et, cadence, rule_json,
+             created_at, updated_at
       FROM economic_indicators
       ORDER BY rating DESC, name ASC
     `);
@@ -86,10 +89,15 @@ router.post("/", requireAdmin, async (req, res) => {
     return res.status(503).json({ success: false, error: "Database unavailable" });
   }
   const pool = getPool();
-  const { key, name, rating, description, aliases } = req.body;
+  const { key, name, rating, description, aliases, release_time_et, cadence, rule_json } = req.body;
 
   if (!key || !name || rating === undefined) {
     return res.status(400).json({ success: false, error: "key, name, and rating are required" });
+  }
+
+  const VALID_CADENCES = ["fixed_dates", "first_friday", "nth_weekday", "weekly", "manual"];
+  if (cadence && !VALID_CADENCES.includes(cadence)) {
+    return res.status(400).json({ success: false, error: `cadence must be one of: ${VALID_CADENCES.join(", ")}` });
   }
 
   const numRating = Math.round(Number(rating));
@@ -99,15 +107,16 @@ router.post("/", requireAdmin, async (req, res) => {
 
   const tier = ratingToTier(numRating);
   const id = randomUUID();
+  const ruleJsonStr = rule_json ? (typeof rule_json === "string" ? rule_json : JSON.stringify(rule_json)) : null;
 
   const conn = await pool.getConnection();
   try {
     await conn.beginTransaction();
 
     await conn.execute(
-      `INSERT INTO economic_indicators (id, \`key\`, name, rating, tier, description, is_active)
-       VALUES (?, ?, ?, ?, ?, ?, 1)`,
-      [id, key, name, numRating, tier, description || null]
+      `INSERT INTO economic_indicators (id, \`key\`, name, rating, tier, description, is_active, release_time_et, cadence, rule_json)
+       VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+      [id, key, name, numRating, tier, description || null, release_time_et || null, cadence || null, ruleJsonStr]
     );
 
     if (aliases && Array.isArray(aliases)) {
@@ -154,7 +163,12 @@ router.put("/:id", requireAdmin, async (req, res) => {
   }
   const pool = getPool();
   const { id } = req.params;
-  const { name, rating, description, is_active, aliases } = req.body;
+  const { name, rating, description, is_active, aliases, release_time_et, cadence, rule_json } = req.body;
+
+  const VALID_CADENCES = ["fixed_dates", "first_friday", "nth_weekday", "weekly", "manual"];
+  if (cadence !== undefined && cadence !== null && !VALID_CADENCES.includes(cadence)) {
+    return res.status(400).json({ success: false, error: `cadence must be one of: ${VALID_CADENCES.join(", ")}` });
+  }
 
   const conn = await pool.getConnection();
   try {
@@ -206,6 +220,25 @@ router.put("/:id", requireAdmin, async (req, res) => {
       updates.is_active = !!is_active;
     }
 
+    if (release_time_et !== undefined) {
+      setClauses.push("release_time_et = ?");
+      params.push(release_time_et || null);
+      updates.release_time_et = release_time_et;
+    }
+
+    if (cadence !== undefined) {
+      setClauses.push("cadence = ?");
+      params.push(cadence || null);
+      updates.cadence = cadence;
+    }
+
+    if (rule_json !== undefined) {
+      const ruleJsonStr = rule_json ? (typeof rule_json === "string" ? rule_json : JSON.stringify(rule_json)) : null;
+      setClauses.push("rule_json = ?");
+      params.push(ruleJsonStr);
+      updates.rule_json = rule_json;
+    }
+
     if (setClauses.length > 0) {
       params.push(id);
       await conn.execute(
@@ -236,7 +269,9 @@ router.put("/:id", requireAdmin, async (req, res) => {
     await publishRefresh();
 
     const [updated] = await pool.execute(
-      `SELECT id, \`key\`, name, rating, tier, description, is_active, created_at, updated_at
+      `SELECT id, \`key\`, name, rating, tier, description, is_active,
+              release_time_et, cadence, rule_json,
+              created_at, updated_at
        FROM economic_indicators WHERE id = ?`,
       [id]
     );
@@ -348,6 +383,46 @@ router.post("/result", requireAdmin, async (req, res) => {
   } catch (err) {
     console.error("[econ-indicators] Result error:", err);
     res.status(500).json({ success: false, error: "Failed to store result" });
+  }
+});
+
+/**
+ * POST /api/admin/economic-indicators/build-rolling
+ * Trigger on-demand build of the rolling schedule artifact
+ */
+router.post("/build-rolling", requireAdmin, async (req, res) => {
+  const { window_days } = req.body;
+
+  try {
+    const result = await buildRollingSchedule({ windowDays: window_days || 7 });
+    console.log(`[econ-indicators] Rolling schedule built: ${result.event_count} events`);
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error("[econ-indicators] Build-rolling error:", err);
+    res.status(500).json({ success: false, error: "Failed to build rolling schedule" });
+  }
+});
+
+/**
+ * GET /api/admin/economic-indicators/rolling-schedule
+ * Inspect the current rolling schedule artifact from Redis
+ */
+router.get("/rolling-schedule", requireAdmin, async (req, res) => {
+  try {
+    const redis = getMarketRedis();
+    if (!redis) {
+      return res.status(503).json({ success: false, error: "Redis unavailable" });
+    }
+
+    const raw = await redis.get("massive:econ:schedule:rolling:v1");
+    if (!raw) {
+      return res.json({ success: true, data: null, message: "No rolling schedule artifact exists yet" });
+    }
+
+    res.json({ success: true, data: JSON.parse(raw), ts: Date.now() });
+  } catch (err) {
+    console.error("[econ-indicators] Rolling-schedule read error:", err);
+    res.status(500).json({ success: false, error: "Failed to read rolling schedule" });
   }
 });
 

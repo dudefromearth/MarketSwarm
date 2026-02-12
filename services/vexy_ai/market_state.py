@@ -321,12 +321,20 @@ class MarketStateEngine:
     def get_event_energy(self) -> Dict[str, Any]:
         """Look up today's economic events and classify posture.
 
+        Reads from the UERS rolling artifact first, with fallback
+        to the hardcoded ECONOMIC_CALENDAR during transition period.
         Resolves rating/impact dynamically from the indicator registry.
         Optionally attaches post-release result data from Redis.
         """
         et = pytz.timezone("America/New_York")
         today_str = datetime.now(et).strftime("%Y-%m-%d")
-        raw_events = ECONOMIC_CALENDAR.get(today_str, [])
+
+        # 1. Try rolling artifact from Redis (UERS v1.1)
+        raw_events = self._read_rolling_artifact(today_str)
+
+        # 2. Fallback to hardcoded calendar (transition period)
+        if raw_events is None:
+            raw_events = ECONOMIC_CALENDAR.get(today_str, [])
 
         if not raw_events:
             result: Dict[str, Any] = {
@@ -344,11 +352,14 @@ class MarketStateEngine:
             entry = dict(evt)  # shallow copy
             name = entry["name"]
 
-            if self.registry and self.registry.is_loaded:
+            # Rolling artifact events already have rating/tier — skip registry
+            if "rating" in entry and entry["rating"]:
+                rating = entry["rating"]
+                impact = self.registry.get_impact_label(rating) if (self.registry and self.registry.is_loaded) else "Medium"
+            elif self.registry and self.registry.is_loaded:
                 rating = self.registry.get_rating(name)
                 impact = self.registry.get_impact_label(rating)
             else:
-                # Fallback: hardcoded defaults for known events
                 rating = 5
                 impact = "Medium"
 
@@ -372,6 +383,28 @@ class MarketStateEngine:
         if unscheduled:
             result["unscheduled_events"] = unscheduled
         return result
+
+    def _read_rolling_artifact(self, today_str: str) -> Optional[List[Dict]]:
+        """Read today's events from the UERS rolling schedule artifact."""
+        if not self._market_redis:
+            return None
+        try:
+            raw = self._market_redis.get("massive:econ:schedule:rolling:v1")
+            if not raw:
+                return None
+            artifact = json.loads(raw)
+            # Staleness guard: if today is past window_end, treat as missing
+            window_end = artifact.get("window_end", "")
+            if today_str > window_end:
+                self.logger.warning("Rolling schedule artifact is stale", emoji="⚠️")
+                return None
+            day_data = artifact.get("days", {}).get(today_str)
+            if day_data is None:
+                return []  # Valid artifact, no events today
+            return day_data.get("events", [])
+        except Exception as e:
+            self.logger.warning(f"Rolling artifact read failed: {e}", emoji="⚠️")
+            return None
 
     def _get_econ_result(self, date_str: str, event_name: str) -> Optional[Dict[str, str]]:
         """Read post-release result from Redis for a given event."""

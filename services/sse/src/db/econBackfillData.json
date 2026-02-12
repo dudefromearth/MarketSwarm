@@ -1,0 +1,462 @@
+{
+  "_comment": "UERS v1.1 — Pre-computed cadence rules for economic indicators. Derived from hardcoded ECONOMIC_CALENDAR.",
+  "rules": [
+    {
+      "key": "nfp",
+      "release_time_et": "08:30",
+      "cadence": "first_friday",
+      "rule_json": {
+        "type": "first_friday",
+        "time_et": "08:30",
+        "skip_holidays": true
+      }
+    },
+    {
+      "key": "cpi",
+      "release_time_et": "08:30",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "time_et": "08:30",
+        "dates": [
+          "2025-01-15", "2025-02-12", "2025-03-12", "2025-04-10", "2025-05-13",
+          "2025-06-11", "2025-07-10", "2025-08-12", "2025-09-10", "2025-10-14",
+          "2025-11-12", "2025-12-10",
+          "2026-01-14", "2026-02-11", "2026-03-11", "2026-04-14", "2026-05-12",
+          "2026-06-10", "2026-07-14", "2026-08-12", "2026-09-16", "2026-10-13",
+          "2026-11-10", "2026-12-09"
+        ]
+      }
+    },
+    {
+      "key": "ppi",
+      "release_time_et": "08:30",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "time_et": "08:30",
+        "dates": [
+          "2025-01-14", "2025-02-13", "2025-03-13", "2025-04-11", "2025-05-14",
+          "2025-06-12", "2025-07-11", "2025-08-13", "2025-09-11", "2025-10-15",
+          "2025-11-13", "2025-12-11",
+          "2026-01-15", "2026-02-12", "2026-03-12", "2026-04-15", "2026-05-13",
+          "2026-06-11", "2026-07-15", "2026-08-13", "2026-09-17", "2026-10-14",
+          "2026-11-12", "2026-12-10"
+        ]
+      }
+    },
+    {
+      "key": "fomc",
+      "release_time_et": "14:00",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "time_et": "14:00",
+        "dates": [
+          "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
+          "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-17",
+          "2026-01-28", "2026-03-18", "2026-05-06", "2026-06-17",
+          "2026-07-29", "2026-09-17", "2026-10-28", "2026-12-16"
+        ]
+      }
+    },
+    {
+      "key": "ism_manufacturing",
+      "release_time_et": "10:00",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "time_et": "10:00",
+        "dates": [
+          "2025-03-03", "2025-05-01", "2025-06-02"
+        ]
+      }
+    },
+    {
+      "key": "adp_employment",
+      "release_time_et": "08:30",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "time_et": "08:30",
+        "dates": [
+          "2025-04-02"
+        ]
+      }
+    },
+    {
+      "key": "gdp",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "avg_hourly_earnings",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30",
+        "note": "Released with NFP on first Friday"
+      }
+    },
+    {
+      "key": "unemployment_rate",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30",
+        "note": "Released with NFP on first Friday"
+      }
+    },
+    {
+      "key": "retail_sales",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "ism_services",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "core_retail_sales",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "flash_mfg_pmi",
+      "release_time_et": "09:45",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "09:45"
+      }
+    },
+    {
+      "key": "flash_services_pmi",
+      "release_time_et": "09:45",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "09:45"
+      }
+    },
+    {
+      "key": "housing_starts",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "durable_goods",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "core_durable_goods",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "eci",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "consumer_confidence",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "prelim_uom_sentiment",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "revised_uom_sentiment",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "initial_claims",
+      "release_time_et": "08:30",
+      "cadence": "weekly",
+      "rule_json": {
+        "type": "weekly",
+        "time_et": "08:30",
+        "weekday": 4
+      }
+    },
+    {
+      "key": "jolts",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "goods_trade_balance",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "personal_income",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "personal_spending",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "revised_uom_inflation",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "rcm_tipp",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "beige_book",
+      "release_time_et": "14:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "14:00"
+      }
+    },
+    {
+      "key": "chicago_pmi",
+      "release_time_et": "09:45",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "09:45"
+      }
+    },
+    {
+      "key": "philly_fed",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "challenger_job_cuts",
+      "release_time_et": "07:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "07:30"
+      }
+    },
+    {
+      "key": "trade_balance",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "new_home_sales",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "existing_home_sales",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "pending_home_sales",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "empire_state",
+      "release_time_et": "08:30",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "08:30"
+      }
+    },
+    {
+      "key": "richmond_mfg",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "sp_cs_hpi",
+      "release_time_et": "09:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "09:00"
+      }
+    },
+    {
+      "key": "hpi",
+      "release_time_et": "09:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "09:00"
+      }
+    },
+    {
+      "key": "nahb",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "wholesale_inventories",
+      "release_time_et": "10:00",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "10:00"
+      }
+    },
+    {
+      "key": "industrial_production",
+      "release_time_et": "09:15",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "09:15"
+      }
+    },
+    {
+      "key": "crude_oil_inventories",
+      "release_time_et": "10:30",
+      "cadence": "weekly",
+      "rule_json": {
+        "type": "weekly",
+        "time_et": "10:30",
+        "weekday": 3
+      }
+    },
+    {
+      "key": "natural_gas_storage",
+      "release_time_et": "10:30",
+      "cadence": "weekly",
+      "rule_json": {
+        "type": "weekly",
+        "time_et": "10:30",
+        "weekday": 4
+      }
+    },
+    {
+      "key": "capacity_utilization",
+      "release_time_et": "09:15",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "09:15"
+      }
+    },
+    {
+      "key": "chicago_pmi_legacy",
+      "release_time_et": "09:45",
+      "cadence": "manual",
+      "rule_json": {
+        "type": "manual",
+        "time_et": "09:45"
+      }
+    }
+  ]
+}

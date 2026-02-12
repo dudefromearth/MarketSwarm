@@ -22,6 +22,7 @@ import importsRoutes from "./routes/imports.js";
 import econIndicatorsRoutes from "./routes/econIndicators.js";
 import { authMiddleware, logAuthConfig } from "./auth.js";
 import { initDb, closeDb } from "./db/index.js";
+import { startScheduleBuilder, buildRollingSchedule } from "./econ/scheduleBuilder.js";
 
 const app = express();
 
@@ -231,6 +232,28 @@ async function main() {
   subscribeDealerGravityPubSub();
   subscribePositionsPubSub();
   subscribeLogLifecyclePubSub();
+
+  // Start economic schedule builder (daily + on-demand)
+  startScheduleBuilder();
+
+  // Rebuild rolling schedule when indicators are mutated via admin
+  try {
+    const { getMarketRedisSub } = await import("./redis.js");
+    const sub = getMarketRedisSub();
+    if (sub) {
+      sub.subscribe("vexy:econ-indicators:refresh");
+      sub.on("message", (channel, message) => {
+        if (channel === "vexy:econ-indicators:refresh") {
+          console.log("[econ-schedule] Indicator mutation detected, rebuilding...");
+          buildRollingSchedule({ windowDays: 7 }).catch((err) => {
+            console.error("[econ-schedule] Rebuild after mutation failed:", err.message);
+          });
+        }
+      });
+    }
+  } catch (err) {
+    console.warn("[econ-schedule] Failed to subscribe to indicator refresh:", err.message);
+  }
 
   // Start server
   const port = config.env.SSE_PORT;

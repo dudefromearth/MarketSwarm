@@ -49,7 +49,8 @@ class EconomicIndicatorRegistry:
         try:
             with conn.cursor() as cur:
                 cur.execute(
-                    "SELECT id, `key`, name, rating, tier, description "
+                    "SELECT id, `key`, name, rating, tier, description, "
+                    "release_time_et, cadence, rule_json "
                     "FROM economic_indicators WHERE is_active = 1"
                 )
                 indicators = cur.fetchall()
@@ -81,6 +82,9 @@ class EconomicIndicatorRegistry:
                 "rating": ind["rating"],
                 "tier": ind["tier"],
                 "description": ind["description"],
+                "release_time_et": ind.get("release_time_et"),
+                "cadence": ind.get("cadence"),
+                "rule_json": ind.get("rule_json"),
                 "aliases": alias_map.get(ind["id"], []),
             }
             key_index[ind["key"]] = entry
