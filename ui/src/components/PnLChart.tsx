@@ -50,7 +50,7 @@ export interface PnLChartProps {
   theoreticalBreakevens: number[];
   strikes: number[];
   onOpenAlertDialog?: (price: number, type: PriceAlertType) => void;
-  alertLines?: { price: number; color: string; label?: string; style?: 'dashed' | 'solid' | 'dimmed' }[];
+  alertLines?: { price: number; color: string; label?: string; style?: 'dashed' | 'solid' | 'dimmed' | 'active' }[];
   /** P&L alert zones - horizontal lines and shaded regions */
   pnlAlertZones?: PnLAlertZone[];
   /** Faded curves for sim-expired strategies */
@@ -515,8 +515,23 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
       const x = toCanvasX(alert.price, width);
       if (x >= PADDING.left && x <= width - PADDING.right) {
         const lineStyle = alert.style || 'dashed';
+
+        // Active style: glow halo behind the line
+        if (lineStyle === 'active') {
+          ctx.save();
+          ctx.strokeStyle = alert.color;
+          ctx.lineWidth = 6;
+          ctx.globalAlpha = 0.2;
+          ctx.setLineDash([]);
+          ctx.beginPath();
+          ctx.moveTo(x, PADDING.top);
+          ctx.lineTo(x, height - PADDING.bottom);
+          ctx.stroke();
+          ctx.restore();
+        }
+
         ctx.strokeStyle = alert.color;
-        ctx.lineWidth = lineStyle === 'solid' ? 2 : 1;
+        ctx.lineWidth = lineStyle === 'active' ? 3 : lineStyle === 'solid' ? 2 : 1;
         ctx.globalAlpha = lineStyle === 'dimmed' ? 0.3 : 1;
         if (lineStyle === 'dashed' || lineStyle === 'dimmed') {
           ctx.setLineDash([4, 4]);
@@ -534,7 +549,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
         if (alert.label) {
           ctx.fillStyle = alert.color;
           ctx.globalAlpha = lineStyle === 'dimmed' ? 0.3 : 1;
-          ctx.font = '9px monospace';
+          ctx.font = lineStyle === 'active' ? 'bold 10px monospace' : '9px monospace';
           ctx.textAlign = 'center';
           ctx.fillText(alert.label, x, PADDING.top - 5);
           ctx.globalAlpha = 1;

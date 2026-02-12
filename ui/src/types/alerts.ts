@@ -737,6 +737,12 @@ export type AlertIntentClass =
   | 'reflective'      // "Worth noticing" - e.g., trade closed, pattern recurrence
   | 'protective';     // "Attention, not action" - e.g., risk envelope degraded
 
+// Threshold alert mode — observe (evaluate but don't trigger) or active (evaluate + trigger)
+export type AlertMode = 'observe' | 'active';
+
+// Threshold alert scope — what positions the alert evaluates against
+export type ThresholdScope = 'single' | 'group' | 'any' | 'all';
+
 // Alert condition operators
 export type AlertCondition = 'above' | 'below' | 'at' | 'outside_zone' | 'inside_zone';
 
@@ -780,6 +786,12 @@ export interface AlertBase {
 
   // For repeat behavior
   wasOnOtherSide?: boolean;
+
+  // Threshold alert extensions
+  goal?: string;                    // User's stated purpose for the alert
+  thresholdScope?: ThresholdScope;  // Position scoping (default: 'single')
+  strategyIds?: string[];           // For group scope (multiple positions)
+  mode?: AlertMode;                 // observe or active (default: 'observe')
 }
 
 // Price alert - spot price crosses level
@@ -963,6 +975,12 @@ export interface CreateAlertInput {
 
   // Greeks threshold specific
   greekName?: GreekName;
+
+  // Threshold alert extensions
+  goal?: string;
+  thresholdScope?: ThresholdScope;
+  strategyIds?: string[];
+  mode?: AlertMode;
 }
 
 // Input type for editing alerts
@@ -978,6 +996,12 @@ export interface EditAlertInput {
   enabled?: boolean;
   minProfitThreshold?: number;
   strategyId?: string;
+
+  // Threshold alert extensions
+  goal?: string;
+  thresholdScope?: ThresholdScope;
+  strategyIds?: string[];
+  mode?: AlertMode;
 }
 
 // AI evaluation result from backend

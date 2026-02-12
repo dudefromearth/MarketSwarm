@@ -14,6 +14,7 @@ import PnLChart, { type PnLChartHandle, type PriceAlertType, type BackdropRender
 import RiskGraphBackdrop from './RiskGraphBackdrop';
 import DealerGravitySettings from './DealerGravitySettings';
 import AlgoAlertPanel from './AlgoAlertPanel';
+import AlertDesigner from './AlertDesigner';
 import WhatsNew from './WhatsNew';
 import {
   useRiskGraphCalculations,
@@ -25,12 +26,15 @@ import {
 } from '../hooks/useRiskGraphCalculations';
 import { resolveSpotKey } from '../utils/symbolResolver';
 import { useAlerts } from '../contexts/AlertContext';
+import { useAlertEvaluator } from '../hooks/useAlertEvaluator';
 import { useDealerGravity } from '../contexts/DealerGravityContext';
 import { useIndicatorSettings } from './chart-primitives';
 import type {
+  Alert,
   AlertType,
   AlertBehavior,
   AlertCondition,
+  AlertMode,
 } from '../types/alerts';
 import type { PositionLeg, PositionType, PositionDirection, CostBasisType } from '../types/riskGraph';
 import { recognizePositionType, strategyToLegs } from '../utils/positionRecognition';
@@ -195,10 +199,20 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   const {
     alerts,
     createAlert,
+    updateAlert,
     deleteAlert,
     clearTriggeredAlerts,
     getTriggeredAlerts,
+    setAlertMode,
   } = useAlerts();
+
+  // Alert designer state
+  const [designerOpen, setDesignerOpen] = useState(false);
+  const [designerInitialType, setDesignerInitialType] = useState<string | undefined>();
+  const [designerInitialValue, setDesignerInitialValue] = useState<number | undefined>();
+  const [designerInitialCondition, setDesignerInitialCondition] = useState<'above' | 'below' | 'at' | undefined>();
+  const [designerInitialStrategyId, setDesignerInitialStrategyId] = useState<string | undefined>();
+  const [designerEditingAlert, setDesignerEditingAlert] = useState<Alert | null>(null);
 
   // Dealer Gravity context for backdrop
   const { artifact: dgArtifact, config: dgConfig } = useDealerGravity();
@@ -396,9 +410,22 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     };
   }, [pnlChartData]);
 
+  // Client-side threshold evaluator — returns set of alert IDs whose conditions are met
+  const conditionMetIds = useAlertEvaluator({
+    alerts,
+    hasPositions: strategies.length > 0,
+    spotPrice: simulatedSpot,
+    delta: pnlChartData.delta,
+    gamma: pnlChartData.gamma,
+    theta: pnlChartData.theta,
+    totalPnL: pnlChartData.theoreticalPnLAtSpot,
+    strategyPnLAtSpot: pnlChartData.strategyPnLAtSpot || {},
+    strategyGreeks: {},  // TODO: per-strategy Greeks when available
+  });
+
   // Convert alerts to lines for PnLChart — all lines come from real alerts now
   const alertLinesForChart = useMemo(() => {
-    const lines: { price: number; color: string; label?: string; style?: 'dashed' | 'solid' | 'dimmed' }[] = [];
+    const lines: { price: number; color: string; label?: string; style?: 'dashed' | 'solid' | 'dimmed' | 'active' }[] = [];
 
     // Legacy price alert lines (will be migrated to real alerts)
     priceAlertLines.forEach(line => {
@@ -413,11 +440,16 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     // Strategy price alerts — visual distinction by state
     alerts.filter(a => a.type === 'price').forEach(alert => {
       const val = Number(alert.targetValue);
+      const isMet = conditionMetIds.has(alert.id);
+      let style: 'dashed' | 'solid' | 'dimmed' | 'active' = 'dashed';
+      if (!alert.enabled) style = 'dimmed';
+      else if (alert.triggered) style = 'solid';
+      else if (isMet) style = 'active';
       lines.push({
         price: val,
         color: alert.color,
         label: val.toFixed(0),
-        style: !alert.enabled ? 'dimmed' : alert.triggered ? 'solid' : 'dashed',
+        style,
       });
     });
 
@@ -441,7 +473,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     });
 
     return lines;
-  }, [priceAlertLines, alerts]);
+  }, [priceAlertLines, alerts, conditionMetIds]);
 
   // Build P&L alert zones from alerts for chart rendering
   const pnlAlertZones = useMemo(() => {
@@ -521,16 +553,102 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     }).catch(() => {}); // Fire-and-forget
   }, [pnlChartData.delta, pnlChartData.gamma, pnlChartData.theta]);
 
-  // Handle opening alert dialog from chart context menu
+  // Open designer from chart context menu (right-click)
   const handleOpenAlertDialog = useCallback((price: number, type: PriceAlertType) => {
     const conditionMap: Record<PriceAlertType, 'above' | 'below' | 'at'> = {
       'price_above': 'above',
       'price_below': 'below',
       'price_touch': 'at',
     };
-    const strategyId = strategies[0]?.id || 'chart-alert';
-    onOpenAlertDialog(strategyId, Math.round(price), conditionMap[type]);
-  }, [strategies, onOpenAlertDialog]);
+    setDesignerEditingAlert(null);
+    setDesignerInitialType('price');
+    setDesignerInitialValue(Math.round(price));
+    setDesignerInitialCondition(conditionMap[type]);
+    setDesignerInitialStrategyId(strategies[0]?.id);
+    setDesignerOpen(true);
+  }, [strategies]);
+
+  // Open designer from position "Alert" button
+  const handleStartNewAlert = useCallback((strategyId: string) => {
+    setDesignerEditingAlert(null);
+    setDesignerInitialType(undefined);
+    setDesignerInitialValue(undefined);
+    setDesignerInitialCondition(undefined);
+    setDesignerInitialStrategyId(strategyId);
+    setDesignerOpen(true);
+  }, []);
+
+  // Open designer to edit existing alert
+  const handleStartEditingAlert = useCallback((alertId: string) => {
+    const alert = alerts.find(a => a.id === alertId);
+    if (!alert) return;
+    setDesignerEditingAlert(alert);
+    setDesignerInitialType(undefined);
+    setDesignerInitialValue(undefined);
+    setDesignerInitialCondition(undefined);
+    setDesignerInitialStrategyId(undefined);
+    setDesignerOpen(true);
+  }, [alerts]);
+
+  // Handle designer save
+  const handleDesignerSave = useCallback((alertData: any) => {
+    if (alertData.id) {
+      // Editing existing — update
+      updateAlert({
+        id: alertData.id,
+        type: alertData.type,
+        condition: alertData.condition,
+        targetValue: alertData.targetValue,
+        color: alertData.color,
+        behavior: alertData.behavior,
+        ...(alertData.goal !== undefined && { goal: alertData.goal }),
+        ...(alertData.thresholdScope !== undefined && { thresholdScope: alertData.thresholdScope }),
+        ...(alertData.strategyIds !== undefined && { strategyIds: alertData.strategyIds }),
+        ...(alertData.mode !== undefined && { mode: alertData.mode }),
+      } as any);
+    } else {
+      // Creating new
+      const isPortfolioType = ['portfolio_pnl', 'portfolio_trailing', 'greeks_threshold'].includes(alertData.type);
+      const strategyId = alertData.strategyId || strategies[0]?.id || 'chart-alert';
+      const strategy = strategies.find(s => s.id === strategyId);
+      const strategyLabel = strategy
+        ? `${strategy.symbol || 'SPX'} ${strategy.strike} ${strategy.strategy === 'butterfly' ? 'BF' : strategy.strategy === 'vertical' ? 'VS' : 'SGL'}`
+        : 'Chart Alert';
+      createAlert({
+        type: alertData.type,
+        condition: alertData.condition,
+        targetValue: alertData.targetValue,
+        color: alertData.color,
+        behavior: alertData.behavior || 'once_only',
+        source: {
+          type: isPortfolioType ? 'chart' : 'strategy',
+          id: isPortfolioType ? 'portfolio' : strategyId,
+          label: isPortfolioType ? 'Portfolio' : strategyLabel,
+        },
+        strategyId: isPortfolioType ? undefined : strategyId,
+        entryDebit: strategy?.debit || undefined,
+        greekName: alertData.greekName,
+        label: alertData.label,
+        goal: alertData.goal,
+        thresholdScope: alertData.thresholdScope,
+        strategyIds: alertData.strategyIds,
+        mode: alertData.mode,
+      } as any);
+    }
+  }, [createAlert, updateAlert, strategies]);
+
+  // Build strategy info list for AlertDesigner
+  const designerStrategies = useMemo(() =>
+    strategies.map(s => ({
+      id: s.id,
+      label: `${s.symbol || 'SPX'} ${formatPositionLabel(
+        s.positionType || s.strategy,
+        s.direction || 'long',
+        s.legs || strategyToLegs(s.strategy, s.side, s.strike, s.width, s.expiration)
+      )}`,
+    })),
+    [strategies]
+  );
 
   // Render backdrop for Dealer Gravity visualization (VP + GEX + Structural Lines)
   const renderBackdrop = useCallback((props: BackdropRenderProps) => {
@@ -859,6 +977,17 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                       const positionLabel = formatPositionLabel(positionType, direction, legs);
                       const legsNotation = formatLegsDisplay(legs);
 
+                      // Recompute DTE from expiration date (stored dte can be stale/off-by-one after midnight)
+                      const displayDte = (() => {
+                        if (!strat.expiration) return strat.dte ?? 0;
+                        const expStr = String(strat.expiration).split('T')[0];
+                        const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+                        if (expStr <= todayET) return 0;
+                        const expMs = new Date(expStr + 'T00:00:00-05:00').getTime();
+                        const todayMs = new Date(todayET + 'T00:00:00-05:00').getTime();
+                        return Math.ceil((expMs - todayMs) / (1000 * 60 * 60 * 24));
+                      })();
+
                       // Determine cost basis
                       const costBasis = strat.costBasis ?? strat.debit ?? null;
 
@@ -884,8 +1013,8 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                               <span className="position-label" title={positionLabel}>
                                 {positionLabel}
                               </span>
-                              <span className="position-dte" title={`${strat.dte} days to expiration`}>
-                                {strat.dte}d
+                              <span className="position-dte" title={`${displayDte} days to expiration`}>
+                                {displayDte}d
                               </span>
                               {/* Lock/Unlock Toggle */}
                               <button
@@ -1004,7 +1133,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                               )}
                               <button
                                 className="btn-alert"
-                                onClick={() => onStartNewAlert(strat.id)}
+                                onClick={() => handleStartNewAlert(strat.id)}
                                 title="Create alert for this position"
                               >
                                 Alert
@@ -1027,44 +1156,6 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                               </button>
                             </div>
 
-                            {/* Quick Profit Target Alerts — only shown when cost basis is locked */}
-                            {isLocked && costBasis != null && pnlChartData.maxPnL > 0 && (
-                              <div className="position-row-quick-alerts">
-                                <span className="quick-alert-label">Target:</span>
-                                {[25, 50, 75].map(pct => {
-                                  const targetPnL = pnlChartData.maxPnL * (pct / 100);
-                                  const existingAlert = alerts.find(
-                                    a => a.type === 'profit_target' && 'strategyId' in a && a.strategyId === strat.id
-                                      && Math.abs(a.targetValue - (pct / 100)) < 0.01
-                                  );
-                                  return (
-                                    <button
-                                      key={pct}
-                                      className={`btn-quick-alert ${existingAlert ? 'active' : ''}`}
-                                      disabled={!!existingAlert}
-                                      title={existingAlert
-                                        ? `${pct}% target already set`
-                                        : `Alert at ${pct}% max profit ($${targetPnL.toFixed(0)})`}
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        createAlert({
-                                          type: 'profit_target',
-                                          source: { type: 'strategy', id: strat.id, label: positionLabel },
-                                          condition: 'above',
-                                          targetValue: pct / 100,
-                                          behavior: 'once_only',
-                                          color: pct === 25 ? '#eab308' : pct === 50 ? '#22c55e' : '#3b82f6',
-                                          strategyId: strat.id,
-                                          entryDebit: Math.abs(costBasis),
-                                        });
-                                      }}
-                                    >
-                                      {pct}%
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            )}
                           </div>
                         </div>
                       );
@@ -1086,21 +1177,45 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                 <div className="risk-graph-alerts">
                   <div className="section-header">
                     Alerts
-                    {getTriggeredAlerts().length > 0 && (
-                      <button className="btn-clear-triggered" onClick={clearTriggeredAlerts}>
-                        Clear
+                    <div className="section-header-actions">
+                      {getTriggeredAlerts().length > 0 && (
+                        <button className="btn-clear-triggered" onClick={clearTriggeredAlerts}>
+                          Clear
+                        </button>
+                      )}
+                      <button
+                        className="btn-add-alert"
+                        onClick={() => {
+                          setDesignerEditingAlert(null);
+                          setDesignerInitialType(undefined);
+                          setDesignerInitialValue(undefined);
+                          setDesignerInitialCondition(undefined);
+                          setDesignerInitialStrategyId(strategies[0]?.id);
+                          setDesignerOpen(true);
+                        }}
+                        title="Create new alert"
+                      >
+                        +
                       </button>
-                    )}
+                    </div>
                   </div>
                   <div className="alerts-list">
                     {alerts.map(alert => {
                       const isAI = alert.type.startsWith('ai_');
                       const val = Number(alert.targetValue);
-                      const alertLabel = (() => {
+                      const isMet = conditionMetIds.has(alert.id);
+                      const alertMode: AlertMode = (alert as any).mode || 'observe';
+                      const alertGoal: string = (alert as any).goal || '';
+                      const alertScope: string = (alert as any).thresholdScope || 'single';
+                      const isInert = strategies.length === 0;
+
+                      // Build criteria text
+                      const criteriaText = (() => {
                         switch (alert.type) {
-                          case 'price':
+                          case 'price': {
                             const op = alert.condition === 'above' ? '≥' : alert.condition === 'below' ? '≤' : '≈';
                             return `Price ${op} ${val.toFixed(0)}`;
+                          }
                           case 'debit':
                             return `Debit ≤ $${val.toFixed(2)}`;
                           case 'profit_target':
@@ -1108,18 +1223,18 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                           case 'trailing_stop':
                             return `Trail -$${val.toFixed(0)}`;
                           case 'ai_theta_gamma':
-                            if (alert.isZoneActive && alert.zoneLow && alert.zoneHigh) {
-                              return `Zone ${alert.zoneLow.toFixed(0)}–${alert.zoneHigh.toFixed(0)}`;
+                            if ('isZoneActive' in alert && alert.isZoneActive && 'zoneLow' in alert && 'zoneHigh' in alert) {
+                              return `Zone ${(alert as any).zoneLow.toFixed(0)}–${(alert as any).zoneHigh.toFixed(0)}`;
                             }
-                            return `T/G Zone (${((alert.minProfitThreshold || 0.5) * 100).toFixed(0)}% to arm)`;
+                            return `T/G Zone`;
                           case 'ai_sentiment':
-                            return 'Sentiment Shift';
+                            return 'Sentiment';
                           case 'ai_risk_zone':
-                            return 'Risk Zone Exit';
+                            return 'Risk Zone';
                           case 'portfolio_pnl':
-                            return `Portfolio P&L ${alert.condition === 'below' ? '≤' : '≥'} $${val.toFixed(0)}`;
+                            return `P&L ${alert.condition === 'below' ? '≤' : '≥'} $${val.toFixed(0)}`;
                           case 'portfolio_trailing':
-                            return `Portfolio Trail -$${val.toFixed(0)}`;
+                            return `Trail -$${val.toFixed(0)}`;
                           case 'greeks_threshold': {
                             const gn = alert.label || 'delta';
                             return `${gn.charAt(0).toUpperCase() + gn.slice(1)} ${alert.condition === 'above' ? '≥' : '≤'} ${val}`;
@@ -1129,61 +1244,114 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                         }
                       })();
 
+                      // Scope label
+                      const scopeLabel = (() => {
+                        if (alertScope === 'all') return 'All positions';
+                        if (alertScope === 'any') return 'Any position';
+                        if (alertScope === 'group') return 'Group';
+                        if ('strategyId' in alert && alert.strategyId) {
+                          const strat = strategies.find(s => s.id === alert.strategyId);
+                          return strat ? `${strat.symbol || 'SPX'} ${strat.strike}` : 'Position';
+                        }
+                        return '';
+                      })();
+
                       return (
                         <div
                           key={alert.id}
-                          className={`alert-item clickable ${alert.triggered ? 'triggered' : ''} ${!alert.enabled ? 'disabled' : ''} ${isAI ? 'ai-alert' : ''}`}
-                          onClick={() => onStartEditingAlert(alert.id)}
-                          title={`Click to edit${alert.triggered ? ' (triggered)' : ''}`}
+                          className={`alert-item-rich ${alert.triggered ? 'triggered' : ''} ${!alert.enabled ? 'disabled' : ''} ${isAI ? 'ai-alert' : ''} ${isInert ? 'alert-inert' : ''}`}
                         >
-                          <div className="alert-info">
+                          {/* Line 1: Color dot, criteria, live dot, mode, edit, delete */}
+                          <div className="alert-row-top">
                             <div
                               className="alert-color-dot"
                               style={{ backgroundColor: alert.color || ALERT_COLOR_PALETTE[0] }}
                             />
                             {isAI && <span className="alert-ai-badge">AI</span>}
-                            <span className="alert-condition">{alertLabel}</span>
+                            <span className="alert-criteria">{criteriaText}</span>
+                            <span className="alert-row-top-right">
+                              {/* Live indicator */}
+                              {!isInert && alert.enabled && !alert.triggered && (
+                                <span className={`alert-live-dot ${isMet ? 'met' : ''}`} title={isMet ? 'Condition met' : 'Watching'} />
+                              )}
+                              {alert.triggered && alert.triggeredAt && (
+                                <span className="alert-triggered-time">
+                                  {new Date(alert.triggeredAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </span>
+                              )}
+                              {/* Mode badge */}
+                              <button
+                                className={`alert-mode-badge ${alertMode}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setAlertMode(alert.id, alertMode === 'observe' ? 'active' : 'observe');
+                                }}
+                                title={alertMode === 'observe' ? 'Observe mode — click to arm' : 'Active mode — click to observe'}
+                              >
+                                {alertMode === 'active' ? 'Active' : 'Observe'}
+                              </button>
+                              <button
+                                className="btn-edit-alert"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleStartEditingAlert(alert.id);
+                                }}
+                                title="Edit alert"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                className="btn-delete-alert"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  deleteAlert(alert.id);
+                                }}
+                                title="Delete alert"
+                              >
+                                ×
+                              </button>
+                            </span>
                           </div>
-                          <button
-                            className="btn-delete-alert"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteAlert(alert.id);
-                            }}
-                            title="Delete alert"
-                          >
-                            ×
-                          </button>
+                          {/* Line 2: Scope/position + goal */}
+                          <div className="alert-row-bottom">
+                            {scopeLabel && <span className="alert-scope-label">{scopeLabel}</span>}
+                            {scopeLabel && alertGoal && <span className="alert-separator">·</span>}
+                            <span className={`alert-goal-text ${alertGoal ? '' : 'empty'}`}>
+                              {alertGoal || '(no goal set)'}
+                            </span>
+                          </div>
                         </div>
                       );
                     })}
 
                     {/* Legacy price lines (pending migration) */}
                     {priceAlertLines.map(alert => (
-                      <div key={alert.id} className="alert-item price-line-alert" title="Legacy price line (migrating...)">
-                        <div className="alert-info">
+                      <div key={alert.id} className="alert-item-rich price-line-alert" title="Legacy price line">
+                        <div className="alert-row-top">
                           <div
                             className="alert-color-dot"
                             style={{ backgroundColor: alert.color }}
                           />
-                          <span className="alert-condition">
+                          <span className="alert-criteria">
                             Line @ {alert.price.toFixed(0)}
                           </span>
+                          <span className="alert-row-top-right">
+                            <button
+                              className="btn-delete-alert"
+                              onClick={() => onDeletePriceAlertLine(alert.id)}
+                              title="Remove price line"
+                            >
+                              ×
+                            </button>
+                          </span>
                         </div>
-                        <button
-                          className="btn-delete-alert"
-                          onClick={() => onDeletePriceAlertLine(alert.id)}
-                          title="Remove price line"
-                        >
-                          ×
-                        </button>
                       </div>
                     ))}
 
                     {alerts.length === 0 && priceAlertLines.length === 0 && (
                       <div className="alerts-empty">
                         No alerts set
-                        <span className="hint">Right-click chart to add price alerts</span>
+                        <span className="hint">Right-click chart or click + to add</span>
                       </div>
                     )}
                   </div>
@@ -1490,6 +1658,25 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
         <DealerGravitySettings
           isOpen={showDGSettings}
           onClose={() => setShowDGSettings(false)}
+        />
+
+        {/* Alert Designer Panel */}
+        <AlertDesigner
+          isOpen={designerOpen}
+          onClose={() => setDesignerOpen(false)}
+          onSave={handleDesignerSave}
+          strategies={designerStrategies}
+          spotPrice={simulatedSpot}
+          totalPnL={pnlChartData.theoreticalPnLAtSpot}
+          delta={pnlChartData.delta}
+          gamma={pnlChartData.gamma}
+          theta={pnlChartData.theta}
+          strategyPnLAtSpot={pnlChartData.strategyPnLAtSpot || {}}
+          initialType={designerInitialType}
+          initialValue={designerInitialValue}
+          initialCondition={designerInitialCondition}
+          initialStrategyId={designerInitialStrategyId}
+          editingAlert={designerEditingAlert}
         />
     </div>
   );

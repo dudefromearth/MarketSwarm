@@ -35,6 +35,7 @@ import type {
   AlertUpdateEvent,
   AlertBehavior,
   AlertPriority,
+  AlertMode,
   // v1.1 types
   AlertDefinition,
   AlertLifecycleStage,
@@ -231,6 +232,7 @@ interface AlertContextValue extends AlertState {
   updateAlert: (input: EditAlertInput) => void;
   deleteAlert: (id: string) => void;
   toggleAlert: (id: string) => void;
+  setAlertMode: (id: string, mode: AlertMode) => void;
 
   // Legacy Queries (v1)
   getAlert: (id: string) => Alert | undefined;
@@ -537,13 +539,26 @@ export function AlertProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // Toggle alert enabled
+  // Toggle alert enabled (persists to server)
   const toggleAlert = useCallback((id: string) => {
     const alert = state.alerts.find((a) => a.id === id);
     if (alert) {
-      dispatch({ type: 'UPDATE_ALERT', id, updates: { enabled: !alert.enabled } });
+      const newEnabled = !alert.enabled;
+      dispatch({ type: 'UPDATE_ALERT', id, updates: { enabled: newEnabled } });
+      updateAlertApi({ id, enabled: newEnabled }).catch((err) => {
+        console.error('Failed to toggle alert on server:', err);
+        dispatch({ type: 'UPDATE_ALERT', id, updates: { enabled: !newEnabled } });
+      });
     }
   }, [state.alerts]);
+
+  // Set alert mode (observe/active) — persists to server
+  const setAlertMode = useCallback((id: string, mode: AlertMode) => {
+    dispatch({ type: 'UPDATE_ALERT', id, updates: { mode } as Partial<Alert> });
+    updateAlertApi({ id, mode } as EditAlertInput).catch((err) => {
+      console.error('Failed to set alert mode on server:', err);
+    });
+  }, []);
 
   // Get single alert
   const getAlert = useCallback(
@@ -712,6 +727,7 @@ export function AlertProvider({ children }: { children: ReactNode }) {
     updateAlert,
     deleteAlert,
     toggleAlert,
+    setAlertMode,
     getAlert,
     getAlertsForSource,
     getAlertsForStrategy,
