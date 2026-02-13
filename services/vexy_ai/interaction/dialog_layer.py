@@ -97,7 +97,7 @@ class DialogLayer:
             return DialogResponse(
                 interaction_id=interaction_id,
                 status="refuse",
-                message="Daily reflection limit reached. Rest is part of the practice.",
+                message="Rate limit reached. Take a breath — try again in a bit.",
                 tier=resolved_tier,
                 remaining_today=0,
             )

@@ -84,7 +84,7 @@ export default function AskVexyAffordance({
 
       if (!res.ok) {
         if (res.status === 429) {
-          throw new Error('Daily message limit reached');
+          throw new Error('Rate limit reached — try again in a bit');
         }
         throw new Error(`Request failed: ${res.status}`);
       }

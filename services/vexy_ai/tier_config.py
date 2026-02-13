@@ -184,7 +184,7 @@ Minimal. Present. One line maximum.
 class TierConfig:
     """Configuration for a user tier."""
     name: str
-    daily_limit: int  # -1 for unlimited
+    rate_limit: int  # max requests per hour, -1 for unlimited
     agents: List[str]
     reflection_dial_min: float
     reflection_dial_max: float
@@ -205,7 +205,7 @@ class TierConfig:
 TIER_CONFIGS: Dict[str, TierConfig] = {
     "observer": TierConfig(
         name="Observer",
-        daily_limit=5,
+        rate_limit=20,
         agents=OBSERVER_AGENTS,
         reflection_dial_min=0.3,
         reflection_dial_max=0.5,
@@ -222,7 +222,7 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
     ),
     "observer_restricted": TierConfig(
         name="Observer Restricted",
-        daily_limit=3,
+        rate_limit=20,
         agents=["observer"],
         reflection_dial_min=0.3,
         reflection_dial_max=0.3,
@@ -239,7 +239,7 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
     ),
     "activator": TierConfig(
         name="Activator",
-        daily_limit=25,
+        rate_limit=20,
         agents=ACTIVATOR_AGENTS,
         reflection_dial_min=0.3,
         reflection_dial_max=0.6,
@@ -256,7 +256,7 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
     ),
     "navigator": TierConfig(
         name="Navigator",
-        daily_limit=100,
+        rate_limit=20,
         agents=ALL_AGENTS,
         reflection_dial_min=0.3,
         reflection_dial_max=0.9,
@@ -271,7 +271,7 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
     ),
     "coaching": TierConfig(
         name="Coaching",
-        daily_limit=100,
+        rate_limit=20,
         agents=ALL_AGENTS,
         reflection_dial_min=0.3,
         reflection_dial_max=0.9,
@@ -286,7 +286,7 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
     ),
     "administrator": TierConfig(
         name="Administrator",
-        daily_limit=-1,  # Unlimited
+        rate_limit=-1,  # Unlimited
         agents=ALL_AGENTS,
         reflection_dial_min=0.3,
         reflection_dial_max=1.0,
@@ -328,7 +328,7 @@ def get_tier_config_dict(tier: str) -> Dict[str, Any]:
     config = get_tier_config(tier)
     return {
         "name": config.name,
-        "daily_limit": config.daily_limit,
+        "rate_limit": config.rate_limit,
         "agents": config.agents,
         "reflection_dial_min": config.reflection_dial_min,
         "reflection_dial_max": config.reflection_dial_max,

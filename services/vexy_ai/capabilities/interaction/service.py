@@ -161,28 +161,28 @@ class InteractionService:
 
     async def _check_rate_limit(self, user_id: int, tier_config: Any) -> int:
         """
-        Check rate limit for user. Returns remaining today (-1 = unlimited).
+        Check hourly rate limit for user. Returns remaining (-1 = unlimited).
         """
-        if tier_config.daily_limit < 0:
+        if tier_config.rate_limit < 0:
             return -1
 
         rate_key = f"vexy:interaction:rate:{user_id}"
         count_str = await self.buses.market.get(rate_key)
 
         if count_str is None:
-            return tier_config.daily_limit
+            return tier_config.rate_limit
 
         count = int(count_str)
-        return max(0, tier_config.daily_limit - count)
+        return max(0, tier_config.rate_limit - count)
 
     async def _decrement_rate_limit(self, user_id: int, tier_config: Any) -> None:
-        """Increment usage counter for today."""
-        if tier_config.daily_limit < 0:
+        """Increment usage counter for this hour."""
+        if tier_config.rate_limit < 0:
             return
 
         rate_key = f"vexy:interaction:rate:{user_id}"
         pipe = self.buses.market.pipeline()
         pipe.incr(rate_key)
-        # Set TTL to end of day (rough: 24 hours from first use)
-        pipe.expire(rate_key, 86400)
+        # 1-hour sliding window from first use
+        pipe.expire(rate_key, 3600)
         await pipe.execute()

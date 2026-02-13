@@ -34,19 +34,19 @@ class ChatService:
         self.buses = buses
         self.market_intel = market_intel
         self.kernel = kernel
-        # Daily usage tracking (in production, stored in Redis)
+        # Hourly usage tracking (in production, stored in Redis)
         self._usage_cache: Dict[str, int] = {}
 
     def check_rate_limit(self, user_id: int, tier: str) -> Tuple[bool, int]:
         """
-        Check if user can send a message based on rate limits.
+        Check if user can send a message based on hourly rate limits.
 
         Returns (allowed, remaining).
         """
         from services.vexy_ai.tier_config import get_tier_config
 
         tier_config = get_tier_config(tier)
-        limit = tier_config.daily_limit
+        limit = tier_config.rate_limit
 
         # Unlimited for admins
         if limit == -1:
@@ -58,7 +58,7 @@ class ChatService:
             buses = self.config.get("buses", {}) or {}
             system_url = buses.get("system-redis", {}).get("url", "redis://127.0.0.1:6379")
             r = SyncRedis.from_url(system_url, decode_responses=True)
-            key = f"vexy_chat:{user_id}:{date.today().isoformat()}"
+            key = f"vexy_chat:rate:{user_id}"
             current = r.get(key)
             current_count = int(current) if current else 0
             remaining = max(0, limit - current_count)
@@ -67,28 +67,28 @@ class ChatService:
             self.logger.warn(f"Redis rate limit check failed: {e}", emoji="⚠️")
 
         # Fallback to in-memory
-        cache_key = f"{user_id}:{date.today().isoformat()}"
+        cache_key = f"rate:{user_id}"
         current_count = self._usage_cache.get(cache_key, 0)
         remaining = max(0, limit - current_count)
         return remaining > 0, remaining
 
     def increment_usage(self, user_id: int) -> None:
-        """Increment daily usage counter."""
+        """Increment hourly usage counter."""
         # Try sync Redis for rate limiting
         try:
             from redis import Redis as SyncRedis
             buses = self.config.get("buses", {}) or {}
             system_url = buses.get("system-redis", {}).get("url", "redis://127.0.0.1:6379")
             r = SyncRedis.from_url(system_url, decode_responses=True)
-            key = f"vexy_chat:{user_id}:{date.today().isoformat()}"
+            key = f"vexy_chat:rate:{user_id}"
             r.incr(key)
-            r.expire(key, 86400 * 2)  # 2 day TTL
+            r.expire(key, 3600)  # 1 hour sliding window
             return
         except Exception as e:
             self.logger.warn(f"Redis usage increment failed: {e}", emoji="⚠️")
 
         # Fallback to in-memory
-        cache_key = f"{user_id}:{date.today().isoformat()}"
+        cache_key = f"rate:{user_id}"
         self._usage_cache[cache_key] = self._usage_cache.get(cache_key, 0) + 1
 
     # build_system_prompt() removed — now handled by VexyKernel._assemble_system_prompt()

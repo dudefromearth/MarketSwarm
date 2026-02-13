@@ -14,7 +14,7 @@ interface ChatInputProps {
   onReflectionDialChange?: (value: number) => void;
   showReflectionDial?: boolean;
   remainingMessages?: number;
-  dailyLimit?: number;
+  hourlyLimit?: number;
 }
 
 export default function ChatInput({
@@ -24,7 +24,7 @@ export default function ChatInput({
   onReflectionDialChange,
   showReflectionDial = false,
   remainingMessages,
-  dailyLimit,
+  hourlyLimit,
 }: ChatInputProps) {
   const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -66,7 +66,7 @@ export default function ChatInput({
   };
 
   const isExhausted = remainingMessages !== undefined && remainingMessages <= 0;
-  const isLimited = remainingMessages !== undefined && dailyLimit !== undefined && dailyLimit > 0;
+  const isLimited = remainingMessages !== undefined && hourlyLimit !== undefined && hourlyLimit > 0;
 
   return (
     <div className="vexy-chat-input-area">
@@ -78,7 +78,7 @@ export default function ChatInput({
             value={message}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder={isExhausted ? 'Daily limit reached' : 'Type a message...'}
+            placeholder={isExhausted ? 'Rate limit reached — try again shortly' : 'Type a message...'}
             disabled={disabled || isExhausted}
             rows={1}
           />
@@ -113,8 +113,8 @@ export default function ChatInput({
         <div className={`vexy-rate-limit ${isExhausted ? 'exhausted' : ''}`}>
           <span>
             {isExhausted
-              ? 'Daily message limit reached'
-              : `${remainingMessages} of ${dailyLimit} messages remaining today`}
+              ? 'Rate limit reached — try again shortly'
+              : `${remainingMessages} of ${hourlyLimit} messages remaining this hour`}
           </span>
         </div>
       )}

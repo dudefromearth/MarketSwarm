@@ -23,8 +23,8 @@ import TrialIndicator from './TrialIndicator';
 import RestrictedBanner from './RestrictedBanner';
 import ElevationHint from './ElevationHint';
 
-// Feature flag: set to true to use the new async interaction system
-const USE_INTERACTION_API = true;
+// Feature flag: use synchronous /api/vexy/chat (same route as Ask Vexy in Routine Drawer)
+const USE_INTERACTION_API = false;
 
 interface UserProfile {
   display_name?: string;
@@ -193,37 +193,37 @@ function formatContextForClipboard(
 
 // Tier configuration for client-side
 const TIER_CONFIG: Record<UserTier, {
-  dailyLimit: number;
+  hourlyLimit: number;
   echoEnabled: boolean;
   showReflectionDial: boolean;
   reflectionDialMax: number;
 }> = {
   observer: {
-    dailyLimit: 5,
+    hourlyLimit: 20,
     echoEnabled: false,
     showReflectionDial: false,
     reflectionDialMax: 0.5,
   },
   activator: {
-    dailyLimit: 25,
+    hourlyLimit: 20,
     echoEnabled: true,
     showReflectionDial: false,
     reflectionDialMax: 0.6,
   },
   navigator: {
-    dailyLimit: 100,
+    hourlyLimit: 20,
     echoEnabled: true,
     showReflectionDial: true,
     reflectionDialMax: 0.9,
   },
   coaching: {
-    dailyLimit: 100,
+    hourlyLimit: 20,
     echoEnabled: true,
     showReflectionDial: true,
     reflectionDialMax: 0.9,
   },
   administrator: {
-    dailyLimit: -1, // Unlimited
+    hourlyLimit: -1, // Unlimited
     echoEnabled: true,
     showReflectionDial: true,
     reflectionDialMax: 1.0,
@@ -552,7 +552,7 @@ export default function VexyChat({
         onReflectionDialChange={handleReflectionDialChange}
         showReflectionDial={tierConfig.showReflectionDial}
         remainingMessages={remainingMessages}
-        dailyLimit={tierConfig.dailyLimit > 0 ? tierConfig.dailyLimit : undefined}
+        hourlyLimit={tierConfig.hourlyLimit > 0 ? tierConfig.hourlyLimit : undefined}
       />
     </div>
   );

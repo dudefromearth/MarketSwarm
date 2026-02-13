@@ -85,7 +85,7 @@ class ChatCapability(BaseCapability):
                 tier_config = get_tier_config(user_tier)
                 raise HTTPException(
                     status_code=429,
-                    detail=f"Daily message limit reached ({tier_config.daily_limit} messages)"
+                    detail=f"Rate limit reached ({tier_config.rate_limit} per hour)"
                 )
 
             # Process chat
