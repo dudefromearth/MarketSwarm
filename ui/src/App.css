@@ -108,44 +108,44 @@
 
 /* Contrast levels — dark theme (default) */
 [data-contrast="low"] {
-  --text-primary: #b0b0b0;
-  --text-heading: #b8c0cc;
-  --text-bright: #d0d0d0;
-  --text-secondary: #7a8a9a;
-  --text-tertiary: #707070;
-  --text-muted: #555;
-  --text-faint: #556070;
+  --text-primary: #909090;
+  --text-heading: #98a0ac;
+  --text-bright: #b0b0b0;
+  --text-secondary: #606878;
+  --text-tertiary: #585858;
+  --text-muted: #444;
+  --text-faint: #445060;
 }
 
 [data-contrast="high"] {
-  --text-primary: #f5f5f5;
-  --text-heading: #f8fafc;
+  --text-primary: #fff;
+  --text-heading: #fff;
   --text-bright: #fff;
-  --text-secondary: #b0c0d4;
-  --text-tertiary: #a0a0a0;
-  --text-muted: #808080;
-  --text-faint: #8094a8;
+  --text-secondary: #c8d4e8;
+  --text-tertiary: #b8b8b8;
+  --text-muted: #959595;
+  --text-faint: #96a8be;
 }
 
 /* Contrast levels — light theme */
 [data-theme="light"][data-contrast="low"] {
-  --text-primary: #4a4a4e;
-  --text-heading: #4a4a4e;
-  --text-bright: #2a2a2a;
-  --text-secondary: #8e8e93;
-  --text-tertiary: #a0a0a5;
-  --text-muted: #c0c0c5;
-  --text-faint: #c0c0c5;
+  --text-primary: #6a6a6e;
+  --text-heading: #6a6a6e;
+  --text-bright: #4a4a4a;
+  --text-secondary: #a0a0a5;
+  --text-tertiary: #b0b0b5;
+  --text-muted: #d0d0d5;
+  --text-faint: #d0d0d5;
 }
 
 [data-theme="light"][data-contrast="high"] {
   --text-primary: #000;
   --text-heading: #000;
   --text-bright: #000;
-  --text-secondary: #3a3a3f;
-  --text-tertiary: #555;
-  --text-muted: #777;
-  --text-faint: #777;
+  --text-secondary: #1a1a1f;
+  --text-tertiary: #333;
+  --text-muted: #555;
+  --text-faint: #555;
 }
 
 /* ── Apple-style range sliders ── */
