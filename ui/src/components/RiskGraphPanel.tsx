@@ -360,6 +360,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
       legs: s.legs,
       positionType: s.positionType,
       direction: s.direction,
+      costBasisType: s.costBasisType,
     })),
     [strategies]
   );
@@ -995,10 +996,8 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                       const isLocked = priceLocked[strat.id] ?? false;
                       const theoValue = pnlChartData.strategyTheoValues[strat.id];
 
-                      // Derive credit/debit from the sign of the active value
-                      // Negative value = credit in both locked and unlocked modes
-                      const activeValue = isLocked ? costBasis : theoValue;
-                      const isCredit = activeValue != null ? activeValue < 0 : (strat.costBasisType === 'credit');
+                      // Use costBasisType as the source of truth for credit/debit
+                      const isCredit = strat.costBasisType === 'credit';
 
                       return (
                         <div key={strat.id} className={`risk-graph-position-item ${!strat.visible ? 'hidden-position' : ''} ${strat.visible && !pnlChartData.activeStrategyIds.includes(strat.id) ? 'sim-expired' : ''} ${isCredit ? 'credit-tint' : 'debit-tint'}`}>
@@ -1084,10 +1083,13 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                                 </span>
                                 <span className="cost-type-label">{isCredit ? 'Credit' : 'Debit'}</span>
                                 {isLocked && theoValue != null && (() => {
-                                  // P&L: for debits, lower theo = loss, higher = gain
-                                  // For credits, the signs are already negative, so compare directly
+                                  // P&L: compare theoretical value to cost basis with correct sign convention
+                                  // For debits: P&L = theoValue - costBasis (higher value = gain)
+                                  // For credits: P&L = theoValue + costBasis (theoValue is negative for short positions;
+                                  //   closer to zero = more profit since you keep the credit)
                                   const lockedVal = costBasis ?? 0;
-                                  const pnl = theoValue - lockedVal; // positive = position gained value
+                                  const signedLockedVal = isCredit ? -lockedVal : lockedVal;
+                                  const pnl = theoValue - signedLockedVal; // positive = position gained value
                                   const pnlColor = Math.abs(pnl) < 0.005 ? 'var(--text-faint)' : pnl > 0 ? '#22c55e' : '#ef4444';
                                   return (
                                     <span className="natural-price" style={{ color: pnlColor }}>

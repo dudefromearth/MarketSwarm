@@ -195,7 +195,7 @@ function calculateSkewedIV(
 }
 
 // Import position types
-import type { PositionLeg, PositionType, PositionDirection } from '../types/riskGraph';
+import type { PositionLeg, PositionType, PositionDirection, CostBasisType } from '../types/riskGraph';
 
 // Types
 export interface Strategy {
@@ -213,6 +213,7 @@ export interface Strategy {
   legs?: PositionLeg[];
   positionType?: PositionType;
   direction?: PositionDirection;
+  costBasisType?: CostBasisType;  // 'debit' or 'credit' — affects P&L sign
 }
 
 export interface PnLPoint {
@@ -245,6 +246,9 @@ export interface RiskGraphData {
   expiredTheoreticalPoints: PnLPoint[];
   // Per-strategy theoretical value at current/simulated spot (for lock/unlock pricing)
   strategyTheoValues: Record<string, number>;
+  strategyExpirationCurves: Record<string, Array<{ price: number; pnl: number }>>;
+  strategyGreeks: Record<string, { delta: number; gamma: number; theta: number }>;
+  strategyPnLAtSpot: Record<string, number>;
 }
 
 interface UseRiskGraphCalculationsProps {
@@ -814,7 +818,9 @@ function calculateLegsExpirationPnL(
  * For calendars/diagonals: uses Black-Scholes for far-dated legs at primary expiration
  */
 function calculateExpirationPnL(strategy: Strategy, price: number, baseVolatility?: number): number {
-  const debit = strategy.debit || 0;
+  // Apply sign convention: credits are negative cost (you received premium)
+  const rawDebit = strategy.debit || 0;
+  const debit = strategy.costBasisType === 'credit' ? -rawDebit : rawDebit;
   const multiplier = 100; // Standard equity option multiplier
 
   // If legs are provided, use leg-based calculation
@@ -1215,7 +1221,9 @@ function calculateTheoreticalPnL(
   spotPrice: number,
   params: PricingParams
 ): number {
-  const debit = strategy.debit || 0;
+  // Apply sign convention: credits are negative cost (you received premium)
+  const rawDebit = strategy.debit || 0;
+  const debit = strategy.costBasisType === 'credit' ? -rawDebit : rawDebit;
   const multiplier = 100;
   const T = Math.max(0, timeToExpiryYears);
 
@@ -1578,6 +1586,9 @@ export function useRiskGraphCalculations({
         expiredExpirationPoints: [],
         expiredTheoreticalPoints: [],
         strategyTheoValues: {},
+        strategyExpirationCurves: {},
+        strategyGreeks: {},
+        strategyPnLAtSpot: {},
       };
     }
 
@@ -1717,6 +1728,7 @@ export function useRiskGraphCalculations({
     }
 
     // Helper: returns theo value for unlocked strategies, original debit for locked
+    // Note: returns UNSIGNED value — sign convention is applied in calculateExpirationPnL/calculateTheoreticalPnL
     const getEffectiveDebit = (strat: Strategy): number => {
       if (unlockedStrategyIds?.has(strat.id)) {
         return strategyTheoValues[strat.id] ?? strat.debit ?? 0;
@@ -1732,6 +1744,11 @@ export function useRiskGraphCalculations({
     let minPnL = Infinity;
     let maxPnL = -Infinity;
 
+    const stratExpCurves: Record<string, PnLPoint[]> = {};
+    for (const strat of [...activeStrategies, ...expiredStrategies]) {
+      stratExpCurves[strat.id] = [];
+    }
+
     for (const price of pricePoints) {
       // Percentage offset from the weighting index spot
       const pctFromIndex = (price - ws) / ws;
@@ -1742,9 +1759,12 @@ export function useRiskGraphCalculations({
       for (const strat of activeStrategies) {
         const stratSpot = getStrategySpot(strat);
         const stratPrice = stratSpot * (1 + pctFromIndex);
+        // Unlocked: theoValue is already signed by leg quantities — clear costBasisType to avoid double-negate
         const effectiveStrat = unlockedStrategyIds?.has(strat.id)
-          ? { ...strat, debit: getEffectiveDebit(strat) } : strat;
-        expPnL += calculateExpirationPnL(effectiveStrat, stratPrice, volatility);
+          ? { ...strat, debit: getEffectiveDebit(strat), costBasisType: undefined } : strat;
+        const stratExpPnL = calculateExpirationPnL(effectiveStrat, stratPrice, volatility);
+        expPnL += stratExpPnL;
+        stratExpCurves[strat.id].push({ price, pnl: stratExpPnL });
       }
       expirationPoints.push({ price, pnl: expPnL });
 
@@ -1753,8 +1773,9 @@ export function useRiskGraphCalculations({
       for (const strat of activeStrategies) {
         const stratSpot = getStrategySpot(strat);
         const stratPrice = stratSpot * (1 + pctFromIndex);
+        // Unlocked: theoValue is already signed by leg quantities — clear costBasisType to avoid double-negate
         const effectiveStrat = unlockedStrategyIds?.has(strat.id)
-          ? { ...strat, debit: getEffectiveDebit(strat) } : strat;
+          ? { ...strat, debit: getEffectiveDebit(strat), costBasisType: undefined } : strat;
         theoPnL += calculateTheoreticalPnL(effectiveStrat, stratPrice, volatility, riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams);
       }
       theoreticalPoints.push({ price, pnl: theoPnL });
@@ -1769,6 +1790,7 @@ export function useRiskGraphCalculations({
           const ep = calculateExpirationPnL(strat, stratPrice, volatility);
           expiredExpPnL += ep;
           expiredTheoPnL += ep; // at expiration, theoretical = intrinsic
+          stratExpCurves[strat.id].push({ price, pnl: ep });
         }
         expiredExpirationPoints.push({ price, pnl: expiredExpPnL });
         expiredTheoreticalPoints.push({ price, pnl: expiredTheoPnL });
@@ -1803,12 +1825,16 @@ export function useRiskGraphCalculations({
       mcNumPaths: pricingModel === 'monte-carlo' ? Math.min(mcNumPaths, 1000) : 1000,
     };
     let theoreticalPnLAtSpot = 0;
+    const strategyPnLAtSpot: Record<string, number> = {};
     for (const strat of activeStrategies) {
       // Unlocked strategies have P&L = 0 at spot by definition (cost basis = model value)
-      if (unlockedStrategyIds?.has(strat.id)) continue;
+      if (unlockedStrategyIds?.has(strat.id)) {
+        strategyPnLAtSpot[strat.id] = 0;
+        continue;
+      }
       const stratSpot = getStrategySpot(strat);
       const stratSimulatedSpot = timeMachineEnabled ? stratSpot * (1 + simSpotPct / 100) : stratSpot;
-      theoreticalPnLAtSpot += calculateTheoreticalPnL(
+      const stratPnL = calculateTheoreticalPnL(
         strat,
         stratSimulatedSpot,
         volatility,
@@ -1817,12 +1843,21 @@ export function useRiskGraphCalculations({
         stratSpot,
         spotPricingParams
       );
+      theoreticalPnLAtSpot += stratPnL;
+      strategyPnLAtSpot[strat.id] = stratPnL;
+    }
+    // Expired strategies: P&L at spot is the intrinsic value
+    for (const strat of expiredStrategies) {
+      const stratSpot = getStrategySpot(strat);
+      const stratSimulatedSpot = timeMachineEnabled ? stratSpot * (1 + simSpotPct / 100) : stratSpot;
+      strategyPnLAtSpot[strat.id] = calculateExpirationPnL(strat, stratSimulatedSpot, volatility);
     }
 
     // Calculate aggregate Greeks at simulated spot (with skew, per-strategy time and spot)
     let totalDelta = 0;
     let totalGamma = 0;
     let totalTheta = 0;
+    const strategyGreeks: Record<string, { delta: number; gamma: number; theta: number }> = {};
     for (const strat of activeStrategies) {
       const stratSpot = getStrategySpot(strat);
       const stratSimulatedSpot = timeMachineEnabled ? stratSpot * (1 + simSpotPct / 100) : stratSpot;
@@ -1838,6 +1873,7 @@ export function useRiskGraphCalculations({
       totalDelta += greeks.delta;
       totalGamma += greeks.gamma;
       totalTheta += greeks.theta;
+      strategyGreeks[strat.id] = { delta: greeks.delta, gamma: greeks.gamma, theta: greeks.theta };
     }
 
     return {
@@ -1861,6 +1897,9 @@ export function useRiskGraphCalculations({
       expiredExpirationPoints,
       expiredTheoreticalPoints,
       strategyTheoValues,
+      strategyExpirationCurves: stratExpCurves,
+      strategyGreeks,
+      strategyPnLAtSpot,
     };
 
     } catch (err) {
@@ -1888,6 +1927,9 @@ export function useRiskGraphCalculations({
         expiredExpirationPoints: [],
         expiredTheoreticalPoints: [],
         strategyTheoValues: {},
+        strategyExpirationCurves: {},
+        strategyGreeks: {},
+        strategyPnLAtSpot: {},
       };
     }
   }, [strategies, spotPrice, vix, spotPrices, weightingSpotProp, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotPct, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths, unlockedStrategyIds]);

@@ -105,14 +105,21 @@ function rowToPosition(row) {
 }
 
 /**
- * Calculate DTE from primary expiration date
+ * Calculate DTE from primary expiration date (calendar days in ET timezone).
+ * 0DTE = expires today, 1DTE = expires tomorrow, etc.
  */
 function calculateDte(expirationDate) {
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const exp = new Date(expirationDate);
-  exp.setHours(0, 0, 0, 0);
-  return Math.max(0, Math.ceil((exp - now) / (1000 * 60 * 60 * 24)));
+  // Parse expiration as ET date string (avoid UTC date-only parsing pitfall)
+  const expStr = typeof expirationDate === 'string'
+    ? expirationDate.split('T')[0]
+    : new Date(expirationDate).toISOString().split('T')[0];
+  // Today in ET timezone (YYYY-MM-DD)
+  const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+  if (expStr <= todayET) return 0;
+  // Calendar day difference using explicit ET midnight
+  const expMs = new Date(expStr + 'T00:00:00-05:00').getTime();
+  const todayMs = new Date(todayET + 'T00:00:00-05:00').getTime();
+  return Math.ceil((expMs - todayMs) / (1000 * 60 * 60 * 24));
 }
 
 /**

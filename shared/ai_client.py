@@ -31,7 +31,7 @@ class AIClientConfig:
     temperature: float = 0.7
     max_tokens: int = 600
     enable_web_search: bool = False
-    xai_model: str = "grok-4"
+    xai_model: str = "grok-4-1-fast-reasoning"
     openai_model: str = "gpt-4o-mini"
 
 

@@ -16,6 +16,7 @@ router.use(async (req, res, next) => {
   const user = getCurrentUser(req);
   const wp = user?.wp;
   if (wp?.issuer && wp?.id) {
+    req.wpUserId = String(wp.id);
     try {
       const profile = await getUserProfile(wp.issuer, wp.id);
       if (profile?.id) {
@@ -476,8 +477,9 @@ router.get("/logs", (req, res) => {
 });
 
 // GET /sse/vexy-interaction - User-scoped Vexy interaction progress + results
+// Uses wpUserId (not dbUserId) because Vexy publishes to vexy_interaction:{wp_id}
 router.get("/vexy-interaction", (req, res) => {
-  const userId = req.dbUserId;
+  const userId = req.wpUserId;
   if (!userId) {
     res.status(401).json({ error: "Authentication required" });
     return;

@@ -216,8 +216,12 @@ export function usePositions(): UsePositionsResult {
       dte: (() => {
         const exp = input.legs[0]?.expiration;
         if (!exp) return 0;
-        const expClose = new Date(exp + 'T16:00:00-05:00');
-        return Math.max(0, Math.ceil((expClose.getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+        // Calendar-day DTE: compare dates in ET timezone (0DTE = expires today)
+        const todayET = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+        if (exp <= todayET) return 0;
+        const expMs = new Date(exp + 'T00:00:00-05:00').getTime();
+        const todayMs = new Date(todayET + 'T00:00:00-05:00').getTime();
+        return Math.ceil((expMs - todayMs) / (1000 * 60 * 60 * 24));
       })(),
       costBasis: input.costBasis ?? null,
       costBasisType: input.costBasisType ?? 'debit',
