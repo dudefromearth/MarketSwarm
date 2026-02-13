@@ -6,9 +6,10 @@
 # This script pushes to Git, then triggers deploy on DudeOne.
 #
 # Usage:
-#   ./promote.sh              # Push and deploy
+#   ./promote.sh              # Push and deploy (with post-deploy health verify)
 #   ./promote.sh --no-push    # Deploy only (already pushed)
 #   ./promote.sh --status     # Check production status
+#   ./promote.sh --verify     # Just verify production health (no deploy)
 # =============================================================
 
 set -e
@@ -78,6 +79,13 @@ deploy_production() {
     ssh "$PROD_HOST" "cd $MARKETSWARM_DIR && ./deploy/deploy.sh"
 
     success "Production deployment complete"
+
+    # Post-deploy verification from StudioTwo side
+    # Catches cases where deploy.sh exits 0 but services die shortly after
+    header "Verifying Production Health (post-deploy)"
+    sleep 5  # Allow services to fully settle
+    ssh "$PROD_HOST" "cd $MARKETSWARM_DIR && ./deploy/deploy.sh --verify"
+    success "Production deployment verified"
 }
 
 check_status() {
@@ -86,13 +94,19 @@ check_status() {
     ssh "$PROD_HOST" "cd $MARKETSWARM_DIR && ./deploy/deploy.sh --status"
 }
 
+verify_production() {
+    header "Verifying Production Health ($PROD_HOST)"
+    ssh "$PROD_HOST" "cd $MARKETSWARM_DIR && ./deploy/deploy.sh --verify"
+}
+
 show_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  (no args)     Push to Git and deploy to production"
+    echo "  (no args)     Push to Git and deploy to production (with health verify)"
     echo "  --no-push     Skip git push, just deploy"
-    echo "  --status      Check production service status"
+    echo "  --verify      Verify production health only (no deploy)"
+    echo "  --status      Check production service status (PID/Node Admin)"
     echo "  --help        Show this help"
     echo ""
     echo "Environment variables:"
@@ -110,6 +124,9 @@ main() {
             ;;
         --no-push)
             deploy_production
+            ;;
+        --verify)
+            verify_production
             ;;
         --status)
             check_status

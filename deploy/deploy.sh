@@ -18,7 +18,7 @@ set -e  # Exit on error
 # Configuration
 MARKETSWARM_DIR="${MARKETSWARM_DIR:-/Users/ernie/MarketSwarm}"
 NGINX_HOST="${NGINX_HOST:-MiniThree}"
-NGINX_CONF_PATH="${NGINX_CONF_PATH:-/etc/nginx/sites-available/marketswarm.conf}"
+NGINX_CONF_PATH="${NGINX_CONF_PATH:-/opt/homebrew/etc/nginx/servers/marketswarm.conf}"
 LOG_FILE="${MARKETSWARM_DIR}/deploy/deploy.log"
 NODE_ADMIN_PORT="${NODE_ADMIN_PORT:-8099}"
 NODE_ADMIN_URL="http://localhost:${NODE_ADMIN_PORT}"
@@ -31,12 +31,23 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Services to restart (in order)
+# Services to restart (in order — SSE gateway first, then backends)
 SERVICES=(
+    "sse"
     "journal"
     "vexy_ai"
+    "vexy_proxy"
     "rss_agg"
     "copilot"
+)
+
+# Service health endpoints for HTTP verification
+HEALTH_URLS=(
+    "sse|http://localhost:3001/api/health"
+    "journal|http://localhost:3002/health"
+    "vexy_ai|http://localhost:3005/health"
+    "vexy_proxy|http://localhost:3006/health"
+    "copilot|http://localhost:8095/health"
 )
 
 # =============================================================
@@ -162,14 +173,14 @@ sync_nginx() {
     # Copy config to Nginx server
     scp "$conf_src" "$NGINX_HOST:/tmp/marketswarm-https.conf"
 
-    # Test and reload on Nginx server
+    # Test and reload on Nginx server (MiniThree uses Homebrew nginx)
     ssh "$NGINX_HOST" bash -s << 'REMOTE_SCRIPT'
         set -e
         echo "Testing nginx config..."
-        sudo cp /tmp/marketswarm-https.conf /etc/nginx/sites-available/marketswarm.conf
-        sudo nginx -t
+        cp /tmp/marketswarm-https.conf /opt/homebrew/etc/nginx/servers/marketswarm.conf
+        nginx -t
         echo "Reloading nginx..."
-        sudo systemctl reload nginx
+        brew services reload nginx
         echo "Nginx reloaded successfully"
 REMOTE_SCRIPT
 
@@ -236,11 +247,19 @@ restart_services_direct() {
         fi
 
         case "$service" in
+            sse)
+                export PATH="/opt/homebrew/bin:$PATH"
+                nohup node services/sse/src/index.js >> logs/sse.log 2>&1 &
+                ;;
             journal)
                 nohup "$PYTHON" services/journal/main.py >> logs/journal.log 2>&1 &
                 ;;
             vexy_ai)
                 nohup "$PYTHON" services/vexy_ai/main.py >> logs/vexy_ai.log 2>&1 &
+                ;;
+            vexy_proxy)
+                export PATH="/opt/homebrew/bin:$PATH"
+                nohup node services/vexy_proxy/src/index.js >> logs/vexy_proxy.log 2>&1 &
                 ;;
             rss_agg)
                 nohup "$PYTHON" services/rss_agg/main.py >> logs/rss_agg.log 2>&1 &
@@ -308,15 +327,125 @@ check_status() {
     fi
 }
 
+reload_truth() {
+    header "Reloading Truth into Redis"
+    cd "$MARKETSWARM_DIR"
+    ./scripts/ms-truth.sh --load || { warn "Truth reload failed"; return 1; }
+    success "Truth loaded into system-redis"
+}
+
+build_ui() {
+    header "Building UI"
+    export PATH="/opt/homebrew/bin:$PATH"
+    cd "$MARKETSWARM_DIR/ui"
+    npx vite build || { warn "UI build failed"; cd "$MARKETSWARM_DIR"; return 1; }
+    cd "$MARKETSWARM_DIR"
+    success "UI built"
+}
+
+verify_health() {
+    header "Verifying Service Health (HTTP)"
+
+    local failed=()
+    local retries=5
+    local wait_secs=3
+
+    for entry in "${HEALTH_URLS[@]}"; do
+        local svc="${entry%%|*}"
+        local url="${entry##*|}"
+        local healthy=false
+
+        for ((i=1; i<=retries; i++)); do
+            local http_code
+            http_code=$(curl -s -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 5 "$url" 2>/dev/null || echo "000")
+
+            if [[ "$http_code" =~ ^2 ]]; then
+                healthy=true
+                break
+            fi
+
+            if [[ $i -lt $retries ]]; then
+                echo "  $svc: attempt $i/$retries (HTTP $http_code), retrying in ${wait_secs}s..."
+                sleep "$wait_secs"
+            fi
+        done
+
+        if $healthy; then
+            success "$svc (HTTP $http_code)"
+        else
+            error_msg="$svc FAILED (HTTP $http_code after $retries attempts)"
+            echo -e "${RED}✗${NC} $error_msg"
+            failed+=("$svc")
+        fi
+    done
+
+    echo ""
+    if [[ ${#failed[@]} -gt 0 ]]; then
+        echo -e "${RED}━━━ HEALTH CHECK FAILED ━━━${NC}"
+        echo -e "${RED}Unhealthy services: ${failed[*]}${NC}"
+        return 1
+    fi
+
+    success "All services healthy"
+    return 0
+}
+
+verify_nginx() {
+    header "Verifying Nginx (MiniThree)"
+
+    local nginx_ok=true
+
+    # Test nginx config syntax
+    echo "  Checking nginx config..."
+    if ssh "$NGINX_HOST" "nginx -t" 2>&1; then
+        success "nginx -t passed"
+    else
+        echo -e "${RED}✗${NC} nginx -t failed"
+        nginx_ok=false
+    fi
+
+    # Check nginx is running via brew services
+    echo "  Checking nginx process..."
+    local brew_status
+    brew_status=$(ssh "$NGINX_HOST" "brew services info nginx --json 2>/dev/null" || echo "")
+    if echo "$brew_status" | grep -q '"running":true\|"running": true'; then
+        success "nginx is running (brew services)"
+    else
+        echo -e "${RED}✗${NC} nginx not running on $NGINX_HOST"
+        nginx_ok=false
+    fi
+
+    # End-to-end check through nginx
+    echo "  Checking end-to-end via https://flyonthewall.io..."
+    local http_code
+    http_code=$(curl -sk -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 10 "https://flyonthewall.io/api/health" 2>/dev/null || echo "000")
+    if [[ "$http_code" =~ ^2 ]]; then
+        success "End-to-end OK (HTTP $http_code)"
+    else
+        echo -e "${RED}✗${NC} End-to-end FAILED (HTTP $http_code)"
+        nginx_ok=false
+    fi
+
+    if ! $nginx_ok; then
+        echo ""
+        echo -e "${RED}━━━ NGINX VERIFICATION FAILED ━━━${NC}"
+        return 1
+    fi
+
+    success "Nginx fully verified"
+    return 0
+}
+
 show_usage() {
     echo "Usage: $0 [OPTIONS]"
     echo ""
     echo "Options:"
-    echo "  (no args)     Full deploy: pull, migrate, restart services"
+    echo "  (no args)     Full deploy: pull, migrate, build UI, restart, verify"
     echo "  --pull-only   Just pull code, no restarts"
     echo "  --restart     Just restart services"
     echo "  --nginx       Sync Nginx config to MiniThree"
-    echo "  --status      Check service status"
+    echo "  --status      Check service status (PID/Node Admin)"
+    echo "  --verify      HTTP health check all services + nginx (no restarts)"
     echo "  --help        Show this help"
     echo ""
     echo "Environment variables:"
@@ -343,7 +472,7 @@ main() {
         --restart)
             check_prereqs
             restart_services
-            check_status
+            verify_health
             ;;
         --nginx)
             check_prereqs
@@ -353,6 +482,19 @@ main() {
             check_prereqs
             check_status
             ;;
+        --verify)
+            check_prereqs
+            local exit_code=0
+            verify_health || exit_code=1
+            verify_nginx || exit_code=$((exit_code + 1))
+            if [[ $exit_code -gt 0 ]]; then
+                echo ""
+                echo -e "${RED}━━━ VERIFICATION FAILED ━━━${NC}"
+                exit 1
+            fi
+            header "Verification Passed"
+            success "All services and nginx healthy"
+            ;;
         full|"")
             header "MarketSwarm Deployment"
             echo "Server: $(hostname)"
@@ -361,12 +503,15 @@ main() {
             check_prereqs
             git_pull
             run_migrations
+            reload_truth
+            build_ui
             restart_services
             sync_nginx
-            check_status
+            verify_health
+            verify_nginx
 
             header "Deployment Complete"
-            success "All services deployed successfully"
+            success "All services deployed and verified"
             ;;
         *)
             error "Unknown option: $mode"

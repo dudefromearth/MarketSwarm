@@ -221,4 +221,19 @@ menu() {
 ###############################################
 # Entrypoint
 ###############################################
-menu
+case "${1:-}" in
+  --load)
+    echo "Loading Truth into system-redis (non-interactive)"
+    echo "────────────────────────────────────────────────"
+    show_status
+    echo ""
+    rc_bus system-redis SET truth "$(cat "$TRUTH_FILE")" >/dev/null \
+      || { echo "[ERROR] Failed to write truth"; exit 1; }
+    rc_bus system-redis PING | grep -q PONG \
+      || { echo "[ERROR] system-redis not responding after write"; exit 1; }
+    echo "[OK] Truth loaded and verified"
+    ;;
+  *)
+    menu
+    ;;
+esac

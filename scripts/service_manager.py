@@ -686,13 +686,15 @@ class HealthCollector:
         "sse":          {"interval": 5,  "ttl": 15},
         "healer":       {"interval": 10, "ttl": 30},
         "mesh":         {"interval": 5,  "ttl": 15},
+        "vexy_proxy":   {"interval": 10, "ttl": 30},
     }
 
     HEALTH_ENDPOINTS = {
-        "sse":      "http://127.0.0.1:3001/api/health",
-        "journal":  "http://127.0.0.1:3002/health",
-        "vexy_ai":  "http://127.0.0.1:3005/health",
-        "copilot":  "http://127.0.0.1:8095/health",
+        "sse":         "http://127.0.0.1:3001/api/health",
+        "journal":     "http://127.0.0.1:3002/health",
+        "vexy_ai":     "http://127.0.0.1:3005/health",
+        "vexy_proxy":  "http://127.0.0.1:3006/health",
+        "copilot":     "http://127.0.0.1:8095/health",
     }
 
     MAX_HISTORY = 240
