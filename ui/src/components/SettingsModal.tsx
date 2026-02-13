@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { usePath } from '../contexts/PathContext';
 import { useTimezone } from '../contexts/TimezoneContext';
-import { useUserPreferences, type ThemeMode, type TextSize } from '../contexts/UserPreferencesContext';
+import { useUserPreferences, type ThemeMode, type TextSize, type ContrastLevel } from '../contexts/UserPreferencesContext';
 import {
   HARDCODED_DEFAULTS,
   type SymbolConfigRegistry,
@@ -104,6 +104,7 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
   const {
     theme, setTheme, resolvedTheme,
     textSize, setTextSize,
+    contrast, setContrast,
     indicatorPanelsVisible, setIndicatorPanelsVisible,
   } = useUserPreferences();
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
@@ -1525,6 +1526,25 @@ export default function SettingsModal({ onClose }: SettingsModalProps) {
                         {textSize === 'compact' ? 'Smaller text for more information density'
                           : textSize === 'comfortable' ? 'Larger text for easier reading'
                           : 'Default text size'}
+                      </span>
+                    </div>
+                    <div className="setting-item">
+                      <label>Contrast</label>
+                      <div className="setting-toggle-group">
+                        {(['low', 'normal', 'high'] as ContrastLevel[]).map((c) => (
+                          <button
+                            key={c}
+                            className={`setting-toggle-btn ${contrast === c ? 'active' : ''}`}
+                            onClick={() => setContrast(c)}
+                          >
+                            {c.charAt(0).toUpperCase() + c.slice(1)}
+                          </button>
+                        ))}
+                      </div>
+                      <span className="setting-hint">
+                        {contrast === 'low' ? 'Softer text for reduced eye strain'
+                          : contrast === 'high' ? 'Sharper text against backgrounds'
+                          : 'Default text contrast'}
                       </span>
                     </div>
                   </div>

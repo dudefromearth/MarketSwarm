@@ -6,6 +6,7 @@ import { useLocalStorage } from '../hooks/useLocalStorage';
 
 export type ThemeMode = 'dark' | 'light' | 'auto';
 export type TextSize = 'compact' | 'normal' | 'comfortable';
+export type ContrastLevel = 'low' | 'normal' | 'high';
 
 interface UserPreferencesContextValue {
   theme: ThemeMode;
@@ -13,6 +14,8 @@ interface UserPreferencesContextValue {
   resolvedTheme: 'dark' | 'light';
   textSize: TextSize;
   setTextSize: (s: TextSize) => void;
+  contrast: ContrastLevel;
+  setContrast: (c: ContrastLevel) => void;
   indicatorPanelsVisible: boolean;
   setIndicatorPanelsVisible: (v: boolean) => void;
 }
@@ -27,6 +30,7 @@ function getSystemTheme(): 'dark' | 'light' {
 export function UserPreferencesProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useLocalStorage<ThemeMode>('ms-pref-theme', 'dark', { syncTabs: true });
   const [textSize, setTextSize] = useLocalStorage<TextSize>('ms-pref-text-size', 'normal', { syncTabs: true });
+  const [contrast, setContrast] = useLocalStorage<ContrastLevel>('ms-pref-contrast', 'normal', { syncTabs: true });
   const [indicatorPanelsVisible, setIndicatorPanelsVisible] = useLocalStorage<boolean>('ms-pref-indicators-visible', false, { syncTabs: true });
 
   // For auto mode, we need to track the system preference reactively
@@ -54,6 +58,10 @@ export function UserPreferencesProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     document.documentElement.dataset.textSize = textSize;
   }, [textSize]);
+
+  useEffect(() => {
+    document.documentElement.dataset.contrast = contrast;
+  }, [contrast]);
 
   // Range slider filled-track: set --range-pct on every input[type="range"]
   useEffect(() => {
@@ -98,6 +106,7 @@ export function UserPreferencesProvider({ children }: { children: ReactNode }) {
     <UserPreferencesContext.Provider value={{
       theme, setTheme, resolvedTheme,
       textSize, setTextSize,
+      contrast, setContrast,
       indicatorPanelsVisible, setIndicatorPanelsVisible,
     }}>
       {children}
