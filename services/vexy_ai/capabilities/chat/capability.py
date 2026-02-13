@@ -11,7 +11,7 @@ Provides direct conversational access to Vexy with:
 
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from ...core.capability import BaseCapability
 from .service import ChatService
@@ -66,16 +66,20 @@ class ChatCapability(BaseCapability):
         router = APIRouter(tags=["Chat"])
 
         @router.post("/api/vexy/chat", response_model=VexyChatResponse)
-        async def vexy_chat(request: VexyChatRequest):
+        async def vexy_chat(request: VexyChatRequest, req: Request):
             """
             Handle Vexy chat messages.
 
             Provides direct conversational access to Vexy, the AI engine
             running on The Path OS. Access is tiered by subscription level.
             """
-            # For now, default to navigator tier
-            # In production, user_id and tier come from auth middleware
-            user_id = 1  # TODO: Extract from auth header
+            # Extract user_id from X-User-Id header (set by vexy_proxy or SSE gateway)
+            user_id_str = req.headers.get("X-User-Id", "")
+            try:
+                user_id = int(user_id_str) if user_id_str else 1
+            except ValueError:
+                user_id = 1
+
             user_tier = request.user_tier or "navigator"
 
             # Check rate limit
