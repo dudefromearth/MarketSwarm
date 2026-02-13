@@ -1494,6 +1494,13 @@ body {
   white-space: nowrap;
 }
 
+.panel-header-date {
+  font-weight: 400;
+  font-size: 0.8em;
+  opacity: 0.6;
+  margin-left: 6px;
+}
+
 .panel-toggle {
   font-size: 10px;
   color: var(--text-muted);

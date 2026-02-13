@@ -1360,12 +1360,12 @@ function App() {
   useEffect(() => {
     if (hasMigratedPriceLines.current || priceAlertLines.length === 0) return;
     hasMigratedPriceLines.current = true;
-    const currentSpotVal = currentSpot || 6000;
+    const spotVal = spot?.[underlying]?.value || 6000;
     for (const line of priceAlertLines) {
       contextCreateAlert({
         type: 'price',
         source: { type: 'chart', id: 'migrated', label: 'Price Line' },
-        condition: line.price > currentSpotVal ? 'above' : 'below',
+        condition: line.price > spotVal ? 'above' : 'below',
         targetValue: line.price,
         color: line.color,
         behavior: 'once_only',
@@ -1374,7 +1374,7 @@ function App() {
     }
     setPriceAlertLines([]);
     localStorage.removeItem('priceAlertLines');
-  }, [priceAlertLines, contextCreateAlert, currentSpot]);
+  }, [priceAlertLines, contextCreateAlert, spot, underlying]);
 
   // Fetch user profile for header greeting
   useEffect(() => {
@@ -3451,7 +3451,7 @@ function App() {
         <div className={`panel heatmap-panel ${heatmapCollapsed ? 'collapsed' : ''}`}>
           <div className="panel-header" onClick={() => setHeatmapCollapsed(!heatmapCollapsed)} style={{ cursor: 'pointer' }}>
             <span className="panel-toggle">{heatmapCollapsed ? '▶' : '▼'}</span>
-            <h3>Heatmap</h3>
+            <h3>Heatmap{currentExpiration && (() => { const d = new Date(currentExpiration + 'T00:00:00'); return <span className="panel-header-date">{d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>; })()}</h3>
             {!heatmapCollapsed && (
               <div className="panel-header-icons">
                 <button
