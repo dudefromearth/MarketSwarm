@@ -387,7 +387,8 @@
         "journal",
         "playbook",
         "commentary",
-        "interaction"
+        "interaction",
+        "edge_lab"
       ],
       "env": {
         "VEXY_MODE": "full",
