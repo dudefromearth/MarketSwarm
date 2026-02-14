@@ -540,6 +540,28 @@ class JournalOrchestrator:
             self.logger.error(f"get_users_with_logs error: {e}")
             return self._error_response(str(e), 500, request)
 
+    async def get_edge_lab_active_users(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/active-users?days=30 — Get user IDs with recent Edge Lab setups.
+
+        Internal endpoint, restricted to localhost. Used by PDE scan loop.
+        """
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] not in ('127.0.0.1', '::1', 'localhost'):
+                return self._error_response('Internal endpoint only', 403, request)
+
+            days = int(request.query.get('days', '30'))
+            user_ids = self.db.get_edge_lab_active_users(days)
+
+            return self._json_response({
+                'success': True,
+                'user_ids': user_ids,
+                'count': len(user_ids)
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"get_edge_lab_active_users error: {e}")
+            return self._error_response(str(e), 500, request)
+
     async def get_logs_health_metrics(self, request: web.Request) -> web.Response:
         """GET /api/logs/health - Get log health metrics for a user.
 
@@ -6858,6 +6880,9 @@ class JournalOrchestrator:
         app.router.add_post('/api/edge-lab/analytics/compute', self.compute_edge_lab_analytics)
         app.router.add_get('/api/edge-lab/analytics/dashboard', self.get_edge_lab_dashboard)
         app.router.add_post('/api/internal/edge-lab/materialize', self.materialize_edge_lab_metrics)
+
+        # Edge Lab internal (PDE user discovery)
+        app.router.add_get('/api/edge-lab/active-users', self.get_edge_lab_active_users)
 
         return app
 

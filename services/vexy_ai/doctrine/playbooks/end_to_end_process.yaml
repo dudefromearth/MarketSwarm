@@ -1,0 +1,37 @@
+playbook:
+  domain: end_to_end_process
+  version: 1.0.0
+  doctrine_source: path_v4_runtime
+  path_runtime_version: v4.0.3
+  path_runtime_hash: 721b212df8d691d4fcdf54e6d45fcfbd368dcd23c41c33f9b0f5489a90988038
+  generated_at: '2026-02-14T15:33:41.573335+00:00'
+  canonical_terminology:
+  - term: interaction
+    definition: 'A two-layer request: fast dialog ACK (<250ms) followed by async cognition via VexyKernel.reason().'
+  - term: dialog layer
+    definition: The fast first layer that validates, rate-limits, and acknowledges. Never blocks.
+  - term: cognition layer
+    definition: The async second layer that performs full reasoning with doctrine, playbooks, and echo.
+  - term: doctrine mode
+    definition: 'The reasoning constraint level: STRICT (full doctrine), HYBRID (doctrine + reflective), REFLECTIVE (emotional/process).'
+  definitions:
+    core: End-to-end process describes the full request lifecycle from user query through doctrine classification, reasoning,
+      validation, and response delivery.
+  structural_logic:
+  - 'Every interaction passes through two layers: dialog (fast) and cognition (async).'
+  - All LLM calls route through VexyKernel.reason() — no exceptions.
+  - Post-LLM validation checks ORA, forbidden language, tier scope, and despair signals.
+  - Response delivery via pub/sub on vexy_interaction:{wp_user_id}.
+  mechanisms: []
+  constraints:
+  - No capability may call call_ai() directly — must use kernel.
+  - Dialog layer must respond in <250ms.
+  - Post-LLM validation must run on every response.
+  failure_modes:
+  - Bypassing kernel for direct LLM calls.
+  - Dialog layer blocking on cognition.
+  - Skipping post-LLM validation.
+  non_capabilities:
+  - Cannot bypass VexyKernel.reason().
+  - Cannot skip post-LLM validation.
+  - Cannot deliver responses without pub/sub.

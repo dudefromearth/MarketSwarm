@@ -1,0 +1,38 @@
+playbook:
+  domain: admin_orchestration
+  version: 1.0.0
+  doctrine_source: path_v4_runtime
+  path_runtime_version: v4.0.3
+  path_runtime_hash: 721b212df8d691d4fcdf54e6d45fcfbd368dcd23c41c33f9b0f5489a90988038
+  generated_at: '2026-02-14T15:33:41.573335+00:00'
+  canonical_terminology:
+  - term: governance parameter
+    definition: A mutable configuration value (threshold, cooldown, budget, toggle) that controls system behavior without
+      changing doctrine.
+  - term: immutable doctrine
+    definition: Canonical terminology, structural logic, constraints, and non-capabilities that can only change via version
+      bump + deployment.
+  - term: kill switch
+    definition: Administrative toggle that disables specific subsystems. Logged, reversible, non-destructive.
+  - term: overlay
+    definition: An observational addendum appended after doctrine reasoning. Cannot influence LLM reasoning. Expires automatically.
+  definitions:
+    core: Admin orchestration governs what Vexy sees and how she operates. It controls governance parameters but cannot mutate
+      immutable doctrine.
+  structural_logic:
+  - Admin can modify thresholds, cooldowns, budgets, strictness toggles.
+  - Admin CANNOT mutate canonical terminology, structural logic, constraints, or non-capabilities.
+  - Doctrine edits require version bump + service restart + explicit deployment.
+  - All mutation actions are logged with timestamp + admin user ID.
+  mechanisms: []
+  constraints:
+  - Immutable doctrine core cannot be changed at runtime.
+  - Kill switch actions must be logged.
+  - Overlays are observational only — never prescriptive.
+  failure_modes:
+  - Allowing runtime mutation of canonical terminology.
+  - Kill switch without audit logging.
+  - Overlay injection before or during doctrine reasoning.
+  non_capabilities:
+  - Cannot mutate immutable doctrine at runtime.
+  - Cannot suppress audit logging.

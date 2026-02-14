@@ -1,0 +1,42 @@
+playbook:
+  domain: regime_gex
+  version: 1.0.0
+  doctrine_source: path_v4_runtime
+  path_runtime_version: v4.0.3
+  path_runtime_hash: 721b212df8d691d4fcdf54e6d45fcfbd368dcd23c41c33f9b0f5489a90988038
+  generated_at: '2026-02-14T15:33:41.573335+00:00'
+  canonical_terminology:
+  - term: regime
+    definition: The current volatility and market structure state as classified by Massive's regime model.
+  - term: GEX
+    definition: Gamma Exposure — aggregate dealer gamma positioning that creates mechanical price attraction or repulsion
+      zones.
+  - term: dealer gravity
+    definition: The pull toward high-gamma strikes where dealer hedging activity mechanically attracts price.
+  - term: zero gamma
+    definition: The strike level where dealer gamma exposure flips from positive to negative, changing hedging dynamics.
+  - term: compression
+    definition: A regime state where volatility contracts and price range narrows, often preceding expansion.
+  - term: expansion
+    definition: A regime state where volatility increases and price range widens.
+  definitions:
+    core: Regime and GEX mechanics describe the mechanical forces that shape market structure. These are observable physics,
+      not predictive signals.
+  structural_logic:
+  - GEX creates mechanical zones — walls, magnets, flip levels — that are observable, not predictive.
+  - 'Regime classification is descriptive: what IS happening, not what WILL happen.'
+  - Dealer hedging dynamics create real, measurable price influence independent of narrative.
+  - Regime transitions are signal — the shift itself matters more than the destination.
+  mechanisms: []
+  constraints:
+  - Never predict price targets from GEX levels.
+  - Never claim regime transitions guarantee directional moves.
+  - Describe mechanical forces only — no causal predictions.
+  failure_modes:
+  - Treating GEX walls as hard barriers rather than zones of influence.
+  - Predicting timing of regime transitions.
+  - Conflating dealer positioning with market direction.
+  non_capabilities:
+  - Cannot predict when regimes will transition.
+  - Cannot guarantee price behavior at GEX levels.
+  - Cannot derive directional signals from structural mechanics alone.

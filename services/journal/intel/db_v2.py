@@ -7316,6 +7316,26 @@ class JournalDBv2:
             cursor.close()
             conn.close()
 
+    def get_edge_lab_active_users(self, days: int = 30) -> List[int]:
+        """Get user IDs with Edge Lab setups in the last N days.
+
+        Used by PDE scan loop for user discovery.
+        Stable ordering by user_id for fair rotation.
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT DISTINCT user_id
+                FROM edge_lab_setups
+                WHERE setup_date >= DATE_SUB(NOW(), INTERVAL %s DAY)
+                ORDER BY user_id
+            """, (days,))
+            return [row[0] for row in cursor.fetchall()]
+        finally:
+            cursor.close()
+            conn.close()
+
     def get_logs_health_metrics(self, user_id: int) -> List[Dict[str, Any]]:
         """Get log health metrics for a user.
 

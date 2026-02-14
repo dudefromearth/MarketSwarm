@@ -257,7 +257,8 @@ class JournalAuth:
 
         Checks in order:
         1. X-User-* headers (from SSE gateway proxy)
-        2. JWT token (direct requests)
+        2. X-Internal-User-Id header (internal service auth, localhost only)
+        3. JWT token (direct requests)
 
         Args:
             request: aiohttp request object
@@ -269,6 +270,24 @@ class JournalAuth:
         user = self.get_user_from_proxy_headers(request)
         if user and user.get('id'):
             return user
+
+        # Internal service auth (localhost only, uses internal DB user ID)
+        # NOTE: Localhost-only auth is valid for single-node deployment.
+        # Must be replaced with mTLS or service JWT in distributed/multi-node mode.
+        x_internal_user = request.headers.get('X-Internal-User-Id', '').strip()
+        if x_internal_user:
+            # Reject ambiguous requests with both internal and proxy headers
+            x_user_id = request.headers.get('X-User-Id', '').strip()
+            if x_user_id:
+                return None  # Ambiguous — refuse rather than guess
+            peername = request.transport.get_extra_info('peername')
+            if peername and peername[0] in ('127.0.0.1', '::1'):
+                try:
+                    user = self.get_user_by_id(int(x_internal_user))
+                    if user:
+                        return user
+                except (ValueError, TypeError):
+                    pass
 
         # Fall back to JWT token extraction
         token = self.extract_token(request)

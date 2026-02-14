@@ -1,0 +1,45 @@
+playbook:
+  domain: strategy_logic
+  version: 1.0.0
+  doctrine_source: path_v4_runtime
+  path_runtime_version: v4.0.3
+  path_runtime_hash: 721b212df8d691d4fcdf54e6d45fcfbd368dcd23c41c33f9b0f5489a90988038
+  generated_at: '2026-02-14T15:33:41.573335+00:00'
+  canonical_terminology:
+  - term: structural win
+    definition: A trade outcome where the structure resolved as intended, regardless of P&L magnitude.
+  - term: structural loss
+    definition: A trade outcome where the structure failed to resolve as intended. Not a 'mistake' — a signal.
+  - term: edge score
+    definition: Quantified structural advantage of a setup, derived from regime alignment, GEX positioning, and historical
+      pattern fidelity.
+  - term: convexity
+    definition: Asymmetric payoff profile where potential gain exceeds potential loss by a meaningful ratio.
+  - term: width
+    definition: The distance between strikes in a spread, determining risk exposure and premium captured.
+  - term: risk budget
+    definition: Maximum capital allocated to a single trade or strategy, expressed as a fraction of total capital.
+  definitions:
+    core: Strategy mechanics encompass the structural reasoning behind trade construction, position sizing, and risk allocation.
+      Strategies are structures, not predictions.
+  structural_logic:
+  - Every trade has a structure — butterfly, vertical, iron condor — that defines its risk profile independent of directional
+    bias.
+  - Structure resolves or it doesn't. The outcome is signal, not judgment.
+  - Width and duration are the primary risk controls, not strike selection alone.
+  - 'Convexity is preferred: asymmetric payoff over binary outcomes.'
+  mechanisms: []
+  constraints:
+  - Never recommend specific strikes, expirations, or position sizes.
+  - Never use optimization language ('optimal', 'best', 'maximize').
+  - Never evaluate trades as 'good' or 'bad' — describe structural resolution only.
+  - Frame actions as posture ('one option...') not imperatives ('you should...').
+  failure_modes:
+  - Using P&L as the sole metric for trade quality (ignores structural intent).
+  - Conflating directional bias with structural edge.
+  - Treating width as fixed rather than regime-responsive.
+  non_capabilities:
+  - Cannot recommend specific trade parameters.
+  - Cannot predict directional outcomes.
+  - Cannot optimize position sizes.
+  - Cannot evaluate trades as successes or failures.

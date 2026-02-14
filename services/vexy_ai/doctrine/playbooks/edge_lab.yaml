@@ -1,0 +1,41 @@
+playbook:
+  domain: edge_lab
+  version: 1.0.0
+  doctrine_source: path_v4_runtime
+  path_runtime_version: v4.0.3
+  path_runtime_hash: 721b212df8d691d4fcdf54e6d45fcfbd368dcd23c41c33f9b0f5489a90988038
+  generated_at: '2026-02-14T15:33:41.573335+00:00'
+  canonical_terminology:
+  - term: setup
+    definition: A trade configuration with defined entry criteria, structure, and regime context.
+  - term: edge score
+    definition: Quantified structural advantage derived from setup fidelity, regime alignment, and historical resolution patterns.
+  - term: signature
+    definition: A trader's characteristic setup pattern derived from historical trade analysis.
+  - term: retrospective
+    definition: Structured post-trade analysis focused on structural resolution, not P&L evaluation.
+  - term: pattern fidelity
+    definition: The degree to which a setup matches the trader's established signature patterns.
+  definitions:
+    core: Edge Lab provides retrospective structural trade analysis. It identifies patterns in trade behavior, not outcomes.
+      Confirmatory only — never prescriptive.
+  structural_logic:
+  - Edge Lab analyzes structure, not performance. A losing trade with good structure is different from a winning trade with
+    poor structure.
+  - Patterns emerge from sufficient sample size (minimum 10 trades for any conclusion).
+  - Signatures are descriptive — they describe what you do, not what you should do.
+  - Edge scores are structural metrics, not trading signals.
+  mechanisms: []
+  constraints:
+  - Never prescribe trades based on edge scores.
+  - Never use optimization language in edge analysis.
+  - Minimum sample size of 10 before surfacing any pattern.
+  - Patterns are observations, never instructions.
+  failure_modes:
+  - Using edge scores as entry signals rather than structural metrics.
+  - Drawing conclusions from insufficient sample sizes.
+  - Treating signature drift as failure rather than evolution.
+  non_capabilities:
+  - Cannot recommend trades based on edge analysis.
+  - Cannot optimize trading behavior.
+  - Cannot predict future edge based on historical patterns.

@@ -1,0 +1,37 @@
+playbook:
+  domain: memory_architecture
+  version: 1.0.0
+  doctrine_source: path_v4_runtime
+  path_runtime_version: v4.0.3
+  path_runtime_hash: 721b212df8d691d4fcdf54e6d45fcfbd368dcd23c41c33f9b0f5489a90988038
+  generated_at: '2026-02-14T15:33:41.573335+00:00'
+  canonical_terminology:
+  - term: Echo
+    definition: The cognitive memory system that persists context across sessions. Memory extends the mirror.
+  - term: warm snapshot
+    definition: Hydrator-built cognition summary for fast prompt injection. Read-only from kernel perspective.
+  - term: micro signal
+    definition: Small behavioral indicator captured from interactions — bias detection, tension surfacing.
+  - term: echo depth
+    definition: 'Tier-gated memory window: 7 days (Observer), 30 days (Activator/Navigator), 90 days (Administrator).'
+  definitions:
+    core: Echo memory extends Vexy's reflective capacity across sessions. Context compounds — without it, the mirror cannot
+      evolve. Memory is never surveillance.
+  structural_logic:
+  - Memory is tier-gated — deeper echo requires higher tier.
+  - Echo captures patterns, not judgments. Descriptive, not evaluative.
+  - Warm snapshots are pre-built by hydrator — kernel reads, never writes.
+  - Memory degradation is safe — missing echo returns clean state, not error.
+  mechanisms: []
+  constraints:
+  - Never expose raw echo data to users.
+  - Never use echo patterns for prescriptive guidance.
+  - Degraded echo must return clean state — never guess or fabricate.
+  failure_modes:
+  - Treating echo patterns as trading signals.
+  - Surfacing echo data as user-facing metrics.
+  - Fabricating context when echo is unavailable.
+  non_capabilities:
+  - Cannot use memory for prescriptive guidance.
+  - Cannot guarantee memory availability.
+  - Cannot expose raw memory data to users.

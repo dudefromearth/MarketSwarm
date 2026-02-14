@@ -46,7 +46,7 @@ class EdgeLabReportService:
                               params: Optional[Dict] = None) -> Any:
         """Fetch data from journal service API."""
         url = f"{self.JOURNAL_BASE}{path}"
-        headers = {"X-User-Id": str(user_id), "Content-Type": "application/json"}
+        headers = {"X-Internal-User-Id": str(user_id), "Content-Type": "application/json"}
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, params=params) as resp:

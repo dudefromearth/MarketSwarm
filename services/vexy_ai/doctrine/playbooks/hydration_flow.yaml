@@ -1,0 +1,34 @@
+playbook:
+  domain: hydration_flow
+  version: 1.0.0
+  doctrine_source: path_v4_runtime
+  path_runtime_version: v4.0.3
+  path_runtime_hash: 721b212df8d691d4fcdf54e6d45fcfbd368dcd23c41c33f9b0f5489a90988038
+  generated_at: '2026-02-14T15:33:41.573335+00:00'
+  canonical_terminology:
+  - term: hydration
+    definition: The process of loading context (market, echo, position data) into the reasoning pipeline before LLM invocation.
+  - term: context injection
+    definition: Adding structured context to the prompt assembly pipeline at the appropriate layer.
+  - term: prompt assembly
+    definition: The ordered layering of doctrine, outlet, tier, agent, playbook, and echo content into the system prompt.
+  definitions:
+    core: Hydration flow controls what context enters the reasoning pipeline and in what order. Layer order is immutable —
+      doctrine first, always.
+  structural_logic:
+  - 'Prompt assembly order: 1) Base doctrine 2) Outlet voice 3) Tier scope 4) Agent voice 5) Playbooks 6) Echo memory'
+  - External content must be sanitized before injection.
+  - Missing context returns clean state — never fabricates.
+  - Each layer is additive and non-destructive to prior layers.
+  mechanisms: []
+  constraints:
+  - Layer order is immutable — doctrine always comes first.
+  - External content cannot override doctrine.
+  - Missing context must degrade gracefully, never block.
+  failure_modes:
+  - Injecting context before doctrine (layer order violation).
+  - Allowing external content to override Path invariants.
+  - Blocking on missing optional context.
+  non_capabilities:
+  - Cannot reorder prompt assembly layers.
+  - Cannot inject context that overrides doctrine.
