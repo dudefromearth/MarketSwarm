@@ -1,21 +1,21 @@
 /**
- * PositionCreateModal - Create new positions manually or from imported scripts
+ * PositionCreateModal - Create or edit positions
  *
  * Features:
  * - Build mode: Select position type and configure legs
  * - Import mode: Paste scripts from ToS, Tradier, etc.
+ * - Edit mode: Modify existing positions (legs, cost basis)
  * - Auto-detection of script format
  * - Preview before adding to Risk Graph
  */
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useDraggable } from '../hooks/useDraggable';
-import type { PositionLeg, PositionType, CostBasisType } from '../types/riskGraph';
+import type { PositionLeg, PositionType, PositionDirection, CostBasisType } from '../types/riskGraph';
 import { POSITION_TYPE_LABELS } from '../types/riskGraph';
-import { recognizePositionType } from '../utils/positionRecognition';
+import { recognizePositionType, strategyToLegs } from '../utils/positionRecognition';
 import { formatLegsDisplay, formatPositionLabel } from '../utils/positionFormatting';
 import { useSymbolConfig, getCurrentExpiration, getNextExpiration } from '../utils/symbolConfig';
-import StrikeDropdown from './StrikeDropdown';
 import {
   parseScript,
   detectScriptFormat,
@@ -46,10 +46,30 @@ export interface PositionPrefill {
   symbol?: string;
 }
 
+// Legacy strategy data format (for backward compatibility with edit mode)
+export interface StrategyData {
+  id: string;
+  strategy: 'butterfly' | 'vertical' | 'single';
+  side: 'call' | 'put';
+  strike: number;
+  width: number;
+  dte: number;
+  expiration: string;
+  debit: number | null;
+  symbol?: string;
+  legs?: PositionLeg[];
+  positionType?: PositionType;
+  direction?: PositionDirection;
+  costBasis?: number | null;
+  costBasisType?: CostBasisType;
+}
+
 interface PositionCreateModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCreate: (position: CreatedPosition) => void;
+  onSave?: (strategy: StrategyData) => void;
+  editStrategy?: StrategyData | null;
   defaultSymbol?: string;
   atmStrike?: number;  // Current ATM strike price (fallback for primary underlying)
   spotData?: Record<string, { value: number; [key: string]: any }>;
@@ -143,8 +163,6 @@ const MINI_RISK_GRAPHS: Record<PositionType, { path: string; color: string }> = 
 function getDefaultDirection(type: PositionType): Direction {
   return SHORT_DEFAULT_TYPES.includes(type) ? 'short' : 'long';
 }
-
-// isExpirationDay, getCurrentExpiration, getNextExpiration imported from symbolConfig.ts
 
 // Format date to YYYY-MM-DD
 function formatDate(date: Date): string {
@@ -249,11 +267,14 @@ export default function PositionCreateModal({
   isOpen,
   onClose,
   onCreate,
+  onSave,
+  editStrategy,
   defaultSymbol = 'SPX',
   atmStrike = 5900,
   spotData,
   prefill,
 }: PositionCreateModalProps) {
+  const isEditMode = editStrategy != null;
   const { symbols: availableSymbols, getConfig } = useSymbolConfig();
   const [mode, setMode] = useState<CreateMode>('build');
 
@@ -291,7 +312,7 @@ export default function PositionCreateModal({
 
   // Config-driven values from Symbol Config Registry
   const symbolConfig = useMemo(() => getConfig(symbol), [symbol, getConfig]);
-  const { strikeIncrement, defaultWidth, strikeRange, expirationPattern } = symbolConfig;
+  const { strikeIncrement, defaultWidth, expirationPattern } = symbolConfig;
 
   // Per-symbol ATM: resolve from merged spot data (fetched + live SSE)
   const symbolAtm = useMemo(() => {
@@ -320,11 +341,31 @@ export default function PositionCreateModal({
   // Types that need vega warning when going short
   const VEGA_SENSITIVE_TYPES: PositionType[] = ['calendar', 'diagonal'];
 
+  // Time spreads have per-leg expirations; all others share the first leg's expiration
+  const TIME_SPREAD_TYPES: PositionType[] = ['calendar', 'diagonal'];
+  const isTimespread = TIME_SPREAD_TYPES.includes(isEditMode ? recognition.type : positionType);
+
   // Update direction when position type changes (full regeneration via effect)
   const handlePositionTypeChange = useCallback((newType: PositionType) => {
     setPositionType(newType);
     setDirection(getDefaultDirection(newType));
   }, []);
+
+  // Handle multiplier change — scale all leg quantities proportionally
+  const handleMultiplierChange = useCallback((newMultiplier: number) => {
+    const oldMultiplier = positionQty;
+    if (oldMultiplier === newMultiplier || oldMultiplier === 0) {
+      setPositionQty(newMultiplier);
+      return;
+    }
+    setPositionQty(newMultiplier);
+    // Re-scale: divide out old multiplier, multiply by new
+    setLegs(prev => prev.map(leg => {
+      const baseQty = leg.quantity / oldMultiplier;
+      return { ...leg, quantity: Math.round(baseQty * newMultiplier) };
+    }));
+    skipRegenRef.current = true;
+  }, [positionQty]);
 
   // Handle direction change — flip existing leg qty signs in place
   const handleDirectionChange = useCallback((newDirection: Direction) => {
@@ -355,7 +396,7 @@ export default function PositionCreateModal({
     setPendingShortType(null);
   }, []);
 
-  // Handle Quick Setup expiration change — update all leg expirations in place
+  // Handle expiration change — update all leg expirations in place
   const handleExpirationChange = useCallback((newExp: string) => {
     skipRegenRef.current = true;
     setExpiration(newExp);
@@ -370,22 +411,23 @@ export default function PositionCreateModal({
 
   // Reset strike, width, and expiration when symbol changes (dynamic ATM + config per symbol)
   useEffect(() => {
+    if (isEditMode) return; // Don't reset in edit mode
     setBaseStrike(roundedAtm.toString());
     setWidth(defaultWidth.toString());
     setExpiration(formatDate(getCurrentExpiration(expirationPattern)));
-  }, [symbol, roundedAtm, defaultWidth, expirationPattern]);
+  }, [symbol, roundedAtm, defaultWidth, expirationPattern, isEditMode]);
 
   // Set initial values when modal opens
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !isEditMode) {
       setExpiration(formatDate(getCurrentExpiration(expirationPattern)));
       setBaseStrike(roundedAtm.toString());
     }
-  }, [isOpen, roundedAtm, expirationPattern]);
+  }, [isOpen, roundedAtm, expirationPattern, isEditMode]);
 
   // Apply prefill values when modal opens with prefill data
   useEffect(() => {
-    if (isOpen && prefill) {
+    if (isOpen && prefill && !isEditMode) {
       setMode('build');
       if (prefill.symbol) setSymbol(prefill.symbol);
       setPositionType(prefill.positionType as PositionType);
@@ -401,12 +443,38 @@ export default function PositionCreateModal({
         setCostBasis('');
       }
     }
-  }, [isOpen, prefill]);
+  }, [isOpen, prefill, isEditMode]);
 
-  // Generate legs when build parameters change
+  // Populate form when editing an existing strategy
+  useEffect(() => {
+    if (isOpen && editStrategy) {
+      setMode('build');
+      setSymbol(editStrategy.symbol || 'SPX');
+
+      if (editStrategy.legs && editStrategy.legs.length > 0) {
+        setLegs([...editStrategy.legs]);
+      } else {
+        const derivedLegs = strategyToLegs(
+          editStrategy.strategy,
+          editStrategy.side,
+          editStrategy.strike,
+          editStrategy.width,
+          editStrategy.expiration
+        );
+        setLegs(derivedLegs);
+      }
+
+      const basis = editStrategy.costBasis ?? editStrategy.debit ?? null;
+      setCostBasis(basis !== null ? basis.toString() : '');
+      setCostBasisType(editStrategy.costBasisType || 'debit');
+    }
+  }, [isOpen, editStrategy]);
+
+  // Generate legs when build parameters change (create mode only)
   // Direction and expiration changes are handled in-place by their own handlers;
   // skipRegenRef prevents this effect from overwriting those updates.
   useEffect(() => {
+    if (isEditMode) return; // Don't auto-generate in edit mode
     if (skipRegenRef.current) {
       skipRegenRef.current = false;
       return;
@@ -414,10 +482,14 @@ export default function PositionCreateModal({
     if (mode === 'build' && expiration) {
       const strike = parseFloat(baseStrike) || 5900;
       const w = parseFloat(width) || defaultWidth;
-      const newLegs = getDefaultLegs(positionType, strike, w, expiration, primaryRight, direction, expirationPattern);
+      const baseLegs = getDefaultLegs(positionType, strike, w, expiration, primaryRight, direction, expirationPattern);
+      // Apply multiplier to base leg quantities
+      const newLegs = positionQty > 1
+        ? baseLegs.map(leg => ({ ...leg, quantity: leg.quantity * positionQty }))
+        : baseLegs;
       setLegs(newLegs);
     }
-  }, [mode, positionType, baseStrike, width, expiration, primaryRight, direction, expirationPattern, defaultWidth]);
+  }, [mode, positionType, baseStrike, width, expiration, primaryRight, direction, expirationPattern, defaultWidth, isEditMode, positionQty]);
 
   // Parse script when input changes
   useEffect(() => {
@@ -450,32 +522,30 @@ export default function PositionCreateModal({
   // Current legs (from build or import)
   const currentLegs = mode === 'import' && parsedPosition ? parsedPosition.legs : legs;
 
-  // Recognize position type
+  // Recognize position type from current legs
   const recognition = useMemo(() => {
     if (currentLegs.length === 0) {
-      return { type: 'custom' as PositionType, direction: 'long' as const };
+      return { type: 'custom' as PositionType, direction: 'long' as const, isSymmetric: true };
     }
     return recognizePositionType(currentLegs);
   }, [currentLegs]);
 
-  // Format display - use user's selection in build mode, inferred in import mode
+  // In edit mode, derive type/direction from recognition
+  const displayPositionType = isEditMode ? recognition.type : positionType;
+  const displayDirection = isEditMode ? recognition.direction : direction;
+  const isAsymmetric = recognition.isSymmetric === false;
+
+  // Format display - use user's selection in build mode, inferred in import/edit mode
   const positionLabel = useMemo(() => {
-    if (mode === 'build') {
+    if (mode === 'build' && !isEditMode) {
       return formatPositionLabel(positionType, direction, currentLegs);
     }
     return formatPositionLabel(recognition.type, recognition.direction, currentLegs);
-  }, [mode, positionType, direction, recognition, currentLegs]);
+  }, [mode, isEditMode, positionType, direction, recognition, currentLegs]);
 
   const legsNotation = useMemo(() => {
-    if (positionQty > 1) {
-      const multiplied = currentLegs.map(leg => ({
-        ...leg,
-        quantity: leg.quantity * positionQty,
-      }));
-      return formatLegsDisplay(multiplied);
-    }
     return formatLegsDisplay(currentLegs);
-  }, [currentLegs, positionQty]);
+  }, [currentLegs]);
 
   // Calculate DTE
   const dte = useMemo(() => {
@@ -491,14 +561,21 @@ export default function PositionCreateModal({
     return Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
   }, [currentLegs]);
 
-  // Update a specific leg
+  // Update a specific leg. When updating expiration on leg 0 for non-timespreads,
+  // propagate the new expiration to all other legs.
   const updateLeg = useCallback((index: number, updates: Partial<PositionLeg>) => {
     setLegs(prev => {
       const newLegs = [...prev];
       newLegs[index] = { ...newLegs[index], ...updates };
+      // Propagate expiration from first leg to all others (except timespreads)
+      if (index === 0 && updates.expiration && !isTimespread) {
+        for (let i = 1; i < newLegs.length; i++) {
+          newLegs[i] = { ...newLegs[i], expiration: updates.expiration };
+        }
+      }
       return newLegs;
     });
-  }, []);
+  }, [isTimespread]);
 
   const handleClose = useCallback(() => {
     // Reset state
@@ -520,15 +597,9 @@ export default function PositionCreateModal({
     expirations.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
     const primaryExpiration = expirations[0];
 
-    // Apply position quantity multiplier to all leg quantities
-    const multipliedLegs = currentLegs.map(leg => ({
-      ...leg,
-      quantity: leg.quantity * positionQty,
-    }));
-
     onCreate({
       symbol,
-      legs: multipliedLegs,
+      legs: currentLegs,
       costBasis: costBasisNum,
       costBasisType,
       expiration: primaryExpiration,
@@ -537,6 +608,68 @@ export default function PositionCreateModal({
 
     handleClose();
   }, [symbol, currentLegs, costBasis, costBasisType, dte, positionQty, onCreate, handleClose]);
+
+  // Save handler for edit mode (derives legacy fields from legs for backward compat)
+  const handleSave = useCallback(() => {
+    if (!editStrategy || legs.length === 0 || !onSave) return;
+
+    const costBasisNum = costBasis ? parseFloat(costBasis) : null;
+
+    // Calculate center strike and width for legacy compatibility
+    const sortedLegs = [...legs].sort((a, b) => a.strike - b.strike);
+    const strikes = sortedLegs.map(l => l.strike);
+
+    let centerStrike = strikes[0];
+    let legWidth = 0;
+
+    if (legs.length === 3) {
+      centerStrike = strikes[1];
+      legWidth = strikes[1] - strikes[0];
+    } else if (legs.length === 2) {
+      centerStrike = strikes[0];
+      legWidth = strikes[1] - strikes[0];
+    } else if (legs.length === 4) {
+      centerStrike = Math.round((strikes[1] + strikes[2]) / 2);
+      legWidth = strikes[1] - strikes[0];
+    }
+
+    // Get primary expiration
+    const expirations = legs.map(l => l.expiration);
+    expirations.sort((a, b) => new Date(a).getTime() - new Date(b).getTime());
+    const primaryExpiration = expirations[0];
+
+    // Determine side from dominant leg type
+    const calls = legs.filter(l => l.right === 'call').length;
+    const puts = legs.filter(l => l.right === 'put').length;
+    const side: 'call' | 'put' = calls >= puts ? 'call' : 'put';
+
+    // Map position type back to legacy strategy type
+    let legacyStrategy: 'butterfly' | 'vertical' | 'single' = 'single';
+    if (['butterfly', 'bwb'].includes(recognition.type)) {
+      legacyStrategy = 'butterfly';
+    } else if (['vertical', 'calendar', 'diagonal'].includes(recognition.type)) {
+      legacyStrategy = 'vertical';
+    }
+
+    onSave({
+      id: editStrategy.id,
+      symbol,
+      strategy: legacyStrategy,
+      side,
+      strike: centerStrike,
+      width: legWidth,
+      dte,
+      expiration: primaryExpiration,
+      debit: costBasisNum,
+      costBasis: costBasisNum,
+      costBasisType,
+      legs,
+      positionType: recognition.type,
+      direction: recognition.direction,
+    });
+
+    handleClose();
+  }, [editStrategy, symbol, legs, costBasis, costBasisType, dte, recognition, onSave, handleClose]);
 
   const handlePasteFromClipboard = useCallback(async () => {
     try {
@@ -564,25 +697,27 @@ export default function PositionCreateModal({
         style={containerStyle}
       >
         <div className="position-create-header draggable-handle">
-          <h3>Create Position</h3>
+          <h3>{isEditMode ? 'Edit Position' : 'Create Position'}</h3>
           <button className="close-btn" onClick={handleClose}>&times;</button>
         </div>
 
-        {/* Mode Tabs */}
-        <div className="position-create-tabs">
-          <button
-            className={`tab-btn ${mode === 'build' ? 'active' : ''}`}
-            onClick={() => setMode('build')}
-          >
-            Build
-          </button>
-          <button
-            className={`tab-btn ${mode === 'import' ? 'active' : ''}`}
-            onClick={() => setMode('import')}
-          >
-            Import / Export Script
-          </button>
-        </div>
+        {/* Mode Tabs (hidden in edit mode) */}
+        {!isEditMode && (
+          <div className="position-create-tabs">
+            <button
+              className={`tab-btn ${mode === 'build' ? 'active' : ''}`}
+              onClick={() => setMode('build')}
+            >
+              Build
+            </button>
+            <button
+              className={`tab-btn ${mode === 'import' ? 'active' : ''}`}
+              onClick={() => setMode('import')}
+            >
+              Import / Export Script
+            </button>
+          </div>
+        )}
 
         <div className="position-create-body">
           {mode === 'build' ? (
@@ -608,146 +743,118 @@ export default function PositionCreateModal({
 
               {/* Position Type Selection */}
               <div className="form-group position-type-row">
-                <label>Type</label>
-                <select
-                  className="position-type-select"
-                  value={positionType}
-                  onChange={e => handlePositionTypeChange(e.target.value as PositionType)}
-                >
-                  {POSITION_TYPE_CATEGORIES.map(category => (
-                    <optgroup key={category.label} label={category.label}>
-                      {category.types.map(type => (
-                        <option key={type} value={type}>
-                          {POSITION_TYPE_LABELS[type]}
-                        </option>
+                <label>Strategy</label>
+                {isEditMode ? (
+                  <div className="position-type-display">
+                    <span className={`position-type-badge ${displayPositionType}`}>
+                      {positionLabel}
+                    </span>
+                    {isAsymmetric && (
+                      <span className="position-asym-warning">
+                        Asymmetric wing widths
+                      </span>
+                    )}
+                  </div>
+                ) : (
+                  <>
+                    <select
+                      className="position-type-select"
+                      value={positionType}
+                      onChange={e => handlePositionTypeChange(e.target.value as PositionType)}
+                    >
+                      {POSITION_TYPE_CATEGORIES.map(category => (
+                        <optgroup key={category.label} label={category.label}>
+                          {category.types.map(type => (
+                            <option key={type} value={type}>
+                              {POSITION_TYPE_LABELS[type]}
+                            </option>
+                          ))}
+                        </optgroup>
                       ))}
-                    </optgroup>
-                  ))}
-                </select>
-                <div className="position-type-display">
-                  <svg
-                    className={`mini-risk-graph ${direction === 'short' ? 'flipped' : ''}`}
-                    viewBox="0 0 24 12"
-                    width="48"
-                    height="24"
-                  >
-                    <path
-                      d={MINI_RISK_GRAPHS[positionType]?.path || MINI_RISK_GRAPHS.custom.path}
-                      stroke={MINI_RISK_GRAPHS[positionType]?.color || MINI_RISK_GRAPHS.custom.color}
-                      strokeWidth="1.5"
-                      fill="none"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                  <div className="direction-toggle">
-                    <button
-                      type="button"
-                      className={`direction-btn long ${direction === 'long' ? 'active' : ''}`}
-                      onClick={() => handleDirectionChange('long')}
-                    >
-                      Buy
-                    </button>
-                    <button
-                      type="button"
-                      className={`direction-btn short ${direction === 'short' ? 'active' : ''}`}
-                      onClick={() => handleDirectionChange('short')}
-                    >
-                      Sell
-                    </button>
-                  </div>
-                  <span className="selected-type-label">
-                    {direction === 'long' ? 'Buy' : 'Sell'} {POSITION_TYPE_LABELS[positionType]}
-                  </span>
-                </div>
-              </div>
-
-              {/* Quick Setup (Strike, Width, Expiration) */}
-              <div className="form-group">
-                <label>Quick Setup</label>
-                <div className="quick-setup-row">
-                  <div className="setup-field setup-field-qty">
-                    <span className="field-label">Qty</span>
-                    <input
-                      type="number"
-                      value={positionQty}
-                      onChange={e => setPositionQty(Math.max(1, Math.min(99, parseInt(e.target.value) || 1)))}
-                      min="1"
-                      max="99"
-                      step="1"
-                    />
-                  </div>
-                  <div className="setup-field">
-                    <span className="field-label">Strike</span>
-                    <input
-                      type="number"
-                      value={baseStrike}
-                      onChange={e => setBaseStrike(e.target.value)}
-                      step={strikeIncrement}
-                    />
-                  </div>
-                  <div className="setup-field">
-                    <span className="field-label">Width</span>
-                    <input
-                      type="number"
-                      value={width}
-                      onChange={e => setWidth(e.target.value)}
-                      step={strikeIncrement}
-                    />
-                  </div>
-                  <div className="setup-field">
-                    <span className="field-label">Exp</span>
-                    <input
-                      type="date"
-                      value={expiration}
-                      onChange={e => handleExpirationChange(e.target.value)}
-                    />
-                  </div>
-                  <div className="setup-field">
-                    <span className="field-label">Side</span>
-                    <div className="side-toggle">
-                      <button
-                        className={`side-btn call ${primaryRight === 'call' ? 'active' : ''}`}
-                        onClick={() => setPrimaryRight('call')}
+                    </select>
+                    <div className="position-type-display">
+                      <svg
+                        className={`mini-risk-graph ${direction === 'short' ? 'flipped' : ''}`}
+                        viewBox="0 0 24 12"
+                        width="48"
+                        height="24"
                       >
-                        Call
-                      </button>
-                      <button
-                        className={`side-btn put ${primaryRight === 'put' ? 'active' : ''}`}
-                        onClick={() => setPrimaryRight('put')}
-                      >
-                        Put
-                      </button>
+                        <path
+                          d={MINI_RISK_GRAPHS[positionType]?.path || MINI_RISK_GRAPHS.custom.path}
+                          stroke={MINI_RISK_GRAPHS[positionType]?.color || MINI_RISK_GRAPHS.custom.color}
+                          strokeWidth="1.5"
+                          fill="none"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                      <div className="direction-toggle">
+                        <button
+                          type="button"
+                          className={`direction-btn long ${direction === 'long' ? 'active' : ''}`}
+                          onClick={() => handleDirectionChange('long')}
+                        >
+                          Buy
+                        </button>
+                        <button
+                          type="button"
+                          className={`direction-btn short ${direction === 'short' ? 'active' : ''}`}
+                          onClick={() => handleDirectionChange('short')}
+                        >
+                          Sell
+                        </button>
+                      </div>
+                      <span className="selected-type-label">
+                        {direction === 'long' ? 'Buy' : 'Sell'} {POSITION_TYPE_LABELS[positionType]}
+                      </span>
                     </div>
-                  </div>
-                </div>
+                  </>
+                )}
               </div>
 
-              {/* Legs Editor (Fine-tune) */}
+              {/* Multiplier (create mode only) */}
+              {!isEditMode && (
+                <div className="form-group">
+                  <label>Multiplier</label>
+                  <input
+                    type="number"
+                    value={positionQty}
+                    onChange={e => handleMultiplierChange(Math.max(1, Math.min(999, parseInt(e.target.value) || 1)))}
+                    min="1"
+                    max="999"
+                    step="1"
+                    className="position-qty-input"
+                  />
+                </div>
+              )}
+
+              {/* Legs Editor */}
               <div className="form-group legs-editor">
-                <label>Legs <span className="hint">(fine-tune)</span></label>
-                <div className="legs-list compact">
+                <label>Legs</label>
+                <div className="legs-list">
                   {legs.map((leg, index) => (
-                    <div key={index} className="leg-row compact">
-                      <select
+                    <div key={index} className="leg-row">
+                      <span className="leg-index">Leg {index + 1}:</span>
+
+                      <input
+                        type="number"
                         className="leg-quantity"
                         value={leg.quantity}
-                        onChange={e => updateLeg(index, { quantity: parseInt(e.target.value) })}
-                      >
-                        <option value="2">+2</option>
-                        <option value="1">+1</option>
-                        <option value="-1">-1</option>
-                        <option value="-2">-2</option>
-                      </select>
-                      <StrikeDropdown
-                        value={leg.strike}
-                        onChange={strike => updateLeg(index, { strike })}
-                        atmStrike={roundedAtm}
-                        minStrike={roundedAtm - strikeRange}
-                        maxStrike={roundedAtm + strikeRange}
-                        strikeStep={strikeIncrement}
-                        className="leg-strike-dropdown"
+                        onChange={e => updateLeg(index, { quantity: parseInt(e.target.value) || 0 })}
+                        min="-999"
+                        max="999"
+                        step="1"
                       />
+
+                      <input
+                        type="number"
+                        className="leg-strike"
+                        value={leg.strike}
+                        onChange={e => updateLeg(index, { strike: parseFloat(e.target.value) || 0 })}
+                        step={strikeIncrement}
+                        min="0"
+                      />
+
                       <select
                         className="leg-right"
                         value={leg.right}
@@ -756,15 +863,26 @@ export default function PositionCreateModal({
                         <option value="call">Call</option>
                         <option value="put">Put</option>
                       </select>
-                      <input
-                        type="date"
-                        className="leg-expiration"
-                        value={leg.expiration}
-                        onChange={e => updateLeg(index, { expiration: e.target.value })}
-                      />
+
+                      {/* Show expiration on first leg always; on other legs only for timespreads */}
+                      {(index === 0 || isTimespread) && (
+                        <input
+                          type="date"
+                          className="leg-expiration"
+                          value={leg.expiration}
+                          onChange={e => updateLeg(index, { expiration: e.target.value })}
+                        />
+                      )}
                     </div>
                   ))}
                 </div>
+
+                {/* Type change warning (edit mode) */}
+                {isEditMode && recognition.type === 'custom' && legs.length > 1 && (
+                  <div className="type-change-warning">
+                    Structure not recognized. Adjust legs to match a known pattern.
+                  </div>
+                )}
               </div>
             </>
           ) : (
@@ -930,11 +1048,11 @@ export default function PositionCreateModal({
             Cancel
           </button>
           <button
-            className="btn btn-create"
-            onClick={handleCreate}
+            className={`btn ${isEditMode ? 'btn-save' : 'btn-create'}`}
+            onClick={isEditMode ? handleSave : handleCreate}
             disabled={!isValid()}
           >
-            Add Position
+            {isEditMode ? 'Save Changes' : 'Add Position'}
           </button>
         </div>
       </div>

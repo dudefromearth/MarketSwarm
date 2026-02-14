@@ -36,8 +36,7 @@ import TosImportModal from './components/TosImportModal';
 import TradeImportModal from './components/TradeImportModal';
 import ImportManager from './components/ImportManager';
 import { recognizeStrategy, type ImportedTrade } from './utils/importers';
-import PositionEditModal, { type StrategyData } from './components/PositionEditModal';
-import PositionCreateModal, { type CreatedPosition, type PositionPrefill } from './components/PositionCreateModal';
+import PositionCreateModal, { type CreatedPosition, type PositionPrefill, type StrategyData } from './components/PositionCreateModal';
 import type { ParsedStrategy } from './utils/tosParser';
 import { useAlerts } from './contexts/AlertContext';
 import { usePath } from './contexts/PathContext';
@@ -3842,23 +3841,17 @@ function App() {
         onImport={handleTosImport}
       />
 
-      {/* Position Create Modal (Build or Import) */}
+      {/* Position Create / Edit Modal */}
       <PositionCreateModal
-        isOpen={showPositionCreate}
-        onClose={() => { setShowPositionCreate(false); setPositionPrefill(null); }}
+        isOpen={showPositionCreate || editingStrategy !== null}
+        onClose={() => { setShowPositionCreate(false); setPositionPrefill(null); setEditingStrategy(null); }}
         onCreate={handlePositionCreate}
+        onSave={handleStrategyEdit}
+        editStrategy={editingStrategy as StrategyData | null}
         defaultSymbol={underlying.replace('I:', '')}
         atmStrike={spot?.[underlying]?.value}
         spotData={spot || undefined}
         prefill={positionPrefill}
-      />
-
-      {/* Position Edit Modal (Leg-based) */}
-      <PositionEditModal
-        isOpen={editingStrategy !== null}
-        onClose={() => setEditingStrategy(null)}
-        onSave={handleStrategyEdit}
-        strategy={editingStrategy}
       />
 
       {/* Daily Onboarding Overlay (shows on first open each day) */}

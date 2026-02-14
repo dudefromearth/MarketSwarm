@@ -1,7 +1,7 @@
 /**
  * StrategyEditModal - Edit existing risk graph strategies
  *
- * NOTE: This is the legacy modal. For new leg-based editing, use PositionEditModal.
+ * NOTE: This is the legacy modal. For new leg-based editing, use PositionCreateModal in edit mode.
  * This file is kept for backward compatibility.
  *
  * Form-based editor for strategy parameters:
@@ -34,9 +34,8 @@ export interface StrategyData {
   symbol?: string;
 }
 
-// Re-export PositionEditModal for consumers who want the new leg-based editor
-export { default as PositionEditModal } from './PositionEditModal';
-export type { StrategyData as PositionData } from './PositionEditModal';
+// Re-export StrategyData for consumers (now lives in PositionCreateModal)
+export type { StrategyData as PositionData } from './PositionCreateModal';
 
 interface StrategyEditModalProps {
   isOpen: boolean;
