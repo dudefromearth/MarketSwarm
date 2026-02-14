@@ -341,9 +341,8 @@ export default function PositionCreateModal({
   // Types that need vega warning when going short
   const VEGA_SENSITIVE_TYPES: PositionType[] = ['calendar', 'diagonal'];
 
-  // Time spreads have per-leg expirations; all others share the first leg's expiration
+  // Time spread types (used later after recognition is computed)
   const TIME_SPREAD_TYPES: PositionType[] = ['calendar', 'diagonal'];
-  const isTimespread = TIME_SPREAD_TYPES.includes(isEditMode ? recognition.type : positionType);
 
   // Update direction when position type changes (full regeneration via effect)
   const handlePositionTypeChange = useCallback((newType: PositionType) => {
@@ -530,6 +529,9 @@ export default function PositionCreateModal({
     return recognizePositionType(currentLegs);
   }, [currentLegs]);
 
+  // Time spreads have per-leg expirations; all others share the first leg's expiration
+  const isTimespread = TIME_SPREAD_TYPES.includes(isEditMode ? recognition.type : positionType);
+
   // In edit mode, derive type/direction from recognition
   const displayPositionType = isEditMode ? recognition.type : positionType;
   const displayDirection = isEditMode ? recognition.direction : direction;
@@ -701,49 +703,30 @@ export default function PositionCreateModal({
           <button className="close-btn" onClick={handleClose}>&times;</button>
         </div>
 
-        {/* Mode Tabs (hidden in edit mode) */}
-        {!isEditMode && (
-          <div className="position-create-tabs">
-            <button
-              className={`tab-btn ${mode === 'build' ? 'active' : ''}`}
-              onClick={() => setMode('build')}
-            >
-              Build
-            </button>
-            <button
-              className={`tab-btn ${mode === 'import' ? 'active' : ''}`}
-              onClick={() => setMode('import')}
-            >
-              Import / Export Script
-            </button>
-          </div>
-        )}
-
         <div className="position-create-body">
           {mode === 'build' ? (
             <>
-              {/* Symbol Selection */}
-              <div className="form-group">
-                <label>Symbol</label>
-                <select
-                  value={symbol}
-                  onChange={e => setSymbol(e.target.value)}
-                  className="symbol-select"
-                >
-                  {symbol && !availableSymbols.find(s => s.symbol === symbol) && (
-                    <option value={symbol}>{symbol}</option>
-                  )}
-                  {availableSymbols.map(s => (
-                    <option key={s.symbol} value={s.symbol}>
-                      {s.symbol} - {s.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Position Type Selection */}
-              <div className="form-group position-type-row">
-                <label>Strategy</label>
+              {/* Symbol + Strategy Row */}
+              <div className="form-group symbol-strategy-row">
+                <div className="symbol-field">
+                  <label>Symbol</label>
+                  <select
+                    value={symbol}
+                    onChange={e => setSymbol(e.target.value)}
+                    className="symbol-select"
+                  >
+                    {symbol && !availableSymbols.find(s => s.symbol === symbol) && (
+                      <option value={symbol}>{symbol}</option>
+                    )}
+                    {availableSymbols.map(s => (
+                      <option key={s.symbol} value={s.symbol}>
+                        {s.symbol} - {s.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="strategy-field">
+                  <label>Strategy</label>
                 {isEditMode ? (
                   <div className="position-type-display">
                     <span className={`position-type-badge ${displayPositionType}`}>
@@ -810,28 +793,25 @@ export default function PositionCreateModal({
                     </div>
                   </>
                 )}
-              </div>
-
-              {/* Multiplier (create mode only) */}
-              {!isEditMode && (
-                <div className="form-group">
-                  <label>Multiplier</label>
-                  <input
-                    type="number"
-                    value={positionQty}
-                    onChange={e => handleMultiplierChange(Math.max(1, Math.min(999, parseInt(e.target.value) || 1)))}
-                    min="1"
-                    max="999"
-                    step="1"
-                    className="position-qty-input"
-                  />
                 </div>
-              )}
+              </div>
 
               {/* Legs Editor */}
               <div className="form-group legs-editor">
                 <label>Legs</label>
                 <div className="legs-list">
+                  {/* Column headers */}
+                  <div className="leg-row leg-header">
+                    <span className="leg-index"></span>
+                    <span className="leg-col-label leg-quantity"></span>
+                    <span className="leg-col-label leg-strike">STRIKE</span>
+                    <span className="leg-col-label leg-right">TYPE</span>
+                    <span className="leg-col-label leg-expiration">EXPIRATION</span>
+                    <span className="leg-col-label leg-cost-basis">
+                      <span className={costBasisType}>{costBasisType === 'credit' ? 'CREDIT' : 'DEBIT'}</span>
+                    </span>
+                    <span className="leg-col-label leg-qty-field">QTY</span>
+                  </div>
                   {legs.map((leg, index) => (
                     <div key={index} className="leg-row">
                       <span className="leg-index">Leg {index + 1}:</span>
@@ -873,6 +853,42 @@ export default function PositionCreateModal({
                           onChange={e => updateLeg(index, { expiration: e.target.value })}
                         />
                       )}
+
+                      {/* Cost basis + QTY on first leg row only */}
+                      {index === 0 && (
+                        <>
+                          <input
+                            type="number"
+                            className={`cost-basis-inline ${costBasis ? costBasisType : ''}`}
+                            value={costBasis}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setCostBasis(val);
+                              const num = parseFloat(val);
+                              if (!isNaN(num)) {
+                                setCostBasisType(num < 0 ? 'credit' : 'debit');
+                              }
+                            }}
+                            onBlur={() => {
+                              if (costBasis) {
+                                const num = parseFloat(costBasis);
+                                if (!isNaN(num)) setCostBasis(num.toFixed(2));
+                              }
+                            }}
+                            placeholder="0.00"
+                            step="0.05"
+                          />
+                          <input
+                            type="number"
+                            className="position-qty-input"
+                            value={positionQty}
+                            onChange={e => handleMultiplierChange(Math.max(1, Math.min(999, parseInt(e.target.value) || 1)))}
+                            min="1"
+                            max="999"
+                            step="1"
+                          />
+                        </>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -883,6 +899,46 @@ export default function PositionCreateModal({
                     Structure not recognized. Adjust legs to match a known pattern.
                   </div>
                 )}
+              </div>
+
+              {/* Preview + Action Buttons */}
+              <div className="preview-actions-row">
+                <div className="position-preview create-preview">
+                  <span className="preview-label">Preview:</span>
+                  <div className="preview-content">
+                    <div className="preview-header">
+                      <span className="preview-symbol">{symbol}</span>
+                      <span className="preview-type">{positionLabel}</span>
+                      <span className="preview-dte">{dte}d</span>
+                      {costBasis && (
+                        <span className={`preview-cost-basis ${costBasisType}`}>
+                          ${parseFloat(costBasis).toFixed(2)} {costBasisType === 'credit' ? 'Credit' : 'Debit'}
+                        </span>
+                      )}
+                    </div>
+                    <div className="preview-legs">{legsNotation}</div>
+                  </div>
+                </div>
+                <div className="action-buttons">
+                  {!isEditMode && (
+                    <button
+                      className="btn btn-import-export"
+                      onClick={() => setMode(mode === 'import' ? 'build' : 'import')}
+                    >
+                      {mode === 'import' ? 'Back to Build' : 'Import / Export'}
+                    </button>
+                  )}
+                  <button
+                    className={`btn ${isEditMode ? 'btn-save' : 'btn-create'}`}
+                    onClick={isEditMode ? handleSave : handleCreate}
+                    disabled={!isValid()}
+                  >
+                    {isEditMode ? 'Save Changes' : 'Add to Risk Graph'}
+                  </button>
+                  <button className="btn btn-cancel" onClick={handleClose}>
+                    Cancel
+                  </button>
+                </div>
               </div>
             </>
           ) : (
@@ -991,70 +1047,40 @@ export default function PositionCreateModal({
             </>
           )}
 
-          {/* Cost Basis (both modes) */}
-          <div className="form-group cost-basis-group">
-            <label>Cost Basis <span className="hint">(optional)</span></label>
-            <div className="cost-basis-input-row">
-              <div className="cost-type-toggle">
-                <button
-                  type="button"
-                  className={`cost-type-btn debit ${costBasisType === 'debit' ? 'active' : ''}`}
-                  onClick={() => setCostBasisType('debit')}
-                >
-                  Debit
-                </button>
-                <button
-                  type="button"
-                  className={`cost-type-btn credit ${costBasisType === 'credit' ? 'active' : ''}`}
-                  onClick={() => setCostBasisType('credit')}
-                >
-                  Credit
-                </button>
+          {/* Cost Basis for import mode only */}
+          {mode === 'import' && (
+            <div className="form-group cost-basis-group">
+              <label>Cost Basis <span className="hint">(optional)</span></label>
+              <div className="cost-basis-input-row">
+                <input
+                  type="number"
+                  className="cost-basis-value"
+                  value={costBasis}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setCostBasis(val);
+                    const num = parseFloat(val);
+                    if (!isNaN(num)) {
+                      setCostBasisType(num < 0 ? 'credit' : 'debit');
+                    }
+                  }}
+                  onBlur={() => {
+                    if (costBasis) {
+                      const num = parseFloat(costBasis);
+                      if (!isNaN(num)) setCostBasis(num.toFixed(2));
+                    }
+                  }}
+                  placeholder="0.00"
+                  step="0.05"
+                />
+                <span className={`cost-basis-label ${costBasisType}`}>
+                  {costBasisType === 'credit' ? 'CREDIT' : 'DEBIT'}
+                </span>
               </div>
-              <span className="cost-basis-dollar">$</span>
-              <input
-                type="number"
-                className="cost-basis-value"
-                value={costBasis}
-                onChange={e => setCostBasis(e.target.value)}
-                placeholder="0.00"
-                min="0"
-                step="0.05"
-              />
             </div>
-          </div>
-
-          {/* Preview */}
-          <div className="position-preview create-preview">
-            <span className="preview-label">Preview:</span>
-            <div className="preview-content">
-              <div className="preview-header">
-                <span className="preview-symbol">{symbol}</span>
-                <span className="preview-type">{positionLabel}</span>
-                <span className="preview-dte">{dte}d</span>
-                {costBasis && (
-                  <span className={`preview-cost-basis ${costBasisType}`}>
-                    ${costBasis} {costBasisType === 'credit' ? 'Credit' : 'Debit'}
-                  </span>
-                )}
-              </div>
-              <div className="preview-legs">{legsNotation}</div>
-            </div>
-          </div>
+          )}
         </div>
 
-        <div className="position-create-footer">
-          <button className="btn btn-cancel" onClick={handleClose}>
-            Cancel
-          </button>
-          <button
-            className={`btn ${isEditMode ? 'btn-save' : 'btn-create'}`}
-            onClick={isEditMode ? handleSave : handleCreate}
-            disabled={!isValid()}
-          >
-            {isEditMode ? 'Save Changes' : 'Add Position'}
-          </button>
-        </div>
       </div>
 
       {/* Vega Warning Modal */}
