@@ -427,14 +427,29 @@ router.post("/structures", requireAdmin, async (req, res) => {
     // Save back to Redis
     await redis.set(VP_JSON_KEY, JSON.stringify(vpData));
 
-    // Publish update event to trigger SSE refresh
+    // Sync dealer_gravity:artifact:spx so GET /artifact returns user structures
+    const artifactJson = await redis.get(ARTIFACT_KEY);
+    if (artifactJson) {
+      const artifact = JSON.parse(artifactJson);
+      artifact.structures = {
+        volume_nodes: normalizedNodes,
+        volume_wells: volume_wells || [],
+        crevasses: artifact.structures?.crevasses || vpData.structures?.crevasses || [],
+      };
+      artifact.meta.last_update = new Date().toISOString();
+      artifact.meta.artifact_version = `v${Date.now()}`;
+      await redis.set(ARTIFACT_KEY, JSON.stringify(artifact));
+    }
+
+    // Publish update event on market-redis where SSE subscribes
     const updateEvent = {
       type: 'structures_updated',
       symbol: symbol || 'SPX',
       artifact_version: vpData.last_updated,
       occurred_at: new Date().toISOString(),
     };
-    await redis.publish('dealer_gravity_updated', JSON.stringify(updateEvent));
+    const marketRedis = getMarketRedis();
+    await marketRedis.publish('dealer_gravity_updated', JSON.stringify(updateEvent));
 
     console.log(`[dealer-gravity] Saved structures: ${normalizedNodes.length} nodes, ${(volume_wells || []).length} wells`);
 

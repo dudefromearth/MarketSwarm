@@ -12,7 +12,7 @@
 import { useRef, useMemo, useCallback, useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import PnLChart, { type PnLChartHandle, type PriceAlertType, type BackdropRenderProps, type PnLAlertZone } from './PnLChart';
 import RiskGraphBackdrop from './RiskGraphBackdrop';
-import DealerGravitySettings from './DealerGravitySettings';
+import RiskGraphBackdropSettings from './RiskGraphBackdropSettings';
 import AlgoAlertPanel from './AlgoAlertPanel';
 import AlertDesigner from './AlertDesigner';
 import WhatsNew from './WhatsNew';
@@ -29,6 +29,7 @@ import { useAlerts } from '../contexts/AlertContext';
 import { useAlertEvaluator } from '../hooks/useAlertEvaluator';
 import { useDealerGravity } from '../contexts/DealerGravityContext';
 import { useIndicatorSettings } from './chart-primitives';
+
 import type {
   Alert,
   AlertType,
@@ -214,8 +215,8 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   const [designerInitialStrategyId, setDesignerInitialStrategyId] = useState<string | undefined>();
   const [designerEditingAlert, setDesignerEditingAlert] = useState<Alert | null>(null);
 
-  // Dealer Gravity context for backdrop
-  const { artifact: dgArtifact, config: dgConfig } = useDealerGravity();
+  // Dealer Gravity context — artifact/data only; display config is local (useIndicatorSettings)
+  const { artifact: dgArtifact } = useDealerGravity();
 
   const pnlChartRef = useRef<PnLChartHandle>(null);
 
@@ -237,8 +238,8 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   const [backdropOpacity, setBackdropOpacity] = useState(0.8);
   const [showDGSettings, setShowDGSettings] = useState(false);
 
-  // Get GEX and VP configs from indicator settings (inherits from DG chart settings)
-  const { gexConfig, vpConfig: volumeProfileConfig } = useIndicatorSettings();
+  // Local display config for VP + GEX in Risk Graph backdrop (localStorage-backed)
+  const { gexConfig, vpConfig: volumeProfileConfig, setGexConfig, setVpConfig, saveAsDefault, resetToFactoryDefaults } = useIndicatorSettings();
 
   // Expose autoFit to parent
   useImperativeHandle(ref, () => ({
@@ -685,7 +686,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
         }}
       />
     );
-  }, [dgArtifact, dgConfig?.enabled, showVolumeProfile, showGex, showStructuralLines, backdropOpacity, gexByStrike, gexConfig, volumeProfileConfig]);
+  }, [dgArtifact, showVolumeProfile, showGex, showStructuralLines, backdropOpacity, gexByStrike, gexConfig, volumeProfileConfig]);
 
   // Format DTE display
   const formatDTE = (hours: number) => {
@@ -1643,10 +1644,16 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
               </div>
         </div>
 
-        {/* Dealer Gravity Settings Modal */}
-        <DealerGravitySettings
+        {/* Risk Graph Backdrop Settings (local display config — VP, GEX, Structural Lines) */}
+        <RiskGraphBackdropSettings
           isOpen={showDGSettings}
           onClose={() => setShowDGSettings(false)}
+          vpConfig={volumeProfileConfig}
+          gexConfig={gexConfig}
+          onVpChange={setVpConfig}
+          onGexChange={setGexConfig}
+          onSaveDefault={saveAsDefault}
+          onResetToFactory={resetToFactoryDefaults}
         />
 
         {/* Alert Designer Panel */}
