@@ -206,6 +206,20 @@ menu() {
 ###############################################
 if [[ $# -gt 0 ]]; then
   case "$1" in
+    --build)
+      # Non-interactive build — no clear, no keypress waits.
+      # Use this from scripts, CI, or automated contexts.
+      if [[ ! -x "$VENV_PY" ]]; then
+        echo "ERROR: venv python not found at $VENV_PY" >&2
+        exit 1
+      fi
+      if [[ ! -f "$BUILD_SCRIPT" ]]; then
+        echo "ERROR: build_truth.py not found at $BUILD_SCRIPT" >&2
+        exit 1
+      fi
+      "$VENV_PY" "$BUILD_SCRIPT"
+      exit $?
+      ;;
     run)
       run_builder
       exit 0
@@ -227,7 +241,15 @@ if [[ $# -gt 0 ]]; then
       exit 0
       ;;
     *)
-      echo "Usage: $0 [run|show|check-node [node.json]|check-comp [name|component.json]]"
+      echo "Usage: $0 [--build|run|show|check-node [node.json]|check-comp [name|component.json]]"
+      echo ""
+      echo "  --build     Build truth non-interactively (for scripts/automation)"
+      echo "  run         Build truth (interactive, with menu return)"
+      echo "  show        View current truth summary"
+      echo "  check-node  Validate node definition"
+      echo "  check-comp  Validate a component definition"
+      echo ""
+      echo "No arguments launches the interactive menu."
       exit 1
       ;;
   esac
