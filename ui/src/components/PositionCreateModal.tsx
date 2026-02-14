@@ -250,22 +250,23 @@ function getDefaultLegs(
       ];
 
     case 'iron_fly':
-      // Iron fly: short the ATM straddle, long the wings
-      // Short iron fly = credit received (typical)
+      // Iron fly base (long direction): long ATM straddle, short wings (debit)
+      // Short direction (default): short ATM straddle, long wings (credit)
       return [
-        { strike: baseStrike - width, expiration, right: 'put', quantity: 1 * d },
-        { strike: baseStrike, expiration, right: 'put', quantity: -1 * d },
-        { strike: baseStrike, expiration, right: 'call', quantity: -1 * d },
-        { strike: baseStrike + width, expiration, right: 'call', quantity: 1 * d },
+        { strike: baseStrike - width, expiration, right: 'put', quantity: -1 * d },
+        { strike: baseStrike, expiration, right: 'put', quantity: 1 * d },
+        { strike: baseStrike, expiration, right: 'call', quantity: 1 * d },
+        { strike: baseStrike + width, expiration, right: 'call', quantity: -1 * d },
       ];
 
     case 'iron_condor':
-      // Iron condor: short the inner strikes, long the outer wings
+      // Iron condor base (long direction): long inner strikes, short wings (debit)
+      // Short direction (default): short inner strikes, long wings (credit)
       return [
-        { strike: baseStrike - width * 1.5, expiration, right: 'put', quantity: 1 * d },
-        { strike: baseStrike - width * 0.5, expiration, right: 'put', quantity: -1 * d },
-        { strike: baseStrike + width * 0.5, expiration, right: 'call', quantity: -1 * d },
-        { strike: baseStrike + width * 1.5, expiration, right: 'call', quantity: 1 * d },
+        { strike: baseStrike - width * 1.5, expiration, right: 'put', quantity: -1 * d },
+        { strike: baseStrike - width * 0.5, expiration, right: 'put', quantity: 1 * d },
+        { strike: baseStrike + width * 0.5, expiration, right: 'call', quantity: 1 * d },
+        { strike: baseStrike + width * 1.5, expiration, right: 'call', quantity: -1 * d },
       ];
 
     case 'calendar':
