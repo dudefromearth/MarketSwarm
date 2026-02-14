@@ -436,7 +436,7 @@ export default function PositionCreateModal({
       setPrimaryRight(prefill.primaryRight);
       setExpiration(prefill.expiration);
       if (prefill.costBasis != null) {
-        setCostBasis(Math.abs(prefill.costBasis).toString());
+        setCostBasis(Math.abs(prefill.costBasis).toFixed(2));
         setCostBasisType('debit');
       } else {
         setCostBasis('');
@@ -464,7 +464,7 @@ export default function PositionCreateModal({
       }
 
       const basis = editStrategy.costBasis ?? editStrategy.debit ?? null;
-      setCostBasis(basis !== null ? basis.toString() : '');
+      setCostBasis(basis !== null ? Number(basis).toFixed(2) : '');
       setCostBasisType(editStrategy.costBasisType || 'debit');
     }
   }, [isOpen, editStrategy]);
@@ -502,7 +502,7 @@ export default function PositionCreateModal({
         setParseError(null);
         setSymbol(result.symbol);
         if (result.costBasis !== undefined) {
-          setCostBasis(result.costBasis.toString());
+          setCostBasis(Number(result.costBasis).toFixed(2));
         }
         if (result.costBasisType) {
           setCostBasisType(result.costBasisType);
@@ -803,14 +803,14 @@ export default function PositionCreateModal({
                   {/* Column headers */}
                   <div className="leg-row leg-header">
                     <span className="leg-index"></span>
-                    <span className="leg-col-label leg-quantity"></span>
+                    <span className="leg-col-label leg-quantity">QTY</span>
                     <span className="leg-col-label leg-strike">STRIKE</span>
                     <span className="leg-col-label leg-right">TYPE</span>
                     <span className="leg-col-label leg-expiration">EXPIRATION</span>
                     <span className="leg-col-label leg-cost-basis">
                       <span className={costBasisType}>{costBasisType === 'credit' ? 'CREDIT' : 'DEBIT'}</span>
                     </span>
-                    <span className="leg-col-label leg-qty-field">QTY</span>
+                    <span className="leg-col-label leg-qty-field">POS</span>
                   </div>
                   {legs.map((leg, index) => (
                     <div key={index} className="leg-row">
@@ -858,15 +858,18 @@ export default function PositionCreateModal({
                       {index === 0 && (
                         <>
                           <input
-                            type="number"
+                            type="text"
+                            inputMode="decimal"
                             className={`cost-basis-inline ${costBasis ? costBasisType : ''}`}
                             value={costBasis}
                             onChange={e => {
                               const val = e.target.value;
-                              setCostBasis(val);
-                              const num = parseFloat(val);
-                              if (!isNaN(num)) {
-                                setCostBasisType(num < 0 ? 'credit' : 'debit');
+                              if (val === '' || val === '-' || /^-?\d*\.?\d{0,2}$/.test(val)) {
+                                setCostBasis(val);
+                                const num = parseFloat(val);
+                                if (!isNaN(num)) {
+                                  setCostBasisType(num < 0 ? 'credit' : 'debit');
+                                }
                               }
                             }}
                             onBlur={() => {
@@ -876,7 +879,6 @@ export default function PositionCreateModal({
                               }
                             }}
                             placeholder="0.00"
-                            step="0.05"
                           />
                           <input
                             type="number"
@@ -912,7 +914,7 @@ export default function PositionCreateModal({
                       <span className="preview-dte">{dte}d</span>
                       {costBasis && (
                         <span className={`preview-cost-basis ${costBasisType}`}>
-                          ${parseFloat(costBasis).toFixed(2)} {costBasisType === 'credit' ? 'Credit' : 'Debit'}
+                          ${parseFloat(costBasis).toFixed(2)} {costBasisType === 'credit' ? 'CREDIT' : 'DEBIT'}
                         </span>
                       )}
                     </div>
@@ -920,6 +922,13 @@ export default function PositionCreateModal({
                   </div>
                 </div>
                 <div className="action-buttons">
+                  <button
+                    className={`btn ${isEditMode ? 'btn-save' : 'btn-create'}`}
+                    onClick={isEditMode ? handleSave : handleCreate}
+                    disabled={!isValid()}
+                  >
+                    {isEditMode ? 'Save Changes' : 'Add to Risk Graph'}
+                  </button>
                   {!isEditMode && (
                     <button
                       className="btn btn-import-export"
@@ -928,13 +937,6 @@ export default function PositionCreateModal({
                       {mode === 'import' ? 'Back to Build' : 'Import / Export'}
                     </button>
                   )}
-                  <button
-                    className={`btn ${isEditMode ? 'btn-save' : 'btn-create'}`}
-                    onClick={isEditMode ? handleSave : handleCreate}
-                    disabled={!isValid()}
-                  >
-                    {isEditMode ? 'Save Changes' : 'Add to Risk Graph'}
-                  </button>
                   <button className="btn btn-cancel" onClick={handleClose}>
                     Cancel
                   </button>
@@ -1053,15 +1055,18 @@ export default function PositionCreateModal({
               <label>Cost Basis <span className="hint">(optional)</span></label>
               <div className="cost-basis-input-row">
                 <input
-                  type="number"
+                  type="text"
+                  inputMode="decimal"
                   className="cost-basis-value"
                   value={costBasis}
                   onChange={e => {
                     const val = e.target.value;
-                    setCostBasis(val);
-                    const num = parseFloat(val);
-                    if (!isNaN(num)) {
-                      setCostBasisType(num < 0 ? 'credit' : 'debit');
+                    if (val === '' || val === '-' || /^-?\d*\.?\d{0,2}$/.test(val)) {
+                      setCostBasis(val);
+                      const num = parseFloat(val);
+                      if (!isNaN(num)) {
+                        setCostBasisType(num < 0 ? 'credit' : 'debit');
+                      }
                     }
                   }}
                   onBlur={() => {
