@@ -37,7 +37,7 @@ import TradeImportModal from './components/TradeImportModal';
 import ImportManager from './components/ImportManager';
 import { recognizeStrategy, type ImportedTrade } from './utils/importers';
 import PositionEditModal, { type StrategyData } from './components/PositionEditModal';
-import PositionCreateModal, { type CreatedPosition } from './components/PositionCreateModal';
+import PositionCreateModal, { type CreatedPosition, type PositionPrefill } from './components/PositionCreateModal';
 import type { ParsedStrategy } from './utils/tosParser';
 import { useAlerts } from './contexts/AlertContext';
 import { usePath } from './contexts/PathContext';
@@ -58,7 +58,6 @@ import TradeTrackingPanel from './components/TradeTrackingPanel';
 import TrackingAnalyticsDashboard from './components/TrackingAnalyticsDashboard';
 import LeaderboardView from './components/LeaderboardView';
 import MonitorPanel from './components/MonitorPanel';
-import FloatingDialog from './components/FloatingDialog';
 import OrphanedAlertDialog from './components/OrphanedAlertDialog';
 import DailyOnboarding from './components/DailyOnboarding';
 import ProcessBar, { type ProcessPhase } from './components/ProcessBar';
@@ -624,9 +623,9 @@ function App() {
     }
   }, [USE_NEW_POSITIONS_API, addPosition, legacyAddStrategy]);
 
-  // Popup state
-  const [selectedTile, setSelectedTile] = useState<SelectedStrategy | null>(null);
-  const [tileQty, setTileQty] = useState(1);
+  // Position create prefill state (from heatmap tile clicks or trade recommendations)
+  const [positionPrefill, setPositionPrefill] = useState<PositionPrefill | null>(null);
+
   const [riskGraphAlerts, setRiskGraphAlerts] = useState<RiskGraphAlert[]>(() => {
     try {
       const saved = localStorage.getItem('riskGraphAlerts');
@@ -653,7 +652,6 @@ function App() {
     new Map(riskGraphStrategies.map(s => [s.id, s])),
     [riskGraphStrategies]
   );
-  const [tosCopied, setTosCopied] = useState(false);
   const [showTosImport, setShowTosImport] = useState(false);
   const [showTradeImport, setShowTradeImport] = useState(false);
   const [showImportManager, setShowImportManager] = useState(false);
@@ -815,8 +813,8 @@ function App() {
 
     // Priority 6: Idea discovery → Selection
     // Heatmap, Trade Selector, candidate lists, tile popup (browsing possible trades)
-    // Note: selectedTile is the heatmap popup - this is Selection, not Analysis
-    if (!heatmapCollapsed || selectedTile !== null) return 'selection';
+    // Heatmap visible or position create modal open → Selection phase
+    if (!heatmapCollapsed || showPositionCreate) return 'selection';
 
     // Default: No phase highlighted (neutral state)
     // "If nothing is active: no phase is highlighted"
@@ -824,7 +822,7 @@ function App() {
     // Spec says: "Action is NOT triggered by: Opening a trade entry modal"
     // And Analysis is ONLY for Risk Graph, so modals = neutral unless underlying context applies
     return undefined;
-  }, [actionTriggeredAt, commentaryCollapsed, tradeLogCollapsed, isRiskGraphHovered, gexDrawerOpen, gexCollapsed, heatmapCollapsed, selectedTile]);
+  }, [actionTriggeredAt, commentaryCollapsed, tradeLogCollapsed, isRiskGraphHovered, gexDrawerOpen, gexCollapsed, heatmapCollapsed, showPositionCreate]);
 
   // Drawer proximity tracking for gravitational glow effect
   const [routineProximity, setRoutineProximity] = useState(0);
@@ -993,33 +991,7 @@ function App() {
     return expirations[dte] || expirations[0] || '';
   }, [gexCalls, dte]);
 
-  // Generate TOS order script for a strategy
-  const generateTosScript = (strat: SelectedStrategy): string => {
-    const sideUpper = strat.side.toUpperCase();
-    // Format expiration: "2026-01-31" -> "31 JAN 26"
-    const expParts = strat.expiration.split('-');
-    const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
-    const expFormatted = expParts.length === 3
-      ? `${expParts[2]} ${months[parseInt(expParts[1]) - 1]} ${expParts[0].slice(2)}`
-      : strat.expiration;
-
-    const price = strat.debit !== null ? `@${strat.debit.toFixed(2)} LMT` : '';
-
-    if (strat.strategy === 'single') {
-      return `BUY +1 SPX 100 (Weeklys) ${expFormatted} ${strat.strike} ${sideUpper} ${price}`;
-    } else if (strat.strategy === 'vertical') {
-      const longStrike = strat.strike;
-      const shortStrike = strat.side === 'call' ? strat.strike + strat.width : strat.strike - strat.width;
-      return `BUY +1 VERTICAL SPX 100 (Weeklys) ${expFormatted} ${longStrike}/${shortStrike} ${sideUpper} ${price}`;
-    } else {
-      // Butterfly
-      const lowerStrike = strat.strike - strat.width;
-      const upperStrike = strat.strike + strat.width;
-      return `BUY +1 BUTTERFLY SPX 100 (Weeklys) ${expFormatted} ${lowerStrike}/${strat.strike}/${upperStrike} ${sideUpper} ${price}`;
-    }
-  };
-
-  // Handle tile click
+  // Handle tile click - open PositionCreateModal with prefill
   const handleTileClick = (strike: number, width: number, debit: number | null, effectiveSide?: 'call' | 'put') => {
     // For 'both' mode, determine side based on strike vs spot
     let tileSide: 'call' | 'put';
@@ -1030,73 +1002,16 @@ function App() {
     } else {
       tileSide = side;
     }
-    setSelectedTile({
-      strategy,
-      side: tileSide,
-      strike,
+    setPositionPrefill({
+      positionType: strategy,
+      baseStrike: strike,
       width,
-      dte,
+      primaryRight: tileSide,
       expiration: currentExpiration,
-      debit,
+      costBasis: debit,
+      symbol: underlying.replace('I:', ''),
     });
-  };
-
-  // Copy TOS script to clipboard
-  const copyTosScript = async () => {
-    if (!selectedTile) return;
-    const script = generateTosScript(selectedTile);
-    await navigator.clipboard.writeText(script);
-    setTosCopied(true);
-    setTimeout(() => setTosCopied(false), 2000);
-  };
-
-  // Add strategy to risk graph list (with quantity support)
-  const addToRiskGraph = async () => {
-    if (!selectedTile) return;
-    if (!selectedTile.expiration) {
-      console.error('Cannot add to risk graph: no expiration date available (GEX data may not be loaded)');
-      return;
-    }
-    try {
-      // Build legs with quantity multiplier
-      const q = tileQty;
-      const { strike, width, side: tileSide, expiration: tileExp, strategy: strat } = selectedTile;
-      const right = tileSide as 'call' | 'put';
-      let legs: Array<{ strike: number; expiration: string; right: 'call' | 'put'; quantity: number }> | undefined;
-
-      if (q !== 1) {
-        if (strat === 'butterfly') {
-          legs = [
-            { strike: strike - width, expiration: tileExp, right, quantity: 1 * q },
-            { strike, expiration: tileExp, right, quantity: -2 * q },
-            { strike: strike + width, expiration: tileExp, right, quantity: 1 * q },
-          ];
-        } else if (strat === 'vertical') {
-          if (tileSide === 'call') {
-            legs = [
-              { strike, expiration: tileExp, right, quantity: 1 * q },
-              { strike: strike + width, expiration: tileExp, right, quantity: -1 * q },
-            ];
-          } else {
-            legs = [
-              { strike, expiration: tileExp, right, quantity: 1 * q },
-              { strike: strike - width, expiration: tileExp, right, quantity: -1 * q },
-            ];
-          }
-        } else {
-          legs = [{ strike, expiration: tileExp, right, quantity: 1 * q }];
-        }
-      }
-
-      await contextAddStrategy({
-        ...selectedTile,
-        width: selectedTile.width || 0,
-        ...(legs ? { legs } : {}),
-      } as any);
-      closePopup();
-    } catch (err) {
-      console.error('Failed to add strategy:', err);
-    }
+    setShowPositionCreate(true);
   };
 
   // Import ToS script as new strategy
@@ -1181,25 +1096,21 @@ function App() {
     }
   };
 
-  // Close popup
-  const closePopup = () => { setSelectedTile(null); setTileQty(1); };
-
-  // Handle trade recommendation selection
+  // Handle trade recommendation selection — open PositionCreateModal with prefill
   const handleTradeRecommendationSelect = useCallback((rec: TradeRecommendation) => {
-    // Convert recommendation to selectedTile format
     const expDate = new Date();
     expDate.setDate(expDate.getDate() + rec.dte);
     const expiration = expDate.toISOString().split('T')[0];
 
-    setSelectedTile({
-      strategy: rec.strategy,
-      side: rec.side,
-      strike: rec.strike,
+    setPositionPrefill({
+      positionType: rec.strategy,
+      baseStrike: rec.strike,
       width: rec.width,
-      dte: rec.dte,
+      primaryRight: rec.side,
       expiration,
-      debit: rec.debit,
+      costBasis: rec.debit,
     });
+    setShowPositionCreate(true);
   }, []);
 
   // Remove strategy from risk graph (intercepts if position has bound alerts)
@@ -3828,148 +3739,6 @@ function App() {
         />
       )}
 
-      {/* Strategy Popup - Floating Dialog */}
-      <FloatingDialog
-        isOpen={selectedTile !== null}
-        onClose={closePopup}
-        title={selectedTile?.strategy === 'single' ? 'Single Option' :
-               selectedTile?.strategy === 'vertical' ? 'Vertical Spread' : 'Butterfly'}
-        width={400}
-        showBackdrop={true}
-        closeOnBackdropClick={true}
-      >
-        {selectedTile && (
-          <>
-            <div className="form-row">
-              <span className="form-label">Symbol</span>
-              <span className="form-value">SPX</span>
-            </div>
-            <div className="form-row">
-              <span className="form-label">Expiration</span>
-              <span className="form-value">{selectedTile.expiration}</span>
-            </div>
-            <div className="form-row">
-              <span className="form-label">Strike</span>
-              <span className="form-value">{selectedTile.strike}</span>
-            </div>
-            {selectedTile.strategy !== 'single' && (
-              <div className="form-row">
-                <span className="form-label">Width</span>
-                <span className="form-value">{selectedTile.width}</span>
-              </div>
-            )}
-            <div className="form-row">
-              <span className="form-label">Side</span>
-              <span className={`form-value side-${selectedTile.side}`}>
-                {selectedTile.side.toUpperCase()}
-              </span>
-            </div>
-            <div className="form-row">
-              <span className="form-label">DTE</span>
-              <span className="form-value">{selectedTile.dte}</span>
-            </div>
-            <div className="form-row">
-              <span className="form-label">Qty</span>
-              <span className="form-value">
-                <div className="tile-qty-selector">
-                  <button
-                    className="tile-qty-btn"
-                    onClick={() => setTileQty(q => Math.max(1, q - 1))}
-                    disabled={tileQty <= 1}
-                  >-</button>
-                  <span className="tile-qty-value">{tileQty}</span>
-                  <button
-                    className="tile-qty-btn"
-                    onClick={() => setTileQty(q => Math.min(99, q + 1))}
-                  >+</button>
-                </div>
-              </span>
-            </div>
-            <div className="form-row">
-              <span className="form-label">Debit</span>
-              <span className="form-value" style={{ color: '#fbbf24' }}>
-                {selectedTile.debit !== null ? `$${(selectedTile.debit * tileQty).toFixed(2)}` : '-'}
-                {tileQty > 1 && selectedTile.debit !== null && (
-                  <span style={{ color: 'var(--text-faint)', fontSize: '0.85em', marginLeft: 4 }}>
-                    (${selectedTile.debit.toFixed(2)} ea)
-                  </span>
-                )}
-              </span>
-            </div>
-
-            {selectedTile.strategy === 'butterfly' && (
-              <div className="strategy-legs">
-                <div className="strategy-leg">
-                  <span className="leg-action buy">BUY {1 * tileQty}x</span>
-                  <span>{selectedTile.strike - selectedTile.width} {selectedTile.side.toUpperCase()}</span>
-                </div>
-                <div className="strategy-leg">
-                  <span className="leg-action sell">SELL {2 * tileQty}x</span>
-                  <span>{selectedTile.strike} {selectedTile.side.toUpperCase()}</span>
-                </div>
-                <div className="strategy-leg">
-                  <span className="leg-action buy">BUY {1 * tileQty}x</span>
-                  <span>{selectedTile.strike + selectedTile.width} {selectedTile.side.toUpperCase()}</span>
-                </div>
-              </div>
-            )}
-
-            {selectedTile.strategy === 'vertical' && (
-              <div className="strategy-legs">
-                <div className="strategy-leg">
-                  <span className="leg-action buy">BUY {1 * tileQty}x</span>
-                  <span>{selectedTile.strike} {selectedTile.side.toUpperCase()}</span>
-                </div>
-                <div className="strategy-leg">
-                  <span className="leg-action sell">SELL {1 * tileQty}x</span>
-                  <span>
-                    {selectedTile.side === 'call'
-                      ? selectedTile.strike + selectedTile.width
-                      : selectedTile.strike - selectedTile.width} {selectedTile.side.toUpperCase()}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            <div className="tos-script">
-              {generateTosScript(selectedTile)}
-            </div>
-
-            <div className="form-actions">
-              <button
-                className={`btn btn-primary${tosCopied ? ' copied' : ''}`}
-                onClick={copyTosScript}
-              >
-                {tosCopied ? 'Copied!' : 'Copy TOS'}
-              </button>
-              <button className="btn btn-secondary" onClick={addToRiskGraph}>
-                + Risk Graph
-              </button>
-              <button
-                className="btn btn-success"
-                onClick={() => {
-                  openTradeEntry({
-                    symbol: 'SPX',
-                    underlying,
-                    strategy: selectedTile.strategy as 'single' | 'vertical' | 'butterfly',
-                    side: selectedTile.side as 'call' | 'put',
-                    strike: selectedTile.strike,
-                    width: selectedTile.width,
-                    dte: selectedTile.dte,
-                    entry_price: selectedTile.debit ? selectedTile.debit * tileQty : undefined,
-                    entry_spot: currentSpot || undefined,
-                    source: 'heatmap',
-                    quantity: tileQty,
-                  });
-                  closePopup();
-                }}
-              >
-                Log Trade
-              </button>
-            </div>
-          </>
-        )}
-      </FloatingDialog>
 
       {/* Trade Entry Modal */}
       <TradeEntryModal
@@ -4076,11 +3845,12 @@ function App() {
       {/* Position Create Modal (Build or Import) */}
       <PositionCreateModal
         isOpen={showPositionCreate}
-        onClose={() => setShowPositionCreate(false)}
+        onClose={() => { setShowPositionCreate(false); setPositionPrefill(null); }}
         onCreate={handlePositionCreate}
         defaultSymbol={underlying.replace('I:', '')}
         atmStrike={spot?.[underlying]?.value}
         spotData={spot || undefined}
+        prefill={positionPrefill}
       />
 
       {/* Position Edit Modal (Leg-based) */}

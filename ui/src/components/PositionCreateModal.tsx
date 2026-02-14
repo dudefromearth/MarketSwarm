@@ -8,7 +8,7 @@
  * - Preview before adding to Risk Graph
  */
 
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useDraggable } from '../hooks/useDraggable';
 import type { PositionLeg, PositionType, CostBasisType } from '../types/riskGraph';
 import { POSITION_TYPE_LABELS } from '../types/riskGraph';
@@ -24,6 +24,7 @@ import {
   type ParsedPosition,
   type ScriptFormat,
 } from '../utils/scriptParsers';
+import { generateTosScript } from '../utils/tosGenerator';
 
 // Output format for created position
 export interface CreatedPosition {
@@ -35,6 +36,16 @@ export interface CreatedPosition {
   dte: number;
 }
 
+export interface PositionPrefill {
+  positionType: PositionType;
+  baseStrike: number;
+  width: number;
+  primaryRight: 'call' | 'put';
+  expiration: string;       // YYYY-MM-DD
+  costBasis?: number | null;
+  symbol?: string;
+}
+
 interface PositionCreateModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -42,6 +53,7 @@ interface PositionCreateModalProps {
   defaultSymbol?: string;
   atmStrike?: number;  // Current ATM strike price (fallback for primary underlying)
   spotData?: Record<string, { value: number; [key: string]: any }>;
+  prefill?: PositionPrefill | null;
 }
 
 type CreateMode = 'build' | 'import';
@@ -240,6 +252,7 @@ export default function PositionCreateModal({
   defaultSymbol = 'SPX',
   atmStrike = 5900,
   spotData,
+  prefill,
 }: PositionCreateModalProps) {
   const { symbols: availableSymbols, getConfig } = useSymbolConfig();
   const [mode, setMode] = useState<CreateMode>('build');
@@ -300,27 +313,37 @@ export default function PositionCreateModal({
   const [showVegaWarning, setShowVegaWarning] = useState(false);
   const [pendingShortType, setPendingShortType] = useState<PositionType | null>(null);
 
+  // Skip flag: when direction or expiration changes via user action, the in-place
+  // update handles legs directly — the generation effect should not overwrite.
+  const skipRegenRef = useRef(false);
+
   // Types that need vega warning when going short
   const VEGA_SENSITIVE_TYPES: PositionType[] = ['calendar', 'diagonal'];
 
-  // Update direction when position type changes
+  // Update direction when position type changes (full regeneration via effect)
   const handlePositionTypeChange = useCallback((newType: PositionType) => {
     setPositionType(newType);
     setDirection(getDefaultDirection(newType));
   }, []);
 
-  // Handle direction change with vega warning check
+  // Handle direction change — flip existing leg qty signs in place
   const handleDirectionChange = useCallback((newDirection: Direction) => {
     if (newDirection === 'short' && VEGA_SENSITIVE_TYPES.includes(positionType)) {
       setPendingShortType(positionType);
       setShowVegaWarning(true);
     } else {
+      if (newDirection !== direction) {
+        skipRegenRef.current = true;
+        setLegs(prev => prev.map(leg => ({ ...leg, quantity: -leg.quantity })));
+      }
       setDirection(newDirection);
     }
-  }, [positionType]);
+  }, [positionType, direction]);
 
-  // Confirm short calendar/diagonal despite vega warning
+  // Confirm short calendar/diagonal despite vega warning — flip leg qty signs
   const confirmShortVega = useCallback(() => {
+    skipRegenRef.current = true;
+    setLegs(prev => prev.map(leg => ({ ...leg, quantity: -leg.quantity })));
     setDirection('short');
     setShowVegaWarning(false);
     setPendingShortType(null);
@@ -330,6 +353,13 @@ export default function PositionCreateModal({
   const cancelShortVega = useCallback(() => {
     setShowVegaWarning(false);
     setPendingShortType(null);
+  }, []);
+
+  // Handle Quick Setup expiration change — update all leg expirations in place
+  const handleExpirationChange = useCallback((newExp: string) => {
+    skipRegenRef.current = true;
+    setExpiration(newExp);
+    setLegs(prev => prev.map(leg => ({ ...leg, expiration: newExp })));
   }, []);
 
   // Import mode state
@@ -353,8 +383,34 @@ export default function PositionCreateModal({
     }
   }, [isOpen, roundedAtm, expirationPattern]);
 
-  // Generate legs when build parameters change
+  // Apply prefill values when modal opens with prefill data
   useEffect(() => {
+    if (isOpen && prefill) {
+      setMode('build');
+      if (prefill.symbol) setSymbol(prefill.symbol);
+      setPositionType(prefill.positionType as PositionType);
+      setDirection(getDefaultDirection(prefill.positionType as PositionType));
+      setBaseStrike(prefill.baseStrike.toString());
+      setWidth(prefill.width.toString());
+      setPrimaryRight(prefill.primaryRight);
+      setExpiration(prefill.expiration);
+      if (prefill.costBasis != null) {
+        setCostBasis(Math.abs(prefill.costBasis).toString());
+        setCostBasisType('debit');
+      } else {
+        setCostBasis('');
+      }
+    }
+  }, [isOpen, prefill]);
+
+  // Generate legs when build parameters change
+  // Direction and expiration changes are handled in-place by their own handlers;
+  // skipRegenRef prevents this effect from overwriting those updates.
+  useEffect(() => {
+    if (skipRegenRef.current) {
+      skipRegenRef.current = false;
+      return;
+    }
     if (mode === 'build' && expiration) {
       const strike = parseFloat(baseStrike) || 5900;
       const w = parseFloat(width) || defaultWidth;
@@ -524,7 +580,7 @@ export default function PositionCreateModal({
             className={`tab-btn ${mode === 'import' ? 'active' : ''}`}
             onClick={() => setMode('import')}
           >
-            Import Script
+            Import / Export Script
           </button>
         </div>
 
@@ -590,18 +646,18 @@ export default function PositionCreateModal({
                       className={`direction-btn long ${direction === 'long' ? 'active' : ''}`}
                       onClick={() => handleDirectionChange('long')}
                     >
-                      L
+                      Buy
                     </button>
                     <button
                       type="button"
                       className={`direction-btn short ${direction === 'short' ? 'active' : ''}`}
                       onClick={() => handleDirectionChange('short')}
                     >
-                      S
+                      Sell
                     </button>
                   </div>
                   <span className="selected-type-label">
-                    {direction === 'long' ? 'Long' : 'Short'} {POSITION_TYPE_LABELS[positionType]}
+                    {direction === 'long' ? 'Buy' : 'Sell'} {POSITION_TYPE_LABELS[positionType]}
                   </span>
                 </div>
               </div>
@@ -644,7 +700,7 @@ export default function PositionCreateModal({
                     <input
                       type="date"
                       value={expiration}
-                      onChange={e => setExpiration(e.target.value)}
+                      onChange={e => handleExpirationChange(e.target.value)}
                     />
                   </div>
                   <div className="setup-field">
@@ -697,8 +753,8 @@ export default function PositionCreateModal({
                         value={leg.right}
                         onChange={e => updateLeg(index, { right: e.target.value as 'call' | 'put' })}
                       >
-                        <option value="call">C</option>
-                        <option value="put">P</option>
+                        <option value="call">Call</option>
+                        <option value="put">Put</option>
                       </select>
                       <input
                         type="date"
@@ -713,10 +769,31 @@ export default function PositionCreateModal({
             </>
           ) : (
             <>
-              {/* Import Mode */}
+              {/* TOS Export */}
+              {currentLegs.length > 0 && (
+                <div className="form-group tos-export-group">
+                  <label>Export</label>
+                  <div className="tos-output">
+                    <code>{generateTosScript({ symbol, legs: currentLegs, costBasis: costBasis ? parseFloat(costBasis) : null })}</code>
+                    <button
+                      className="btn-copy-tos"
+                      onClick={async () => {
+                        const script = generateTosScript({ symbol, legs: currentLegs, costBasis: costBasis ? parseFloat(costBasis) : null });
+                        await navigator.clipboard.writeText(script);
+                        const btn = document.querySelector('.btn-copy-tos');
+                        if (btn) { btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy'; }, 2000); }
+                      }}
+                    >
+                      Copy
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Import */}
               <div className="form-group">
                 <label>
-                  Paste Strategy Script
+                  Import Script
                   <button className="btn-paste" onClick={handlePasteFromClipboard}>
                     Paste from Clipboard
                   </button>
