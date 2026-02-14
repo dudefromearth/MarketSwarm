@@ -13900,8 +13900,8 @@ body {
   background: #1a1a2e;
   border: 1px solid var(--border-default);
   border-radius: 8px;
-  min-width: 630px;
-  max-width: 710px;
+  min-width: 680px;
+  max-width: 760px;
   max-height: 85vh;
   display: flex;
   flex-direction: column;
@@ -14195,7 +14195,7 @@ body {
 }
 
 .position-create-body .leg-strike {
-  width: 90px;
+  width: 120px;
   padding: 4px 6px;
   font-size: 11px;
   background: var(--bg-elevated);

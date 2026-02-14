@@ -301,7 +301,7 @@ export default function StrikeDropdown({
         .strike-dropdown {
           position: relative;
           display: inline-block;
-          width: 90px;
+          width: 120px;
         }
 
         .strike-dropdown.disabled {
