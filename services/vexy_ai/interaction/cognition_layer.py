@@ -36,14 +36,16 @@ class CognitionLayer:
     The kernel is NOT modified — all stages wrap around it.
     """
 
-    def __init__(self, kernel: Any, logger: Any):
+    def __init__(self, kernel: Any, logger: Any, echo_client: Any = None):
         """
         Args:
             kernel: VexyKernel instance
             logger: LogUtil instance
+            echo_client: EchoRedisClient (optional, for hydration reads)
         """
         self._kernel = kernel
         self._logger = logger
+        self._echo_client = echo_client
 
     async def execute(
         self,
@@ -72,8 +74,8 @@ class CognitionLayer:
                 job_id, user_id, "hydrate_echo", 0, stage_count,
                 "Gathering your context..."
             )
-            # Echo hydration happens inside kernel, but we signal the stage
-            echo_context = self._prepare_echo_context(request, tier)
+            # Read warm snapshot from Echo Redis (or trigger on-demand hydration)
+            echo_context = await self._prepare_echo_context(request, tier, user_id)
 
             # Stage 2: Select playbooks
             await job_manager.update_stage(
@@ -166,8 +168,42 @@ class CognitionLayer:
             open_loops=request.open_loops,
         )
 
-    def _prepare_echo_context(self, request: Any, tier: str) -> Optional[Dict]:
-        """Pre-stage for echo context. Actual injection happens in kernel."""
-        # The kernel handles echo injection internally based on tier.
-        # This stage exists for progress visibility.
+    async def _prepare_echo_context(self, request: Any, tier: str, user_id: int) -> Optional[Dict]:
+        """
+        Pre-stage: read warm snapshot from Echo Redis.
+
+        If snapshot missing/stale, attempt on-demand hydration (bounded 2s).
+        Returns the snapshot dict, or None if unavailable.
+        """
+        if not self._echo_client or not self._echo_client.available:
+            return None
+
+        try:
+            snapshot = await self._echo_client.read_warm_snapshot(user_id)
+            if snapshot:
+                return snapshot
+
+            # Snapshot missing — try on-demand hydration via hydrator HTTP
+            import asyncio
+            import aiohttp
+
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        "http://127.0.0.1:3007/hydrate",
+                        json={"user_id": user_id, "tier": tier},
+                        timeout=aiohttp.ClientTimeout(total=2.0),
+                    ) as resp:
+                        if resp.status == 200:
+                            result = await resp.json()
+                            if not result.get("error"):
+                                # Re-read the snapshot that was just hydrated
+                                return await self._echo_client.read_warm_snapshot(user_id)
+            except Exception:
+                # Hydrator unavailable — continue without snapshot
+                pass
+
+        except Exception as e:
+            self._logger.warning(f"Echo context preparation failed: {e}")
+
         return None

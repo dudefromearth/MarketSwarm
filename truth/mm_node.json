@@ -20,6 +20,11 @@
       "url": "redis://127.0.0.1:6381",
       "role": "intel",
       "description": "RSS & external intel ingestion, enrichment, sentiment."
+    },
+    "echo-redis": {
+      "url": "redis://127.0.0.1:6382",
+      "role": "echo",
+      "description": "Dedicated cognitive memory — hot tier, snapshots, activity. No persistence."
     }
   },
   "components": [
@@ -33,6 +38,7 @@
     "sse",
     "mesh",
     "healer",
-    "vexy_proxy"
+    "vexy_proxy",
+    "vexy_hydrator"
   ]
 }

@@ -1,8 +1,8 @@
 """
 Redis Bus Adapter - Implementation of BusPort for Redis.
 
-Provides Vexy's unique full-visibility access to all three
-MarketSwarm Redis buses.
+Provides Vexy's unique full-visibility access to all four
+MarketSwarm Redis buses (echo bus is degraded-safe).
 """
 
 import json
@@ -17,10 +17,11 @@ class RedisBusAdapter(BusPort):
     """
     Redis implementation of the BusPort.
 
-    Connects to all three MarketSwarm buses:
-    - System (heartbeats, control)
-    - Market (quotes, positions, alerts)
-    - Intel (articles, analysis)
+    Connects to all four MarketSwarm buses:
+    - System (heartbeats, control) — required
+    - Market (quotes, positions, alerts) — required
+    - Intel (articles, analysis) — required
+    - Echo (cognitive memory, snapshots) — optional, degraded-safe
     """
 
     def __init__(self, config: Dict[str, Any], logger: Any):
@@ -39,16 +40,18 @@ class RedisBusAdapter(BusPort):
         self._system_url = buses.get("system-redis", {}).get("url", "redis://127.0.0.1:6379")
         self._market_url = buses.get("market-redis", {}).get("url", "redis://127.0.0.1:6380")
         self._intel_url = buses.get("intel-redis", {}).get("url", "redis://127.0.0.1:6381")
+        self._echo_url = buses.get("echo-redis", {}).get("url", "redis://127.0.0.1:6382")
 
         # Redis clients (created during connect)
         self._system: Optional[Redis] = None
         self._market: Optional[Redis] = None
         self._intel: Optional[Redis] = None
+        self._echo: Optional[Redis] = None
 
         self._connected = False
 
     async def connect(self) -> None:
-        """Connect to all Redis buses."""
+        """Connect to all Redis buses. Echo bus failure is non-fatal."""
         try:
             self._system = Redis.from_url(
                 self._system_url,
@@ -72,12 +75,32 @@ class RedisBusAdapter(BusPort):
             self.logger.debug(f"Connected to intel bus: {self._intel_url}")
 
             self._connected = True
-            self.logger.info("All Redis buses connected", emoji="🔴")
+            self.logger.info("Core Redis buses connected", emoji="🔴")
 
         except Exception as e:
             self.logger.error(f"Failed to connect to Redis buses: {e}", emoji="❌")
             await self.close()
             raise ConnectionError(f"Redis connection failed: {e}") from e
+
+        # Echo bus — degraded-safe (failure = warning, not crash)
+        try:
+            self._echo = Redis.from_url(
+                self._echo_url,
+                decode_responses=True,
+            )
+            await self._echo.ping()
+            self.logger.info("Echo bus connected (cognitive memory)", emoji="🧠")
+        except Exception as e:
+            self.logger.warn(
+                f"Echo bus unavailable (degraded mode): {e}",
+                emoji="⚠️"
+            )
+            if self._echo:
+                try:
+                    await self._echo.close()
+                except Exception:
+                    pass
+            self._echo = None
 
     async def close(self) -> None:
         """Close all Redis connections."""
@@ -92,6 +115,10 @@ class RedisBusAdapter(BusPort):
         if self._intel:
             await self._intel.close()
             self._intel = None
+
+        if self._echo:
+            await self._echo.close()
+            self._echo = None
 
         self._connected = False
         self.logger.debug("Redis connections closed")
@@ -117,6 +144,11 @@ class RedisBusAdapter(BusPort):
             raise RuntimeError("Bus adapter not connected")
         return self._intel
 
+    @property
+    def echo(self) -> Optional[Redis]:
+        """Echo Redis bus (cognitive memory). None when unavailable."""
+        return self._echo
+
     def _get_bus(self, bus: str) -> Redis:
         """Get Redis client by bus name."""
         if bus == "system":
@@ -125,6 +157,10 @@ class RedisBusAdapter(BusPort):
             return self.market
         elif bus == "intel":
             return self.intel
+        elif bus == "echo":
+            if not self._echo:
+                raise RuntimeError("Echo bus not available (degraded mode)")
+            return self._echo
         else:
             raise ValueError(f"Unknown bus: {bus}")
 

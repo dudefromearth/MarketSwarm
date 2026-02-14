@@ -7,7 +7,8 @@
   "access_points": {
     "subscribe_to": [],
     "publish_to": [
-      { "bus": "system-redis", "key": "sse:heartbeat" }
+      { "bus": "system-redis", "key": "sse:heartbeat" },
+      { "bus": "market-redis", "key": "user:presence" }
     ]
   },
   "heartbeat": {

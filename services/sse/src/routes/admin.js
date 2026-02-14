@@ -23,13 +23,31 @@ let cleanupInterval = null;
 /**
  * Register a connected user (called from SSE routes)
  */
-export function trackUserConnection(sessionId, displayName, email = null) {
+export function trackUserConnection(sessionId, displayName, email = null, wpUserId = null) {
   connectedUsers.set(sessionId, {
     displayName,
     email,
+    wpUserId,
     connectedAt: new Date(),
   });
   console.log(`[admin] User connected: ${displayName} (${email || sessionId}) - Total: ${connectedUsers.size}`);
+
+  // Publish presence event to market-redis for hydrator
+  if (wpUserId) {
+    try {
+      const marketRedis = getMarketRedis();
+      if (marketRedis) {
+        marketRedis.publish("user:presence", JSON.stringify({
+          event: "connected",
+          user_id: wpUserId,
+          display_name: displayName,
+          ts: new Date().toISOString(),
+        }));
+      }
+    } catch (err) {
+      console.error("[admin] Failed to publish user:presence:", err.message);
+    }
+  }
 }
 
 /**

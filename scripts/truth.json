@@ -20,6 +20,11 @@
       "url": "redis://127.0.0.1:6381",
       "role": "intel",
       "description": "RSS & external intel ingestion, enrichment, sentiment."
+    },
+    "echo-redis": {
+      "url": "redis://127.0.0.1:6382",
+      "role": "echo",
+      "description": "Dedicated cognitive memory \u2014 hot tier, snapshots, activity. No persistence."
     }
   },
   "domain": {},
@@ -322,6 +327,13 @@
           {
             "bus": "system-redis",
             "key": "mesh:broadcast"
+          }
+        ],
+        "readwrite": [
+          {
+            "bus": "echo-redis",
+            "key": "echo:*",
+            "note": "Dedicated cognitive memory - not truth-loaded, no AOF/RDB"
           }
         ]
       },
@@ -1238,6 +1250,10 @@
           {
             "bus": "system-redis",
             "key": "sse:heartbeat"
+          },
+          {
+            "bus": "market-redis",
+            "key": "user:presence"
           }
         ]
       },
@@ -1416,6 +1432,58 @@
         "VEXY_PROXY_PORT": "3006",
         "TRUTH_REDIS_URL": "redis://127.0.0.1:6379",
         "VEXY_TARGET": "http://localhost:3005"
+      }
+    },
+    "vexy_hydrator": {
+      "id": "vexy_hydrator",
+      "meta": {
+        "name": "Vexy Hydrator",
+        "description": "Builds and refreshes cognition snapshots in Echo Redis from canonical sources. Read-only access to market and system data, readwrite to echo bus."
+      },
+      "access_points": {
+        "subscribe_to": [
+          {
+            "bus": "market-redis",
+            "key": "user:presence"
+          }
+        ],
+        "publish_to": [
+          {
+            "bus": "system-redis",
+            "key": "vexy_hydrator:heartbeat"
+          }
+        ],
+        "readwrite": [
+          {
+            "bus": "echo-redis",
+            "key": "echo:warm_snapshot:*"
+          },
+          {
+            "bus": "echo-redis",
+            "key": "echo:warm_snapshot_meta:*"
+          },
+          {
+            "bus": "echo-redis",
+            "key": "echo:system:routine_data:*"
+          },
+          {
+            "bus": "echo-redis",
+            "key": "echo:hydrate_lock:*"
+          }
+        ],
+        "read_only": [
+          {
+            "bus": "market-redis",
+            "key": "massive:*"
+          }
+        ]
+      },
+      "heartbeat": {
+        "interval_sec": 10,
+        "ttl_sec": 30
+      },
+      "env": {
+        "HYDRATOR_PORT": "3007"
       }
     }
   }

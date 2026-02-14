@@ -14,6 +14,9 @@
     "publish_to": [
       { "bus": "system-redis", "key": "vexy_ai:heartbeat" },
       { "bus": "system-redis", "key": "mesh:broadcast" }
+    ],
+    "readwrite": [
+      { "bus": "echo-redis", "key": "echo:*", "note": "Dedicated cognitive memory - not truth-loaded, no AOF/RDB" }
     ]
   },
   "models": {

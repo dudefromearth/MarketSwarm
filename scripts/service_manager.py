@@ -630,6 +630,7 @@ def check_redis() -> dict:
         "system-redis": 6379,
         "market-redis": 6380,
         "intel-redis": 6381,
+        "echo-redis": 6382,
     }
 
     results = {}
@@ -674,27 +675,30 @@ class HealthCollector:
         "system-redis": {"host": "127.0.0.1", "port": 6379},
         "market-redis": {"host": "127.0.0.1", "port": 6380},
         "intel-redis":  {"host": "127.0.0.1", "port": 6381},
+        "echo-redis":   {"host": "127.0.0.1", "port": 6382},
     }
 
     HEARTBEAT_SERVICES = {
-        "massive":      {"interval": 5,  "ttl": 15},
-        "rss_agg":      {"interval": 5,  "ttl": 15},
-        "vexy_ai":      {"interval": 15, "ttl": 45},
-        "content_anal": {"interval": 15, "ttl": 45},
-        "journal":      {"interval": 5,  "ttl": 15},
-        "copilot":      {"interval": 5,  "ttl": 15},
-        "sse":          {"interval": 5,  "ttl": 15},
-        "healer":       {"interval": 10, "ttl": 30},
-        "mesh":         {"interval": 5,  "ttl": 15},
-        "vexy_proxy":   {"interval": 10, "ttl": 30},
+        "massive":        {"interval": 5,  "ttl": 15},
+        "rss_agg":        {"interval": 5,  "ttl": 15},
+        "vexy_ai":        {"interval": 15, "ttl": 45},
+        "content_anal":   {"interval": 15, "ttl": 45},
+        "journal":        {"interval": 5,  "ttl": 15},
+        "copilot":        {"interval": 5,  "ttl": 15},
+        "sse":            {"interval": 5,  "ttl": 15},
+        "healer":         {"interval": 10, "ttl": 30},
+        "mesh":           {"interval": 5,  "ttl": 15},
+        "vexy_proxy":     {"interval": 10, "ttl": 30},
+        "vexy_hydrator":  {"interval": 10, "ttl": 30},
     }
 
     HEALTH_ENDPOINTS = {
-        "sse":         "http://127.0.0.1:3001/api/health",
-        "journal":     "http://127.0.0.1:3002/health",
-        "vexy_ai":     "http://127.0.0.1:3005/health",
-        "vexy_proxy":  "http://127.0.0.1:3006/health",
-        "copilot":     "http://127.0.0.1:8095/health",
+        "sse":             "http://127.0.0.1:3001/api/health",
+        "journal":         "http://127.0.0.1:3002/health",
+        "vexy_ai":         "http://127.0.0.1:3005/health",
+        "vexy_proxy":      "http://127.0.0.1:3006/health",
+        "vexy_hydrator":   "http://127.0.0.1:3007/health",
+        "copilot":         "http://127.0.0.1:8095/health",
     }
 
     MAX_HISTORY = 240
@@ -2651,6 +2655,7 @@ def create_web_app():
             "system-redis": 6379,
             "market-redis": 6380,
             "intel-redis": 6381,
+            "echo-redis": 6382,
         }
 
         for name, key, bus in redis_analytics_keys:

@@ -1,0 +1,31 @@
+{
+  "id": "vexy_hydrator",
+  "meta": {
+    "name": "Vexy Hydrator",
+    "description": "Builds and refreshes cognition snapshots in Echo Redis from canonical sources. Read-only access to market and system data, readwrite to echo bus."
+  },
+  "access_points": {
+    "subscribe_to": [
+      { "bus": "market-redis", "key": "user:presence" }
+    ],
+    "publish_to": [
+      { "bus": "system-redis", "key": "vexy_hydrator:heartbeat" }
+    ],
+    "readwrite": [
+      { "bus": "echo-redis", "key": "echo:warm_snapshot:*" },
+      { "bus": "echo-redis", "key": "echo:warm_snapshot_meta:*" },
+      { "bus": "echo-redis", "key": "echo:system:routine_data:*" },
+      { "bus": "echo-redis", "key": "echo:hydrate_lock:*" }
+    ],
+    "read_only": [
+      { "bus": "market-redis", "key": "massive:*" }
+    ]
+  },
+  "heartbeat": {
+    "interval_sec": 10,
+    "ttl_sec": 30
+  },
+  "env": {
+    "HYDRATOR_PORT": "3007"
+  }
+}

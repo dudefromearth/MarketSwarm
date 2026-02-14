@@ -1,10 +1,11 @@
 """
 Bus Port - Abstract interface for Redis bus access.
 
-Vexy is the ONLY service with connections to all three buses:
+Vexy is the ONLY service with connections to all four buses:
 - System: Heartbeats, service control, system state
 - Market: Quotes, positions, alerts, GEX
 - Intel: Articles, analysis, synthesis
+- Echo: Cognitive memory (hot tier, snapshots) — degraded-safe
 
 This port abstracts the bus connections so they can be
 mocked for testing.
@@ -21,7 +22,7 @@ class BusPort(ABC):
     """
     Abstract interface for Redis bus access.
 
-    Provides access to all three MarketSwarm buses.
+    Provides access to all MarketSwarm buses.
     Vexy's unique privilege - full system visibility.
     """
 
@@ -31,7 +32,8 @@ class BusPort(ABC):
         Connect to all Redis buses.
 
         Raises:
-            ConnectionError: If any bus connection fails
+            ConnectionError: If any required bus connection fails.
+            Echo bus failure is non-fatal (degraded mode).
         """
         pass
 
@@ -80,6 +82,24 @@ class BusPort(ABC):
         - Analysis results
         - Synthesized intelligence
         - Vexy commentary
+        """
+        pass
+
+    @property
+    @abstractmethod
+    def echo(self) -> Optional["Redis"]:
+        """
+        Echo Redis bus (dedicated cognitive memory).
+
+        Contains:
+        - Hot tier echo entries (echo:hot:{user_id}:*)
+        - Warm snapshots (echo:warm_snapshot:{user_id})
+        - Activity trails (echo:activity:{user_id}:*)
+        - Readiness cache (echo:readiness:{user_id}:*)
+        - Routine data cache (echo:system:routine_data:*)
+
+        Returns None when echo-redis is unavailable (degraded mode).
+        No truth loading, no AOF/RDB persistence.
         """
         pass
 

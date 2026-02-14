@@ -199,6 +199,13 @@ class TierConfig:
     playbooks_enabled: bool = True
     max_concurrent_jobs: int = 2
     max_tokens: int = 600
+    # Echo Log System tier depths
+    echo_warm_days: int = 0          # WARM MySQL echo retention window
+    echo_conversation_days: int = 0  # Conversation archive window
+    echo_activity_days: int = 0      # Activity trail archive window
+    echo_cold_enabled: bool = False  # Cold tier archival enabled
+    echo_cold_periods: int = 0       # Cold tier retention periods (months)
+    echo_hot_conversations: int = 5  # Max hot-tier conversations in Redis
 
 
 # Tier configurations
@@ -219,6 +226,10 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
         playbooks_enabled=False,
         max_concurrent_jobs=1,
         max_tokens=300,
+        echo_warm_days=7,
+        echo_conversation_days=3,
+        echo_activity_days=2,
+        echo_hot_conversations=5,
     ),
     "observer_restricted": TierConfig(
         name="Observer Restricted",
@@ -236,6 +247,10 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
         playbooks_enabled=False,
         max_concurrent_jobs=1,
         max_tokens=150,
+        echo_warm_days=7,
+        echo_conversation_days=3,
+        echo_activity_days=2,
+        echo_hot_conversations=3,
     ),
     "activator": TierConfig(
         name="Activator",
@@ -253,6 +268,10 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
         playbooks_enabled=True,
         max_concurrent_jobs=2,
         max_tokens=600,
+        echo_warm_days=30,
+        echo_conversation_days=14,
+        echo_activity_days=7,
+        echo_hot_conversations=15,
     ),
     "navigator": TierConfig(
         name="Navigator",
@@ -268,6 +287,12 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
         system_diagnostics=False,
         system_prompt_suffix=NAVIGATOR_PROMPT,
         max_concurrent_jobs=3,
+        echo_warm_days=90,
+        echo_conversation_days=30,
+        echo_activity_days=14,
+        echo_cold_enabled=True,
+        echo_cold_periods=6,
+        echo_hot_conversations=25,
     ),
     "coaching": TierConfig(
         name="Coaching",
@@ -283,6 +308,12 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
         system_diagnostics=False,
         system_prompt_suffix=NAVIGATOR_PROMPT,
         max_concurrent_jobs=3,
+        echo_warm_days=90,
+        echo_conversation_days=30,
+        echo_activity_days=14,
+        echo_cold_enabled=True,
+        echo_cold_periods=6,
+        echo_hot_conversations=25,
     ),
     "administrator": TierConfig(
         name="Administrator",
@@ -298,6 +329,12 @@ TIER_CONFIGS: Dict[str, TierConfig] = {
         system_diagnostics=True,
         system_prompt_suffix=ADMIN_PROMPT,
         max_concurrent_jobs=5,
+        echo_warm_days=90,
+        echo_conversation_days=90,
+        echo_activity_days=30,
+        echo_cold_enabled=True,
+        echo_cold_periods=12,
+        echo_hot_conversations=50,
     ),
 }
 

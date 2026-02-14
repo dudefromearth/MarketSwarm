@@ -28,7 +28,7 @@ from .models_v2 import (
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 24
+    SCHEMA_VERSION = 25
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -273,6 +273,9 @@ class JournalDBv2:
 
             if current_version < 24:
                 self._migrate_to_v24(conn)
+
+            if current_version < 25:
+                self._migrate_to_v25(conn)
 
             conn.commit()
         finally:
@@ -2050,6 +2053,191 @@ class JournalDBv2:
             cursor.execute("ALTER TABLE tags MODIFY COLUMN category VARCHAR(50) NOT NULL DEFAULT 'custom'")
 
             self._set_schema_version(conn, 24)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v25(self, conn):
+        """Migrate to v25: Echo Log System — 11 warm-tier + analytics tables."""
+        cursor = conn.cursor()
+        try:
+            # 1. user_echo — consolidated echo entries per user per day
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_echo (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    echo_date DATE NOT NULL,
+                    category VARCHAR(50) NOT NULL,
+                    content TEXT NOT NULL,
+                    confidence FLOAT DEFAULT 0.0,
+                    resonance FLOAT DEFAULT 0.0,
+                    source_count INT DEFAULT 1,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_user_echo_user_date (user_id, echo_date),
+                    INDEX idx_user_echo_category (user_id, category)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 2. conversation_echo — trimmed conversation archive
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS conversation_echo (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    conversation_ts DATETIME NOT NULL,
+                    surface VARCHAR(50) NOT NULL,
+                    outlet VARCHAR(50) DEFAULT 'chat',
+                    user_message TEXT NOT NULL,
+                    vexy_response TEXT NOT NULL,
+                    context_tags JSON,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_conv_echo_user_ts (user_id, conversation_ts),
+                    INDEX idx_conv_echo_surface (user_id, surface)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 3. user_activity_trail — activity trail archive
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_activity_trail (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    activity_ts DATETIME NOT NULL,
+                    surface VARCHAR(50) NOT NULL,
+                    feature VARCHAR(100) NOT NULL,
+                    action_type VARCHAR(50) NOT NULL,
+                    action_detail VARCHAR(255) DEFAULT '',
+                    duration_seconds FLOAT DEFAULT 0.0,
+                    context_tags JSON,
+                    tier VARCHAR(50) DEFAULT 'observer',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_activity_user_ts (user_id, activity_ts),
+                    INDEX idx_activity_surface (user_id, surface)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 4. user_readiness_log — daily readiness selections (retained indefinitely)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_readiness_log (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    readiness_date DATE NOT NULL,
+                    sleep VARCHAR(50) DEFAULT '',
+                    focus VARCHAR(50) DEFAULT '',
+                    distractions VARCHAR(50) DEFAULT '',
+                    body_state VARCHAR(50) DEFAULT '',
+                    friction VARCHAR(50) DEFAULT '',
+                    notes TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_readiness_user_date (user_id, readiness_date),
+                    INDEX idx_readiness_user (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 5. user_readiness_profile — computed weekly profiles
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_readiness_profile (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    profile_window VARCHAR(20) NOT NULL,
+                    baseline JSON,
+                    day_patterns JSON,
+                    drift_signals JSON,
+                    friction_clusters JSON,
+                    computed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_profile_user_window (user_id, profile_window)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 6. routine_data_daily — end-of-day market snapshot
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS routine_data_daily (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    snapshot_date DATE NOT NULL,
+                    econ_calendar JSON,
+                    vix_state JSON,
+                    market_summary JSON,
+                    gex_summary JSON,
+                    regime_tag VARCHAR(50) DEFAULT '',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_routine_date (snapshot_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 7. shared_memory — admin-curated content
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS shared_memory (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    audience VARCHAR(50) NOT NULL DEFAULT 'all',
+                    category VARCHAR(50) NOT NULL,
+                    content TEXT NOT NULL,
+                    priority INT DEFAULT 0,
+                    display_mode VARCHAR(20) DEFAULT 'hydrate',
+                    active TINYINT DEFAULT 1,
+                    created_by INT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_shared_audience (audience, active),
+                    INDEX idx_shared_category (category)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 8. shared_memory_ack — user acknowledgment tracking
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS shared_memory_ack (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    shared_memory_id BIGINT NOT NULL,
+                    user_id INT NOT NULL,
+                    acked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_ack_memory_user (shared_memory_id, user_id),
+                    INDEX idx_ack_user (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 9. system_echo — anonymized aggregate learning (NO user_id column)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_echo (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    echo_date DATE NOT NULL,
+                    pattern_type VARCHAR(50) NOT NULL,
+                    pattern_content TEXT NOT NULL,
+                    sample_size INT DEFAULT 0,
+                    confidence FLOAT DEFAULT 0.0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_system_echo_date (echo_date),
+                    INDEX idx_system_echo_pattern (pattern_type)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 10. system_activity_analytics — anonymous usage stats by surface/feature/day
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_activity_analytics (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    analytics_date DATE NOT NULL,
+                    surface VARCHAR(50) NOT NULL,
+                    feature VARCHAR(100) NOT NULL,
+                    action_count INT DEFAULT 0,
+                    unique_users INT DEFAULT 0,
+                    avg_duration_seconds FLOAT DEFAULT 0.0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_analytics_date_surface_feature (analytics_date, surface, feature),
+                    INDEX idx_analytics_date (analytics_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 11. system_flow_analytics — navigation flow patterns (occurrence_count >= 3)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS system_flow_analytics (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    flow_date DATE NOT NULL,
+                    from_surface VARCHAR(50) NOT NULL,
+                    to_surface VARCHAR(50) NOT NULL,
+                    occurrence_count INT DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_flow_date_surfaces (flow_date, from_surface, to_surface),
+                    INDEX idx_flow_date (flow_date)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            self._set_schema_version(conn, 25)
         finally:
             cursor.close()
 

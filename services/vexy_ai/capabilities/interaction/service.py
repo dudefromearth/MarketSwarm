@@ -46,7 +46,8 @@ class InteractionService:
         self.buses = buses
 
         self.dialog_layer = DialogLayer()
-        self.cognition_layer = CognitionLayer(kernel, logger)
+        echo_client = getattr(kernel, 'echo_client', None)
+        self.cognition_layer = CognitionLayer(kernel, logger, echo_client=echo_client)
         self.job_manager = JobManager(buses, logger)
         self.elevation = ElevationEngine(buses, logger)
         self.settings = InteractionSettings(buses, logger)

@@ -183,12 +183,14 @@ class VexyKernel:
         logger: Optional[Any] = None,
         market_intel: Optional[Any] = None,
         validation_mode: ValidationMode = ValidationMode.OBSERVE,
+        echo_client: Optional[Any] = None,
     ):
         self.path_runtime = path_runtime
         self.config = config
         self.logger = logger or logging.getLogger(__name__)
         self.market_intel = market_intel
         self.validation_mode = validation_mode
+        self.echo_client = echo_client  # EchoRedisClient or None
 
     def _log(self, msg: str, emoji: str = "🧠"):
         if hasattr(self.logger, 'info') and callable(getattr(self.logger, 'info', None)):
@@ -331,6 +333,17 @@ class VexyKernel:
                 response_text = ""
                 silence_reason = "sovereignty_violation_blocked"
 
+        # ── ECHO CAPTURE (post-LLM, fire-and-forget) ─────────────────────
+
+        echo_updated = False
+        if response_text and self.echo_client:
+            try:
+                echo_updated = await self._capture_echo_signal(
+                    request, response_text, agent_selection, despair_post
+                )
+            except Exception as e:
+                self._log(f"Echo capture failed (non-fatal): {e}", emoji="⚠️")
+
         # ── TELEMETRY ──────────────────────────────────────────────────────
 
         latency_ms = int((time.time() - t0) * 1000)
@@ -375,7 +388,7 @@ class VexyKernel:
             forbidden_violations=forbidden_violations,
             scope_violations=scope_violations,
             despair_check=despair_post,
-            echo_updated=False,  # TODO: wire echo storage
+            echo_updated=echo_updated,
             used_web_search=used_web_search,
             silence_reason=silence_reason,
             telemetry=telemetry,
@@ -573,7 +586,10 @@ class VexyKernel:
         return "".join(parts)
 
     def _get_echo_injection(self, request: ReasoningRequest) -> str:
-        """Get tier-gated echo memory for injection into prompt."""
+        """Get tier-gated echo memory for injection into prompt.
+
+        Priority: Echo Redis warm snapshot → YAML file fallback (transition period).
+        """
         from services.vexy_ai.tier_config import get_tier_config
 
         tier_config = get_tier_config(request.tier)
@@ -581,6 +597,19 @@ class VexyKernel:
         if not tier_config.echo_enabled:
             return ""
 
+        # Try Echo Redis warm snapshot first (written by hydrator)
+        if self.echo_client and self.echo_client.available:
+            try:
+                import asyncio
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # We're inside an async context — can't await directly from sync
+                    # Use the _get_echo_injection_async helper
+                    return ""  # Will be handled by cognition_layer in Phase 2
+            except Exception:
+                pass
+
+        # Fallback to YAML files (transition period)
         try:
             from services.vexy_ai.intel.echo_memory import get_echo_context_for_prompt
             echo_context = get_echo_context_for_prompt(
@@ -593,6 +622,86 @@ class VexyKernel:
             pass
 
         return ""
+
+    async def _capture_echo_signal(
+        self,
+        request: ReasoningRequest,
+        response_text: str,
+        agent_selection: Dict[str, Any],
+        despair_post: Dict[str, Any],
+    ) -> bool:
+        """
+        Post-LLM echo capture: write session echo + conversation + micro signals.
+
+        Called after every successful LLM response. Non-blocking — failures
+        are logged but never interrupt the response flow.
+        """
+        if not self.echo_client or not self.echo_client.available:
+            return False
+
+        from services.vexy_ai.tier_config import get_tier_config
+        tier_config = get_tier_config(request.tier)
+
+        captured = False
+
+        # 1. Store conversation exchange
+        try:
+            from services.vexy_ai.intel.conversation_cache import ConversationCache
+            conv_cache = ConversationCache(self.echo_client, self.logger)
+            await conv_cache.store_exchange(
+                user_id=request.user_id,
+                tier=request.tier,
+                surface=request.outlet,
+                user_message=request.user_message,
+                vexy_response=response_text,
+                outlet=request.outlet,
+            )
+            captured = True
+        except Exception as e:
+            self._log(f"Conversation cache write failed: {e}", emoji="⚠️")
+
+        # 2. Record activity trail
+        try:
+            from services.vexy_ai.intel.activity_trail import ActivityTrail
+            trail = ActivityTrail(self.echo_client, self.logger)
+            await trail.record(
+                user_id=request.user_id,
+                surface=request.outlet,
+                feature=f"{request.outlet}_interact",
+                action_type="interact",
+                tier=request.tier,
+                action_detail=f"agent={agent_selection.get('primary_agent', 'unknown')}",
+            )
+        except Exception as e:
+            self._log(f"Activity trail write failed: {e}", emoji="⚠️")
+
+        # 3. Write session echo state
+        try:
+            session_data = {
+                "user_id": request.user_id,
+                "tier": request.tier,
+                "outlet": request.outlet,
+                "agent": agent_selection.get("primary_agent", ""),
+                "despair_severity": despair_post.get("pre_llm", {}).get("severity", 0),
+                "reflection_dial": request.reflection_dial,
+            }
+            await self.echo_client.write_session_echo(request.user_id, session_data)
+        except Exception as e:
+            self._log(f"Session echo write failed: {e}", emoji="⚠️")
+
+        # 4. Write micro signals (despair, bias indicators from response)
+        if despair_post.get("signals_in_response"):
+            try:
+                for signal_text in despair_post["signals_in_response"][:5]:
+                    await self.echo_client.write_micro_signal(request.user_id, {
+                        "type": "despair_signal",
+                        "text": signal_text[:200],
+                        "outlet": request.outlet,
+                    })
+            except Exception as e:
+                self._log(f"Micro signal write failed: {e}", emoji="⚠️")
+
+        return captured
 
     # -------------------------------------------------------------------------
     # DESPAIR DETECTION

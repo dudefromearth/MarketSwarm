@@ -71,6 +71,7 @@ class Container:
         # Cognitive Kernel components
         self._path_runtime = None
         self._kernel = None
+        self._echo_client = None
 
         # Track what we've created for cleanup
         self._initialized = False
@@ -99,7 +100,10 @@ class Container:
             self._market_intel = MarketIntelProvider(self.config, self.logger)
             self._market_intel.initialize()
 
-            # 2.6 Create PathRuntime and VexyKernel (Cognitive Kernel v1)
+            # 2.6 Create Echo Redis client (degraded-safe)
+            self._echo_client = self._create_echo_client()
+
+            # 2.7 Create PathRuntime and VexyKernel (Cognitive Kernel v1)
             self._path_runtime, self._kernel = self._create_kernel()
 
             # 3. Create Vexy core
@@ -148,6 +152,22 @@ class Container:
         self.logger.info("AI adapter ready", emoji="🤖")
         return adapter
 
+    def _create_echo_client(self):
+        """Create the Echo Redis client (degraded-safe)."""
+        try:
+            from ..intel.echo_redis import EchoRedisClient
+            echo_redis = self._bus_adapter.echo  # Optional[Redis], None if unavailable
+            client = EchoRedisClient(echo_redis, self.logger)
+            if client.available:
+                self.logger.info("Echo Redis client ready", emoji="🧠")
+            else:
+                self.logger.warn("Echo Redis client in degraded mode", emoji="⚠️")
+            return client
+        except Exception as e:
+            self.logger.warn(f"Echo client creation failed (degraded mode): {e}", emoji="⚠️")
+            from ..intel.echo_redis import EchoRedisClient
+            return EchoRedisClient(None, self.logger)
+
     def _create_kernel(self):
         """Create PathRuntime + VexyKernel (Cognitive Kernel v1)."""
         from ..intel.path_runtime import PathRuntime
@@ -184,6 +204,7 @@ class Container:
             logger=self.logger,
             market_intel=self._market_intel,
             validation_mode=validation_mode,
+            echo_client=self._echo_client,
         )
 
         self.logger.info(

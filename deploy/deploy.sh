@@ -37,6 +37,7 @@ SERVICES=(
     "journal"
     "vexy_ai"
     "vexy_proxy"
+    "vexy_hydrator"
     "rss_agg"
     "copilot"
 )
@@ -47,6 +48,7 @@ HEALTH_URLS=(
     "journal|http://localhost:3002/health"
     "vexy_ai|http://localhost:3005/health"
     "vexy_proxy|http://localhost:3006/health"
+    "vexy_hydrator|http://localhost:3007/health"
     "copilot|http://localhost:8095/health"
 )
 
