@@ -539,11 +539,12 @@ class MarketStateEngine:
             "context_phase": context_phase,
         }
 
-        # Weekend/holiday: return null lenses
+        # Weekend/holiday: null out live-market lenses, but still show
+        # event energy for the next trading day so the trader can prepare.
         if phase in _OFF_MARKET_PHASES:
             envelope["big_picture_volatility"] = None
             envelope["localized_volatility"] = None
-            envelope["event_energy"] = None
+            envelope["event_energy"] = self._get_next_trading_day_events(now)
             envelope["convexity_temperature"] = None
             return envelope
 
@@ -562,6 +563,74 @@ class MarketStateEngine:
         self._sanitize(envelope)
 
         return envelope
+
+    def _get_next_trading_day_events(self, now: datetime) -> Optional[Dict[str, Any]]:
+        """Look ahead and return events for the upcoming trading week (up to 5 trading days)."""
+        from datetime import timedelta
+
+        week_events: List[Dict[str, Any]] = []
+        all_events_flat: List[Dict[str, Any]] = []
+        current = now.date() + timedelta(days=1)
+        trading_days_found = 0
+
+        for _ in range(10):  # scan up to 10 calendar days to find 5 trading days
+            iso = current.isoformat()
+            if current.weekday() < 5 and iso not in ALL_HOLIDAYS:
+                trading_days_found += 1
+                raw_events = self._read_rolling_artifact(iso)
+                if raw_events is None:
+                    raw_events = ECONOMIC_CALENDAR.get(iso, [])
+
+                enriched: List[Dict[str, Any]] = []
+                for evt in raw_events:
+                    entry = dict(evt)
+                    name = entry["name"]
+                    if "rating" in entry and entry["rating"]:
+                        rating = entry["rating"]
+                        impact = self.registry.get_impact_label(rating) if (self.registry and self.registry.is_loaded) else "Medium"
+                    elif self.registry and self.registry.is_loaded:
+                        rating = self.registry.get_rating(name)
+                        impact = self.registry.get_impact_label(rating)
+                    else:
+                        rating = 5
+                        impact = "Medium"
+                    entry["rating"] = rating
+                    entry["impact"] = impact
+                    enriched.append(entry)
+
+                if enriched:
+                    week_events.append({"date": iso, "events": enriched})
+                    all_events_flat.extend(enriched)
+
+                if trading_days_found >= 5:
+                    break
+            current += timedelta(days=1)
+
+        if not week_events:
+            result: Dict[str, Any] = {
+                "events": [],
+                "event_posture": "clean_morning",
+                "week_ahead": [],
+            }
+            unscheduled = self.get_unscheduled_developments()
+            if unscheduled:
+                result["unscheduled_events"] = unscheduled
+            return result
+
+        # Use the first trading day's events as the primary "events" list
+        first_day = week_events[0]
+        posture = self._classify_event_posture(first_day["events"]) if first_day["events"] else "clean_morning"
+
+        result: Dict[str, Any] = {
+            "events": first_day["events"],
+            "event_posture": posture,
+            "next_trading_day": first_day["date"],
+            "week_ahead": week_events,
+        }
+        unscheduled = self.get_unscheduled_developments()
+        if unscheduled:
+            result["unscheduled_events"] = unscheduled
+        return result
 
     def _map_context_phase(self, phase: RoutineContextPhase) -> str:
         """Map RoutineContextPhase enum to SoM contract values."""

@@ -848,6 +848,22 @@
   margin-top: 8px;
 }
 
+/* ── Week Ahead (off-market calendar) ─── */
+.som-week-ahead {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.som-week-day-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, #94a3b8);
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.06));
+  margin-bottom: 2px;
+}
+
 /* ── Event Rows ───────────────────── */
 .som-events {
   margin-bottom: 4px;

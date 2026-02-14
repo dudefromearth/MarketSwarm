@@ -64,6 +64,8 @@ interface SomPayload {
     events: SomEvent[];
     event_posture: string;
     unscheduled_events?: SomUnscheduledEvent[];
+    next_trading_day?: string;
+    week_ahead?: { date: string; events: SomEvent[] }[];
   } | null;
   convexity_temperature: {
     temperature: ConvexityTemp;
@@ -153,6 +155,12 @@ function ratingColorClass(rating: number | undefined): string {
   return 'som-rating-gray';
 }
 
+function formatWeekDate(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
+  const date = new Date(y, m - 1, d);
+  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+}
+
 function vixToRegime(vix: number): { key: SomRegimeKey; label: string } {
   if (vix <= 15) return { key: 'compression', label: 'Compression' };
   if (vix <= 20) return { key: 'goldilocks_i', label: 'Goldilocks I' };
@@ -225,10 +233,10 @@ export default function StateOfTheMarket({ isOpen, marketContext }: StateOfTheMa
     );
   }
 
-  // No data or off-market: hide entirely
+  // No data at all: hide
   if (!payload) return null;
-  if (payload.context_phase === 'weekend' || payload.context_phase === 'holiday') return null;
 
+  const isOffMarket = payload.context_phase === 'weekend' || payload.context_phase === 'holiday';
   const bpv = payload.big_picture_volatility;
   const lv = payload.localized_volatility;
   const ee = payload.event_energy;
@@ -278,34 +286,70 @@ export default function StateOfTheMarket({ isOpen, marketContext }: StateOfTheMa
       {/* Lens 3: Potential Energy */}
       {ee && (
         <div className="som-lens">
-          <div className="som-lens-title">Potential Energy</div>
+          <div className="som-lens-title">
+            {isOffMarket && ee.week_ahead && ee.week_ahead.length > 0
+              ? 'Week Ahead — Economic Calendar'
+              : 'Potential Energy'}
+          </div>
           <div className="som-lens-content">
-            {ee.events.length > 0 ? (
-              <div className="som-events">
-                {ee.events.map((evt, idx) => (
-                  <div key={idx} className="som-event-row">
-                    <span className="som-rating-dot">
-                      <span className={`som-rating-circle ${ratingColorClass(evt.rating)}`} />
-                      <span className="som-rating-number">{evt.rating ?? '?'}</span>
-                    </span>
-                    <span className="som-event-time">{evt.time_et}</span>
-                    <span className="som-event-name">{evt.name}</span>
-                    {evt.result ? (
-                      <>
-                        <span className="som-event-actual">{evt.result.actual}</span>
-                        <span className="som-event-forecast">{evt.result.expected}</span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="som-event-actual">&mdash;</span>
-                        <span className="som-event-forecast">&mdash;</span>
-                      </>
-                    )}
+            {/* Week-ahead view (off-market): grouped by day */}
+            {isOffMarket && ee.week_ahead && ee.week_ahead.length > 0 ? (
+              <div className="som-week-ahead">
+                {ee.week_ahead.map((day) => (
+                  <div key={day.date} className="som-week-day">
+                    <div className="som-week-day-header">{formatWeekDate(day.date)}</div>
+                    <div className="som-events">
+                      {day.events.map((evt, idx) => (
+                        <div key={idx} className="som-event-row">
+                          <span className="som-rating-dot">
+                            <span className={`som-rating-circle ${ratingColorClass(evt.rating)}`} />
+                            <span className="som-rating-number">{evt.rating ?? '?'}</span>
+                          </span>
+                          <span className="som-event-time">{evt.time_et}</span>
+                          <span className="som-event-name">{evt.name}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 ))}
+                {ee.week_ahead.length === 0 && (
+                  <div className="som-detail som-clean">No scheduled events this week</div>
+                )}
               </div>
             ) : (
-              <div className="som-detail som-clean">No scheduled events</div>
+              /* Live market: today's events */
+              <>
+                {ee.events.length > 0 ? (
+                  <div className="som-events">
+                    {ee.events.map((evt, idx) => (
+                      <div key={idx} className="som-event-row">
+                        <span className="som-rating-dot">
+                          <span className={`som-rating-circle ${ratingColorClass(evt.rating)}`} />
+                          <span className="som-rating-number">{evt.rating ?? '?'}</span>
+                        </span>
+                        <span className="som-event-time">{evt.time_et}</span>
+                        <span className="som-event-name">{evt.name}</span>
+                        {evt.result ? (
+                          <>
+                            <span className="som-event-actual">{evt.result.actual}</span>
+                            <span className="som-event-forecast">{evt.result.expected}</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="som-event-actual">&mdash;</span>
+                            <span className="som-event-forecast">&mdash;</span>
+                          </>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="som-detail som-clean">No scheduled events</div>
+                )}
+                <div className="som-detail som-posture">
+                  Event Posture: {EVENT_POSTURE_LABELS[ee.event_posture] || ee.event_posture}
+                </div>
+              </>
             )}
             {ee.unscheduled_events && ee.unscheduled_events.length > 0 && (
               <div className="som-unscheduled">
@@ -322,9 +366,6 @@ export default function StateOfTheMarket({ isOpen, marketContext }: StateOfTheMa
                 ))}
               </div>
             )}
-            <div className="som-detail som-posture">
-              Event Posture: {EVENT_POSTURE_LABELS[ee.event_posture] || ee.event_posture}
-            </div>
           </div>
         </div>
       )}
