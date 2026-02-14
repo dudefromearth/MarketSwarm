@@ -43,7 +43,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
-from datetime import datetime, UTC
+import time
+from datetime import datetime, UTC, timezone
 from typing import Any, Dict, List
 
 import redis
@@ -64,6 +65,8 @@ except ImportError:
 INSTRUMENTS: Dict[str, Dict[str, Any]] = {
     "SPY": {"synthetic": "SPX", "multiplier": 10},
     "QQQ": {"synthetic": "NDX", "multiplier": 4},
+    "ES":  {"synthetic": "SPX", "multiplier": 1},
+    "NQ":  {"synthetic": "NDX", "multiplier": 1},
 }
 
 BIN_SIZE = 1
@@ -372,6 +375,140 @@ def save_to_system_redis(obj: Dict[str, Any]) -> None:
 def publish_to_market(obj: Dict[str, Any]) -> None:
     rds_market().publish(MARKET_CHANNEL, json.dumps(obj))
     log("redis", "📡", f"Published profile to MARKET_REDIS ({MARKET_CHANNEL})")
+
+
+def build_compact_profile(bins: Dict[int, float], bucket_size: int = 1) -> Dict[str, Any]:
+    """Convert bin dict to compact array format with normalized volumes (0-1000)."""
+    if not bins:
+        return {"min": 0, "step": bucket_size, "volumes": []}
+
+    min_idx = min(bins.keys())
+    max_idx = max(bins.keys())
+
+    raw_volumes = []
+    for i in range(min_idx, max_idx + 1):
+        raw_volumes.append(bins.get(i, 0))
+
+    max_vol = max(raw_volumes) if raw_volumes else 1
+    volumes = [int(v * 1000 / max_vol) for v in raw_volumes]
+
+    return {
+        "min": min_idx * bucket_size,
+        "step": bucket_size,
+        "volumes": volumes,
+    }
+
+
+def detect_compact_structures(compact: Dict[str, Any]) -> Dict[str, Any]:
+    """Detect structural features from compact profile (matching vp_quick_load format)."""
+    volumes = compact.get("volumes", [])
+    min_price = compact.get("min", 0)
+    step = compact.get("step", 1)
+
+    if not volumes:
+        return {"volume_nodes": [], "volume_wells": [], "crevasses": []}
+
+    sorted_vols = sorted([v for v in volumes if v > 0])
+    if not sorted_vols:
+        return {"volume_nodes": [], "volume_wells": [], "crevasses": []}
+
+    node_threshold = sorted_vols[int(len(sorted_vols) * 0.7)]
+    well_threshold = sorted_vols[int(len(sorted_vols) * 0.2)]
+
+    volume_nodes = []
+    well_prices = []
+
+    for i, vol in enumerate(volumes):
+        price = min_price + i * step
+        if vol >= node_threshold:
+            volume_nodes.append(price)
+        elif vol <= well_threshold and vol > 0:
+            well_prices.append(price)
+
+    # Coalesce consecutive well prices into [start, end] ranges
+    # (VPLineEditor expects volume_wells as [number, number][] pairs)
+    volume_wells: List[List[int]] = []
+    if well_prices:
+        rng_start = well_prices[0]
+        rng_end = well_prices[0]
+        for p in well_prices[1:]:
+            if p <= rng_end + step:
+                rng_end = p
+            else:
+                volume_wells.append([rng_start, rng_end])
+                rng_start = rng_end = p
+        volume_wells.append([rng_start, rng_end])
+
+    crevasses: List[List[int]] = []
+    crevasse_start = None
+    consecutive_wells = 0
+
+    for i, vol in enumerate(volumes):
+        if vol <= well_threshold:
+            if crevasse_start is None:
+                crevasse_start = min_price + i * step
+            consecutive_wells += 1
+        else:
+            if consecutive_wells >= 3:
+                crevasse_end = min_price + (i - 1) * step
+                crevasses.append([crevasse_start, crevasse_end])
+            crevasse_start = None
+            consecutive_wells = 0
+
+    if consecutive_wells >= 3 and crevasse_start is not None:
+        crevasse_end = min_price + (len(volumes) - 1) * step
+        crevasses.append([crevasse_start, crevasse_end])
+
+    return {
+        "volume_nodes": volume_nodes,
+        "volume_wells": volume_wells,
+        "crevasses": crevasses,
+    }
+
+
+def write_dealer_gravity_artifact(bins_tv: Dict[int, float], symbol: str) -> None:
+    """Build and write the Dealer Gravity artifact to system-redis."""
+    if not bins_tv:
+        log("artifact", "⚠️", "No TV bins — skipping dealer gravity artifact")
+        return
+
+    compact = build_compact_profile(bins_tv, BIN_SIZE)
+    structures = detect_compact_structures(compact)
+
+    artifact_version = f"v{int(time.time())}"
+    artifact = {
+        "profile": {
+            "min": compact["min"],
+            "step": compact["step"],
+            "bins": compact["volumes"],
+        },
+        "structures": structures,
+        "meta": {
+            "spot": None,
+            "algorithm": "tv_microbins_30",
+            "normalized_scale": 1000,
+            "artifact_version": artifact_version,
+            "last_update": datetime.now(timezone.utc).isoformat(),
+        },
+    }
+
+    artifact_key = f"dealer_gravity:artifact:{symbol}"
+    rds_system().set(artifact_key, json.dumps(artifact))
+    log("artifact", "💾", f"Wrote dealer gravity artifact to SYSTEM_REDIS ({artifact_key})")
+    log("artifact", "💾", f"  {len(compact['volumes'])} bins, "
+        f"{len(structures['volume_nodes'])} nodes, "
+        f"{len(structures['volume_wells'])} wells, "
+        f"{len(structures['crevasses'])} crevasses")
+
+    # Publish update event on market-redis for SSE fanout
+    event = {
+        "type": "dealer_gravity_artifact_updated",
+        "symbol": symbol.upper(),
+        "artifact_version": artifact_version,
+        "occurred_at": datetime.now(timezone.utc).isoformat(),
+    }
+    rds_market().publish("dealer_gravity_updated", json.dumps(event))
+    log("artifact", "📡", f"Published dealer_gravity_updated event")
 
 
 def generate_ai_chart(
@@ -727,6 +864,14 @@ def parse_args() -> argparse.Namespace:
         help="JSON file produced by vp_download_history.py",
     )
     ap.add_argument(
+        "--merge-file",
+        type=str,
+        action="append",
+        default=[],
+        help="Additional JSON file(s) to merge (e.g., ES daily bars). "
+             "Format: TICKER:path (e.g., ES:./data/vp/ES_3650d.json)",
+    )
+    ap.add_argument(
         "--publish",
         type=str,
         default="raw",
@@ -820,6 +965,53 @@ def main() -> None:
         ohlc.append({"t": t, "o": o, "h": h, "l": l, "c": c, "v": v})
         accumulate_raw(bins_raw, c, v, multiplier)
         accumulate_tv(bins_tv, l, h, v, multiplier)
+
+    # --- Merge additional files (e.g., ES daily bars) ---
+    for merge_spec in args.merge_file:
+        if ":" not in merge_spec:
+            raise SystemExit(
+                f"Invalid --merge-file format: {merge_spec}. "
+                "Expected TICKER:path (e.g., ES:./data/vp/ES_3650d.json)"
+            )
+        merge_ticker, merge_path = merge_spec.split(":", 1)
+        merge_ticker = merge_ticker.upper()
+
+        if merge_ticker not in INSTRUMENTS:
+            raise SystemExit(
+                f"Unknown merge ticker: {merge_ticker}. "
+                f"Supported: {list(INSTRUMENTS)}"
+            )
+
+        merge_info = INSTRUMENTS[merge_ticker]
+        if merge_info["synthetic"] != synthetic:
+            raise SystemExit(
+                f"Merge ticker {merge_ticker} targets {merge_info['synthetic']}, "
+                f"but primary ticker {ticker} targets {synthetic}. "
+                "Both must target the same synthetic."
+            )
+
+        if not os.path.isfile(merge_path):
+            raise SystemExit(f"Merge file not found: {merge_path}")
+
+        with open(merge_path, "r", encoding="utf-8") as f:
+            merge_payload = json.load(f)
+
+        merge_bars = merge_payload.get("bars") or []
+        merge_mult = merge_info["multiplier"]
+        merge_vol_total = 0
+
+        for b in merge_bars:
+            c_m = b.get("c")
+            h_m = b.get("h")
+            l_m = b.get("l")
+            v_m = b.get("v")
+            accumulate_raw(bins_raw, c_m, v_m, merge_mult)
+            accumulate_tv(bins_tv, l_m, h_m, v_m, merge_mult)
+            if v_m:
+                merge_vol_total += v_m
+
+        log("merge", "🔗", f"Merged {len(merge_bars)} bars from {merge_ticker} "
+            f"(mult={merge_mult}, volume={merge_vol_total:,.0f})")
 
     if bins_raw:
         price_min = min(bins_raw.keys())
@@ -942,6 +1134,9 @@ def main() -> None:
             f"{len(structures['volume_wells'])} wells, {len(structures['crevasses'])} crevasses")
 
     save_to_system_redis(out)
+
+    # --- Write Dealer Gravity artifact (same format as vp_quick_load.py) ---
+    write_dealer_gravity_artifact(bins_tv, synthetic.lower())
 
     mode = args.publish
     if mode in ("raw", "both"):
