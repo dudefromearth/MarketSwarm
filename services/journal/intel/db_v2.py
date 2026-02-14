@@ -22,13 +22,16 @@ from .models_v2 import (
     ImportBatch,
     # Tag schema v2 constants
     DEFAULT_SCOPES_BY_CATEGORY,
+    # Edge Lab models
+    EdgeLabSetup, EdgeLabHypothesis, EdgeLabOutcome,
+    EdgeLabEdgeScore, EdgeLabMetric,
 )
 
 
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 25
+    SCHEMA_VERSION = 26
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -276,6 +279,9 @@ class JournalDBv2:
 
             if current_version < 25:
                 self._migrate_to_v25(conn)
+
+            if current_version < 26:
+                self._migrate_to_v26(conn)
 
             conn.commit()
         finally:
@@ -2238,6 +2244,131 @@ class JournalDBv2:
             """)
 
             self._set_schema_version(conn, 25)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v26(self, conn):
+        """Migrate to v26: Edge Lab — structural setup tracking, hypothesis logging,
+        outcome attribution, edge scoring, and metric snapshots."""
+        cursor = conn.cursor()
+        try:
+            # 1. edge_lab_setups — structural setup records
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS edge_lab_setups (
+                    id VARCHAR(36) PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    trade_id VARCHAR(36),
+                    position_id VARCHAR(36),
+                    setup_date DATE NOT NULL,
+                    regime VARCHAR(50) NOT NULL,
+                    gex_posture VARCHAR(50) NOT NULL,
+                    vol_state VARCHAR(50) NOT NULL,
+                    time_structure VARCHAR(50) NOT NULL,
+                    heatmap_color VARCHAR(20) NOT NULL,
+                    position_structure VARCHAR(50) NOT NULL,
+                    width_bucket VARCHAR(20) NOT NULL,
+                    directional_bias VARCHAR(20) NOT NULL,
+                    entry_logic TEXT,
+                    exit_logic TEXT,
+                    entry_defined TINYINT DEFAULT 0,
+                    exit_defined TINYINT DEFAULT 0,
+                    structure_signature VARCHAR(200),
+                    bias_state_json JSON,
+                    status VARCHAR(20) DEFAULT 'active',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_setup_user_date (user_id, setup_date),
+                    INDEX idx_setup_user_sig (user_id, structure_signature),
+                    INDEX idx_setup_trade (trade_id),
+                    INDEX idx_setup_position (position_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 2. edge_lab_hypotheses — immutable after trade entry
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS edge_lab_hypotheses (
+                    id VARCHAR(36) PRIMARY KEY,
+                    setup_id VARCHAR(36) NOT NULL,
+                    user_id INT NOT NULL,
+                    thesis TEXT NOT NULL,
+                    convexity_source TEXT NOT NULL,
+                    failure_condition TEXT NOT NULL,
+                    max_risk_defined TINYINT DEFAULT 0,
+                    locked_at DATETIME,
+                    is_locked TINYINT DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_hypothesis_setup (setup_id),
+                    INDEX idx_hypothesis_user (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 3. edge_lab_outcomes — outcome attribution records
+            # NOTE: pnl_result is recorded for reference ONLY. It is NEVER used
+            # in Edge Score computation, outcome classification, or any analytics
+            # formula. This separation enforces process-quality measurement.
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS edge_lab_outcomes (
+                    id VARCHAR(36) PRIMARY KEY,
+                    setup_id VARCHAR(36) NOT NULL,
+                    user_id INT NOT NULL,
+                    outcome_type ENUM(
+                        'structural_win', 'structural_loss', 'execution_error',
+                        'bias_interference', 'regime_mismatch'
+                    ) NOT NULL,
+                    system_suggestion VARCHAR(50),
+                    suggestion_confidence DECIMAL(3,2),
+                    suggestion_reasoning TEXT,
+                    hypothesis_valid TINYINT,
+                    structure_resolved TINYINT,
+                    exit_per_plan TINYINT,
+                    notes TEXT,
+                    pnl_result DECIMAL(12,2),
+                    confirmed_at DATETIME,
+                    is_confirmed TINYINT DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_outcome_setup (setup_id),
+                    INDEX idx_outcome_user_type (user_id, outcome_type),
+                    INDEX idx_outcome_user_date (user_id, created_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 4. edge_lab_edge_scores — rolling window score snapshots
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS edge_lab_edge_scores (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    window_start DATE NOT NULL,
+                    window_end DATE NOT NULL,
+                    scope VARCHAR(100) DEFAULT 'all',
+                    structural_integrity DECIMAL(4,3),
+                    execution_discipline DECIMAL(4,3),
+                    bias_interference_rate DECIMAL(4,3),
+                    regime_alignment DECIMAL(4,3),
+                    final_score DECIMAL(4,3),
+                    sample_size INT DEFAULT 0,
+                    computed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_score_user_window (user_id, window_start, window_end),
+                    INDEX idx_score_user_scope (user_id, scope)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            # 5. edge_lab_metrics — precomputed metric snapshots
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS edge_lab_metrics (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    metric_type VARCHAR(50) NOT NULL,
+                    scope VARCHAR(100) DEFAULT 'all',
+                    window_start DATE NOT NULL,
+                    window_end DATE NOT NULL,
+                    payload JSON,
+                    sample_size INT DEFAULT 0,
+                    computed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_metric_user_type (user_id, metric_type, window_start, window_end)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            self._set_schema_version(conn, 26)
         finally:
             cursor.close()
 
@@ -8072,6 +8203,437 @@ class JournalDBv2:
         """Set ML enabled/disabled setting."""
         setting = Setting(key='ml_enabled', value='true' if enabled else 'false')
         self.set_setting(setting)
+
+
+    # ==================== Edge Lab CRUD ====================
+
+    def create_edge_lab_setup(self, setup: EdgeLabSetup) -> EdgeLabSetup:
+        """Create a new Edge Lab setup."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = setup.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO edge_lab_setups ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return setup
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_edge_lab_setup(self, setup_id: str, user_id: int) -> Optional[EdgeLabSetup]:
+        """Get an Edge Lab setup by ID."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM edge_lab_setups WHERE id = %s AND user_id = %s",
+                (setup_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return EdgeLabSetup.from_dict(self._row_to_dict(cursor, row))
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_edge_lab_setups(self, user_id: int, limit: int = 50, offset: int = 0,
+                             filters: Optional[Dict] = None) -> List[EdgeLabSetup]:
+        """List Edge Lab setups for a user with optional filters."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            query = "SELECT * FROM edge_lab_setups WHERE user_id = %s"
+            params = [user_id]
+
+            if filters:
+                if filters.get('status'):
+                    query += " AND status = %s"
+                    params.append(filters['status'])
+                if filters.get('regime'):
+                    query += " AND regime = %s"
+                    params.append(filters['regime'])
+                if filters.get('position_structure'):
+                    query += " AND position_structure = %s"
+                    params.append(filters['position_structure'])
+                if filters.get('structure_signature'):
+                    query += " AND structure_signature = %s"
+                    params.append(filters['structure_signature'])
+                if filters.get('start_date'):
+                    query += " AND setup_date >= %s"
+                    params.append(filters['start_date'])
+                if filters.get('end_date'):
+                    query += " AND setup_date <= %s"
+                    params.append(filters['end_date'])
+
+            query += " ORDER BY setup_date DESC, created_at DESC LIMIT %s OFFSET %s"
+            params.extend([limit, offset])
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [EdgeLabSetup.from_dict(self._row_to_dict(cursor, r)) for r in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_edge_lab_setup(self, setup_id: str, user_id: int,
+                              updates: Dict[str, Any]) -> Optional[EdgeLabSetup]:
+        """Update an Edge Lab setup. Rejects if status is archived."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Check current status
+            cursor.execute(
+                "SELECT status FROM edge_lab_setups WHERE id = %s AND user_id = %s",
+                (setup_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            if row[0] == 'archived':
+                raise ValueError("Cannot update an archived setup")
+
+            # Build update
+            allowed = {
+                'trade_id', 'position_id', 'regime', 'gex_posture', 'vol_state',
+                'time_structure', 'heatmap_color', 'position_structure',
+                'width_bucket', 'directional_bias', 'entry_logic', 'exit_logic',
+                'entry_defined', 'exit_defined', 'structure_signature',
+                'bias_state_json', 'status',
+            }
+            filtered = {k: v for k, v in updates.items() if k in allowed}
+            if not filtered:
+                return self.get_edge_lab_setup(setup_id, user_id)
+
+            filtered['updated_at'] = datetime.utcnow().isoformat()
+            set_clause = ', '.join([f"{k} = %s" for k in filtered.keys()])
+            params = list(filtered.values()) + [setup_id, user_id]
+            cursor.execute(
+                f"UPDATE edge_lab_setups SET {set_clause} WHERE id = %s AND user_id = %s",
+                params
+            )
+            conn.commit()
+            return self.get_edge_lab_setup(setup_id, user_id)
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    # -- Hypotheses --
+
+    def create_edge_lab_hypothesis(self, hypothesis: EdgeLabHypothesis) -> EdgeLabHypothesis:
+        """Create a new hypothesis for a setup."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = hypothesis.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO edge_lab_hypotheses ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return hypothesis
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_hypothesis_for_setup(self, setup_id: str, user_id: int) -> Optional[EdgeLabHypothesis]:
+        """Get the hypothesis for a setup."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM edge_lab_hypotheses WHERE setup_id = %s AND user_id = %s",
+                (setup_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return EdgeLabHypothesis.from_dict(self._row_to_dict(cursor, row))
+        finally:
+            cursor.close()
+            conn.close()
+
+    def lock_hypothesis(self, hypothesis_id: str, user_id: int) -> Optional[EdgeLabHypothesis]:
+        """Lock a hypothesis. Rejects if already locked."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM edge_lab_hypotheses WHERE id = %s AND user_id = %s",
+                (hypothesis_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            hypothesis = EdgeLabHypothesis.from_dict(self._row_to_dict(cursor, row))
+            if hypothesis.is_locked:
+                raise ValueError("Hypothesis is already locked")
+
+            now = datetime.utcnow().isoformat()
+            cursor.execute(
+                "UPDATE edge_lab_hypotheses SET is_locked = 1, locked_at = %s WHERE id = %s AND user_id = %s",
+                (now, hypothesis_id, user_id)
+            )
+            conn.commit()
+            hypothesis.is_locked = 1
+            hypothesis.locked_at = now
+            return hypothesis
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    # -- Outcomes --
+
+    def create_edge_lab_outcome(self, outcome: EdgeLabOutcome) -> EdgeLabOutcome:
+        """Create a new outcome for a setup."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = outcome.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO edge_lab_outcomes ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            conn.commit()
+            return outcome
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_outcome_for_setup(self, setup_id: str, user_id: int) -> Optional[EdgeLabOutcome]:
+        """Get the outcome for a setup."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM edge_lab_outcomes WHERE setup_id = %s AND user_id = %s",
+                (setup_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return EdgeLabOutcome.from_dict(self._row_to_dict(cursor, row))
+        finally:
+            cursor.close()
+            conn.close()
+
+    def confirm_outcome(self, outcome_id: str, user_id: int) -> Optional[EdgeLabOutcome]:
+        """Confirm an outcome. Rejects if already confirmed."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM edge_lab_outcomes WHERE id = %s AND user_id = %s",
+                (outcome_id, user_id)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            outcome = EdgeLabOutcome.from_dict(self._row_to_dict(cursor, row))
+            if outcome.is_confirmed:
+                raise ValueError("Outcome is already confirmed")
+
+            now = datetime.utcnow().isoformat()
+            cursor.execute(
+                "UPDATE edge_lab_outcomes SET is_confirmed = 1, confirmed_at = %s WHERE id = %s AND user_id = %s",
+                (now, outcome_id, user_id)
+            )
+            conn.commit()
+            outcome.is_confirmed = 1
+            outcome.confirmed_at = now
+            return outcome
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    # -- Readiness / Routine reads (existing tables) --
+
+    def get_readiness_for_date(self, user_id: int, date_str: str) -> Optional[Dict]:
+        """Read user_readiness_log entry for a given date."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM user_readiness_log WHERE user_id = %s AND readiness_date = %s",
+                (user_id, date_str)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return self._row_to_dict(cursor, row)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_routine_data_for_date(self, date_str: str) -> Optional[Dict]:
+        """Read routine_data_daily entry for a given date."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM routine_data_daily WHERE routine_date = %s",
+                (date_str,)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return self._row_to_dict(cursor, row)
+        finally:
+            cursor.close()
+            conn.close()
+
+    # -- Edge Lab aggregation queries (for analytics) --
+
+    def get_setups_with_outcomes(self, user_id: int, start_date: str,
+                                 end_date: str) -> List[Dict]:
+        """JOIN setups + outcomes for analytics. Only returns confirmed outcomes."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT s.*, o.outcome_type, o.hypothesis_valid, o.structure_resolved,
+                       o.exit_per_plan, o.pnl_result, o.is_confirmed, o.confirmed_at,
+                       o.system_suggestion, o.suggestion_confidence
+                FROM edge_lab_setups s
+                JOIN edge_lab_outcomes o ON o.setup_id = s.id AND o.user_id = s.user_id
+                WHERE s.user_id = %s
+                  AND s.setup_date >= %s AND s.setup_date <= %s
+                  AND o.is_confirmed = 1
+                ORDER BY s.setup_date
+            """, (user_id, start_date, end_date))
+            rows = cursor.fetchall()
+            return [self._row_to_dict(cursor, r) for r in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_setup_count_by_signature(self, user_id: int) -> List[Dict]:
+        """GROUP BY structure_signature with counts for sample size ranking."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT structure_signature, COUNT(*) as setup_count,
+                       MIN(setup_date) as first_seen, MAX(setup_date) as last_seen
+                FROM edge_lab_setups
+                WHERE user_id = %s AND status = 'active'
+                GROUP BY structure_signature
+                ORDER BY setup_count DESC
+            """, (user_id,))
+            rows = cursor.fetchall()
+            return [self._row_to_dict(cursor, r) for r in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def save_edge_score(self, score: EdgeLabEdgeScore) -> EdgeLabEdgeScore:
+        """UPSERT edge score into edge_lab_edge_scores."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = score.to_dict()
+            data.pop('id', None)
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO edge_lab_edge_scores ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            score.id = cursor.lastrowid
+            conn.commit()
+            return score
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    def list_edge_scores(self, user_id: int, limit: int = 90) -> List[EdgeLabEdgeScore]:
+        """List edge scores sorted by window_end DESC."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                "SELECT * FROM edge_lab_edge_scores WHERE user_id = %s ORDER BY window_end DESC LIMIT %s",
+                (user_id, limit)
+            )
+            rows = cursor.fetchall()
+            return [EdgeLabEdgeScore.from_dict(self._row_to_dict(cursor, r)) for r in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def save_metric(self, metric: EdgeLabMetric) -> EdgeLabMetric:
+        """Save a metric snapshot."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            data = metric.to_dict()
+            data.pop('id', None)
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO edge_lab_metrics ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+            metric.id = cursor.lastrowid
+            conn.commit()
+            return metric
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_metric(self, user_id: int, metric_type: str,
+                   start_date: str, end_date: str) -> Optional[EdgeLabMetric]:
+        """Get a metric snapshot by type and date range."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(
+                """SELECT * FROM edge_lab_metrics
+                   WHERE user_id = %s AND metric_type = %s
+                     AND window_start = %s AND window_end = %s
+                   ORDER BY computed_at DESC LIMIT 1""",
+                (user_id, metric_type, start_date, end_date)
+            )
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return EdgeLabMetric.from_dict(self._row_to_dict(cursor, row))
+        finally:
+            cursor.close()
+            conn.close()
 
 
 class VersionConflictError(Exception):

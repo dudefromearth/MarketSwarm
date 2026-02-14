@@ -29,8 +29,10 @@ from .models_v2 import (
     TrackedIdeaSnapshot, UserTradeAction, MLModel, MLExperiment,
     PositionJournalEntry,
     VALID_TAG_CATEGORIES, VALID_TAG_SCOPES, DEFAULT_SCOPES_BY_CATEGORY,
+    EdgeLabSetup, EdgeLabHypothesis, EdgeLabOutcome,
 )
 from .analytics_v2 import AnalyticsV2
+from .edge_lab_analytics import EdgeLabAnalytics
 from .auth import JournalAuth, require_auth, optional_auth
 
 
@@ -43,6 +45,7 @@ class JournalOrchestrator:
         self.port = int(config.get('JOURNAL_PORT', 3002))
         self.db = JournalDBv2(config)
         self.analytics = AnalyticsV2(self.db)
+        self.edge_lab_analytics = EdgeLabAnalytics(self.db)
         self.auth = JournalAuth(config, self.db._pool)
 
         # Redis for alerts sync
@@ -6833,7 +6836,605 @@ class JournalOrchestrator:
         app.router.add_post('/api/internal/ml/circuit-breakers/disable-ml', self.disable_ml)
         app.router.add_post('/api/internal/ml/circuit-breakers/enable-ml', self.enable_ml)
 
+        # Edge Lab
+        app.router.add_get('/api/edge-lab/setups', self.list_edge_lab_setups)
+        app.router.add_get('/api/edge-lab/setups/{id}', self.get_edge_lab_setup)
+        app.router.add_post('/api/edge-lab/setups', self.create_edge_lab_setup)
+        app.router.add_patch('/api/edge-lab/setups/{id}', self.update_edge_lab_setup)
+        app.router.add_get('/api/edge-lab/setups/{setupId}/hypothesis', self.get_edge_lab_hypothesis)
+        app.router.add_post('/api/edge-lab/hypotheses', self.create_edge_lab_hypothesis)
+        app.router.add_post('/api/edge-lab/hypotheses/{id}/lock', self.lock_edge_lab_hypothesis)
+        app.router.add_get('/api/edge-lab/setups/{setupId}/outcome', self.get_edge_lab_outcome)
+        app.router.add_post('/api/edge-lab/outcomes', self.create_edge_lab_outcome)
+        app.router.add_post('/api/edge-lab/outcomes/{id}/confirm', self.confirm_edge_lab_outcome)
+
+        # Edge Lab Analytics
+        app.router.add_get('/api/edge-lab/setups/{setupId}/suggest-outcome', self.suggest_edge_lab_outcome)
+        app.router.add_get('/api/edge-lab/analytics/regime-correlation', self.get_regime_correlation)
+        app.router.add_get('/api/edge-lab/analytics/bias-overlay', self.get_bias_overlay)
+        app.router.add_get('/api/edge-lab/analytics/edge-score', self.get_edge_score)
+        app.router.add_get('/api/edge-lab/analytics/edge-score/history', self.get_edge_score_history)
+        app.router.add_get('/api/edge-lab/analytics/signatures', self.get_signature_sample_sizes)
+        app.router.add_post('/api/edge-lab/analytics/compute', self.compute_edge_lab_analytics)
+        app.router.add_get('/api/edge-lab/analytics/dashboard', self.get_edge_lab_dashboard)
+        app.router.add_post('/api/internal/edge-lab/materialize', self.materialize_edge_lab_metrics)
+
         return app
+
+    # ==================== Edge Lab Handlers ====================
+
+    @require_auth
+    async def list_edge_lab_setups(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/setups — List setups for authenticated user."""
+        try:
+            user_id = request['user']['id']
+            limit = int(request.query.get('limit', '50'))
+            offset = int(request.query.get('offset', '0'))
+            filters = {}
+            for key in ['status', 'regime', 'position_structure', 'structure_signature',
+                         'start_date', 'end_date']:
+                val = request.query.get(key)
+                if val:
+                    filters[key] = val
+            setups = self.db.list_edge_lab_setups(user_id, limit, offset, filters or None)
+            return self._json_response({
+                'success': True,
+                'data': [s.to_api_dict() for s in setups],
+                'count': len(setups),
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"list_edge_lab_setups error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def get_edge_lab_setup(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/setups/{id} — Get a single setup."""
+        try:
+            user_id = request['user']['id']
+            setup_id = request.match_info['id']
+            setup = self.db.get_edge_lab_setup(setup_id, user_id)
+            if not setup:
+                return self._error_response('Setup not found', 404, request)
+
+            # Include hypothesis and outcome if they exist
+            result = setup.to_api_dict()
+            hypothesis = self.db.get_hypothesis_for_setup(setup_id, user_id)
+            if hypothesis:
+                result['hypothesis'] = hypothesis.to_api_dict()
+            outcome = self.db.get_outcome_for_setup(setup_id, user_id)
+            if outcome:
+                result['outcome'] = outcome.to_api_dict()
+
+            return self._json_response({'success': True, 'data': result}, request=request)
+        except Exception as e:
+            self.logger.error(f"get_edge_lab_setup error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def create_edge_lab_setup(self, request: web.Request) -> web.Response:
+        """POST /api/edge-lab/setups — Create a new setup."""
+        try:
+            user_id = request['user']['id']
+            body = await request.json()
+
+            # Validate required fields
+            required = ['setup_date', 'regime', 'gex_posture', 'vol_state',
+                         'time_structure', 'heatmap_color', 'position_structure',
+                         'width_bucket', 'directional_bias']
+            for field in required:
+                camel = self._snake_to_camel(field)
+                if not body.get(field) and not body.get(camel):
+                    return self._error_response(f'{field} is required', 400, request)
+
+            setup = EdgeLabSetup(
+                id=EdgeLabSetup.new_id(),
+                user_id=user_id,
+                setup_date=body.get('setup_date') or body.get('setupDate'),
+                regime=body.get('regime'),
+                gex_posture=body.get('gex_posture') or body.get('gexPosture'),
+                vol_state=body.get('vol_state') or body.get('volState'),
+                time_structure=body.get('time_structure') or body.get('timeStructure'),
+                heatmap_color=body.get('heatmap_color') or body.get('heatmapColor'),
+                position_structure=body.get('position_structure') or body.get('positionStructure'),
+                width_bucket=body.get('width_bucket') or body.get('widthBucket'),
+                directional_bias=body.get('directional_bias') or body.get('directionalBias'),
+                trade_id=body.get('trade_id') or body.get('tradeId'),
+                position_id=body.get('position_id') or body.get('positionId'),
+                entry_logic=body.get('entry_logic') or body.get('entryLogic'),
+                exit_logic=body.get('exit_logic') or body.get('exitLogic'),
+                entry_defined=1 if body.get('entry_defined') or body.get('entryDefined') else 0,
+                exit_defined=1 if body.get('exit_defined') or body.get('exitDefined') else 0,
+            )
+            setup.structure_signature = setup.compute_structure_signature()
+
+            # Auto-populate bias state from readiness log
+            setup_date = body.get('setup_date') or body.get('setupDate')
+            readiness = self.db.get_readiness_for_date(user_id, setup_date)
+            if readiness:
+                import json as _json
+                setup.bias_state_json = _json.dumps({
+                    'sleep': readiness.get('sleep'),
+                    'focus': readiness.get('focus'),
+                    'distractions': readiness.get('distractions'),
+                    'body_state': readiness.get('body_state'),
+                    'friction': readiness.get('friction'),
+                })
+
+            result = self.db.create_edge_lab_setup(setup)
+            return self._json_response(
+                {'success': True, 'data': result.to_api_dict()},
+                request=request, status=201,
+            )
+        except Exception as e:
+            self.logger.error(f"create_edge_lab_setup error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def update_edge_lab_setup(self, request: web.Request) -> web.Response:
+        """PATCH /api/edge-lab/setups/{id} — Update a setup."""
+        try:
+            user_id = request['user']['id']
+            setup_id = request.match_info['id']
+            body = await request.json()
+
+            # Convert camelCase to snake_case for known fields
+            updates = {}
+            field_map = {
+                'tradeId': 'trade_id', 'positionId': 'position_id',
+                'gexPosture': 'gex_posture', 'volState': 'vol_state',
+                'timeStructure': 'time_structure', 'heatmapColor': 'heatmap_color',
+                'positionStructure': 'position_structure', 'widthBucket': 'width_bucket',
+                'directionalBias': 'directional_bias', 'entryLogic': 'entry_logic',
+                'exitLogic': 'exit_logic', 'entryDefined': 'entry_defined',
+                'exitDefined': 'exit_defined', 'biasStateJson': 'bias_state_json',
+            }
+            for key, val in body.items():
+                snake = field_map.get(key, key)
+                updates[snake] = val
+
+            # Recompute signature if structural fields changed
+            struct_fields = {'regime', 'gex_posture', 'vol_state', 'time_structure',
+                             'heatmap_color', 'position_structure', 'width_bucket',
+                             'directional_bias'}
+            if struct_fields & updates.keys():
+                existing = self.db.get_edge_lab_setup(setup_id, user_id)
+                if existing:
+                    for f in struct_fields:
+                        if f not in updates:
+                            updates[f] = getattr(existing, f)
+                    temp = EdgeLabSetup(
+                        id='', user_id=0, setup_date='',
+                        regime=updates.get('regime', ''),
+                        gex_posture=updates.get('gex_posture', ''),
+                        vol_state=updates.get('vol_state', ''),
+                        time_structure=updates.get('time_structure', ''),
+                        heatmap_color=updates.get('heatmap_color', ''),
+                        position_structure=updates.get('position_structure', ''),
+                        width_bucket=updates.get('width_bucket', ''),
+                        directional_bias=updates.get('directional_bias', ''),
+                    )
+                    updates['structure_signature'] = temp.compute_structure_signature()
+
+            result = self.db.update_edge_lab_setup(setup_id, user_id, updates)
+            if not result:
+                return self._error_response('Setup not found', 404, request)
+            return self._json_response({'success': True, 'data': result.to_api_dict()}, request=request)
+        except ValueError as e:
+            return self._error_response(str(e), 400, request)
+        except Exception as e:
+            self.logger.error(f"update_edge_lab_setup error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def get_edge_lab_hypothesis(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/setups/{setupId}/hypothesis"""
+        try:
+            user_id = request['user']['id']
+            setup_id = request.match_info['setupId']
+            hypothesis = self.db.get_hypothesis_for_setup(setup_id, user_id)
+            if not hypothesis:
+                return self._error_response('Hypothesis not found', 404, request)
+            return self._json_response({'success': True, 'data': hypothesis.to_api_dict()}, request=request)
+        except Exception as e:
+            self.logger.error(f"get_edge_lab_hypothesis error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def create_edge_lab_hypothesis(self, request: web.Request) -> web.Response:
+        """POST /api/edge-lab/hypotheses — Create a hypothesis for a setup."""
+        try:
+            user_id = request['user']['id']
+            body = await request.json()
+
+            setup_id = body.get('setup_id') or body.get('setupId')
+            if not setup_id:
+                return self._error_response('setup_id is required', 400, request)
+
+            # Verify setup exists and belongs to user
+            setup = self.db.get_edge_lab_setup(setup_id, user_id)
+            if not setup:
+                return self._error_response('Setup not found', 404, request)
+
+            # Check no existing hypothesis
+            existing = self.db.get_hypothesis_for_setup(setup_id, user_id)
+            if existing:
+                return self._error_response('Hypothesis already exists for this setup', 409, request)
+
+            for field in ['thesis', 'convexity_source', 'failure_condition']:
+                camel = self._snake_to_camel(field)
+                if not body.get(field) and not body.get(camel):
+                    return self._error_response(f'{field} is required', 400, request)
+
+            hypothesis = EdgeLabHypothesis(
+                id=EdgeLabHypothesis.new_id(),
+                setup_id=setup_id,
+                user_id=user_id,
+                thesis=body.get('thesis'),
+                convexity_source=body.get('convexity_source') or body.get('convexitySource'),
+                failure_condition=body.get('failure_condition') or body.get('failureCondition'),
+                max_risk_defined=1 if body.get('max_risk_defined') or body.get('maxRiskDefined') else 0,
+            )
+            result = self.db.create_edge_lab_hypothesis(hypothesis)
+            return self._json_response(
+                {'success': True, 'data': result.to_api_dict()},
+                request=request, status=201,
+            )
+        except Exception as e:
+            self.logger.error(f"create_edge_lab_hypothesis error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def lock_edge_lab_hypothesis(self, request: web.Request) -> web.Response:
+        """POST /api/edge-lab/hypotheses/{id}/lock — Lock a hypothesis."""
+        try:
+            user_id = request['user']['id']
+            hypothesis_id = request.match_info['id']
+            result = self.db.lock_hypothesis(hypothesis_id, user_id)
+            if not result:
+                return self._error_response('Hypothesis not found', 404, request)
+            return self._json_response({'success': True, 'data': result.to_api_dict()}, request=request)
+        except ValueError as e:
+            return self._error_response(str(e), 400, request)
+        except Exception as e:
+            self.logger.error(f"lock_edge_lab_hypothesis error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def get_edge_lab_outcome(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/setups/{setupId}/outcome"""
+        try:
+            user_id = request['user']['id']
+            setup_id = request.match_info['setupId']
+            outcome = self.db.get_outcome_for_setup(setup_id, user_id)
+            if not outcome:
+                return self._error_response('Outcome not found', 404, request)
+            return self._json_response({'success': True, 'data': outcome.to_api_dict()}, request=request)
+        except Exception as e:
+            self.logger.error(f"get_edge_lab_outcome error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def create_edge_lab_outcome(self, request: web.Request) -> web.Response:
+        """POST /api/edge-lab/outcomes — Create an outcome for a setup."""
+        try:
+            user_id = request['user']['id']
+            body = await request.json()
+
+            setup_id = body.get('setup_id') or body.get('setupId')
+            if not setup_id:
+                return self._error_response('setup_id is required', 400, request)
+
+            setup = self.db.get_edge_lab_setup(setup_id, user_id)
+            if not setup:
+                return self._error_response('Setup not found', 404, request)
+
+            # Check no existing outcome
+            existing = self.db.get_outcome_for_setup(setup_id, user_id)
+            if existing:
+                return self._error_response('Outcome already exists for this setup', 409, request)
+
+            outcome_type = body.get('outcome_type') or body.get('outcomeType')
+            if not outcome_type:
+                return self._error_response('outcome_type is required', 400, request)
+            if outcome_type not in EdgeLabOutcome.VALID_OUTCOME_TYPES:
+                return self._error_response(
+                    f'Invalid outcome_type. Must be one of: {", ".join(EdgeLabOutcome.VALID_OUTCOME_TYPES)}',
+                    400, request,
+                )
+
+            outcome = EdgeLabOutcome(
+                id=EdgeLabOutcome.new_id(),
+                setup_id=setup_id,
+                user_id=user_id,
+                outcome_type=outcome_type,
+                system_suggestion=body.get('system_suggestion') or body.get('systemSuggestion'),
+                suggestion_confidence=body.get('suggestion_confidence') or body.get('suggestionConfidence'),
+                suggestion_reasoning=body.get('suggestion_reasoning') or body.get('suggestionReasoning'),
+                hypothesis_valid=body.get('hypothesis_valid') if body.get('hypothesis_valid') is not None
+                    else body.get('hypothesisValid'),
+                structure_resolved=body.get('structure_resolved') if body.get('structure_resolved') is not None
+                    else body.get('structureResolved'),
+                exit_per_plan=body.get('exit_per_plan') if body.get('exit_per_plan') is not None
+                    else body.get('exitPerPlan'),
+                notes=body.get('notes'),
+                # pnl_result is recorded for reference ONLY — never used in Edge Score
+                pnl_result=body.get('pnl_result') or body.get('pnlResult'),
+            )
+            result = self.db.create_edge_lab_outcome(outcome)
+            return self._json_response(
+                {'success': True, 'data': result.to_api_dict()},
+                request=request, status=201,
+            )
+        except Exception as e:
+            self.logger.error(f"create_edge_lab_outcome error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def confirm_edge_lab_outcome(self, request: web.Request) -> web.Response:
+        """POST /api/edge-lab/outcomes/{id}/confirm — Confirm an outcome."""
+        try:
+            user_id = request['user']['id']
+            outcome_id = request.match_info['id']
+            result = self.db.confirm_outcome(outcome_id, user_id)
+            if not result:
+                return self._error_response('Outcome not found', 404, request)
+            return self._json_response({'success': True, 'data': result.to_api_dict()}, request=request)
+        except ValueError as e:
+            return self._error_response(str(e), 400, request)
+        except Exception as e:
+            self.logger.error(f"confirm_edge_lab_outcome error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @staticmethod
+    def _snake_to_camel(name: str) -> str:
+        """Convert snake_case to camelCase."""
+        parts = name.split('_')
+        return parts[0] + ''.join(p.capitalize() for p in parts[1:])
+
+    # ==================== Edge Lab Analytics Handlers ====================
+
+    @require_auth
+    async def suggest_edge_lab_outcome(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/setups/{setupId}/suggest-outcome"""
+        try:
+            user_id = request['user']['id']
+            setup_id = request.match_info['setupId']
+            result = self.edge_lab_analytics.suggest_outcome_type(setup_id, user_id)
+            return self._json_response({'success': True, 'data': result}, request=request)
+        except Exception as e:
+            self.logger.error(f"suggest_edge_lab_outcome error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def get_regime_correlation(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/analytics/regime-correlation?start=&end="""
+        try:
+            user_id = request['user']['id']
+            start = request.query.get('start')
+            end = request.query.get('end')
+            if not start or not end:
+                return self._error_response('start and end query params required', 400, request)
+            result = self.edge_lab_analytics.compute_regime_correlation(user_id, start, end)
+            return self._json_response({'success': True, 'data': result}, request=request)
+        except Exception as e:
+            self.logger.error(f"get_regime_correlation error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def get_bias_overlay(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/analytics/bias-overlay?start=&end="""
+        try:
+            user_id = request['user']['id']
+            start = request.query.get('start')
+            end = request.query.get('end')
+            if not start or not end:
+                return self._error_response('start and end query params required', 400, request)
+            result = self.edge_lab_analytics.compute_bias_overlay(user_id, start, end)
+            return self._json_response({'success': True, 'data': result}, request=request)
+        except Exception as e:
+            self.logger.error(f"get_bias_overlay error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def get_edge_score(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/analytics/edge-score?start=&end=&scope="""
+        try:
+            user_id = request['user']['id']
+            start = request.query.get('start')
+            end = request.query.get('end')
+            if not start or not end:
+                return self._error_response('start and end query params required', 400, request)
+            scope = request.query.get('scope', 'all')
+            result = self.edge_lab_analytics.compute_edge_score(user_id, start, end, scope)
+            return self._json_response({'success': True, 'data': result}, request=request)
+        except Exception as e:
+            self.logger.error(f"get_edge_score error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def get_edge_score_history(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/analytics/edge-score/history?days="""
+        try:
+            user_id = request['user']['id']
+            days = int(request.query.get('days', '90'))
+            result = self.edge_lab_analytics.get_edge_score_history(user_id, days)
+            return self._json_response({'success': True, 'data': result}, request=request)
+        except Exception as e:
+            self.logger.error(f"get_edge_score_history error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def get_signature_sample_sizes(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/analytics/signatures"""
+        try:
+            user_id = request['user']['id']
+            result = self.edge_lab_analytics.get_signature_sample_sizes(user_id)
+            return self._json_response({'success': True, 'data': result}, request=request)
+        except Exception as e:
+            self.logger.error(f"get_signature_sample_sizes error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def compute_edge_lab_analytics(self, request: web.Request) -> web.Response:
+        """POST /api/edge-lab/analytics/compute — Trigger full analytics computation."""
+        try:
+            user_id = request['user']['id']
+            body = await request.json()
+            start = body.get('start')
+            end = body.get('end')
+            if not start or not end:
+                return self._error_response('start and end are required', 400, request)
+
+            results = {
+                'regime_correlation': self.edge_lab_analytics.compute_regime_correlation(user_id, start, end),
+                'bias_overlay': self.edge_lab_analytics.compute_bias_overlay(user_id, start, end),
+                'edge_score': self.edge_lab_analytics.compute_edge_score(user_id, start, end),
+                'signatures': self.edge_lab_analytics.get_signature_sample_sizes(user_id),
+            }
+            return self._json_response({'success': True, 'data': results}, request=request)
+        except Exception as e:
+            self.logger.error(f"compute_edge_lab_analytics error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def get_edge_lab_dashboard(self, request: web.Request) -> web.Response:
+        """GET /api/edge-lab/analytics/dashboard — Fast read from precomputed metrics."""
+        try:
+            user_id = request['user']['id']
+            today = datetime.utcnow().strftime('%Y-%m-%d')
+            ninety_ago = (datetime.utcnow() - timedelta(days=90)).strftime('%Y-%m-%d')
+
+            # Read precomputed metrics
+            edge_score_metric = self.db.get_metric(user_id, 'edge_score', ninety_ago, today)
+            regime_metric = self.db.get_metric(user_id, 'regime_correlation', ninety_ago, today)
+            bias_metric = self.db.get_metric(user_id, 'bias_overlay', ninety_ago, today)
+
+            result = {
+                'edge_score': edge_score_metric.to_api_dict() if edge_score_metric else None,
+                'regime_correlation': regime_metric.to_api_dict() if regime_metric else None,
+                'bias_overlay': bias_metric.to_api_dict() if bias_metric else None,
+                'score_history': self.edge_lab_analytics.get_edge_score_history(user_id, 90),
+                'signatures': self.edge_lab_analytics.get_signature_sample_sizes(user_id),
+            }
+            return self._json_response({'success': True, 'data': result}, request=request)
+        except Exception as e:
+            self.logger.error(f"get_edge_lab_dashboard error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def materialize_edge_lab_metrics(self, request: web.Request) -> web.Response:
+        """POST /api/internal/edge-lab/materialize — Manual trigger for metrics materialization."""
+        try:
+            count = await self._materialize_edge_lab_for_all_users()
+            return self._json_response({'success': True, 'users_processed': count}, request=request)
+        except Exception as e:
+            self.logger.error(f"materialize_edge_lab_metrics error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    async def _materialize_edge_lab_for_all_users(self) -> int:
+        """Materialize Edge Lab metrics for all users with sufficient data."""
+        import time as _time
+        from .models_v2 import EdgeLabMetric
+
+        conn = self.db._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Find users with edge lab data
+            cursor.execute("""
+                SELECT DISTINCT user_id, COUNT(*) as outcome_count
+                FROM edge_lab_outcomes
+                WHERE is_confirmed = 1
+                GROUP BY user_id
+            """)
+            users = cursor.fetchall()
+        finally:
+            cursor.close()
+            conn.close()
+
+        today = datetime.utcnow().strftime('%Y-%m-%d')
+        ninety_ago = (datetime.utcnow() - timedelta(days=90)).strftime('%Y-%m-%d')
+        processed = 0
+
+        for row in users:
+            user_id = row[0]
+            outcome_count = row[1]
+
+            # Skip users with < 10 confirmed outcomes — no point materializing noise
+            if outcome_count < 10:
+                continue
+
+            start_time = _time.time()
+
+            try:
+                # Compute and save edge score
+                score_result = self.edge_lab_analytics.compute_edge_score(
+                    user_id, ninety_ago, today
+                )
+                score_metric = EdgeLabMetric(
+                    user_id=user_id,
+                    metric_type='edge_score',
+                    scope='all',
+                    window_start=ninety_ago,
+                    window_end=today,
+                    payload=json.dumps(score_result),
+                    sample_size=outcome_count,
+                )
+                self.db.save_metric(score_metric)
+
+                # Compute and save regime correlation
+                regime_result = self.edge_lab_analytics.compute_regime_correlation(
+                    user_id, ninety_ago, today
+                )
+                regime_metric = EdgeLabMetric(
+                    user_id=user_id,
+                    metric_type='regime_correlation',
+                    scope='all',
+                    window_start=ninety_ago,
+                    window_end=today,
+                    payload=json.dumps(regime_result, default=str),
+                    sample_size=outcome_count,
+                )
+                self.db.save_metric(regime_metric)
+
+                # Compute and save bias overlay
+                bias_result = self.edge_lab_analytics.compute_bias_overlay(
+                    user_id, ninety_ago, today
+                )
+                bias_metric = EdgeLabMetric(
+                    user_id=user_id,
+                    metric_type='bias_overlay',
+                    scope='all',
+                    window_start=ninety_ago,
+                    window_end=today,
+                    payload=json.dumps(bias_result, default=str),
+                    sample_size=outcome_count,
+                )
+                self.db.save_metric(bias_metric)
+
+                elapsed_ms = int((_time.time() - start_time) * 1000)
+                self.logger.info(
+                    f"Edge Lab materialized for user {user_id}: "
+                    f"{outcome_count} outcomes, {elapsed_ms}ms"
+                )
+                processed += 1
+
+            except Exception as e:
+                self.logger.error(f"Edge Lab materialization failed for user {user_id}: {e}")
+
+        return processed
+
+    async def _edge_lab_scheduler(self):
+        """Background task: materialize Edge Lab metrics daily for all users."""
+        while True:
+            try:
+                await asyncio.sleep(86400)  # 24 hours
+                self.logger.info("Edge Lab scheduler: starting daily materialization")
+                count = await self._materialize_edge_lab_for_all_users()
+                self.logger.info(f"Edge Lab scheduler: materialized {count} users")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                self.logger.error(f"Edge Lab scheduler error: {e}")
+                await asyncio.sleep(3600)  # retry in 1 hour on error
 
     async def start(self) -> web.AppRunner:
         """Start the API server and return the runner for cleanup."""
@@ -6859,6 +7460,12 @@ async def run(config: Dict[str, Any], logger) -> None:
         name="leaderboard-scheduler",
     )
 
+    # Start Edge Lab metrics scheduler as background task
+    edge_lab_task = asyncio.create_task(
+        orchestrator._edge_lab_scheduler(),
+        name="edge-lab-scheduler",
+    )
+
     try:
         # Run forever until cancelled
         while True:
@@ -6866,6 +7473,7 @@ async def run(config: Dict[str, Any], logger) -> None:
     except asyncio.CancelledError:
         logger.info("Orchestrator cancelled", emoji="🛑")
         leaderboard_task.cancel()
+        edge_lab_task.cancel()
     finally:
         logger.info("Shutting down API server", emoji="🛑")
         await runner.cleanup()

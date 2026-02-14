@@ -2703,6 +2703,13 @@ function App() {
           </button>
           <button
             className="header-leaderboard-btn"
+            onClick={() => navigate('/edge-lab')}
+            title="Edge Lab"
+          >
+            Edge Lab
+          </button>
+          <button
+            className="header-leaderboard-btn"
             onClick={() => setLeaderboardOpen(true)}
             title="Leaderboard"
           >

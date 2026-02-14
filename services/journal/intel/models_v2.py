@@ -2578,3 +2578,444 @@ class PositionJournalEntry:
             'phase': self.phase,
             'createdAt': self.created_at,
         }
+
+
+# ==================== Edge Lab Models ====================
+
+
+@dataclass
+class EdgeLabSetup:
+    """A structural setup record for Edge Lab retrospective analysis."""
+    id: str
+    user_id: int
+    setup_date: str  # DATE as string
+    regime: str  # e.g., 'trending', 'range_bound', 'volatile'
+    gex_posture: str  # e.g., 'positive', 'negative', 'neutral'
+    vol_state: str  # e.g., 'low', 'elevated', 'high', 'compressed'
+    time_structure: str  # e.g., 'morning', 'midday', 'power_hour', 'close'
+    heatmap_color: str  # e.g., 'green', 'red', 'yellow', 'mixed'
+    position_structure: str  # e.g., 'long_fly', 'bwb', 'vertical', 'iron_condor'
+    width_bucket: str  # 'narrow', 'standard', 'wide'
+    directional_bias: str  # 'bullish', 'bearish', 'neutral'
+
+    trade_id: Optional[str] = None
+    position_id: Optional[str] = None
+    entry_logic: Optional[str] = None
+    exit_logic: Optional[str] = None
+    entry_defined: int = 0
+    exit_defined: int = 0
+    structure_signature: Optional[str] = None
+    bias_state_json: Optional[str] = None
+    status: str = 'active'
+
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        return str(uuid.uuid4())
+
+    def compute_structure_signature(self) -> str:
+        """Hash all 8 structural dimensions into a deterministic grouping key.
+
+        Signature format: regime|gex_posture|vol_state|time_structure|heatmap_color|position_structure|width_bucket|directional_bias
+        This prevents signatures from collapsing too broadly and enables
+        meaningful Phase 2 clustering.
+        """
+        return '|'.join([
+            self.regime or '',
+            self.gex_posture or '',
+            self.vol_state or '',
+            self.time_structure or '',
+            self.heatmap_color or '',
+            self.position_structure or '',
+            self.width_bucket or '',
+            self.directional_bias or '',
+        ])
+
+    def to_dict(self) -> dict:
+        return {
+            'id': self.id,
+            'user_id': self.user_id,
+            'trade_id': self.trade_id,
+            'position_id': self.position_id,
+            'setup_date': self.setup_date,
+            'regime': self.regime,
+            'gex_posture': self.gex_posture,
+            'vol_state': self.vol_state,
+            'time_structure': self.time_structure,
+            'heatmap_color': self.heatmap_color,
+            'position_structure': self.position_structure,
+            'width_bucket': self.width_bucket,
+            'directional_bias': self.directional_bias,
+            'entry_logic': self.entry_logic,
+            'exit_logic': self.exit_logic,
+            'entry_defined': self.entry_defined,
+            'exit_defined': self.exit_defined,
+            'structure_signature': self.structure_signature,
+            'bias_state_json': self.bias_state_json,
+            'status': self.status,
+            'created_at': self.created_at,
+            'updated_at': self.updated_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'EdgeLabSetup':
+        d = dict(d)
+        for f in ['setup_date']:
+            if hasattr(d.get(f), 'isoformat'):
+                d[f] = d[f].isoformat()
+        for f in ['created_at', 'updated_at']:
+            if isinstance(d.get(f), datetime):
+                d[f] = d[f].isoformat()
+        known = {f.name for f in cls.__dataclass_fields__.values()}
+        d = {k: v for k, v in d.items() if k in known}
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        return {
+            'id': self.id,
+            'userId': self.user_id,
+            'tradeId': self.trade_id,
+            'positionId': self.position_id,
+            'setupDate': self.setup_date,
+            'regime': self.regime,
+            'gexPosture': self.gex_posture,
+            'volState': self.vol_state,
+            'timeStructure': self.time_structure,
+            'heatmapColor': self.heatmap_color,
+            'positionStructure': self.position_structure,
+            'widthBucket': self.width_bucket,
+            'directionalBias': self.directional_bias,
+            'entryLogic': self.entry_logic,
+            'exitLogic': self.exit_logic,
+            'entryDefined': bool(self.entry_defined),
+            'exitDefined': bool(self.exit_defined),
+            'structureSignature': self.structure_signature,
+            'biasState': json.loads(self.bias_state_json) if self.bias_state_json else None,
+            'status': self.status,
+            'createdAt': self.created_at,
+            'updatedAt': self.updated_at,
+        }
+
+
+@dataclass
+class EdgeLabHypothesis:
+    """An immutable hypothesis record tied to a setup. Locked after trade entry."""
+    id: str
+    setup_id: str
+    user_id: int
+    thesis: str
+    convexity_source: str
+    failure_condition: str
+    max_risk_defined: int = 0
+    locked_at: Optional[str] = None
+    is_locked: int = 0
+
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @staticmethod
+    def new_id() -> str:
+        return str(uuid.uuid4())
+
+    def lock(self):
+        """Lock the hypothesis. Once locked, it cannot be modified."""
+        if self.is_locked:
+            raise ValueError("Hypothesis is already locked")
+        self.is_locked = 1
+        self.locked_at = datetime.utcnow().isoformat()
+
+    def to_dict(self) -> dict:
+        return {
+            'id': self.id,
+            'setup_id': self.setup_id,
+            'user_id': self.user_id,
+            'thesis': self.thesis,
+            'convexity_source': self.convexity_source,
+            'failure_condition': self.failure_condition,
+            'max_risk_defined': self.max_risk_defined,
+            'locked_at': self.locked_at,
+            'is_locked': self.is_locked,
+            'created_at': self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'EdgeLabHypothesis':
+        d = dict(d)
+        for f in ['locked_at', 'created_at']:
+            if isinstance(d.get(f), datetime):
+                d[f] = d[f].isoformat()
+        known = {f.name for f in cls.__dataclass_fields__.values()}
+        d = {k: v for k, v in d.items() if k in known}
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        return {
+            'id': self.id,
+            'setupId': self.setup_id,
+            'userId': self.user_id,
+            'thesis': self.thesis,
+            'convexitySource': self.convexity_source,
+            'failureCondition': self.failure_condition,
+            'maxRiskDefined': bool(self.max_risk_defined),
+            'lockedAt': self.locked_at,
+            'isLocked': bool(self.is_locked),
+            'createdAt': self.created_at,
+        }
+
+
+@dataclass
+class EdgeLabOutcome:
+    """Outcome attribution record for a setup. Confirmed once, immutable after."""
+    id: str
+    setup_id: str
+    user_id: int
+    outcome_type: str  # structural_win, structural_loss, execution_error, bias_interference, regime_mismatch
+
+    system_suggestion: Optional[str] = None
+    suggestion_confidence: Optional[float] = None
+    suggestion_reasoning: Optional[str] = None
+
+    hypothesis_valid: Optional[int] = None
+    structure_resolved: Optional[int] = None
+    exit_per_plan: Optional[int] = None
+    notes: Optional[str] = None
+    # pnl_result is recorded for reference ONLY. It is NEVER used in
+    # Edge Score computation, outcome classification, or any analytics formula.
+    # This separation enforces process-quality measurement over profitability.
+    pnl_result: Optional[float] = None
+
+    confirmed_at: Optional[str] = None
+    is_confirmed: int = 0
+
+    created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    VALID_OUTCOME_TYPES = (
+        'structural_win', 'structural_loss', 'execution_error',
+        'bias_interference', 'regime_mismatch',
+    )
+
+    @staticmethod
+    def new_id() -> str:
+        return str(uuid.uuid4())
+
+    def confirm(self):
+        """Confirm the outcome. Once confirmed, it cannot be modified."""
+        if self.is_confirmed:
+            raise ValueError("Outcome is already confirmed")
+        self.is_confirmed = 1
+        self.confirmed_at = datetime.utcnow().isoformat()
+
+    def to_dict(self) -> dict:
+        return {
+            'id': self.id,
+            'setup_id': self.setup_id,
+            'user_id': self.user_id,
+            'outcome_type': self.outcome_type,
+            'system_suggestion': self.system_suggestion,
+            'suggestion_confidence': self.suggestion_confidence,
+            'suggestion_reasoning': self.suggestion_reasoning,
+            'hypothesis_valid': self.hypothesis_valid,
+            'structure_resolved': self.structure_resolved,
+            'exit_per_plan': self.exit_per_plan,
+            'notes': self.notes,
+            'pnl_result': self.pnl_result,
+            'confirmed_at': self.confirmed_at,
+            'is_confirmed': self.is_confirmed,
+            'created_at': self.created_at,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'EdgeLabOutcome':
+        d = dict(d)
+        for f in ['confirmed_at', 'created_at']:
+            if isinstance(d.get(f), datetime):
+                d[f] = d[f].isoformat()
+        if d.get('pnl_result') is not None:
+            d['pnl_result'] = float(d['pnl_result'])
+        if d.get('suggestion_confidence') is not None:
+            d['suggestion_confidence'] = float(d['suggestion_confidence'])
+        known = {f.name for f in cls.__dataclass_fields__.values()}
+        d = {k: v for k, v in d.items() if k in known}
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        return {
+            'id': self.id,
+            'setupId': self.setup_id,
+            'userId': self.user_id,
+            'outcomeType': self.outcome_type,
+            'systemSuggestion': self.system_suggestion,
+            'suggestionConfidence': self.suggestion_confidence,
+            'suggestionReasoning': self.suggestion_reasoning,
+            'hypothesisValid': self.hypothesis_valid,
+            'structureResolved': self.structure_resolved,
+            'exitPerPlan': self.exit_per_plan,
+            'notes': self.notes,
+            'pnlResult': self.pnl_result,
+            'confirmedAt': self.confirmed_at,
+            'isConfirmed': bool(self.is_confirmed),
+            'createdAt': self.created_at,
+        }
+
+
+@dataclass
+class EdgeLabEdgeScore:
+    """Rolling window edge score snapshot."""
+    id: Optional[int] = None  # AUTO_INCREMENT
+    user_id: int = 0
+    window_start: str = ''
+    window_end: str = ''
+    scope: str = 'all'
+
+    structural_integrity: float = 0.0
+    execution_discipline: float = 0.0
+    bias_interference_rate: float = 0.0
+    regime_alignment: float = 0.0
+    final_score: float = 0.0
+    sample_size: int = 0
+
+    computed_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    # Minimum sample guard: never compute from noise
+    MIN_SAMPLE_SIZE = 10
+
+    @classmethod
+    def compute(cls, structural_integrity: float, execution_discipline: float,
+                bias_interference_rate: float, regime_alignment: float,
+                sample_size: int, **kwargs) -> Optional['EdgeLabEdgeScore']:
+        """Compute edge score from components.
+
+        Formula: SI*0.35 + ED*0.30 - BI*0.15 + RA*0.20
+        Returns None if sample_size < MIN_SAMPLE_SIZE (insufficient data).
+        """
+        if sample_size < cls.MIN_SAMPLE_SIZE:
+            return None
+
+        final = (
+            structural_integrity * 0.35
+            + execution_discipline * 0.30
+            - bias_interference_rate * 0.15
+            + regime_alignment * 0.20
+        )
+        return cls(
+            structural_integrity=structural_integrity,
+            execution_discipline=execution_discipline,
+            bias_interference_rate=bias_interference_rate,
+            regime_alignment=regime_alignment,
+            final_score=round(final, 3),
+            sample_size=sample_size,
+            **kwargs,
+        )
+
+    def to_dict(self) -> dict:
+        d = {
+            'user_id': self.user_id,
+            'window_start': self.window_start,
+            'window_end': self.window_end,
+            'scope': self.scope,
+            'structural_integrity': self.structural_integrity,
+            'execution_discipline': self.execution_discipline,
+            'bias_interference_rate': self.bias_interference_rate,
+            'regime_alignment': self.regime_alignment,
+            'final_score': self.final_score,
+            'sample_size': self.sample_size,
+            'computed_at': self.computed_at,
+        }
+        if self.id is not None:
+            d['id'] = self.id
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'EdgeLabEdgeScore':
+        d = dict(d)
+        for f in ['computed_at']:
+            if isinstance(d.get(f), datetime):
+                d[f] = d[f].isoformat()
+        for f in ['window_start', 'window_end']:
+            if hasattr(d.get(f), 'isoformat'):
+                d[f] = d[f].isoformat()
+        for f in ['structural_integrity', 'execution_discipline',
+                   'bias_interference_rate', 'regime_alignment', 'final_score']:
+            if d.get(f) is not None:
+                d[f] = float(d[f])
+        known = {f.name for f in cls.__dataclass_fields__.values()}
+        d = {k: v for k, v in d.items() if k in known}
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        return {
+            'id': self.id,
+            'userId': self.user_id,
+            'windowStart': self.window_start,
+            'windowEnd': self.window_end,
+            'scope': self.scope,
+            'structuralIntegrity': self.structural_integrity,
+            'executionDiscipline': self.execution_discipline,
+            'biasInterferenceRate': self.bias_interference_rate,
+            'regimeAlignment': self.regime_alignment,
+            'finalScore': self.final_score,
+            'sampleSize': self.sample_size,
+            'computedAt': self.computed_at,
+        }
+
+
+@dataclass
+class EdgeLabMetric:
+    """Thin container for precomputed metric JSON payloads."""
+    id: Optional[int] = None  # AUTO_INCREMENT
+    user_id: int = 0
+    metric_type: str = ''
+    scope: str = 'all'
+    window_start: str = ''
+    window_end: str = ''
+    payload: Optional[str] = None  # JSON string
+    sample_size: int = 0
+
+    computed_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    def to_dict(self) -> dict:
+        d = {
+            'user_id': self.user_id,
+            'metric_type': self.metric_type,
+            'scope': self.scope,
+            'window_start': self.window_start,
+            'window_end': self.window_end,
+            'payload': self.payload,
+            'sample_size': self.sample_size,
+            'computed_at': self.computed_at,
+        }
+        if self.id is not None:
+            d['id'] = self.id
+        return d
+
+    @classmethod
+    def from_dict(cls, d: dict) -> 'EdgeLabMetric':
+        d = dict(d)
+        for f in ['computed_at']:
+            if isinstance(d.get(f), datetime):
+                d[f] = d[f].isoformat()
+        for f in ['window_start', 'window_end']:
+            if hasattr(d.get(f), 'isoformat'):
+                d[f] = d[f].isoformat()
+        known = {f.name for f in cls.__dataclass_fields__.values()}
+        d = {k: v for k, v in d.items() if k in known}
+        return cls(**d)
+
+    def to_api_dict(self) -> dict:
+        return {
+            'id': self.id,
+            'userId': self.user_id,
+            'metricType': self.metric_type,
+            'scope': self.scope,
+            'windowStart': self.window_start,
+            'windowEnd': self.window_end,
+            'payload': json.loads(self.payload) if self.payload else None,
+            'sampleSize': self.sample_size,
+            'computedAt': self.computed_at,
+        }
+
+
+def detect_signature_drift(user_id):
+    """Reserved for Phase 2 — adaptive insight layer."""
+    pass

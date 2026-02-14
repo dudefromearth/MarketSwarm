@@ -94,6 +94,7 @@ export const PANEL_STAGE_MAP: Record<string, Stage> = {
   'trade-log': 'reflection',
   'trade-detail': 'reflection',
   'reporting': 'reflection',
+  'edge-lab': 'reflection',
 
   // Distillation - synthesis tools
   'journal': 'distillation',

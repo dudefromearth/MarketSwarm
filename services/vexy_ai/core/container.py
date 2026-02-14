@@ -39,6 +39,7 @@ CAPABILITY_REGISTRY: Dict[str, str] = {
     "healer": "capabilities.healer.capability.HealerCapability",
     "mesh": "capabilities.mesh.capability.MeshCapability",
     "interaction": "capabilities.interaction.capability.InteractionCapability",
+    "edge_lab": "capabilities.edge_lab.capability.EdgeLabCapability",
 }
 
 
