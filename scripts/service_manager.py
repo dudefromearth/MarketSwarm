@@ -1608,20 +1608,92 @@ After making changes, output ONLY a JSON summary:
                 self._history.append(record)
             self._log(f"=== HEAL END: {service_name} — {record['result']} ===")
 
+    def _load_context_doc(self) -> str:
+        """Load the healer context document."""
+        ctx_path = ROOT / "docs" / "healer-context.md"
+        try:
+            return ctx_path.read_text() if ctx_path.exists() else ""
+        except Exception:
+            return ""
+
+    def _read_log_tail(self, service_name: str, lines: int = 200) -> str:
+        """Read the last N lines of a service's log file."""
+        log_path = ROOT / "logs" / f"{service_name}.log"
+        try:
+            if not log_path.exists():
+                return "(no log file found)"
+            text = log_path.read_text()
+            all_lines = text.strip().split("\n")
+            return "\n".join(all_lines[-lines:])
+        except Exception:
+            return "(failed to read log)"
+
+    def _format_health_snapshot(self, snapshot: dict) -> str:
+        """Format health snapshot into a readable summary for Claude."""
+        parts = []
+        # Redis status
+        redis_info = snapshot.get("redis", {})
+        redis_lines = []
+        for name, info in redis_info.items():
+            if isinstance(info, dict):
+                status = "UP" if info.get("alive") else "DOWN"
+                mem = info.get("used_memory_mb", "?")
+                redis_lines.append(f"  {name}: {status} ({mem} MB)")
+        if redis_lines:
+            parts.append("Redis Instances:")
+            parts.extend(redis_lines)
+
+        # Heartbeat + PID status (both live in heartbeats dict)
+        hb_info = snapshot.get("heartbeats", {})
+        alive = []
+        dead = []
+        pid_lines = []
+        for svc, info in hb_info.items():
+            if isinstance(info, dict):
+                if info.get("alive"):
+                    alive.append(svc)
+                else:
+                    dead.append(svc)
+                pid = info.get("pid", "?")
+                pid_alive = info.get("pid_alive", False)
+                pid_lines.append(f"  {svc}: PID {pid} ({'running' if pid_alive else 'stopped'})")
+        parts.append(f"\nHeartbeats Alive: {', '.join(alive) if alive else 'none'}")
+        if dead:
+            parts.append(f"Heartbeats Dead: {', '.join(dead)}")
+
+        if pid_lines:
+            parts.append("\nService PIDs:")
+            parts.extend(pid_lines)
+
+        return "\n".join(parts) if parts else "(no health data)"
+
+    @staticmethod
+    def _clean_env() -> dict:
+        """Return env dict with CLAUDECODE vars stripped so nested CLI works."""
+        env = os.environ.copy()
+        for key in list(env):
+            if key.startswith("CLAUDECODE"):
+                del env[key]
+        return env
+
     def _phase1_diagnose(self, service_name: str, snapshot: dict) -> Optional[dict]:
         """Phase 1: Read-only diagnosis via Claude CLI."""
-        log_path = ROOT / "logs" / f"{service_name}.log"
         svc_dir = ROOT / "services" / service_name
 
+        # Pre-load context, logs, and health data
+        context_doc = self._load_context_doc()
+        log_excerpt = self._read_log_tail(service_name, 200)
+        health_summary = self._format_health_snapshot(snapshot)
+
         prompt = (
-            f"A MarketSwarm service named '{service_name}' has crashed.\n\n"
+            f"=== MARKETSWARM SYSTEM CONTEXT ===\n{context_doc}\n\n"
+            f"=== SERVICE LOG (last 200 lines of logs/{service_name}.log) ===\n{log_excerpt}\n\n"
+            f"=== HEALTH SNAPSHOT ===\n{health_summary}\n\n"
+            f"A MarketSwarm service named '{service_name}' has crashed.\n"
             f"Service code directory: {svc_dir}\n"
-            f"Service log file: {log_path}\n"
             f"Project root: {ROOT}\n\n"
-            f"Please investigate by:\n"
-            f"1. Reading the log file to find errors/exceptions\n"
-            f"2. Scanning the service code to understand the issue\n"
-            f"3. Determining if this is a code bug you can fix\n\n"
+            f"The system context, log, and health snapshot are provided above.\n"
+            f"Investigate the crash — scan the service code if needed to understand the bug.\n"
             f"Remember: output ONLY valid JSON, no markdown fences, no extra text."
         )
 
@@ -1644,6 +1716,7 @@ After making changes, output ONLY a JSON summary:
                 text=True,
                 timeout=self.TIMEOUT_SEC,
                 cwd=str(ROOT),
+                env=self._clean_env(),
             )
 
             if result.returncode != 0:
@@ -1678,7 +1751,12 @@ After making changes, output ONLY a JSON summary:
             f"Output ONLY valid JSON when done, no markdown fences, no extra text."
         )
 
-        sys_prompt = self.FIX_PROMPT.replace("{service}", service_name)
+        # Include system context so Claude understands conventions
+        context_doc = self._load_context_doc()
+        sys_prompt = (
+            f"=== MARKETSWARM SYSTEM CONTEXT ===\n{context_doc}\n\n"
+            f"{self.FIX_PROMPT.replace('{service}', service_name)}"
+        ) if context_doc else self.FIX_PROMPT.replace("{service}", service_name)
 
         try:
             result = subprocess.run(
@@ -1698,6 +1776,7 @@ After making changes, output ONLY a JSON summary:
                 text=True,
                 timeout=self.TIMEOUT_SEC,
                 cwd=str(ROOT),
+                env=self._clean_env(),
             )
 
             if result.returncode != 0:
