@@ -1000,7 +1000,14 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                       const isCredit = strat.costBasisType === 'credit';
 
                       return (
-                        <div key={strat.id} className={`risk-graph-position-item ${!strat.visible ? 'hidden-position' : ''} ${strat.visible && !pnlChartData.activeStrategyIds.includes(strat.id) ? 'sim-expired' : ''} ${isCredit ? 'credit-tint' : 'debit-tint'}`}>
+                        <div key={strat.id} className={`risk-graph-position-item ${!strat.visible ? 'hidden-position' : ''} ${strat.visible && !pnlChartData.activeStrategyIds.includes(strat.id) ? 'sim-expired' : ''} ${isCredit ? 'credit-tint' : 'debit-tint'}`} style={{ position: 'relative' }}>
+                          <button
+                            className="btn-remove btn-remove-corner"
+                            onClick={() => onRemoveStrategy(strat.id)}
+                            title="Remove position"
+                          >
+                            ×
+                          </button>
                           <div className="position-content">
                             {/* Header Row: Symbol, Label, DTE, Lock + Cost Basis */}
                             <div className="position-row-header">
@@ -1010,39 +1017,8 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                                 </span>
                               )}
                               <span className="position-label" title={positionLabel}>
-                                {positionLabel}
+                                {positionLabel} <span className="position-dte" title={`${displayDte} days to expiration`}>{displayDte}D</span>
                               </span>
-                              <span className="position-dte" title={`${displayDte} days to expiration`}>
-                                {displayDte}d
-                              </span>
-                              {/* Lock/Unlock Toggle */}
-                              <button
-                                className={`btn-price-lock ${isLocked ? 'locked' : 'unlocked'}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  // When unlocking, save current theo value as the debit so re-lock preserves it
-                                  if (isLocked && theoValue != null) {
-                                    // Transitioning to unlocked — no debit update needed, hook uses theo
-                                  } else if (!isLocked && theoValue != null) {
-                                    // Re-locking — persist the last theo value as debit
-                                    onUpdateStrategyDebit(strat.id, theoValue);
-                                  }
-                                  togglePriceLock(strat.id);
-                                }}
-                                title={isLocked ? 'Price locked — click to use model price' : 'Using model price — click to lock'}
-                              >
-                                {isLocked ? (
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                                    <rect x="3" y="11" width="18" height="12" rx="2" />
-                                    <path d="M7 11V7a5 5 0 0 1 10 0v4" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-                                  </svg>
-                                ) : (
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                                    <rect x="3" y="11" width="18" height="12" rx="2" />
-                                    <path d="M7 11V7a5 5 0 0 1 10 0" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" transform="rotate(-30, 17, 7) translate(3, -4)" />
-                                  </svg>
-                                )}
-                              </button>
                               {/* Price field */}
                               <span className="position-cost-basis">
                                 <span className="cost-value">
@@ -1082,18 +1058,15 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                                   )}
                                 </span>
                                 <span className="cost-type-label">{isCredit ? 'Credit' : 'Debit'}</span>
-                                {isLocked && theoValue != null && (() => {
-                                  // P&L: compare theoretical value to cost basis with correct sign convention
-                                  // For debits: P&L = theoValue - costBasis (higher value = gain)
-                                  // For credits: P&L = theoValue + costBasis (theoValue is negative for short positions;
-                                  //   closer to zero = more profit since you keep the credit)
+                                {(() => {
+                                  const showPnl = isLocked && theoValue != null;
                                   const lockedVal = costBasis ?? 0;
                                   const signedLockedVal = isCredit ? -lockedVal : lockedVal;
-                                  const pnl = theoValue - signedLockedVal; // positive = position gained value
-                                  const pnlColor = Math.abs(pnl) < 0.005 ? 'var(--text-faint)' : pnl > 0 ? '#22c55e' : '#ef4444';
+                                  const pnl = showPnl ? theoValue - signedLockedVal : 0;
+                                  const pnlColor = !showPnl ? 'transparent' : Math.abs(pnl) < 0.005 ? 'var(--text-faint)' : pnl > 0 ? '#22c55e' : '#ef4444';
                                   return (
-                                    <span className="natural-price" style={{ color: pnlColor }}>
-                                      ${Math.abs(theoValue).toFixed(2)}
+                                    <span className="natural-price" style={{ color: pnlColor, visibility: showPnl ? 'visible' : 'hidden' }}>
+                                      ${showPnl && theoValue != null ? Math.abs(theoValue).toFixed(2) : '0.00'}
                                     </span>
                                   );
                                 })()}
@@ -1149,12 +1122,26 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                                   Log
                                 </button>
                               )}
+                              <span style={{ flex: 1 }} />
+                              {/* Lock/Unlock Toggle */}
                               <button
-                                className="btn-remove"
-                                onClick={() => onRemoveStrategy(strat.id)}
-                                title="Remove position"
+                                className={`btn-price-lock ${isLocked ? 'locked' : 'unlocked'}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (isLocked && theoValue != null) {
+                                    // Transitioning to unlocked — no debit update needed
+                                  } else if (!isLocked && theoValue != null) {
+                                    onUpdateStrategyDebit(strat.id, theoValue);
+                                  }
+                                  togglePriceLock(strat.id);
+                                }}
+                                title={isLocked ? 'Price locked — click to use model price' : 'Using model price — click to lock'}
                               >
-                                ×
+                                {isLocked ? (
+                                  <img src="/icons/locked.png" alt="Locked" width="42" height="36" style={{ display: 'block' }} />
+                                ) : (
+                                  <img src="/icons/unlocked.png" alt="Unlocked" width="42" height="36" style={{ display: 'block' }} />
+                                )}
                               </button>
                             </div>
 

@@ -2543,7 +2543,7 @@ body {
 /* Consolidated layout - CSS Grid for sidebar to span full height on LEFT */
 .echarts-risk-graph-panel .risk-graph-consolidated {
   display: grid;
-  grid-template-columns: 340px minmax(0, 1fr); /* minmax allows shrinking */
+  grid-template-columns: 370px minmax(0, 1fr); /* minmax allows shrinking */
   grid-template-rows: minmax(350px, 1fr) auto auto; /* First row has minimum height */
   gap: 12px;
   height: 100%;
@@ -4030,7 +4030,7 @@ body {
   background: var(--bg-surface-alt);
   border: 1px solid var(--border-default);
   border-radius: 6px;
-  padding: 8px 10px;
+  padding: 5px 10px;
   margin-bottom: 6px;
   transition: opacity 500ms ease, border-color 500ms ease, background 300ms ease;
 }
@@ -4115,8 +4115,9 @@ body {
 }
 
 .position-dte {
-  color: var(--text-muted);
+  color: var(--text-bright, #fff);
   font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  font-weight: 800;
   flex-shrink: 0;
 }
 
@@ -4129,11 +4130,13 @@ body {
 }
 
 /* Lock/Unlock Price Toggle */
-.btn-price-lock {
+.btn-price-lock,
+.position-row-actions .btn-price-lock,
+.position-row-actions .btn-price-lock:hover {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 2px;
+  padding: 0;
   flex-shrink: 0;
   line-height: 1;
   color: var(--text-primary);
@@ -4146,11 +4149,11 @@ body {
 }
 
 .btn-price-lock.unlocked {
-  color: #ef4444;
+  color: var(--text-primary);
 }
 
 .btn-price-lock.unlocked:hover {
-  color: #dc2626;
+  color: var(--text-bright, #fff);
 }
 
 [data-theme="light"] .btn-price-lock {
@@ -4158,7 +4161,7 @@ body {
 }
 
 [data-theme="light"] .btn-price-lock.unlocked {
-  color: #dc2626;
+  color: #1f2937;
 }
 
 /* Position Cost Basis (Debit/Credit) */
@@ -4280,7 +4283,7 @@ body {
 
 .position-row-actions button {
   font-size: 9px;
-  padding: 3px 8px;
+  padding: 3px 12px;
   border-radius: 3px;
   cursor: pointer;
   transition: all 0.15s;
@@ -4303,6 +4306,29 @@ body {
 .position-row-actions .btn-remove:hover {
   background: rgba(248, 113, 113, 0.2);
   border-color: #f87171;
+  color: #f87171;
+}
+
+.btn-remove-corner {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 3px;
+  z-index: 1;
+  opacity: 0.7;
+  transition: opacity 0.15s, color 0.15s;
+}
+
+.btn-remove-corner:hover {
+  opacity: 1;
   color: #f87171;
 }
 

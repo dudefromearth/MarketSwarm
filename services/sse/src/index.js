@@ -20,6 +20,7 @@ import positionsRoutes from "./routes/positions.js";
 import aiRoutes from "./routes/ai.js";
 import importsRoutes from "./routes/imports.js";
 import econIndicatorsRoutes from "./routes/econIndicators.js";
+import optionsRoutes from "./routes/options.js";
 import { authMiddleware, logAuthConfig } from "./auth.js";
 import { initDb, closeDb } from "./db/index.js";
 import { startScheduleBuilder, buildRollingSchedule } from "./econ/scheduleBuilder.js";
@@ -73,6 +74,7 @@ app.use("/api/positions", positionsRoutes);
 app.use("/api/ai", aiRoutes);
 app.use("/api/imports", importsRoutes);
 app.use("/api/admin/economic-indicators", econIndicatorsRoutes);
+app.use("/api/options", optionsRoutes);
 
 // Proxy journal endpoints to journal service (port 3002)
 // This handles /api/logs/*, /api/trades/*, /api/playbooks/*, /api/journals/*

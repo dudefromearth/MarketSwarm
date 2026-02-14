@@ -25,6 +25,7 @@ import {
   type ScriptFormat,
 } from '../utils/scriptParsers';
 import { generateTosScript } from '../utils/tosGenerator';
+import StrikeDropdown from './StrikeDropdown';
 
 // Output format for created position
 export interface CreatedPosition {
@@ -94,6 +95,28 @@ const SHORT_DEFAULT_TYPES: PositionType[] = [
   'straddle',
   'strangle',
 ];
+
+// Strategies that are naturally credit when traded in their default direction
+const CREDIT_DEFAULT_TYPES: PositionType[] = [
+  'iron_fly',
+  'iron_condor',
+  'straddle',
+  'strangle',
+  'calendar',
+  'diagonal',
+];
+
+// Determine default cost basis type based on strategy + direction
+function getDefaultCostBasisType(type: PositionType, dir: Direction): CostBasisType {
+  const isNaturalCredit = CREDIT_DEFAULT_TYPES.includes(type);
+  // Natural credit strategies in their default (short) direction are credits;
+  // flipping direction flips the credit/debit nature.
+  // Calendars/diagonals default long but are still credits.
+  if (type === 'calendar' || type === 'diagonal') {
+    return dir === 'long' ? 'credit' : 'debit';
+  }
+  return isNaturalCredit && dir === 'short' ? 'credit' : 'debit';
+}
 
 // Mini risk graph SVG paths for each position type (normalized 0-24 width, 0-12 height)
 // These represent the general P&L shape at expiration
@@ -304,6 +327,23 @@ export default function PositionCreateModal({
 
   // Build mode state
   const [symbol, setSymbol] = useState(defaultSymbol);
+
+  // Fetch real market strikes for the selected symbol
+  const [availableStrikes, setAvailableStrikes] = useState<number[]>([]);
+  useEffect(() => {
+    if (!isOpen) return;
+    const spotKey = getConfig(symbol).spotKey;
+    fetch(`/api/options/strikes/${encodeURIComponent(spotKey)}`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => {
+        if (d.success && Array.isArray(d.strikes) && d.strikes.length > 0) {
+          setAvailableStrikes(d.strikes);
+        } else {
+          setAvailableStrikes([]);
+        }
+      })
+      .catch(() => setAvailableStrikes([]));
+  }, [isOpen, symbol, getConfig]);
   const [positionType, setPositionType] = useState<PositionType>('butterfly');
   const [direction, setDirection] = useState<Direction>('long');
   const [legs, setLegs] = useState<PositionLeg[]>([]);
@@ -347,8 +387,10 @@ export default function PositionCreateModal({
   // Update direction when position type changes (full regeneration via effect)
   const handlePositionTypeChange = useCallback((newType: PositionType) => {
     setPositionType(newType);
-    setDirection(getDefaultDirection(newType));
-  }, []);
+    const newDir = getDefaultDirection(newType);
+    setDirection(newDir);
+    if (!costBasis) setCostBasisType(getDefaultCostBasisType(newType, newDir));
+  }, [costBasis]);
 
   // Handle multiplier change — scale all leg quantities proportionally
   const handleMultiplierChange = useCallback((newMultiplier: number) => {
@@ -377,17 +419,19 @@ export default function PositionCreateModal({
         setLegs(prev => prev.map(leg => ({ ...leg, quantity: -leg.quantity })));
       }
       setDirection(newDirection);
+      if (!costBasis) setCostBasisType(getDefaultCostBasisType(positionType, newDirection));
     }
-  }, [positionType, direction]);
+  }, [positionType, direction, costBasis]);
 
   // Confirm short calendar/diagonal despite vega warning — flip leg qty signs
   const confirmShortVega = useCallback(() => {
     skipRegenRef.current = true;
     setLegs(prev => prev.map(leg => ({ ...leg, quantity: -leg.quantity })));
     setDirection('short');
+    if (!costBasis) setCostBasisType(getDefaultCostBasisType(pendingShortType || positionType, 'short'));
     setShowVegaWarning(false);
     setPendingShortType(null);
-  }, []);
+  }, [costBasis, pendingShortType, positionType]);
 
   // Cancel short calendar/diagonal
   const cancelShortVega = useCallback(() => {
@@ -437,9 +481,11 @@ export default function PositionCreateModal({
       setExpiration(prefill.expiration);
       if (prefill.costBasis != null) {
         setCostBasis(Math.abs(prefill.costBasis).toFixed(2));
-        setCostBasisType('debit');
+        setCostBasisType(prefill.costBasis < 0 ? 'credit' : 'debit');
       } else {
         setCostBasis('');
+        const dir = getDefaultDirection(prefill.positionType as PositionType);
+        setCostBasisType(getDefaultCostBasisType(prefill.positionType as PositionType, dir));
       }
     }
   }, [isOpen, prefill, isEditMode]);
@@ -826,13 +872,15 @@ export default function PositionCreateModal({
                         step="1"
                       />
 
-                      <input
-                        type="number"
-                        className="leg-strike"
+                      <StrikeDropdown
                         value={leg.strike}
-                        onChange={e => updateLeg(index, { strike: parseFloat(e.target.value) || 0 })}
-                        step={strikeIncrement}
-                        min="0"
+                        onChange={strike => updateLeg(index, { strike })}
+                        atmStrike={roundedAtm}
+                        strikes={availableStrikes.length > 0 ? availableStrikes : undefined}
+                        minStrike={roundedAtm - symbolConfig.strikeRange}
+                        maxStrike={roundedAtm + symbolConfig.strikeRange}
+                        strikeStep={strikeIncrement}
+                        className="leg-strike"
                       />
 
                       <select

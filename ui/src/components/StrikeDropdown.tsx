@@ -14,9 +14,10 @@ interface StrikeDropdownProps {
   value: number;
   onChange: (strike: number) => void;
   atmStrike?: number;      // Current ATM strike for centering
-  minStrike?: number;      // Minimum available strike
-  maxStrike?: number;      // Maximum available strike
-  strikeStep?: number;     // Step between strikes (default 5)
+  minStrike?: number;      // Minimum available strike (used when strikes[] not provided)
+  maxStrike?: number;      // Maximum available strike (used when strikes[] not provided)
+  strikeStep?: number;     // Step between strikes (default 5, used when strikes[] not provided)
+  strikes?: number[];      // Real market strikes — when provided, overrides min/max/step grid
   className?: string;
   disabled?: boolean;
 }
@@ -37,6 +38,7 @@ export default function StrikeDropdown({
   minStrike = 4000,
   maxStrike = 7000,
   strikeStep = 5,
+  strikes: realStrikes,
   className = '',
   disabled = false,
 }: StrikeDropdownProps) {
@@ -47,19 +49,32 @@ export default function StrikeDropdown({
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Generate all possible strikes
+  // Generate all possible strikes — use real market strikes when available
   const allStrikes = useMemo(() => {
+    if (realStrikes && realStrikes.length > 0) {
+      return realStrikes; // already sorted ascending from server
+    }
     const strikes: number[] = [];
     for (let s = minStrike; s <= maxStrike; s += strikeStep) {
       strikes.push(s);
     }
     return strikes;
-  }, [minStrike, maxStrike, strikeStep]);
+  }, [realStrikes, minStrike, maxStrike, strikeStep]);
 
   // Find index of a strike value
   const getStrikeIndex = useCallback((strike: number) => {
+    if (realStrikes && realStrikes.length > 0) {
+      // Binary search for closest strike
+      let lo = 0, hi = allStrikes.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (allStrikes[mid] < strike) lo = mid + 1;
+        else hi = mid;
+      }
+      return lo;
+    }
     return Math.round((strike - minStrike) / strikeStep);
-  }, [minStrike, strikeStep]);
+  }, [realStrikes, allStrikes, minStrike, strikeStep]);
 
   // Initialize loaded range around current value
   useEffect(() => {
@@ -130,10 +145,8 @@ export default function StrikeDropdown({
 
     // If valid number, scroll to it
     const numValue = parseFloat(newValue);
-    if (!isNaN(numValue) && numValue >= minStrike && numValue <= maxStrike) {
-      // Snap to nearest valid strike
-      const snappedStrike = Math.round(numValue / strikeStep) * strikeStep;
-      const targetIndex = getStrikeIndex(snappedStrike);
+    if (!isNaN(numValue) && numValue >= allStrikes[0] && numValue <= allStrikes[allStrikes.length - 1]) {
+      const targetIndex = getStrikeIndex(numValue);
 
       // Expand loaded range to include this strike
       setLoadedRange(prev => ({
@@ -149,16 +162,32 @@ export default function StrikeDropdown({
     }
   };
 
+  // Snap to nearest valid strike (works with both real and grid strikes)
+  const snapToNearest = useCallback((numValue: number): number | null => {
+    if (allStrikes.length === 0) return null;
+    if (numValue < allStrikes[0] || numValue > allStrikes[allStrikes.length - 1]) return null;
+    if (realStrikes && realStrikes.length > 0) {
+      // Find closest real strike
+      let best = allStrikes[0];
+      let bestDist = Math.abs(numValue - best);
+      for (const s of allStrikes) {
+        const dist = Math.abs(numValue - s);
+        if (dist < bestDist) { best = s; bestDist = dist; }
+        if (s > numValue) break; // sorted, no need to go further
+      }
+      return best;
+    }
+    return Math.round(numValue / strikeStep) * strikeStep;
+  }, [allStrikes, realStrikes, strikeStep]);
+
   // Handle input blur - commit value
   const handleInputBlur = () => {
     const numValue = parseFloat(inputValue);
-    if (!isNaN(numValue) && numValue >= minStrike && numValue <= maxStrike) {
-      // Snap to nearest valid strike
-      const snappedStrike = Math.round(numValue / strikeStep) * strikeStep;
-      onChange(snappedStrike);
-      setInputValue(snappedStrike.toString());
+    const snapped = !isNaN(numValue) ? snapToNearest(numValue) : null;
+    if (snapped !== null) {
+      onChange(snapped);
+      setInputValue(snapped.toString());
     } else {
-      // Reset to current value
       setInputValue(value.toString());
     }
   };
@@ -176,7 +205,9 @@ export default function StrikeDropdown({
       if (!isOpen) {
         setIsOpen(true);
       } else {
-        const newStrike = Math.min(maxStrike, value + strikeStep);
+        const idx = getStrikeIndex(value);
+        const nextIdx = Math.min(allStrikes.length - 1, idx + 1);
+        const newStrike = allStrikes[nextIdx];
         onChange(newStrike);
         setInputValue(newStrike.toString());
       }
@@ -185,7 +216,9 @@ export default function StrikeDropdown({
       if (!isOpen) {
         setIsOpen(true);
       } else {
-        const newStrike = Math.max(minStrike, value - strikeStep);
+        const idx = getStrikeIndex(value);
+        const prevIdx = Math.max(0, idx - 1);
+        const newStrike = allStrikes[prevIdx];
         onChange(newStrike);
         setInputValue(newStrike.toString());
       }

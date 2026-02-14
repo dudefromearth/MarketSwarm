@@ -52,8 +52,8 @@ export const HARDCODED_DEFAULTS: SymbolConfigRegistry = {
   symbolOverrides: {
     SPX:  { spotKey: 'I:SPX', strikeIncrement: 5, defaultWidth: 20, minWidth: 5, strikeRange: 500, expirationPattern: 'daily' },
     SPXW: { spotKey: 'I:SPX', strikeIncrement: 5, defaultWidth: 20, minWidth: 5, strikeRange: 500, expirationPattern: 'daily' },
-    NDX:  { spotKey: 'I:NDX', strikeIncrement: 25, defaultWidth: 50, minWidth: 25, strikeRange: 500, expirationPattern: 'daily' },
-    NDXP: { spotKey: 'I:NDX', strikeIncrement: 25, defaultWidth: 50, minWidth: 25, strikeRange: 500, expirationPattern: 'daily' },
+    NDX:  { spotKey: 'I:NDX', strikeIncrement: 10, defaultWidth: 50, minWidth: 10, strikeRange: 500, expirationPattern: 'daily' },
+    NDXP: { spotKey: 'I:NDX', strikeIncrement: 10, defaultWidth: 50, minWidth: 10, strikeRange: 500, expirationPattern: 'daily' },
     VIX:  { spotKey: 'I:VIX', strikeIncrement: 1, defaultWidth: 2, minWidth: 1, strikeRange: 30, expirationPattern: 'daily' },
     RUT:  { spotKey: 'I:RUT', strikeIncrement: 5, defaultWidth: 20, minWidth: 5, strikeRange: 500, expirationPattern: 'daily' },
     XSP:  { spotKey: 'I:XSP', strikeIncrement: 1, defaultWidth: 2, minWidth: 1, strikeRange: 50, expirationPattern: 'daily' },

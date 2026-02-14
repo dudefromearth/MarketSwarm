@@ -189,6 +189,11 @@ export class KeyResolver {
     return "risk_graph_updates:*";
   }
 
+  // Chain (option chain snapshot from Massive)
+  chainLatestKey() {
+    return "massive:chain:latest";
+  }
+
   // Debug: log all resolved keys
   logKeys() {
     console.log("[keys] Resolved key patterns from config:");
