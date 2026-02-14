@@ -12768,6 +12768,12 @@ body {
   opacity: 0.5;
 }
 
+.gex-side-mode-toggle {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+}
+
 .gex-side-color-pair {
   display: flex;
   gap: 2px;
@@ -12980,6 +12986,52 @@ body {
 .dg-indicator-name {
   color: var(--text-primary);
   font-weight: 500;
+}
+
+.dg-indicator-color-pair {
+  display: flex;
+  gap: 1px;
+}
+
+.dg-indicator-color-pair span {
+  width: 5px;
+  height: 12px;
+  border-radius: 1px;
+}
+
+.dg-indicator-mode-toggle {
+  display: flex;
+  gap: 1px;
+  margin-left: 2px;
+}
+
+.dg-mode-btn {
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid var(--border-default, #333);
+  border-radius: 3px;
+  color: var(--text-muted, #666);
+  cursor: pointer;
+  line-height: 1.2;
+  transition: all 0.15s;
+}
+
+.dg-mode-btn:hover {
+  background: var(--bg-elevated);
+  color: var(--text-tertiary);
+}
+
+.dg-mode-btn.active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: white;
+}
+
+[data-theme="light"] .dg-mode-btn.active {
+  background: #007aff;
+  border-color: #007aff;
 }
 
 .dg-indicator-btn {
