@@ -242,4 +242,101 @@ def create_admin_router() -> APIRouter:
         """Force-cancel an interaction job (admin)."""
         return {"success": False, "message": "Requires running interaction capability", "job_id": job_id}
 
+    # =========================================================================
+    # AOL v2.0 — ORCHESTRATE ENDPOINT
+    # =========================================================================
+
+    @router.post("/orchestrate")
+    async def orchestrate(request_body: dict):
+        """
+        Pre-processing classification endpoint for vexy_proxy.
+
+        Called BEFORE the interaction endpoint to classify the query
+        and determine doctrine mode. Fast (<50ms, no LLM).
+
+        Request:  { "message": "...", "user_id": 1 }
+        Response: { "lpd_domain": "...", "doctrine_mode": "...", ... }
+        """
+        from services.vexy_ai.doctrine.lpd import LanguagePatternDetector, LPDMetrics
+        from services.vexy_ai.doctrine.dcl import DoctrineControlLayer, DoctrineMode
+
+        message = request_body.get("message", "")
+        user_id = request_body.get("user_id", 0)
+
+        # Check LPD kill switch — if disabled, skip classification and default to STRICT
+        ks = getattr(orchestrate, "_kill_switch", None)
+        if ks and not ks.lpd_enabled:
+            return {
+                "lpd_domain": "unknown",
+                "lpd_confidence": 0,
+                "lpd_secondary": None,
+                "doctrine_mode": "strict",
+                "require_playbook": True,
+                "playbook_domain": "",
+                "allow_overlay": False,
+                "has_overlay": False,
+                "overlay_data": None,
+                "matched_patterns": [],
+                "lpd_disabled": True,
+            }
+
+        # LPD classification (with mutable config if available)
+        lpd_kwargs = {}
+        aol_svc = getattr(orchestrate, "_aol_service", None)
+        if aol_svc:
+            lpd_config = aol_svc.get_lpd_config()
+            lpd_kwargs["confidence_threshold"] = lpd_config.get("confidence_threshold")
+            lpd_kwargs["hybrid_margin"] = lpd_config.get("hybrid_margin")
+        lpd = LanguagePatternDetector(**lpd_kwargs)
+        classification = lpd.classify(message)
+
+        # DCL mode determination
+        dcl = DoctrineControlLayer()
+        mode = dcl.determine_mode(classification)
+        constraints = dcl.get_constraints(mode)
+
+        # Log classification (in-memory metrics)
+        if not hasattr(orchestrate, "_metrics"):
+            orchestrate._metrics = LPDMetrics()
+        orchestrate._metrics.log_classification(user_id, classification)
+
+        # Check for active overlays via AOS
+        has_overlay = False
+        overlay_data = None
+        if constraints.allow_reflective_overlay:
+            aos = getattr(orchestrate, "_aos", None)
+            if aos:
+                active = aos.get_active_overlay(user_id)
+                if active:
+                    has_overlay = True
+                    overlay_data = active
+
+        return {
+            "lpd_domain": classification.domain.value,
+            "lpd_confidence": round(classification.confidence, 3),
+            "lpd_secondary": classification.secondary_domain.value if classification.secondary_domain else None,
+            "doctrine_mode": mode.value,
+            "require_playbook": constraints.require_playbook,
+            "playbook_domain": classification.playbook_domain,
+            "allow_overlay": constraints.allow_reflective_overlay,
+            "has_overlay": has_overlay,
+            "overlay_data": overlay_data,
+            "matched_patterns": classification.matched_patterns[:5],
+        }
+
+    # =========================================================================
+    # AOL v2.0 — CLASSIFICATION LOG
+    # =========================================================================
+
+    @router.get("/classification-log")
+    async def get_classification_log():
+        """Get recent LPD classification log entries."""
+        if hasattr(orchestrate, "_metrics"):
+            return {
+                "success": True,
+                "entries": orchestrate._metrics.get_recent(50),
+                "summary": orchestrate._metrics.get_drift_summary(),
+            }
+        return {"success": True, "entries": [], "summary": {"total": 0}}
+
     return router

@@ -14,9 +14,9 @@ Constitutional constraints:
 - TTL: 24h per overlay
 - Overlay is a structured response field, not appended text
 
-Redis key patterns (echo-redis, degraded-safe):
+Redis key patterns (system-redis, degraded-safe):
 - echo:admin_overlay:{user_id}              — active overlay JSON
-- echo:admin_injection_budget:{user_id}     — weekly budget counter
+- echo:admin_injection_budget:{user_id}     — weekly budget (JSON list of timestamps)
 - echo:admin_cooldown:{pattern}:{user_id}   — cooldown lock
 - echo:admin_lock:{user_id}                 — user-level suppression
 """
@@ -69,6 +69,9 @@ class AdminOrchestrationService:
     - TTL: each overlay expires after N hours
     - Min confidence: below threshold → skip
     - Doctrine conflict: STRICT mode → no overlay
+
+    Redis persistence: write-through with in-memory hot cache.
+    Falls back to in-memory only when Redis unavailable.
     """
 
     MAX_OVERLAYS_PER_WEEK = 5
@@ -76,15 +79,115 @@ class AdminOrchestrationService:
     MIN_CONFIDENCE = 0.70
     OVERLAY_TTL_HOURS = 24
 
-    def __init__(self, logger: Any, echo_redis: Any = None):
-        self._logger = logger
-        self._redis = echo_redis  # Optional[EchoRedisClient or Redis]
+    # Redis key prefixes
+    _KEY_OVERLAY = "echo:admin_overlay:"
+    _KEY_BUDGET = "echo:admin_injection_budget:"
+    _KEY_COOLDOWN = "echo:admin_cooldown:"
+    _KEY_LOCK = "echo:admin_lock:"
 
-        # In-memory fallback when Redis unavailable
+    def __init__(self, logger: Any, redis_client: Any = None):
+        self._logger = logger
+        self._redis = redis_client  # Optional sync redis.Redis client
+
+        # In-memory hot cache (authoritative when Redis unavailable)
         self._overlays: Dict[int, OverlayRecord] = {}
         self._budgets: Dict[int, List[float]] = {}  # user_id → list of creation timestamps
         self._cooldowns: Dict[str, float] = {}  # "category:user_id" → expires_at
         self._suppressed: Dict[int, bool] = {}  # user_id → suppressed
+
+        # Hydrate from Redis on startup
+        self._hydrate_from_redis()
+
+    def _hydrate_from_redis(self) -> None:
+        """Load persisted state from Redis into in-memory cache."""
+        if not self._redis:
+            return
+        try:
+            # Hydrate overlays
+            keys = self._redis.keys(f"{self._KEY_OVERLAY}*")
+            for key in keys:
+                raw = self._redis.get(key)
+                if not raw:
+                    continue
+                data = json.loads(raw)
+                user_id = data.get("user_id")
+                if user_id is None:
+                    continue
+                overlay = OverlayRecord(
+                    user_id=user_id,
+                    category=data.get("category", ""),
+                    label=data.get("label", ""),
+                    summary=data.get("summary", ""),
+                    confidence=data.get("confidence", 0),
+                    sample_size=data.get("sample_size", 0),
+                    created_at=data.get("created_at", 0),
+                    expires_at=data.get("expires_at", 0),
+                )
+                if not overlay.is_expired():
+                    self._overlays[user_id] = overlay
+
+            # Hydrate budgets
+            budget_keys = self._redis.keys(f"{self._KEY_BUDGET}*")
+            for key in budget_keys:
+                raw = self._redis.get(key)
+                if not raw:
+                    continue
+                uid_str = key.replace(self._KEY_BUDGET, "")
+                try:
+                    uid = int(uid_str)
+                except (ValueError, TypeError):
+                    continue
+                timestamps = json.loads(raw)
+                week_ago = time.time() - (7 * 24 * 3600)
+                self._budgets[uid] = [ts for ts in timestamps if ts > week_ago]
+
+            # Hydrate suppressions
+            lock_keys = self._redis.keys(f"{self._KEY_LOCK}*")
+            for key in lock_keys:
+                uid_str = key.replace(self._KEY_LOCK, "")
+                try:
+                    uid = int(uid_str)
+                    self._suppressed[uid] = True
+                except (ValueError, TypeError):
+                    continue
+
+            # Cooldowns are TTL-based in Redis — hydrate from keys
+            cooldown_keys = self._redis.keys(f"{self._KEY_COOLDOWN}*")
+            for key in cooldown_keys:
+                ttl = self._redis.ttl(key)
+                if ttl and ttl > 0:
+                    suffix = key.replace(self._KEY_COOLDOWN, "")
+                    self._cooldowns[suffix] = time.time() + ttl
+
+            hydrated = len(self._overlays)
+            if hydrated > 0:
+                self._logger.info(
+                    f"AOS: Hydrated {hydrated} overlays from Redis",
+                    emoji="💾",
+                )
+        except Exception as e:
+            self._logger.warning(f"AOS: Redis hydration failed (in-memory only): {e}")
+
+    def _redis_set(self, key: str, value: str, ttl_seconds: int = 0) -> None:
+        """Write to Redis (best-effort, never fails the caller)."""
+        if not self._redis:
+            return
+        try:
+            if ttl_seconds > 0:
+                self._redis.setex(key, ttl_seconds, value)
+            else:
+                self._redis.set(key, value)
+        except Exception as e:
+            self._logger.warning(f"AOS: Redis write failed for {key}: {e}")
+
+    def _redis_delete(self, key: str) -> None:
+        """Delete from Redis (best-effort)."""
+        if not self._redis:
+            return
+        try:
+            self._redis.delete(key)
+        except Exception as e:
+            self._logger.warning(f"AOS: Redis delete failed for {key}: {e}")
 
     def process_alerts(
         self,
@@ -131,6 +234,7 @@ class AdminOrchestrationService:
                 continue
 
             # Create overlay
+            ttl_seconds = int(self.OVERLAY_TTL_HOURS * 3600)
             overlay = OverlayRecord(
                 user_id=user_id,
                 category=category,
@@ -139,12 +243,33 @@ class AdminOrchestrationService:
                 confidence=confidence,
                 sample_size=alert.sample_size,
                 created_at=now,
-                expires_at=now + (self.OVERLAY_TTL_HOURS * 3600),
+                expires_at=now + ttl_seconds,
             )
 
+            # Write to in-memory cache
             self._overlays[user_id] = overlay
             self._budgets.setdefault(user_id, []).append(now)
-            self._cooldowns[cooldown_key] = now + (self.DEFAULT_COOLDOWN_HOURS * 3600)
+            cooldown_seconds = int(self.DEFAULT_COOLDOWN_HOURS * 3600)
+            self._cooldowns[cooldown_key] = now + cooldown_seconds
+
+            # Write-through to Redis
+            overlay_data = overlay.to_dict()
+            overlay_data["user_id"] = user_id
+            self._redis_set(
+                f"{self._KEY_OVERLAY}{user_id}",
+                json.dumps(overlay_data),
+                ttl_seconds,
+            )
+            self._redis_set(
+                f"{self._KEY_BUDGET}{user_id}",
+                json.dumps(self._budgets[user_id]),
+                7 * 24 * 3600,  # 1 week TTL
+            )
+            self._redis_set(
+                f"{self._KEY_COOLDOWN}{cooldown_key}",
+                "1",
+                cooldown_seconds,
+            )
 
             created.append(overlay.to_dict())
 
@@ -166,13 +291,13 @@ class AdminOrchestrationService:
 
         if overlay.is_expired():
             del self._overlays[user_id]
+            self._redis_delete(f"{self._KEY_OVERLAY}{user_id}")
             return None
 
         return overlay.to_dict()
 
     def get_all_active_overlays(self) -> List[Dict]:
         """Get all active (non-expired) overlays."""
-        now = time.time()
         result = []
         expired_keys = []
 
@@ -186,6 +311,7 @@ class AdminOrchestrationService:
 
         for k in expired_keys:
             del self._overlays[k]
+            self._redis_delete(f"{self._KEY_OVERLAY}{k}")
 
         return result
 
@@ -194,11 +320,15 @@ class AdminOrchestrationService:
         self._suppressed[user_id] = True
         if user_id in self._overlays:
             del self._overlays[user_id]
+        # Persist suppression + remove overlay
+        self._redis_set(f"{self._KEY_LOCK}{user_id}", "1")
+        self._redis_delete(f"{self._KEY_OVERLAY}{user_id}")
         self._logger.info(f"AOS: Suppressed overlays for user {user_id}", emoji="🔇")
 
     def unsuppress_user(self, user_id: int) -> None:
         """Remove suppression for a user."""
         self._suppressed.pop(user_id, None)
+        self._redis_delete(f"{self._KEY_LOCK}{user_id}")
 
     def get_stats(self) -> Dict[str, Any]:
         """Get AOS statistics."""

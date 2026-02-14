@@ -135,8 +135,17 @@ class LanguagePatternDetector:
     CONFIDENCE_THRESHOLD = 0.6
     HYBRID_MARGIN = 0.3  # If top two scores are within this ratio, it's hybrid
 
-    def __init__(self, logger: Any = None):
+    def __init__(
+        self,
+        logger: Any = None,
+        confidence_threshold: Optional[float] = None,
+        hybrid_margin: Optional[float] = None,
+    ):
         self._logger = logger or logging.getLogger(__name__)
+        if confidence_threshold is not None:
+            self.CONFIDENCE_THRESHOLD = confidence_threshold
+        if hybrid_margin is not None:
+            self.HYBRID_MARGIN = hybrid_margin
 
     def classify(self, query: str) -> LPDClassification:
         """

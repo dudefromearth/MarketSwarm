@@ -41,12 +41,26 @@ class AOLCapability(BaseCapability):
         self.service = AOLService(config=self.config, logger=self.logger)
         self._kernel = kernel
 
-        # Initialize PDE + AOS
+        # Initialize PDE + AOS (with Redis persistence)
         from ...doctrine.pde import PatternDetectionEngine
         from ...doctrine.aos import AdminOrchestrationService
 
         self._pde = PatternDetectionEngine(logger=self.logger)
-        self._aos = AdminOrchestrationService(logger=self.logger)
+
+        # Create sync Redis client for AOS write-through persistence (system-redis)
+        redis_client = None
+        try:
+            import redis as sync_redis
+            buses = self.config.get("buses", {}) or {}
+            system_url = buses.get("system-redis", {}).get("url", "redis://127.0.0.1:6379")
+            redis_client = sync_redis.from_url(system_url, decode_responses=True)
+            redis_client.ping()
+            self.logger.info("AOS: Redis persistence connected (system-redis)", emoji="🔴")
+        except Exception as e:
+            self.logger.warn(f"AOS: Redis persistence unavailable (in-memory only): {e}", emoji="⚠️")
+            redis_client = None
+
+        self._aos = AdminOrchestrationService(logger=self.logger, redis_client=redis_client)
 
         # Scan loop state
         # NOTE: Single-process assumption. Multi-instance requires Redis-based
@@ -62,10 +76,47 @@ class AOLCapability(BaseCapability):
         self._last_scan_users_total = 0
         self._last_scan_batch_size = 0
 
+        # Wire kill switch + AOS + LPD config to orchestrate endpoint and kernel
+        self._wire_runtime_refs()
+
         self._started = True
         self.logger.info("AOL capability started (doctrine governance + PDE + AOS active)", emoji="🛡️")
 
+    def _wire_runtime_refs(self) -> None:
+        """Wire kill switch, AOS, and LPD config refs to orchestrate and kernel.
+
+        The orchestrate endpoint (admin.py) and kernel (kernel.py) are created
+        before capabilities start. We attach references as function/instance
+        attributes so they can check kill switch state and pass LPD config
+        at request time.
+        """
+        # Wire to orchestrate endpoint (function-level attrs on admin.py's orchestrate)
+        try:
+            from services.vexy_ai.adapters.http.routes.admin import create_admin_router
+            # The orchestrate function is inside the router closure, but we already
+            # set attrs on it via the module-level pattern. Find the orchestrate handler.
+            # Since orchestrate uses hasattr() checks, we wire via the app's routes.
+            app = self.vexy.app
+            for route in app.routes:
+                if hasattr(route, 'path') and route.path == '/api/vexy/admin/orchestrate':
+                    endpoint = route.endpoint
+                    endpoint._kill_switch = self.service.kill_switch
+                    endpoint._aos = self._aos
+                    endpoint._aol_service = self.service
+                    self.logger.info("AOL: Wired kill switch + AOS to orchestrate endpoint", emoji="🔗")
+                    break
+        except Exception as e:
+            self.logger.warn(f"AOL: Failed to wire orchestrate refs: {e}", emoji="⚠️")
+
+        # Wire kill switch to kernel for RV enforcement
+        if self._kernel:
+            self._kernel._aol_service = self.service
+            self.logger.info("AOL: Wired kill switch + LPD config to kernel", emoji="🔗")
+
     async def stop(self) -> None:
+        # Clean up runtime refs
+        if self._kernel and hasattr(self._kernel, '_aol_service'):
+            self._kernel._aol_service = None
         self.service = None
         self._kernel = None
         self._pde = None

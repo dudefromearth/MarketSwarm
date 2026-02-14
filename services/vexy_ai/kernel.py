@@ -100,6 +100,17 @@ class ReasoningResponse:
     used_web_search: bool = False
     silence_reason: Optional[str] = None
 
+    # AOL v2.0 — Doctrine metadata
+    doctrine_mode: Optional[str] = None
+    lpd_domain: Optional[str] = None
+    lpd_confidence: Optional[float] = None
+    doctrine_fallback: bool = False
+    doctrine_synchronized: bool = True
+    rv_hard_violations: List[str] = field(default_factory=list)
+    rv_soft_warnings: List[str] = field(default_factory=list)
+    rv_regenerated: bool = False
+    overlay: Optional[Dict[str, Any]] = None
+
     # Telemetry for deterministic replay
     telemetry: Dict[str, Any] = field(default_factory=dict)
 
@@ -192,12 +203,49 @@ class VexyKernel:
         self.validation_mode = validation_mode
         self.echo_client = echo_client  # EchoRedisClient or None
 
+        # AOL v2.0 — Doctrine Playbook Registry
+        self.playbook_registry = None
+        self._init_playbook_registry()
+
     def _log(self, msg: str, emoji: str = "🧠"):
         if hasattr(self.logger, 'info') and callable(getattr(self.logger, 'info', None)):
             try:
                 self.logger.info(msg, emoji=emoji)
             except TypeError:
                 self.logger.info(f"{emoji} {msg}")
+
+    def _init_playbook_registry(self) -> None:
+        """Initialize doctrine playbook registry (AOL v2.0)."""
+        try:
+            from services.vexy_ai.doctrine.playbook_registry import PlaybookRegistry
+            import os
+
+            doctrine_config = self.config.get("doctrine", {})
+            playbook_dir = doctrine_config.get("playbook_dir", "doctrine/playbooks")
+
+            # Resolve relative to vexy_ai service directory
+            if not os.path.isabs(playbook_dir):
+                base = os.path.dirname(os.path.abspath(__file__))
+                playbook_dir = os.path.join(base, playbook_dir)
+
+            self.playbook_registry = PlaybookRegistry(
+                playbook_dir=playbook_dir,
+                path_runtime=self.path_runtime,
+                logger=self.logger,
+            )
+            self.playbook_registry.load_all()
+
+            if self.playbook_registry.safe_mode:
+                self._log(
+                    "DOCTRINE SAFE MODE — playbooks out of sync with PathRuntime",
+                    emoji="🚨",
+                )
+            else:
+                count = len(self.playbook_registry.get_all_playbooks())
+                self._log(f"Loaded {count} doctrine playbooks", emoji="📖")
+        except Exception as e:
+            self._log(f"Doctrine playbook registry init failed (non-fatal): {e}", emoji="⚠️")
+            self.playbook_registry = None
 
     # -------------------------------------------------------------------------
     # MAIN ENTRY POINT
@@ -214,6 +262,62 @@ class VexyKernel:
             ReasoningResponse with text, validation results, telemetry
         """
         t0 = time.time()
+
+        # ── DOCTRINE GUARD (AOL v2.0) ────────────────────────────────────
+        # Kernel independently enforces doctrine presence.
+        # If proxy-provided metadata is missing/malformed, kernel re-runs LPD+DCL.
+        # If proxy fell back to STRICT, kernel does NOT relax it.
+
+        doctrine_meta = {}
+        if isinstance(request.context, dict):
+            doctrine_meta = request.context.get("doctrine_meta", {})
+
+        doctrine_mode = doctrine_meta.get("doctrine_mode")
+        lpd_domain = doctrine_meta.get("lpd_domain")
+        lpd_confidence = doctrine_meta.get("lpd_confidence", 0)
+        is_fallback = doctrine_meta.get("fallback", False)
+        playbook_domain = doctrine_meta.get("playbook_domain", "")
+
+        if not doctrine_mode or doctrine_mode not in ("strict", "hybrid", "reflective"):
+            # Metadata missing/invalid — kernel runs local LPD+DCL
+            try:
+                from services.vexy_ai.doctrine.lpd import LanguagePatternDetector
+                from services.vexy_ai.doctrine.dcl import DoctrineControlLayer
+
+                # Check LPD kill switch — if disabled, skip classification
+                aol_svc = getattr(self, '_aol_service', None)
+                if aol_svc and not aol_svc.kill_switch.lpd_enabled:
+                    raise RuntimeError("LPD disabled via kill switch")
+
+                # Pass mutable LPD config if available
+                lpd_kwargs = {}
+                if aol_svc:
+                    lpd_config = aol_svc.get_lpd_config()
+                    lpd_kwargs["confidence_threshold"] = lpd_config.get("confidence_threshold")
+                    lpd_kwargs["hybrid_margin"] = lpd_config.get("hybrid_margin")
+                lpd = LanguagePatternDetector(**lpd_kwargs)
+                classification = lpd.classify(request.user_message)
+                dcl = DoctrineControlLayer()
+                mode = dcl.determine_mode(classification)
+
+                doctrine_mode = mode.value
+                lpd_domain = classification.domain.value
+                lpd_confidence = classification.confidence
+                playbook_domain = classification.playbook_domain
+                is_fallback = True
+
+                self._log(
+                    f"Doctrine Guard: local LPD+DCL → {doctrine_mode} "
+                    f"domain={lpd_domain} conf={lpd_confidence:.2f}",
+                    emoji="🛡️",
+                )
+            except Exception as e:
+                # If even local LPD+DCL fails, default to STRICT
+                self._log(f"Doctrine Guard: LPD+DCL failed, defaulting STRICT: {e}", emoji="⚠️")
+                doctrine_mode = "strict"
+                lpd_domain = "unknown"
+                lpd_confidence = 0
+                is_fallback = True
 
         # ── PRE-LLM ────────────────────────────────────────────────────────
 
@@ -333,6 +437,104 @@ class VexyKernel:
                 response_text = ""
                 silence_reason = "sovereignty_violation_blocked"
 
+        # ── AOL v2.0 RESPONSE VALIDATOR ──────────────────────────────────
+
+        rv_hard_violations = []
+        rv_soft_warnings = []
+        rv_regenerated = False
+
+        # Check RV kill switch — if disabled, skip entire validation block
+        _aol_svc = getattr(self, '_aol_service', None)
+        _rv_enabled = _aol_svc.kill_switch.rv_enabled if _aol_svc else True
+
+        if _rv_enabled and doctrine_mode and doctrine_mode != "reflective" and response_text:
+            try:
+                from services.vexy_ai.doctrine.response_validator import ResponseValidator
+                rv = ResponseValidator(self.playbook_registry)
+                rv_result = rv.validate(response_text, doctrine_mode, lpd_domain)
+
+                # Log soft warnings — never regenerate for these
+                if rv_result.soft_warnings:
+                    rv_soft_warnings = [w.rule for w in rv_result.soft_warnings]
+                    self._log(
+                        f"RV soft warnings: {rv_soft_warnings}",
+                        emoji="📝",
+                    )
+
+                # Hard blocks trigger regeneration (max 1 attempt)
+                if rv_result.hard_violations and rv_result.regenerate:
+                    rv_hard_violations = [v.rule for v in rv_result.hard_violations]
+                    self._log(
+                        f"RV hard block: {rv_hard_violations}",
+                        emoji="🚫",
+                    )
+
+                    # Build regeneration instruction
+                    regen_instruction = rv.get_regeneration_instruction(
+                        rv_result.hard_violations
+                    )
+
+                    # Regenerate with constraints (1 attempt)
+                    try:
+                        regen_response = await call_ai(
+                            system_prompt=system_prompt + "\n\n" + regen_instruction,
+                            user_message=user_prompt,
+                            config=self.config,
+                            ai_config=ai_config,
+                            logger=self.logger,
+                        )
+                        regen_text = regen_response.text
+                        rv_regenerated = True
+                        tokens_used += regen_response.tokens_used
+
+                        # Second validation
+                        rv_retry = rv.validate(regen_text, doctrine_mode, lpd_domain)
+
+                        if rv_retry.fatal_violations:
+                            # Fatal persisted — controlled error, not invalid output
+                            response_text = (
+                                "I cannot provide a complete answer "
+                                "for this topic right now."
+                            )
+                            self._log(
+                                f"RV fatal block persisted after regeneration: "
+                                f"{[v.rule for v in rv_retry.fatal_violations]}",
+                                emoji="🚨",
+                            )
+                        elif rv_retry.correctable_violations:
+                            # Correctable persisted — return with note
+                            response_text = regen_text
+                            self._log(
+                                f"RV correctable block persisted: "
+                                f"{[v.rule for v in rv_retry.correctable_violations]}",
+                                emoji="⚠️",
+                            )
+                        else:
+                            # Regeneration fixed the issues
+                            response_text = regen_text
+                    except Exception as e:
+                        self._log(f"RV regeneration failed: {e}", emoji="⚠️")
+            except ImportError:
+                pass
+            except Exception as e:
+                self._log(f"RV validation failed (non-fatal): {e}", emoji="⚠️")
+
+        # ── OVERLAY INJECTION (post-validation, observational only) ────────
+        # Constitutional constraint: Overlay is NEVER part of the LLM prompt.
+        # It is a structured response field appended AFTER validated reasoning.
+        # STRICT mode never includes overlay.
+        overlay_data = None
+        if (
+            doctrine_mode != "strict"
+            and request.context
+            and request.context.get("overlay_meta")
+        ):
+            overlay_data = request.context["overlay_meta"]
+            self._log(
+                f"Overlay appended: {overlay_data.get('category', 'unknown')}",
+                emoji="📋",
+            )
+
         # ── ECHO CAPTURE (post-LLM, fire-and-forget) ─────────────────────
 
         echo_updated = False
@@ -364,6 +566,15 @@ class VexyKernel:
             "latency_ms": latency_ms,
             "validation_mode": self.validation_mode.value,
             "used_web_search": used_web_search,
+            # AOL v2.0 doctrine telemetry
+            "doctrine_mode": doctrine_mode,
+            "lpd_domain": lpd_domain,
+            "lpd_confidence": lpd_confidence,
+            "doctrine_fallback": is_fallback,
+            "rv_hard_violations": rv_hard_violations,
+            "rv_soft_warnings": rv_soft_warnings,
+            "rv_regenerated": rv_regenerated,
+            "overlay_appended": overlay_data is not None,
             # Prompt component hashes for deterministic replay
             "base_kernel_hash": self.path_runtime.get_base_kernel_hash(),
             "outlet_prompt_hash": hashlib.sha256(outlet_prompt.encode()).hexdigest()[:16],
@@ -391,6 +602,18 @@ class VexyKernel:
             echo_updated=echo_updated,
             used_web_search=used_web_search,
             silence_reason=silence_reason,
+            doctrine_mode=doctrine_mode,
+            lpd_domain=lpd_domain,
+            lpd_confidence=lpd_confidence,
+            doctrine_fallback=is_fallback,
+            doctrine_synchronized=(
+                self.playbook_registry.is_synchronized()
+                if self.playbook_registry else True
+            ),
+            rv_hard_violations=rv_hard_violations,
+            rv_soft_warnings=rv_soft_warnings,
+            rv_regenerated=rv_regenerated,
+            overlay=overlay_data,
             telemetry=telemetry,
         )
 
@@ -456,6 +679,11 @@ class VexyKernel:
         # Agent voice
         if agent_selection.get("voice_prompt"):
             parts.extend(["\n\n---\n## Agent Voice\n", agent_selection["voice_prompt"]])
+
+        # Doctrine playbook injection (AOL v2.0 — domain-specific)
+        doctrine_text = self._get_doctrine_playbook_injection(request)
+        if doctrine_text:
+            parts.extend(["\n\n---\n", doctrine_text])
 
         # Playbook injection (tier-gated)
         playbook_text = self._get_playbook_injection(request)
@@ -534,6 +762,40 @@ class VexyKernel:
     # -------------------------------------------------------------------------
     # INJECTION HELPERS
     # -------------------------------------------------------------------------
+
+    def _get_doctrine_playbook_injection(self, request: ReasoningRequest) -> str:
+        """
+        Get doctrine playbook injection for the current domain (AOL v2.0).
+
+        When doctrine_meta is present on the request (set by proxy in M2),
+        inject the domain-specific doctrine playbook. Falls back to no injection
+        if registry is in safe mode or domain not found.
+        """
+        if not self.playbook_registry or self.playbook_registry.safe_mode:
+            return ""
+
+        # Check for doctrine metadata from proxy (M2 integration)
+        doctrine_meta = {}
+        if hasattr(request, 'context') and isinstance(request.context, dict):
+            doctrine_meta = request.context.get("doctrine_meta", {})
+
+        playbook_domain = doctrine_meta.get("playbook_domain", "")
+
+        # If no proxy-provided domain, try to infer from outlet
+        if not playbook_domain:
+            outlet_domain_map = {
+                "chat": "",  # Chat is general — no single domain
+                "journal": "",
+                "playbook": "",
+                "routine": "end_to_end_process",
+                "commentary": "",
+            }
+            playbook_domain = outlet_domain_map.get(request.outlet, "")
+
+        if not playbook_domain:
+            return ""
+
+        return self.playbook_registry.get_playbook_injection(playbook_domain)
 
     def _get_playbook_injection(self, request: ReasoningRequest) -> str:
         """Get tier-gated playbook content for injection into prompt."""
