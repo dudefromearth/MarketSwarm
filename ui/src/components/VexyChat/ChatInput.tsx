@@ -45,9 +45,19 @@ export default function ChatInput({
       setMessage('');
       if (textareaRef.current) {
         textareaRef.current.style.height = 'auto';
+        textareaRef.current.focus();
       }
     }
   };
+
+  // Re-focus textarea when disabled clears (response finished)
+  const prevDisabled = useRef(disabled);
+  useEffect(() => {
+    if (prevDisabled.current && !disabled) {
+      textareaRef.current?.focus();
+    }
+    prevDisabled.current = disabled;
+  }, [disabled]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
