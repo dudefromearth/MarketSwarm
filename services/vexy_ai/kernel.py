@@ -331,6 +331,21 @@ class VexyKernel:
             "fp_mode": despair_pre.get("invoke_fp", False),
         }
 
+        # 2b. Distribution state coupling (CDIS Phase 1)
+        dist_state = await self._fetch_distribution_state(request.user_id)
+        agent_context["cii"] = dist_state.get("cii")
+        agent_context["ltc"] = dist_state.get("ltc")
+        agent_context["convexity_at_risk"] = (
+            dist_state.get("cii") is not None and dist_state["cii"] < 0.4
+        )
+        agent_context["survival_breach"] = (
+            dist_state.get("ltc") is not None and dist_state["ltc"] < 0.85
+        )
+        # Stash for playbook filtering downstream
+        if not request.context:
+            request.context = {}
+        request.context["distribution_state"] = dist_state
+
         vix_level = None
         if request.context and request.context.get("market_data"):
             vix_level = (
@@ -825,6 +840,15 @@ class VexyKernel:
         if not accessible:
             return ""
 
+        # CDIS Phase 1: Survival hard stop — suppress expansion playbooks when LTC breached
+        if request.context and request.context.get("distribution_state"):
+            ds = request.context["distribution_state"]
+            ltc = ds.get("ltc")
+            if ltc is not None and ltc < 0.85:
+                accessible = [pb for pb in accessible if "expansion" not in pb.name.lower()]
+                if not accessible:
+                    return ""
+
         relevant = []
         if request.user_message:
             relevant = find_relevant_playbooks(request.user_message, request.tier, max_results=3)
@@ -1043,3 +1067,31 @@ class VexyKernel:
             "signal_count": signal_count,
             "window_days": window_days,
         }
+
+    # -------------------------------------------------------------------------
+    # DISTRIBUTION STATE (CDIS Phase 1)
+    # -------------------------------------------------------------------------
+
+    async def _fetch_distribution_state(self, user_id: int) -> dict:
+        """Fetch distribution state from journal internal endpoint.
+
+        Non-blocking with 2s timeout. Returns {} on any failure so that
+        coupling degrades to no-op (system behaves as if CDIS doesn't exist).
+        """
+        import aiohttp
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"http://localhost:3002/api/internal/distribution-state?user_id={user_id}",
+                    timeout=aiohttp.ClientTimeout(total=2),
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if result.get("success") and result.get("data"):
+                            data = result["data"]
+                            if not data.get("insufficient_data"):
+                                return data
+        except Exception:
+            pass  # Non-critical — coupling degrades to no-op
+        return {}

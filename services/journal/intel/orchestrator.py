@@ -6884,6 +6884,9 @@ class JournalOrchestrator:
         # Edge Lab internal (PDE user discovery)
         app.router.add_get('/api/edge-lab/active-users', self.get_edge_lab_active_users)
 
+        # Distribution Core (CDIS behavioral coupling)
+        app.router.add_get('/api/internal/distribution-state', self.get_distribution_state)
+
         return app
 
     # ==================== Edge Lab Handlers ====================
@@ -7460,6 +7463,92 @@ class JournalOrchestrator:
             except Exception as e:
                 self.logger.error(f"Edge Lab scheduler error: {e}")
                 await asyncio.sleep(3600)  # retry in 1 hour on error
+
+    # ==================== Distribution State (CDIS Coupling) ====================
+
+    _dist_state_cache: Dict[int, Dict[str, Any]] = {}
+    _DIST_CACHE_TTL = 300  # 5 minutes
+
+    async def get_distribution_state(self, request: web.Request) -> web.Response:
+        """GET /api/internal/distribution-state - Compute distribution metrics for a user.
+
+        Internal endpoint for CDIS behavioral coupling (Vexy + Copilot consumers).
+        Returns CII, LTC, skew, drawdown metrics from recent closed trades.
+        Cached in-memory for 5 minutes per user.
+        """
+        try:
+            peername = request.transport.get_extra_info('peername')
+            if peername:
+                client_ip = peername[0]
+                if client_ip not in ('127.0.0.1', '::1', 'localhost'):
+                    return self._error_response('Internal endpoint only', 403, request)
+
+            user_id = request.query.get('user_id')
+            if not user_id:
+                return self._error_response('user_id required', 400, request)
+            user_id = int(user_id)
+
+            # Check cache
+            import time as _time
+            cached = self._dist_state_cache.get(user_id)
+            if cached and (_time.time() - cached.get('_cached_at', 0)) < self._DIST_CACHE_TTL:
+                return self._json_response({'success': True, 'data': cached['data']}, request=request)
+
+            # Get all active logs for this user
+            logs = self.db.list_logs(user_id=user_id)
+            if not logs:
+                return self._json_response({
+                    'success': True,
+                    'data': {'insufficient_data': True, 'trade_count': 0}
+                }, request=request)
+
+            # Collect closed trades from all active logs
+            all_trades = []
+            for log in logs:
+                trades = self.db.get_closed_trades_for_equity(log.id, user_id=user_id)
+                all_trades.extend(trades)
+
+            # Convert via trade adapter
+            from .distribution_core.trade_adapter import adapt_trades
+            from .distribution_core import compute_distribution_metrics
+            from .distribution_core.models import RollingWindow
+
+            records = adapt_trades(all_trades)
+
+            if len(records) < 10:
+                result_data = {'insufficient_data': True, 'trade_count': len(records)}
+                self._dist_state_cache[user_id] = {
+                    'data': result_data,
+                    '_cached_at': _time.time(),
+                }
+                return self._json_response({'success': True, 'data': result_data}, request=request)
+
+            # Compute distribution metrics (30D window)
+            result = compute_distribution_metrics(records, RollingWindow.D30)
+
+            result_data = {
+                'cii': result.cii,
+                'ltc': result.ltc,
+                'skew': result.skew,
+                'rocpr': result.rocpr,
+                'trade_count': result.trade_count,
+                'window': result.window,
+                'drawdown_volatility': result.drawdown.drawdown_volatility if result.drawdown else None,
+                'max_drawdown_depth': result.drawdown.max_drawdown_depth if result.drawdown else None,
+                'version': result.version,
+                'computed_at': datetime.utcnow().isoformat(),
+            }
+
+            self._dist_state_cache[user_id] = {
+                'data': result_data,
+                '_cached_at': _time.time(),
+            }
+
+            return self._json_response({'success': True, 'data': result_data}, request=request)
+
+        except Exception as e:
+            self.logger.error(f"get_distribution_state error: {e}")
+            return self._error_response(str(e), 500, request)
 
     async def start(self) -> web.AppRunner:
         """Start the API server and return the runner for cleanup."""

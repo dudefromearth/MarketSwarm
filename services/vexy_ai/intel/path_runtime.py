@@ -863,6 +863,13 @@ First Principles is always available. When in doubt, invoke it."""
             weights["observer"] = weights.get("observer", 0) + 2.0
             weights["disruptor"] = max(0, weights.get("disruptor", 0) - 1.0)
 
+        # CDIS Phase 1: Convexity at risk — shift toward reflective agents
+        convexity_at_risk = context.get("convexity_at_risk", False)
+        if convexity_at_risk:
+            weights["sage"] = weights.get("sage", 0) + 3.0
+            weights["healer"] = weights.get("healer", 0) + 2.0
+            weights["disruptor"] = max(0, weights.get("disruptor", 0) - 2.0)
+
         # Filter to available agents only
         filtered = {k: v for k, v in weights.items() if k in available_agents and v > 0}
 

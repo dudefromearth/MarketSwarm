@@ -6,8 +6,10 @@ Receives config from SetupBase, manages service lifecycle.
 """
 
 import asyncio
+import json
+import time
 from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from aiohttp import web
 import aiohttp_cors
@@ -76,6 +78,10 @@ class CopilotOrchestrator:
         # Web app
         self.app: web.Application | None = None
         self.runner: web.AppRunner | None = None
+
+        # CDIS Phase 1: Distribution health monitoring
+        self._dist_running = False
+        self._dist_last_alert: Dict[int, float] = {}  # user_id → last alert timestamp
 
     async def connect_redis(self):
         """Connect to Redis buses."""
@@ -687,6 +693,12 @@ class CopilotOrchestrator:
         if self.alert_engine:
             await self.alert_engine.start()
 
+        # Start CDIS distribution health monitor
+        if self.alerts_enabled and self.alert_engine:
+            self._dist_running = True
+            asyncio.create_task(self._distribution_health_loop(), name="distribution-health")
+            self.logger.info("distribution health monitor started", emoji="📐")
+
         # Start web server
         self.runner = web.AppRunner(self.app)
         await self.runner.setup()
@@ -695,9 +707,115 @@ class CopilotOrchestrator:
 
         self.logger.ok(f"Copilot ready at http://{self.host}:{self.port}", emoji="🚀")
 
+    # -------------------------------------------------------------------------
+    # CDIS Phase 1: Distribution Health Monitor
+    # -------------------------------------------------------------------------
+
+    async def _distribution_health_loop(self):
+        """Poll distribution state for active users. Publish survival alert on LTC breach.
+
+        Runs every 60 seconds. Deduplicates alerts: only publishes once per breach,
+        re-publishes after recovery + re-breach or after 24 hours.
+        """
+        import aiohttp
+
+        while self._dist_running:
+            await asyncio.sleep(60)
+            if not self._dist_running:
+                break
+
+            try:
+                user_ids = self._get_active_alert_user_ids()
+                for user_id in user_ids:
+                    state = await self._fetch_distribution_state(user_id)
+                    if not state or state.get("insufficient_data"):
+                        continue
+
+                    ltc = state.get("ltc")
+                    if ltc is None:
+                        continue
+
+                    if ltc < 0.85:
+                        # Check deduplication: skip if already alerted within 24h
+                        last_ts = self._dist_last_alert.get(user_id, 0)
+                        if time.time() - last_ts < 86400:
+                            continue
+
+                        await self._publish_distribution_alert(user_id, state)
+                        self._dist_last_alert[user_id] = time.time()
+                    else:
+                        # LTC recovered — clear dedup so next breach re-triggers
+                        self._dist_last_alert.pop(user_id, None)
+
+            except Exception as e:
+                self.logger.warn(f"Distribution health check error: {e}")
+
+    def _get_active_alert_user_ids(self) -> set[int]:
+        """Extract unique user IDs from currently loaded alerts."""
+        if not self.alert_engine or not self.alert_engine._alerts:
+            return set()
+        return {a.user_id for a in self.alert_engine._alerts.values() if a.user_id}
+
+    async def _fetch_distribution_state(self, user_id: int) -> dict:
+        """Fetch distribution state from journal. Returns {} on failure."""
+        import aiohttp
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"http://localhost:3002/api/internal/distribution-state?user_id={user_id}",
+                    timeout=aiohttp.ClientTimeout(total=3),
+                ) as resp:
+                    if resp.status == 200:
+                        result = await resp.json()
+                        if result.get("success") and result.get("data"):
+                            return result["data"]
+        except Exception:
+            pass
+        return {}
+
+    async def _publish_distribution_alert(self, user_id: int, state: dict):
+        """Publish a survival alert event on copilot:alerts:events."""
+        if not self.market_redis:
+            return
+
+        ltc = state.get("ltc", 0)
+        cii = state.get("cii")
+        payload = {
+            "type": "distribution_health",
+            "data": {
+                "user_id": user_id,
+                "severity": "survival",
+                "metric": "ltc",
+                "value": ltc,
+                "threshold": 0.85,
+                "message": (
+                    f"Left Tail Containment below safety threshold "
+                    f"({ltc:.2f} < 0.85). Losses expanding beyond planned risk."
+                ),
+                "cii": cii,
+                "trade_count": state.get("trade_count"),
+                "window": state.get("window", "30D"),
+            },
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+
+        try:
+            await self.market_redis.publish(
+                "copilot:alerts:events",
+                json.dumps(payload),
+            )
+            self.logger.warn(
+                f"Distribution survival alert: LTC={ltc:.2f} for user {user_id}",
+                emoji="🚨",
+            )
+        except Exception as e:
+            self.logger.warn(f"Failed to publish distribution alert: {e}")
+
     async def stop(self):
         """Stop all subsystems."""
         self.logger.info("shutting down...", emoji="🛑")
+        self._dist_running = False
 
         if self.alert_engine:
             await self.alert_engine.stop()
