@@ -27,6 +27,21 @@ from .ai_providers import AIProviderConfig, AIProviderManager, create_provider
 from .alert_engine import AlertEngine, AlertEngineConfig
 from .alert_evaluators import create_all_evaluators
 
+# CDIS Phase 1 — Distribution Health Thresholds
+#
+# LTC_BREACH_THRESHOLD (0.85): Intentionally below advisory (0.90 per doctrine).
+# Represents structural containment failure (~15% of losses exceeding planned risk).
+# Subject to future empirical calibration once sufficient trade history exists.
+#
+# LTC_RECOVERY_THRESHOLD (0.88): Dead-band above breach to prevent oscillation alert storms.
+# LTC must recover 3 points above breach before dedup clears.
+#
+# DIST_STATE_TIMEOUT_SECONDS (2.5): Symmetric with kernel.py.
+# Both services succeed or both fail. No split-brain.
+LTC_BREACH_THRESHOLD = 0.85
+LTC_RECOVERY_THRESHOLD = 0.88
+DIST_STATE_TIMEOUT_SECONDS = 2.5
+
 
 class CopilotOrchestrator:
     """
@@ -729,13 +744,25 @@ class CopilotOrchestrator:
                 for user_id in user_ids:
                     state = await self._fetch_distribution_state(user_id)
                     if not state or state.get("insufficient_data"):
+                        self.logger.info(
+                            f"CDIS poll: user={user_id}, insufficient_data=True, "
+                            f"trade_count={state.get('trade_count', 0) if state else 0}",
+                            emoji="📐",
+                        )
                         continue
 
                     ltc = state.get("ltc")
                     if ltc is None:
                         continue
 
-                    if ltc < 0.85:
+                    dedup_active = user_id in self._dist_last_alert
+                    self.logger.info(
+                        f"CDIS poll: user={user_id}, ltc={ltc:.3f}, "
+                        f"breached={ltc < LTC_BREACH_THRESHOLD}, dedup_active={dedup_active}",
+                        emoji="📐",
+                    )
+
+                    if ltc < LTC_BREACH_THRESHOLD:
                         # Check deduplication: skip if already alerted within 24h
                         last_ts = self._dist_last_alert.get(user_id, 0)
                         if time.time() - last_ts < 86400:
@@ -743,9 +770,12 @@ class CopilotOrchestrator:
 
                         await self._publish_distribution_alert(user_id, state)
                         self._dist_last_alert[user_id] = time.time()
-                    else:
-                        # LTC recovered — clear dedup so next breach re-triggers
+
+                    elif ltc >= LTC_RECOVERY_THRESHOLD:
+                        # Only clear dedup when LTC recovers above dead-band
                         self._dist_last_alert.pop(user_id, None)
+
+                    # else: inside dead-band (0.85–0.88) → do nothing
 
             except Exception as e:
                 self.logger.warn(f"Distribution health check error: {e}")
@@ -764,7 +794,7 @@ class CopilotOrchestrator:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"http://localhost:3002/api/internal/distribution-state?user_id={user_id}",
-                    timeout=aiohttp.ClientTimeout(total=3),
+                    timeout=aiohttp.ClientTimeout(total=DIST_STATE_TIMEOUT_SECONDS),
                 ) as resp:
                     if resp.status == 200:
                         result = await resp.json()

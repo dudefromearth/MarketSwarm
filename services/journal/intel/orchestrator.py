@@ -7538,14 +7538,16 @@ class JournalOrchestrator:
             import time as _time
             cached = self._dist_state_cache.get(user_id)
             if cached and (_time.time() - cached.get('_cached_at', 0)) < self._DIST_CACHE_TTL:
-                return self._json_response({'success': True, 'data': cached['data']}, request=request)
+                cache_age = _time.time() - cached.get('_cached_at', 0)
+                response_data = {**cached['data'], 'cache_age_seconds': round(cache_age)}
+                return self._json_response({'success': True, 'data': response_data}, request=request)
 
             # Get all active logs for this user
             logs = self.db.list_logs(user_id=user_id)
             if not logs:
                 return self._json_response({
                     'success': True,
-                    'data': {'insufficient_data': True, 'trade_count': 0}
+                    'data': {'insufficient_data': True, 'trade_count': 0, 'cache_age_seconds': 0}
                 }, request=request)
 
             # Collect closed trades from all active logs
@@ -7562,7 +7564,7 @@ class JournalOrchestrator:
             records = adapt_trades(all_trades)
 
             if len(records) < 10:
-                result_data = {'insufficient_data': True, 'trade_count': len(records)}
+                result_data = {'insufficient_data': True, 'trade_count': len(records), 'cache_age_seconds': 0}
                 self._dist_state_cache[user_id] = {
                     'data': result_data,
                     '_cached_at': _time.time(),
@@ -7583,6 +7585,7 @@ class JournalOrchestrator:
                 'max_drawdown_depth': result.drawdown.max_drawdown_depth if result.drawdown else None,
                 'version': result.version,
                 'computed_at': datetime.utcnow().isoformat(),
+                'cache_age_seconds': 0,
             }
 
             self._dist_state_cache[user_id] = {

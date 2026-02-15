@@ -346,6 +346,14 @@ class VexyKernel:
             request.context = {}
         request.context["distribution_state"] = dist_state
 
+        self._log(
+            f"CDIS: cii={dist_state.get('cii')}, ltc={dist_state.get('ltc')}, "
+            f"convexity_at_risk={agent_context['convexity_at_risk']}, "
+            f"survival_breach={agent_context['survival_breach']}, "
+            f"insufficient={not dist_state or dist_state.get('insufficient_data')}",
+            emoji="📐",
+        )
+
         vix_level = None
         if request.context and request.context.get("market_data"):
             vix_level = (
@@ -1072,10 +1080,14 @@ class VexyKernel:
     # DISTRIBUTION STATE (CDIS Phase 1)
     # -------------------------------------------------------------------------
 
+    # CDIS Phase 1 — must match copilot DIST_STATE_TIMEOUT_SECONDS.
+    # Symmetric: both services succeed or both degrade to no-op.
+    DIST_STATE_TIMEOUT_SECONDS = 2.5
+
     async def _fetch_distribution_state(self, user_id: int) -> dict:
         """Fetch distribution state from journal internal endpoint.
 
-        Non-blocking with 2s timeout. Returns {} on any failure so that
+        Non-blocking with 2.5s timeout. Returns {} on any failure so that
         coupling degrades to no-op (system behaves as if CDIS doesn't exist).
         """
         import aiohttp
@@ -1084,7 +1096,7 @@ class VexyKernel:
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"http://localhost:3002/api/internal/distribution-state?user_id={user_id}",
-                    timeout=aiohttp.ClientTimeout(total=2),
+                    timeout=aiohttp.ClientTimeout(total=self.DIST_STATE_TIMEOUT_SECONDS),
                 ) as resp:
                     if resp.status == 200:
                         result = await resp.json()
