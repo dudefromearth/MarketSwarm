@@ -128,6 +128,7 @@ export function issueAppSession(user) {
       email: user.email,
       name: user.name,
       roles: user.roles || [],
+      subscription_tier: user.subscription_tier || null,
     },
   };
   return jwt.sign(payload, env.APP_SESSION_SECRET, { algorithm: "HS256" });
@@ -260,6 +261,16 @@ export function setSessionCookie(res, sessionJwt, req) {
  */
 export function clearSessionCookie(res) {
   res.clearCookie(SESSION_COOKIE, {
+    httpOnly: true,
+    secure: false,
+    sameSite: "lax",
+    path: "/",
+  });
+  // Also clear with secure=true in case it was set over HTTPS
+  res.clearCookie(SESSION_COOKIE, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
     path: "/",
   });
 }

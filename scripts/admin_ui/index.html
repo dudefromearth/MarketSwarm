@@ -304,6 +304,36 @@
             </div>
         </div>
 
+        <!-- Production Model Section -->
+        <div class="tier-gates-section">
+            <div class="panel-header">
+                <h2>Production Model</h2>
+                <div class="panel-actions">
+                    <button class="btn btn-secondary btn-sm" onclick="resetTierGates()">Reset Defaults</button>
+                    <button class="btn btn-success btn-sm" onclick="saveTierGates()">Save</button>
+                    <button class="btn btn-secondary btn-sm" onclick="refreshTierGates()">Refresh</button>
+                </div>
+            </div>
+
+            <div class="tier-gates-mode-bar">
+                <span class="tier-gates-mode-label">Gating Mode:</span>
+                <button id="tier-gates-mode-btn" class="tier-gates-mode-btn full-production" onclick="toggleTierGatesMode()">
+                    Full Production
+                </button>
+                <span id="tier-gates-mode-hint" class="tier-gates-mode-hint">All limits bypassed — every user gets full access</span>
+            </div>
+
+            <div class="tier-gates-access-bar">
+                <span class="tier-gates-access-label">Login Access (which tiers can log into this machine):</span>
+                <div id="tier-gates-access-toggles" class="tier-gates-access-toggles"></div>
+                <span class="tier-gates-access-hint">Admins and 0-dte members always bypass</span>
+            </div>
+
+            <div id="tier-gates-grid" class="tier-gates-grid">
+                <div class="loading">Loading tier gates configuration...</div>
+            </div>
+        </div>
+
         <!-- Deploy Section -->
         <div class="deploy-section">
             <div class="panel-header">

@@ -163,22 +163,39 @@ class InteractionService:
     async def _check_rate_limit(self, user_id: int, tier_config: Any) -> int:
         """
         Check hourly rate limit for user. Returns remaining (-1 = unlimited).
+        Uses dynamic gate override when tier_limited mode is active.
         """
-        if tier_config.rate_limit < 0:
+        from ...tier_config import get_gate_value
+
+        limit = tier_config.rate_limit
+
+        # Check dynamic gate override (tier_limited mode)
+        gate_limit = get_gate_value(tier_config.name.lower(), "vexy_interaction_rate")
+        if gate_limit is not None:
+            limit = int(gate_limit)
+
+        if limit < 0:
             return -1
 
         rate_key = f"vexy:interaction:rate:{user_id}"
         count_str = await self.buses.market.get(rate_key)
 
         if count_str is None:
-            return tier_config.rate_limit
+            return limit
 
         count = int(count_str)
-        return max(0, tier_config.rate_limit - count)
+        return max(0, limit - count)
 
     async def _decrement_rate_limit(self, user_id: int, tier_config: Any) -> None:
         """Increment usage counter for this hour."""
-        if tier_config.rate_limit < 0:
+        from ...tier_config import get_gate_value
+
+        limit = tier_config.rate_limit
+        gate_limit = get_gate_value(tier_config.name.lower(), "vexy_interaction_rate")
+        if gate_limit is not None:
+            limit = int(gate_limit)
+
+        if limit < 0:
             return
 
         rate_key = f"vexy:interaction:rate:{user_id}"

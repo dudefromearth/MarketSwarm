@@ -70,11 +70,18 @@ class InteractionCapability(BaseCapability):
             except ValueError:
                 user_id = 1
 
-            # Get user profile for tier resolution
+            # Tier resolution: prefer X-User-Tier header (set by SSE gateway)
+            header_tier = req.headers.get("X-User-Tier", "")
+
+            # Get user profile for fallback tier resolution
             # Roles come from the profile; created_at for trial check
             user_profile = request.user_profile or {}
             roles = user_profile.get("roles")
             created_at = user_profile.get("created_at")
+
+            # If SSE gateway provided a tier header, inject it as user_tier override
+            if header_tier and not request.user_tier:
+                request.user_tier = header_tier
 
             response = await self.service.handle_interaction(
                 request=request,

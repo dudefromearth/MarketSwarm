@@ -67,6 +67,7 @@ import { useDailySession } from './hooks/useDailySession';
 import { VolumeProfileSettings, useIndicatorSettings } from './components/chart-primitives';
 import type { TradeSelectorModel, TradeRecommendation } from './types/tradeSelector';
 import { useLogLifecycle } from './hooks/useLogLifecycle';
+import { useTierGatesContext } from './contexts/TierGatesContext';
 
 const SSE_BASE = ''; // Use relative URLs - Vite proxy handles /api/* and /sse/*
 
@@ -449,6 +450,9 @@ function App() {
 
   // Navigation
   const navigate = useNavigate();
+
+  // Tier gating
+  const { isGated, getLimit } = useTierGatesContext();
 
   const [spot, setSpot] = useState<SpotData | null>(null);
   const [heatmap, setHeatmap] = useState<HeatmapData | null>(null);
@@ -3619,7 +3623,7 @@ function App() {
           <span className="close-bar-label">Close</span>
         </div>
         <div className="trade-log-panel-inner">
-          {playbookOpen ? (
+          {playbookOpen && !isGated('playbook_access') ? (
             <PlaybookView
               onClose={() => {
                 setPlaybookOpen(false);
@@ -3630,7 +3634,7 @@ function App() {
               }}
               backLabel={playbookSource === 'journal' ? 'Back to Journal' : 'Back to Trades'}
             />
-          ) : journalOpen ? (
+          ) : journalOpen && !isGated('journal_access') ? (
             <JournalView
               onClose={() => {
                 setJournalOpen(false);
@@ -3729,7 +3733,7 @@ function App() {
       )}
 
       {/* Leaderboard Modal */}
-      {leaderboardOpen && (
+      {leaderboardOpen && !isGated('leaderboard_access') && (
         <LeaderboardView onClose={() => setLeaderboardOpen(false)} />
       )}
 
@@ -3923,12 +3927,14 @@ function App() {
       />
 
       {/* Import Manager Modal */}
-      <ImportManager
-        isOpen={showImportManager}
-        onClose={() => setShowImportManager(false)}
-        onImportDeleted={() => setTradeRefreshTrigger(prev => prev + 1)}
-        currentLogId={selectedLog?.id}
-      />
+      {!isGated('import_access') && (
+        <ImportManager
+          isOpen={showImportManager}
+          onClose={() => setShowImportManager(false)}
+          onImportDeleted={() => setTradeRefreshTrigger(prev => prev + 1)}
+          currentLogId={selectedLog?.id}
+        />
+      )}
 
     </div>
   );

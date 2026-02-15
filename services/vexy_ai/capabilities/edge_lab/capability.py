@@ -47,7 +47,7 @@ class EdgeLabCapability(BaseCapability):
 
             user_id_str = req.headers.get("X-User-Id", "")
             user_id = int(user_id_str) if user_id_str else 1
-            user_tier = req.headers.get("X-User-Tier", "navigator")
+            user_tier = req.headers.get("X-User-Tier", "observer")
 
             body = await req.json()
             report_type = body.get("report_type") or body.get("reportType")

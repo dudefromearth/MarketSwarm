@@ -13,6 +13,7 @@ import { Router } from "express";
 import { getPool, isDbAvailable } from "../db/index.js";
 import { getSystemRedis } from "../redis.js";
 import { getUserProfile, upsertUserFromWpToken } from "../db/userStore.js";
+import { checkGate, tierFromRoles } from "../tierGates.js";
 
 const router = Router();
 
@@ -282,6 +283,26 @@ router.post("/", async (req, res) => {
 
     if (!userId) {
       return res.status(401).json({ success: false, error: "Not authenticated" });
+    }
+
+    // --- Tier-based concurrent position limit ---
+    const tier = tierFromRoles(req.user?.wp?.roles, req.user?.wp?.subscription_tier);
+    const { limit } = checkGate(tier, "position_max_concurrent");
+    if (limit !== null && limit !== -1) {
+      const [countRows] = await pool.execute(
+        `SELECT COUNT(*) AS cnt FROM positions WHERE user_id = ? AND primary_expiration >= CURDATE()`,
+        [userId]
+      );
+      const current = countRows[0].cnt;
+      if (current >= limit) {
+        return res.status(429).json({
+          success: false,
+          error: "Position limit reached",
+          limit,
+          current,
+          message: `Your tier allows a maximum of ${limit} concurrent positions.`,
+        });
+      }
     }
 
     const {
@@ -602,6 +623,27 @@ router.post("/batch", async (req, res) => {
         success: false,
         error: "Maximum 50 positions per batch",
       });
+    }
+
+    // --- Tier-based concurrent position limit ---
+    const tier = tierFromRoles(req.user?.wp?.roles, req.user?.wp?.subscription_tier);
+    const { limit } = checkGate(tier, "position_max_concurrent");
+    if (limit !== null && limit !== -1) {
+      const [countRows] = await pool.execute(
+        `SELECT COUNT(*) AS cnt FROM positions WHERE user_id = ? AND primary_expiration >= CURDATE()`,
+        [userId]
+      );
+      const current = countRows[0].cnt;
+      if (current + positions.length > limit) {
+        return res.status(429).json({
+          success: false,
+          error: "Position limit reached",
+          limit,
+          current,
+          requested: positions.length,
+          message: `Your tier allows a maximum of ${limit} concurrent positions. You have ${current} and are trying to add ${positions.length}.`,
+        });
+      }
     }
 
     const createdIds = [];

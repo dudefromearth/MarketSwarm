@@ -24,6 +24,7 @@ import optionsRoutes from "./routes/options.js";
 import { authMiddleware, logAuthConfig } from "./auth.js";
 import { initDb, closeDb } from "./db/index.js";
 import { startScheduleBuilder, buildRollingSchedule } from "./econ/scheduleBuilder.js";
+import { initTierGates, gateMiddleware, getTierGates, tierFromRoles, checkGate } from "./tierGates.js";
 
 const app = express();
 
@@ -76,16 +77,43 @@ app.use("/api/imports", importsRoutes);
 app.use("/api/admin/economic-indicators", econIndicatorsRoutes);
 app.use("/api/options", optionsRoutes);
 
+// Tier gates config endpoint (for frontend consumption)
+app.get("/api/tier-gates/config", (req, res) => {
+  const config = getTierGates();
+  if (!config) {
+    return res.json({ mode: "full_production", defaults: {}, tiers: {} });
+  }
+  // Return config + user's resolved tier
+  const roles = req.user?.wp?.roles || [];
+  const tier = tierFromRoles(roles, req.user?.wp?.subscription_tier);
+  res.json({ ...config, user_tier: tier });
+});
+
 // Proxy journal endpoints to journal service (port 3002)
 // This handles /api/logs/*, /api/trades/*, /api/playbooks/*, /api/journals/*
 const JOURNAL_SERVICE = "http://localhost:3002";
 const journalPaths = ["/api/logs", "/api/trades", "/api/playbooks", "/api/journals", "/api/leaderboard", "/api/orders", "/api/alerts", "/api/symbols", "/api/tags", "/api/settings", "/api/journal", "/api/playbook", "/api/risk-graph", "/api/journal_entries", "/api/users", "/api/analytics", "/api/prompt-alerts", "/api/internal", "/api/algo-alerts", "/api/algo-proposals", "/api/edge-lab"];
 
-journalPaths.forEach(path => {
-  app.use(path, async (req, res) => {
+// Map journal paths to their gate keys (only paths that should be gated)
+const journalGateMap = {
+  "/api/journals": "journal_access",
+  "/api/journal": "journal_access",
+  "/api/journal_entries": "journal_access",
+  "/api/playbooks": "playbook_access",
+  "/api/playbook": "playbook_access",
+  "/api/edge-lab": "edge_lab_access",
+  "/api/imports": "import_access",
+  "/api/leaderboard": "leaderboard_access",
+};
+
+journalPaths.forEach(jPath => {
+  const gateKey = journalGateMap[jPath];
+  const proxyHandler = async (req, res) => {
     const url = `${JOURNAL_SERVICE}${req.originalUrl}`;
     try {
       // Build headers, forwarding versioning/idempotency headers
+      const roles = req.user?.wp?.roles || [];
+      const resolvedTier = tierFromRoles(roles, req.user?.wp?.subscription_tier);
       const headers = {
         "Content-Type": "application/json",
         // Forward user info for journal service
@@ -93,6 +121,7 @@ journalPaths.forEach(path => {
         "X-User-Email": req.user?.wp?.email || "",
         "X-User-Name": req.user?.wp?.name || "",
         "X-User-Issuer": req.user?.wp?.issuer || "",
+        "X-User-Tier": resolvedTier,
       };
       // Forward idempotency and versioning headers
       if (req.headers["idempotency-key"]) {
@@ -120,7 +149,13 @@ journalPaths.forEach(path => {
       console.error(`[proxy] Journal proxy error for ${req.method} ${url}:`, err.message);
       res.status(502).json({ success: false, error: "Journal service unavailable" });
     }
-  });
+  };
+
+  if (gateKey) {
+    app.use(jPath, gateMiddleware(gateKey), proxyHandler);
+  } else {
+    app.use(jPath, proxyHandler);
+  }
 });
 
 // Proxy Vexy AI endpoints to vexy_ai service (port 3005)
@@ -130,10 +165,16 @@ const VEXY_SERVICE = "http://localhost:3005";
 app.use("/api/vexy", async (req, res) => {
   const url = `${VEXY_SERVICE}${req.originalUrl}`;
   try {
+    // Resolve user tier from roles + subscription_tier for Vexy AI rate limiting
+    const roles = req.user?.wp?.roles || [];
+    const resolvedTier = tierFromRoles(roles, req.user?.wp?.subscription_tier);
+
     const headers = {
       "Content-Type": "application/json",
       "X-User-Id": req.user?.wp?.id || "",
       "X-User-Email": req.user?.wp?.email || "",
+      "X-User-Tier": resolvedTier,
+      "X-User-Roles": JSON.stringify(roles),
     };
 
     const response = await fetch(url, {
@@ -220,6 +261,9 @@ async function main() {
 
   // Initialize Redis connections
   initRedis(config);
+
+  // Initialize tier gates (reads config from Redis, subscribes to updates)
+  await initTierGates(config);
 
   // Start heartbeat
   startHeartbeat(config, getClientStats);

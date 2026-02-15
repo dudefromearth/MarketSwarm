@@ -2484,3 +2484,209 @@ footer {
     white-space: nowrap;
     flex: 1;
 }
+
+/* ─── Production Model ──────────────────────────────────── */
+
+.tier-gates-section {
+    margin-top: 24px;
+    padding: 16px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+}
+
+.tier-gates-mode-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    background: var(--bg-tertiary);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+}
+
+.tier-gates-mode-label {
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.tier-gates-mode-btn {
+    padding: 6px 18px;
+    border-radius: 20px;
+    border: none;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tier-gates-mode-btn.full-production {
+    background: var(--accent-green);
+    color: #000;
+}
+
+.tier-gates-mode-btn.tier-limited {
+    background: var(--accent-yellow);
+    color: #000;
+}
+
+.tier-gates-mode-hint {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-style: italic;
+}
+
+.tier-gates-access-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    margin-bottom: 16px;
+    background: var(--bg-tertiary);
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    flex-wrap: wrap;
+}
+
+.tier-gates-access-label {
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.tier-gates-access-toggles {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.tier-gates-access-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+.tier-gates-access-hint {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-style: italic;
+    margin-left: auto;
+}
+
+.tier-gates-grid {
+    overflow-x: auto;
+}
+
+.tier-gates-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.tier-gates-table th {
+    text-align: left;
+    padding: 8px 12px;
+    color: var(--text-secondary);
+    font-weight: 600;
+    border-bottom: 2px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.tier-gates-table th.tier-col {
+    text-align: center;
+    min-width: 120px;
+}
+
+.tier-gates-table td {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.tier-gates-table td.tier-col {
+    text-align: center;
+}
+
+.tier-gates-table tr:hover {
+    background: var(--bg-tertiary);
+}
+
+.tier-gates-table .feature-label {
+    font-weight: 500;
+}
+
+.tier-gates-table .feature-key {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+.tier-gate-toggle {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    display: inline-block;
+}
+
+.tier-gate-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.tier-gate-toggle .slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    transition: 0.2s;
+}
+
+.tier-gate-toggle .slider::before {
+    content: "";
+    position: absolute;
+    height: 14px;
+    width: 14px;
+    left: 2px;
+    bottom: 2px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    transition: 0.2s;
+}
+
+.tier-gate-toggle input:checked + .slider {
+    background: var(--accent-green);
+    border-color: var(--accent-green);
+}
+
+.tier-gate-toggle input:checked + .slider::before {
+    transform: translateX(16px);
+    background: #fff;
+}
+
+.tier-gate-number {
+    width: 60px;
+    padding: 4px 6px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 13px;
+    text-align: center;
+    font-family: 'SF Mono', 'Menlo', monospace;
+}
+
+.tier-gate-number:focus {
+    border-color: var(--accent-blue);
+    outline: none;
+}
+
+.tier-gate-number.unlimited {
+    color: var(--accent-green);
+}

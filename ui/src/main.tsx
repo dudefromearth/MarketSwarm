@@ -25,6 +25,7 @@ import { ApiClientProvider } from './contexts/ApiClientContext.tsx'
 import { PositionsProvider } from './contexts/PositionsContext.tsx'
 import { AlgoAlertProvider } from './contexts/AlgoAlertContext.tsx'
 import { UserPreferencesProvider } from './contexts/UserPreferencesContext.tsx'
+import { TierGatesProvider } from './contexts/TierGatesContext.tsx'
 
 // Wrapper component for routes that need trading providers
 function TradingProviders({ children }: { children: React.ReactNode }) {
@@ -53,6 +54,7 @@ createRoot(document.getElementById('root')!).render(
         <AlertProvider>
           <PathProvider>
           <AuthWrapper>
+            <TierGatesProvider>
             <TimezoneProvider>
               <Routes>
                 <Route path="/" element={
@@ -83,6 +85,7 @@ createRoot(document.getElementById('root')!).render(
                 } />
               </Routes>
             </TimezoneProvider>
+            </TierGatesProvider>
           </AuthWrapper>
         </PathProvider>
         </AlertProvider>

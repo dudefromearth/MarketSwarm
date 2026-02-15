@@ -56,9 +56,11 @@ export function getTierFromRoles(roles?: string[]): UserTier {
   if (roles.includes('navigator') || roles.includes('fotw_navigator')) {
     return 'navigator';
   }
-  if (roles.includes('activator') || roles.includes('fotw_activator') || roles.includes('subscriber')) {
+  if (roles.includes('activator') || roles.includes('fotw_activator')) {
     return 'activator';
   }
+  // NOTE: "subscriber" is WordPress's default role shared by observers AND activators.
+  // Without an explicit subscription_tier, default to "observer" (mirrors tierFromRoles in tierGates.js).
 
   // Default to observer for any authenticated user
   return 'observer';

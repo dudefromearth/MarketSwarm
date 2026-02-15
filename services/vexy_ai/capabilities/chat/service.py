@@ -43,10 +43,15 @@ class ChatService:
 
         Returns (allowed, remaining).
         """
-        from services.vexy_ai.tier_config import get_tier_config
+        from services.vexy_ai.tier_config import get_tier_config, get_gate_value
 
         tier_config = get_tier_config(tier)
         limit = tier_config.rate_limit
+
+        # Check dynamic gate override first
+        gate_limit = get_gate_value(tier, "vexy_chat_rate")
+        if gate_limit is not None:
+            limit = int(gate_limit)
 
         # Unlimited for admins
         if limit == -1:

@@ -2391,3 +2391,178 @@ async function toggleHealer() {
         alert('Error toggling healer: ' + e.message);
     }
 }
+
+// ============================================================
+// Tier Gates
+// ============================================================
+let tierGatesConfig = null;
+
+async function refreshTierGates() {
+    try {
+        const resp = await fetch(`${API_BASE}/api/tier-gates`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        tierGatesConfig = await resp.json();
+        renderTierGatesEditor(tierGatesConfig);
+    } catch (e) {
+        console.error('Failed to load tier gates:', e);
+        document.getElementById('tier-gates-grid').innerHTML =
+            '<div class="empty">Failed to load tier gates config</div>';
+    }
+}
+
+function renderTierGatesEditor(config) {
+    // Update mode button
+    const modeBtn = document.getElementById('tier-gates-mode-btn');
+    const modeHint = document.getElementById('tier-gates-mode-hint');
+    if (config.mode === 'full_production') {
+        modeBtn.textContent = 'Full Production';
+        modeBtn.className = 'tier-gates-mode-btn full-production';
+        modeHint.textContent = 'All limits bypassed \u2014 every user gets full access';
+    } else {
+        modeBtn.textContent = 'Tier-Limited';
+        modeBtn.className = 'tier-gates-mode-btn tier-limited';
+        modeHint.textContent = 'Subscription enforcement active \u2014 limits applied per tier';
+    }
+
+    // Render allowed tiers toggles
+    const allowedTiers = config.allowed_tiers || {};
+    const accessContainer = document.getElementById('tier-gates-access-toggles');
+    let accessHtml = '';
+    for (const [tier, allowed] of Object.entries(allowedTiers)) {
+        const label = tier.charAt(0).toUpperCase() + tier.slice(1);
+        const checked = allowed ? 'checked' : '';
+        accessHtml += `<label class="tier-gates-access-item">
+            <label class="tier-gate-toggle">
+                <input type="checkbox" data-access-tier="${tier}" ${checked}>
+                <span class="slider"></span>
+            </label>
+            ${label}
+        </label>`;
+    }
+    accessContainer.innerHTML = accessHtml;
+
+    const tiers = ['observer', 'activator', 'navigator'];
+    const defaults = config.defaults || {};
+    const tierOverrides = config.tiers || {};
+
+    let html = '<table class="tier-gates-table"><thead><tr>';
+    html += '<th>Feature</th>';
+    tiers.forEach(t => {
+        html += `<th class="tier-col">${t.charAt(0).toUpperCase() + t.slice(1)}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    for (const [key, feat] of Object.entries(defaults)) {
+        html += '<tr>';
+        html += `<td><div class="feature-label">${feat.label}</div><div class="feature-key">${key}</div></td>`;
+
+        tiers.forEach(tier => {
+            const tierVals = tierOverrides[tier] || {};
+            const val = tierVals[key] !== undefined ? tierVals[key] : feat.value;
+
+            html += '<td class="tier-col">';
+            if (feat.type === 'boolean') {
+                const checked = val ? 'checked' : '';
+                html += `<label class="tier-gate-toggle">
+                    <input type="checkbox" data-tier="${tier}" data-key="${key}" data-type="boolean" ${checked}>
+                    <span class="slider"></span>
+                </label>`;
+            } else {
+                const cls = val === -1 ? 'unlimited' : '';
+                html += `<input type="number" class="tier-gate-number ${cls}"
+                    data-tier="${tier}" data-key="${key}" data-type="number"
+                    value="${val}" min="-1" step="1"
+                    onchange="this.classList.toggle('unlimited', this.value=='-1')">`;
+            }
+            html += '</td>';
+        });
+
+        html += '</tr>';
+    }
+
+    html += '</tbody></table>';
+    document.getElementById('tier-gates-grid').innerHTML = html;
+}
+
+async function toggleTierGatesMode() {
+    if (!tierGatesConfig) return;
+    const newMode = tierGatesConfig.mode === 'full_production' ? 'tier_limited' : 'full_production';
+    tierGatesConfig.mode = newMode;
+    // Collect current values and save immediately
+    collectTierGateValues();
+    await saveTierGates();
+}
+
+function collectTierGateValues() {
+    if (!tierGatesConfig) return;
+
+    // Read allowed tiers
+    const accessInputs = document.querySelectorAll('[data-access-tier]');
+    if (!tierGatesConfig.allowed_tiers) tierGatesConfig.allowed_tiers = {};
+    accessInputs.forEach(input => {
+        tierGatesConfig.allowed_tiers[input.dataset.accessTier] = input.checked;
+    });
+
+    // Read all inputs from the grid
+    const inputs = document.querySelectorAll('#tier-gates-grid [data-tier]');
+    inputs.forEach(input => {
+        const tier = input.dataset.tier;
+        const key = input.dataset.key;
+        const type = input.dataset.type;
+
+        if (!tierGatesConfig.tiers[tier]) tierGatesConfig.tiers[tier] = {};
+
+        if (type === 'boolean') {
+            tierGatesConfig.tiers[tier][key] = input.checked;
+        } else {
+            tierGatesConfig.tiers[tier][key] = parseInt(input.value, 10) || -1;
+        }
+    });
+}
+
+async function saveTierGates() {
+    if (!tierGatesConfig) {
+        alert('No tier gates config loaded');
+        return;
+    }
+
+    collectTierGateValues();
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/tier-gates`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(tierGatesConfig),
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        tierGatesConfig = data.config;
+        renderTierGatesEditor(tierGatesConfig);
+        addAlert('info', 'Tier Gates Saved', 'Configuration saved and published to all services', 'tier-gates');
+    } catch (e) {
+        alert('Failed to save tier gates: ' + e.message);
+    }
+}
+
+async function resetTierGates() {
+    if (!confirm('Reset all tier gates to defaults? This sets mode to Full Production and removes all custom limits.')) return;
+
+    try {
+        const resp = await fetch(`${API_BASE}/api/tier-gates/reset`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+        });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        tierGatesConfig = data.config;
+        renderTierGatesEditor(tierGatesConfig);
+        addAlert('info', 'Tier Gates Reset', 'Configuration reset to defaults', 'tier-gates');
+    } catch (e) {
+        alert('Failed to reset tier gates: ' + e.message);
+    }
+}
+
+// Load tier gates on page init
+document.addEventListener('DOMContentLoaded', () => {
+    refreshTierGates();
+});

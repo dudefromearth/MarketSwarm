@@ -3149,6 +3149,121 @@ def create_web_app():
         """Get recent healer log entries."""
         return {"log": _auto_healer.get_log(lines)}
 
+    # ── Tier Gates ───────────────────────────────────────────
+    def _default_tier_gates() -> dict:
+        """Return the default tier gates configuration."""
+        defaults = {
+            "vexy_chat_rate":            {"type": "number",  "label": "Vexy Chat (per hour)",       "value": -1},
+            "vexy_interaction_rate":     {"type": "number",  "label": "Vexy Interaction (per hour)", "value": -1},
+            "risk_graph_max_strategies": {"type": "number",  "label": "Risk Graph Max Strategies",   "value": -1},
+            "trade_log_max_active":      {"type": "number",  "label": "Trade Log Max Active",        "value": -1},
+            "position_max_concurrent":   {"type": "number",  "label": "Position Max Concurrent",     "value": -1},
+            "alert_max_active":          {"type": "number",  "label": "Alert Max Active",            "value": -1},
+            "journal_access":            {"type": "boolean", "label": "Journal Access",              "value": True},
+            "playbook_access":           {"type": "boolean", "label": "Playbook Access",             "value": True},
+            "edge_lab_access":           {"type": "boolean", "label": "Edge Lab Access",             "value": True},
+            "routine_briefing_access":   {"type": "boolean", "label": "Routine Briefing",            "value": True},
+            "heatmap_access":            {"type": "boolean", "label": "Heatmap Access",              "value": True},
+            "dg_analysis_access":        {"type": "boolean", "label": "DG Analysis Access",          "value": True},
+            "import_access":             {"type": "boolean", "label": "Import Functionality",        "value": True},
+            "leaderboard_access":        {"type": "boolean", "label": "Leaderboard Access",          "value": True},
+        }
+        # Build tier overrides — observer gets restricted defaults, others get unlimited
+        observer_overrides = {}
+        for key, feat in defaults.items():
+            if feat["type"] == "number":
+                observer_overrides[key] = 5  # sensible default limit
+            else:
+                observer_overrides[key] = True  # access allowed by default, admin can toggle off
+        # Activator and Navigator get unlimited (-1 / True)
+        activator_overrides = {}
+        navigator_overrides = {}
+        for key, feat in defaults.items():
+            activator_overrides[key] = -1 if feat["type"] == "number" else True
+            navigator_overrides[key] = -1 if feat["type"] == "number" else True
+
+        return {
+            "mode": "full_production",
+            "updated_at": datetime.now().isoformat(),
+            "defaults": defaults,
+            "allowed_tiers": {
+                "observer": True,
+                "activator": True,
+                "navigator": True,
+                "coaching": True,
+            },
+            "tiers": {
+                "observer": observer_overrides,
+                "activator": activator_overrides,
+                "navigator": navigator_overrides,
+            },
+        }
+
+    def _get_redis_tier_gates():
+        """Read tier_gates from system-redis. Returns dict or None."""
+        import redis as _redis
+        try:
+            r = _redis.Redis(host="127.0.0.1", port=6379, socket_timeout=2)
+            raw = r.get("tier_gates")
+            if raw:
+                return json.loads(raw)
+        except Exception:
+            pass
+        return None
+
+    def _save_redis_tier_gates(config: dict):
+        """Write tier_gates to system-redis and publish update notification."""
+        import redis as _redis
+        r = _redis.Redis(host="127.0.0.1", port=6379, socket_timeout=2)
+        config["updated_at"] = datetime.now().isoformat()
+        r.set("tier_gates", json.dumps(config))
+        r.publish("tier_gates:updated", json.dumps({"updated_at": config["updated_at"]}))
+
+    @app.get("/api/tier-gates")
+    def api_get_tier_gates():
+        """Get current tier gates configuration from Redis."""
+        config = _get_redis_tier_gates()
+        if not config:
+            # Return defaults (not yet saved to Redis)
+            config = _default_tier_gates()
+        return config
+
+    @app.post("/api/tier-gates")
+    def api_save_tier_gates(body: dict = Body(default={})):
+        """Save tier gates configuration to Redis."""
+        # Merge incoming body with defaults to ensure schema completeness
+        defaults = _default_tier_gates()
+        # Accept full config or partial updates
+        if "mode" in body:
+            defaults["mode"] = body["mode"]
+        if "tiers" in body:
+            for tier_name, overrides in body["tiers"].items():
+                if tier_name in defaults["tiers"]:
+                    defaults["tiers"][tier_name].update(overrides)
+        if "allowed_tiers" in body:
+            for tier_name, allowed in body["allowed_tiers"].items():
+                if tier_name in defaults["allowed_tiers"]:
+                    defaults["allowed_tiers"][tier_name] = bool(allowed)
+        if "defaults" in body:
+            for key, feat in body["defaults"].items():
+                if key in defaults["defaults"]:
+                    defaults["defaults"][key].update(feat)
+        try:
+            _save_redis_tier_gates(defaults)
+            return {"success": True, "config": defaults}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to save: {str(e)}")
+
+    @app.post("/api/tier-gates/reset")
+    def api_reset_tier_gates():
+        """Reset tier gates to defaults (full_production mode, all unlimited)."""
+        config = _default_tier_gates()
+        try:
+            _save_redis_tier_gates(config)
+            return {"success": True, "config": config}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to reset: {str(e)}")
+
     return app
 
 

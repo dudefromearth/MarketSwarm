@@ -34,6 +34,7 @@ from .models_v2 import (
 from .analytics_v2 import AnalyticsV2
 from .edge_lab_analytics import EdgeLabAnalytics
 from .auth import JournalAuth, require_auth, optional_auth
+from .tier_gates import get_gate_limit, get_user_tier
 
 
 class JournalOrchestrator:
@@ -203,6 +204,21 @@ class JournalOrchestrator:
             user = await self.auth.get_request_user(request)
             if not user:
                 return self._error_response('Authentication required', 401)
+
+            # Tier gate: trade_log_max_active
+            user_tier = get_user_tier(request)
+            limit = get_gate_limit(user_tier, 'trade_log_max_active')
+            if limit is not None and limit != -1:
+                existing = self.db.list_logs(user_id=user['id'], include_inactive=False)
+                count = len(existing)
+                if count >= limit:
+                    return self._json_response({
+                        'error': 'limit_reached',
+                        'feature': 'trade_log_max_active',
+                        'limit': limit,
+                        'current': count,
+                        'message': f'Your tier allows a maximum of {limit} active trade logs.'
+                    }, 429)
 
             body = await request.json()
 
@@ -3286,6 +3302,21 @@ class JournalOrchestrator:
             if not user:
                 return self._error_response('Authentication required', 401, request)
 
+            # Tier gate: alert_max_active
+            user_tier = get_user_tier(request)
+            limit = get_gate_limit(user_tier, 'alert_max_active')
+            if limit is not None and limit != -1:
+                existing = self.db.list_alerts(user['id'], enabled=True)
+                count = len(existing)
+                if count >= limit:
+                    return self._json_response({
+                        'error': 'limit_reached',
+                        'feature': 'alert_max_active',
+                        'limit': limit,
+                        'current': count,
+                        'message': f'Your tier allows a maximum of {limit} active alerts.'
+                    }, 429, request)
+
             body = await request.json()
 
             # Validate required fields
@@ -4789,6 +4820,21 @@ class JournalOrchestrator:
             user = await self.auth.get_request_user(request)
             if not user:
                 return self._error_response('Authentication required', 401, request)
+
+            # Tier gate: risk_graph_max_strategies
+            user_tier = get_user_tier(request)
+            limit = get_gate_limit(user_tier, 'risk_graph_max_strategies')
+            if limit is not None and limit != -1:
+                existing = self.db.list_risk_graph_strategies(user['id'])
+                count = len(existing)
+                if count >= limit:
+                    return self._json_response({
+                        'error': 'limit_reached',
+                        'feature': 'risk_graph_max_strategies',
+                        'limit': limit,
+                        'current': count,
+                        'message': f'Your tier allows a maximum of {limit} active strategies.'
+                    }, 429, request)
 
             body = await request.json()
 

@@ -22,6 +22,29 @@ export default defineConfig({
   server: {
     https: httpsConfig,
     proxy: {
+      // Copilot direct routes (bypass SSE Gateway, match nginx config)
+      '/api/mel': {
+        target: 'http://localhost:8095',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/api/adi': {
+        target: 'http://localhost:8095',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/api/commentary': {
+        target: 'http://localhost:8095',
+        changeOrigin: true,
+        secure: false,
+      },
+      // Copilot WebSocket
+      '/ws': {
+        target: 'http://localhost:8095',
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+      },
       // Vexy AI service (must be before general /api)
       '/api/vexy': {
         target: 'http://localhost:3005',
@@ -38,7 +61,6 @@ export default defineConfig({
         target: 'http://localhost:3001',
         changeOrigin: true,
         secure: false,
-        // SSE requires no timeout and proper headers
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.setHeader('Connection', 'keep-alive');

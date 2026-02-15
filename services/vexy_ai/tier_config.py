@@ -422,16 +422,104 @@ def get_available_agents(tier: str) -> List[str]:
     return get_tier_config(tier).agents
 
 
-def tier_from_roles(roles: Optional[List[str]]) -> str:
+# =============================================================================
+# DYNAMIC TIER GATES (Redis-backed, admin-configurable)
+# =============================================================================
+# These override the static TIER_CONFIGS values when gating mode is active.
+# Config is cached in-memory for 30s to avoid Redis roundtrips on every request.
+
+_tier_gates_cache: Optional[Dict[str, Any]] = None
+_tier_gates_ts: float = 0.0
+_TIER_GATES_TTL = 30  # seconds
+
+
+def _load_tier_gates() -> Optional[Dict[str, Any]]:
+    """Load tier_gates config from system-redis with 30s cache."""
+    global _tier_gates_cache, _tier_gates_ts
+    import time
+
+    now = time.time()
+    if _tier_gates_cache is not None and (now - _tier_gates_ts) < _TIER_GATES_TTL:
+        return _tier_gates_cache
+
+    try:
+        import redis
+        import json
+        r = redis.Redis(host="127.0.0.1", port=6379, socket_timeout=2, decode_responses=True)
+        raw = r.get("tier_gates")
+        if raw:
+            _tier_gates_cache = json.loads(raw)
+            _tier_gates_ts = now
+            return _tier_gates_cache
+    except Exception:
+        pass
+
+    return _tier_gates_cache  # return stale cache if Redis fails
+
+
+def get_gate_value(tier: str, feature_key: str) -> Optional[Any]:
     """
-    Determine tier from WordPress/auth roles.
+    Get a dynamic gate value for a tier+feature.
+
+    Returns the override value if gating is active, or None if:
+    - No config loaded
+    - Mode is full_production
+    - Tier is administrator/coaching (always bypassed)
+    - Feature key not found
+    """
+    config = _load_tier_gates()
+    if not config or config.get("mode") == "full_production":
+        return None
+
+    tier_lower = tier.lower()
+    if tier_lower in ("administrator", "coaching"):
+        return None
+
+    tier_overrides = config.get("tiers", {}).get(tier_lower, {})
+    if feature_key in tier_overrides:
+        return tier_overrides[feature_key]
+
+    # Fall back to defaults
+    defaults = config.get("defaults", {})
+    feat = defaults.get(feature_key)
+    if feat:
+        return feat.get("value")
+
+    return None
+
+
+def tier_from_roles(roles: Optional[List[str]], subscription_tier: Optional[str] = None) -> str:
+    """
+    Determine tier from WordPress/auth roles and/or explicit subscription_tier.
+
+    When subscription_tier is provided (from the JWT or user profile), it takes
+    precedence over role-based inference. This is because the WordPress "subscriber"
+    role is a generic WP role shared by observers AND activators, making role-based
+    detection ambiguous.
 
     Args:
         roles: List of user roles
+        subscription_tier: Explicit subscription tier string (e.g. "Observer Access", "Activator")
 
     Returns:
         Tier name
     """
+    # If we have an explicit subscription_tier, use it as primary source
+    if subscription_tier and isinstance(subscription_tier, str):
+        tier_lower = subscription_tier.lower().strip()
+
+        if "administrator" in tier_lower or "admin" in tier_lower:
+            return "administrator"
+        if "coaching" in tier_lower:
+            return "coaching"
+        if "navigator" in tier_lower:
+            return "navigator"
+        if "activator" in tier_lower:
+            return "activator"
+        if "observer" in tier_lower:
+            return "observer"
+
+    # Fall back to role-based detection
     if not roles:
         return "observer"
 
@@ -444,9 +532,12 @@ def tier_from_roles(roles: Optional[List[str]]) -> str:
         return "coaching"
     if "navigator" in roles_lower or "fotw_navigator" in roles_lower:
         return "navigator"
-    if "activator" in roles_lower or "fotw_activator" in roles_lower or "subscriber" in roles_lower:
+    if "activator" in roles_lower or "fotw_activator" in roles_lower:
         return "activator"
 
+    # NOTE: "subscriber" is WordPress's default role and does NOT imply "activator".
+    # Observers also have the "subscriber" role. Without an explicit subscription_tier,
+    # a user with only the "subscriber" role defaults to "observer".
     return "observer"
 
 
@@ -457,6 +548,7 @@ OBSERVER_TRIAL_DAYS = 28
 def tier_from_roles_with_trial_check(
     roles: Optional[List[str]],
     created_at: Optional[str] = None,
+    subscription_tier: Optional[str] = None,
 ) -> str:
     """
     Determine tier with observer trial expiration check.
@@ -467,11 +559,12 @@ def tier_from_roles_with_trial_check(
     Args:
         roles: List of user roles
         created_at: ISO date string of account creation (from user profile)
+        subscription_tier: Explicit subscription tier string (e.g. "Observer Access")
 
     Returns:
         Tier name (may be "observer_restricted" if trial expired)
     """
-    base_tier = tier_from_roles(roles)
+    base_tier = tier_from_roles(roles, subscription_tier)
 
     if base_tier != "observer":
         return base_tier

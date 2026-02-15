@@ -147,6 +147,7 @@ class Trade:
     tags: List[str] = field(default_factory=list)
     source: str = "manual"  # manual/heatmap/risk_graph
     playbook_id: Optional[str] = None
+    import_batch_id: Optional[str] = None
 
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())

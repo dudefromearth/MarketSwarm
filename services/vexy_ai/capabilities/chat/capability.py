@@ -80,16 +80,22 @@ class ChatCapability(BaseCapability):
             except ValueError:
                 user_id = 1
 
-            user_tier = request.user_tier or "navigator"
+            # Tier resolution: X-User-Tier header (set by SSE gateway) is authoritative.
+            # request.user_tier from body is only used as admin override fallback.
+            header_tier = req.headers.get("X-User-Tier", "")
+            user_tier = header_tier or request.user_tier or "observer"
 
             # Check rate limit
             allowed, remaining = self.service.check_rate_limit(user_id, user_tier)
             if not allowed:
-                from services.vexy_ai.tier_config import get_tier_config
+                from services.vexy_ai.tier_config import get_tier_config, get_gate_value
                 tier_config = get_tier_config(user_tier)
+                effective_limit = get_gate_value(user_tier, "vexy_chat_rate")
+                if effective_limit is None:
+                    effective_limit = tier_config.rate_limit
                 raise HTTPException(
                     status_code=429,
-                    detail=f"Rate limit reached ({tier_config.rate_limit} per hour)"
+                    detail=f"Rate limit reached ({effective_limit} per hour). Your limit resets in under an hour."
                 )
 
             # Process chat

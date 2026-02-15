@@ -39,6 +39,27 @@ function parseCookies(cookieHeader) {
   return cookies;
 }
 
+// --- Tier resolution (mirrors tierFromRoles in tierGates.js) ---
+function resolveUserTier(roles, subscriptionTier) {
+  // Prefer explicit subscription_tier from JWT (disambiguates "subscriber" role)
+  if (subscriptionTier && typeof subscriptionTier === 'string') {
+    const t = subscriptionTier.toLowerCase().trim();
+    if (t.includes('administrator') || t.includes('admin')) return 'administrator';
+    if (t.includes('coaching')) return 'coaching';
+    if (t.includes('navigator')) return 'navigator';
+    if (t.includes('activator')) return 'activator';
+    if (t.includes('observer')) return 'observer';
+  }
+  // Fall back to role-based detection
+  if (!Array.isArray(roles) || roles.length === 0) return 'observer';
+  const lower = roles.map(r => r.toLowerCase());
+  if (lower.includes('administrator') || lower.includes('admin')) return 'administrator';
+  if (lower.includes('coaching') || lower.includes('fotw_coaching')) return 'coaching';
+  if (lower.includes('navigator') || lower.includes('fotw_navigator')) return 'navigator';
+  if (lower.includes('activator') || lower.includes('fotw_activator')) return 'activator';
+  return 'observer';
+}
+
 // --- JSON response helper ---
 function jsonReply(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -81,6 +102,11 @@ const server = http.createServer((req, res) => {
   // Set user headers for Vexy
   req.headers['x-user-id'] = String(decoded.wp?.id || '');
   req.headers['x-user-email'] = String(decoded.wp?.email || '');
+
+  // Resolve and forward user tier for rate limiting
+  const roles = decoded.wp?.roles || [];
+  req.headers['x-user-tier'] = resolveUserTier(roles, decoded.wp?.subscription_tier);
+  req.headers['x-user-roles'] = JSON.stringify(roles);
 
   // Forward to Vexy
   proxy.web(req, res);

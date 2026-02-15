@@ -22,6 +22,7 @@ import VexyInteractionProgress from './VexyInteractionProgress';
 import TrialIndicator from './TrialIndicator';
 import RestrictedBanner from './RestrictedBanner';
 import ElevationHint from './ElevationHint';
+import { useTierGatesContext } from '../../contexts/TierGatesContext';
 
 // Feature flag: use synchronous /api/vexy/chat (same route as Ask Vexy in Routine Drawer)
 const USE_INTERACTION_API = false;
@@ -248,6 +249,11 @@ export default function VexyChat({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const tierConfig = TIER_CONFIG[userTier] || TIER_CONFIG.observer;
+
+  // Dynamic gate override for chat rate limit
+  const { getLimit: getGateLimit } = useTierGatesContext();
+  const dynamicChatLimit = getGateLimit('vexy_chat_rate');
+  const effectiveHourlyLimit = dynamicChatLimit !== null ? dynamicChatLimit : tierConfig.hourlyLimit;
 
   // Interaction hook (only active when feature flag is on)
   const interaction = useVexyInteraction({
@@ -552,7 +558,7 @@ export default function VexyChat({
         onReflectionDialChange={handleReflectionDialChange}
         showReflectionDial={tierConfig.showReflectionDial}
         remainingMessages={remainingMessages}
-        hourlyLimit={tierConfig.hourlyLimit > 0 ? tierConfig.hourlyLimit : undefined}
+        hourlyLimit={effectiveHourlyLimit > 0 ? effectiveHourlyLimit : undefined}
       />
     </div>
   );
