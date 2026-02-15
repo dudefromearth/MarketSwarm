@@ -52,6 +52,34 @@ app.use(express.json());
 // Auth middleware (protects /api/* and /sse/* except auth endpoints)
 app.use(authMiddleware());
 
+// Tier gate: block disallowed tiers on every authenticated request
+app.use((req, res, next) => {
+  // Only check authenticated requests (req.user set by authMiddleware)
+  if (!req.user) return next();
+
+  const config = getTierGates();
+  if (!config || !config.allowed_tiers) return next();
+
+  const roles = req.user.wp?.roles || [];
+  const userTier = tierFromRoles(roles, req.user.wp?.subscription_tier);
+
+  // Admins and 0-dte always bypass
+  const isAdmin = roles.some(r => ["administrator", "admin"].includes(r.toLowerCase()));
+  if (isAdmin || req.user.wp?.issuer === "0-dte") return next();
+
+  if (config.allowed_tiers[userTier] === false) {
+    // Clear their session so they can't keep retrying
+    res.clearCookie("ms_session", { httpOnly: true, path: "/" });
+    return res.status(403).json({
+      error: "tier_blocked",
+      tier: userTier,
+      message: `The ${userTier} tier is not currently allowed on this server.`,
+    });
+  }
+
+  next();
+});
+
 // Health check (public - allowed by authMiddleware)
 app.get("/api/health", (req, res) => {
   const stats = getClientStats();

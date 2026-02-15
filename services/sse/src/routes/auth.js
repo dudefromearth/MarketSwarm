@@ -383,6 +383,23 @@ router.get("/me", (req, res) => {
   if (!user) {
     return res.status(401).json({ detail: "Not authenticated" });
   }
+
+  // Check if this user's tier is allowed
+  const gatesConfig = getTierGates();
+  if (gatesConfig && gatesConfig.allowed_tiers) {
+    const roles = user.wp?.roles || [];
+    const userTier = tierFromRoles(roles, user.wp?.subscription_tier);
+    const isAdmin = roles.some(r => ["administrator", "admin"].includes(r.toLowerCase()));
+    if (!isAdmin && user.wp?.issuer !== "0-dte" && gatesConfig.allowed_tiers[userTier] === false) {
+      clearSessionCookie(res);
+      return res.status(403).json({
+        error: "tier_blocked",
+        tier: userTier,
+        message: `The ${userTier} tier is not currently allowed on this server.`,
+      });
+    }
+  }
+
   return res.json(user);
 });
 
