@@ -1045,23 +1045,25 @@ class HealthCollector:
             if alive_now and alive_before:
                 mem_now = info.get("used_memory_mb", 0)
                 mem_prev = old_info.get("used_memory_mb", 0)
-                if mem_prev > 0:
-                    pct = (mem_now - mem_prev) / mem_prev
-                    if pct > 0.20:
+                delta_mb = mem_now - mem_prev
+                if mem_prev > 0 and delta_mb > 0:
+                    pct = delta_mb / mem_prev
+                    # Only alert if >50% spike AND absolute jump > 500MB
+                    if pct > 0.50 and delta_mb > 500:
                         events.append({
                             "ts": ts, "ts_iso": ts_iso,
                             "type": "redis_memory_warning", "severity": "warning",
                             "service": name,
-                            "message": f"{name} memory spike: {mem_now}MB (+{pct*100:.0f}% in {self.COLLECT_INTERVAL}s, was {mem_prev}MB)",
+                            "message": f"{name} memory spike: {mem_now:.0f}MB (+{pct*100:.0f}%, +{delta_mb:.0f}MB in {self.COLLECT_INTERVAL}s, was {mem_prev:.0f}MB)",
                             "data": {"used_memory_mb": mem_now, "previous_mb": mem_prev, "pct_change": round(pct, 3)},
                         })
-                if mem_now > 500 and mem_prev <= 500:
+                if mem_now > 2000 and mem_prev <= 2000:
                     events.append({
                         "ts": ts, "ts_iso": ts_iso,
                         "type": "redis_memory_warning", "severity": "warning",
                         "service": name,
-                        "message": f"{name} crossed 500MB threshold: {mem_now}MB",
-                        "data": {"used_memory_mb": mem_now, "threshold_mb": 500},
+                        "message": f"{name} crossed 2GB threshold: {mem_now:.0f}MB",
+                        "data": {"used_memory_mb": mem_now, "threshold_mb": 2000},
                     })
 
                 clients_now = info.get("connected_clients", 0)
