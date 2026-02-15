@@ -32,6 +32,7 @@ ALL post-LLM validation lives in the kernel. Capabilities do not validate.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import time
@@ -324,15 +325,44 @@ class VexyKernel:
         # 1. Core doctrine prompt
         base_kernel = self.path_runtime.get_base_kernel_prompt()
 
-        # 2. Pre-LLM agent selection
-        despair_pre = self._check_despair_pre_llm(request.user_id, request.tier)
+        # 2. Parallel pre-LLM fetches (despair + CDIS + echo are independent)
+        async def _prefetch_despair():
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._check_despair_pre_llm, request.user_id, request.tier),
+                timeout=self.ECHO_FILESYSTEM_TIMEOUT,
+            )
+
+        async def _prefetch_echo():
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._get_echo_injection, request),
+                timeout=self.ECHO_FILESYSTEM_TIMEOUT,
+            )
+
+        despair_pre, dist_state, echo_text = await asyncio.gather(
+            _prefetch_despair(),
+            self._fetch_distribution_state(request.user_id),
+            _prefetch_echo(),
+            return_exceptions=True,
+        )
+
+        # Graceful degradation — any failure returns safe default
+        if isinstance(despair_pre, BaseException):
+            self._log(f"Despair prefetch failed: {despair_pre}", emoji="⚠️")
+            despair_pre = {"severity": 0, "invoke_fp": False, "signals": []}
+        if isinstance(dist_state, BaseException):
+            self._log(f"Distribution state prefetch failed: {dist_state}", emoji="⚠️")
+            dist_state = {}
+        if isinstance(echo_text, BaseException):
+            self._log(f"Echo prefetch failed: {echo_text}", emoji="⚠️")
+            echo_text = ""
+
+        # 2b. Agent context from parallel results
         agent_context = {
             "despair_severity": despair_pre.get("severity", 0),
             "fp_mode": despair_pre.get("invoke_fp", False),
         }
 
-        # 2b. Distribution state coupling (CDIS Phase 1)
-        dist_state = await self._fetch_distribution_state(request.user_id)
+        # Distribution state coupling (CDIS Phase 1)
         agent_context["cii"] = dist_state.get("cii")
         agent_context["ltc"] = dist_state.get("ltc")
         agent_context["convexity_at_risk"] = (
@@ -377,7 +407,7 @@ class VexyKernel:
         # 4. Get tier prompt
         tier_prompt = self._get_tier_prompt(request.tier)
 
-        # 5. Build system prompt
+        # 5. Build system prompt (echo pre-fetched by gather)
         system_prompt = self._assemble_system_prompt(
             request=request,
             base_kernel=base_kernel,
@@ -385,6 +415,7 @@ class VexyKernel:
             tier_prompt=tier_prompt,
             agent_selection=agent_selection,
             despair_pre=despair_pre,
+            echo_text=echo_text,
         )
 
         # 6. Build user prompt
@@ -497,13 +528,18 @@ class VexyKernel:
                         rv_result.hard_violations
                     )
 
-                    # Regenerate with constraints (1 attempt)
+                    # Regenerate with constraints (1 attempt, capped timeout)
                     try:
+                        regen_ai_config = AIClientConfig(
+                            timeout=min(30.0, ai_config.timeout),
+                            temperature=ai_config.temperature,
+                            max_tokens=ai_config.max_tokens,
+                        )
                         regen_response = await call_ai(
                             system_prompt=system_prompt + "\n\n" + regen_instruction,
                             user_message=user_prompt,
                             config=self.config,
-                            ai_config=ai_config,
+                            ai_config=regen_ai_config,
                             logger=self.logger,
                         )
                         regen_text = regen_response.text
@@ -670,6 +706,7 @@ class VexyKernel:
         tier_prompt: str,
         agent_selection: Dict[str, Any],
         despair_pre: Dict[str, Any],
+        echo_text: str = "",
     ) -> str:
         """
         Assemble the full system prompt from layered components.
@@ -713,8 +750,7 @@ class VexyKernel:
         if playbook_text:
             parts.extend(["\n\n---\n", playbook_text])
 
-        # Echo memory (tier-gated)
-        echo_text = self._get_echo_injection(request)
+        # Echo memory (tier-gated, pre-fetched by gather in reason())
         if echo_text:
             parts.extend(["\n\n---\n", echo_text])
 
@@ -882,7 +918,10 @@ class VexyKernel:
     def _get_echo_injection(self, request: ReasoningRequest) -> str:
         """Get tier-gated echo memory for injection into prompt.
 
-        Priority: Echo Redis warm snapshot → YAML file fallback (transition period).
+        Called via asyncio.to_thread() from reason(). Filesystem I/O is
+        protected by ECHO_FILESYSTEM_TIMEOUT in the caller.
+        When Echo Redis warm snapshot is ready (Phase 2), it becomes a
+        separate async prefetch in the gather — not jammed into this sync method.
         """
         from services.vexy_ai.tier_config import get_tier_config
 
@@ -891,19 +930,7 @@ class VexyKernel:
         if not tier_config.echo_enabled:
             return ""
 
-        # Try Echo Redis warm snapshot first (written by hydrator)
-        if self.echo_client and self.echo_client.available:
-            try:
-                import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # We're inside an async context — can't await directly from sync
-                    # Use the _get_echo_injection_async helper
-                    return ""  # Will be handled by cognition_layer in Phase 2
-            except Exception:
-                pass
-
-        # Fallback to YAML files (transition period)
+        # YAML filesystem fallback (transition period)
         try:
             from services.vexy_ai.intel.echo_memory import get_echo_context_for_prompt
             echo_context = get_echo_context_for_prompt(
@@ -1083,6 +1110,10 @@ class VexyKernel:
     # CDIS Phase 1 — must match copilot DIST_STATE_TIMEOUT_SECONDS.
     # Symmetric: both services succeed or both degrade to no-op.
     DIST_STATE_TIMEOUT_SECONDS = 2.5
+
+    # Filesystem I/O timeout for echo YAML reads (despair + echo injection).
+    # Protects against slow/hung filesystem blocking the pre-LLM path.
+    ECHO_FILESYSTEM_TIMEOUT = 3.0
 
     async def _fetch_distribution_state(self, user_id: int) -> dict:
         """Fetch distribution state from journal internal endpoint.
