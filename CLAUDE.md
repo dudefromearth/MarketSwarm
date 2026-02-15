@@ -416,6 +416,211 @@ At beginning of session:
 
 ---
 
+# **21. The Path (Doctrine OS)**
+
+The Path is the **antifragile cognitive operating system** that governs all of MarketSwarm.
+
+Canonical definition: *"The Path is an antifragile cognitive operating system that transforms stress into structured adaptation through sovereign reflection."*
+
+* **Location:** `/Users/ernie/path/` (whitepaper, design spec, constitution, playbooks)
+* The Path is NOT a reflection engine — it is an **anti-decay enforcement system**
+* The seven-question filter is enforcement, not philosophy
+* Echo is **structured forgetting** (entropy metabolism), not retention
+* Convex-oriented Playbooks are apps running on The Path, giving it domain context
+* Everything in MarketSwarm is an extension of The Path
+
+**Hierarchy:** The Path governs → FOTW guides → Vexy operationalizes both.
+
+---
+
+# **22. FOTW Product Identity & Mission**
+
+Fly on the Wall (FOTW) is the trader-facing product built on MarketSwarm.
+
+**Core identity:** Doctrine-aware, NOT doctrine-enforcing. Guides traders toward structural maturity under uncertainty.
+
+**Mission:** *"You are here to become the best loser possible."*
+
+**Real KPIs:** Loss quality, routine adherence, discipline improvement, convexity integrity, structural maturity. Profit is second-order.
+
+**Anti-Addiction Rules:**
+
+* No signal-of-the-day
+* No gamification, streaks, or leaderboards
+* No urgency mechanics
+* No prescriptive trade commands
+* Sovereignty preserved always
+
+**Three Surfaces:**
+
+1. **Edge Lab** — retrospective distribution measurement
+2. **AOL** — governance and structural integrity (observational only)
+3. **Alerts** — forward-facing discipline enforcement (Tier 1: structural/algo, Tier 2: behavioral/prompt, Tier 3: governance/AOL)
+
+---
+
+# **23. Distribution Core v1.0.0**
+
+**Location:** `services/journal/intel/distribution_core/`
+
+Single authoritative source for ALL return distribution metrics. **No other module may independently compute skew, LTC, CII, or any distribution metric.** All consumers (Edge Lab, SEE, ALE, AOL) must import from here.
+
+## **Module Structure**
+
+| File | Responsibility |
+|------|---------------|
+| `models.py` | Frozen enums, TradeRecord, DrawdownProfile, all data contracts |
+| `metric_engine.py` | Skew, kurtosis, LTC, ROCPR, profit factor, tail contribution/ratio, strategy mix |
+| `regime_engine.py` | Fixed VIX threshold classification (4 structural regimes) |
+| `window_engine.py` | 7/30/90/180D rolling windows, MIN_SAMPLE=10 |
+| `normalization_engine.py` | Frozen normalization bounds, CII computation |
+| `drawdown_engine.py` | UCSP foundation: depth/duration/recovery, peak equity series |
+| `versioning.py` | Semver tagging (1.0.0), compatibility checks |
+| `__init__.py` | Public API entry points |
+
+## **Public API**
+
+```python
+from distribution_core import compute_distribution_metrics, compute_regime_segmented_metrics, compute_strategy_mix
+```
+
+## **CII v1.0.0 Formula (Frozen)**
+
+```
+CII = (0.35 × normalized_skew)
+    + (0.30 × normalized_LTC)
+    + (0.20 × normalized_ROCPR)
+    - (0.15 × normalized_drawdown_volatility)
+```
+
+* ALL components pass through `normalization_engine` — no mixing raw + normalized
+* Result clamped to [0, 1]
+* CII must **NEVER** include Sharpe
+* < 0.5 → Convexity at risk
+* < 0.4 → Structural warning
+* < 0.3 → Convexity collapse
+* Changing weights or bounds requires major version bump
+
+## **Frozen Normalization Bounds**
+
+| Component | Raw Range | Normalized | Cap |
+|-----------|-----------|------------|-----|
+| Skew | [-1, +1] | [0, 1] | — |
+| LTC | [0, 1] | [0, 1] | clamped |
+| ROCPR | [0, cap] | [0, 1] | 2.0 |
+| Drawdown Vol | [0, cap] | [0, 1] | 1.0 |
+
+## **4 Structural Regimes (Fixed VIX Thresholds)**
+
+| Regime | VIX Range | Internal Enum |
+|--------|-----------|---------------|
+| Zombieland | VIX ≤ 17 | `ZOMBIELAND` |
+| Goldilocks 1 | 17 < VIX ≤ 24 | `GOLDILOCKS_1` |
+| Goldilocks 2 | 24 < VIX ≤ 32 | `GOLDILOCKS_2` |
+| Chaos | VIX > 32 | `CHAOS` |
+
+* No percentiles. No rolling history. Pure deterministic.
+* Regime assigned ONCE at trade entry, never retroactive.
+* UI aggregates Goldilocks 1+2 into single "Goldilocks" for display.
+
+## **3D Convexity Model**
+
+Every trade maps to a coordinate: **(T, P, Γ)**
+
+* **T** = `SessionBucket` (Morning, Afternoon, Closing) — time axis
+* **P** = `PriceZone` (Below/Inside/Above Convex Band) — price axis
+* **Γ** = `RegimeBucket` (Zombieland/Goldilocks 1&2/Chaos) — gamma/regime axis
+
+Phase 0: Coordinates captured at entry. Phase 1+: Full 3D slicing.
+
+## **Strategy Categories (Frozen Enum)**
+
+* `CONVEX_EXPANSION` — OTM flies, gamma scalps, convex stacks
+* `EVENT_COMPRESSION` — Pre-event iron flies, event condors
+* `PREMIUM_COLLECTION` — Short straddles, iron condors, ratio spreads
+
+## **Base Unit**
+
+R-multiple: `R = pnl_realized / risk_unit`. Never raw PnL. `risk_unit > 0` enforced. R-multiple consistency validated on TradeRecord creation.
+
+## **Design Constraints**
+
+* Pure computation. No HTTP, no Redis, no UI, no IO.
+* Deterministic. Same inputs → identical outputs. Injectable `reference_time` for replay.
+* Minimum sample: ≥10 trades per window, else metrics return None.
+* Empty inputs return zero-filled safe structures, never raise.
+* Performance: <200ms for 10K trades (verified by benchmark test).
+* 52 unit tests in `distribution_core/tests/`.
+
+---
+
+# **24. CDIS (Continuous Distribution Intelligence System)**
+
+The closed loop that transforms FOTW from a strategy platform into a Distribution Engineering Lab.
+
+```
+Trade → ALE → Echo → Edge Lab → SEE → AOL → Trader adapts → next trade
+```
+
+**No loop bypass allowed.** Every organ must participate.
+
+**Four Organs:**
+
+1. **ALE** (Alert Lifecycle Engine) — execution discipline, state machine
+2. **Edge Lab** — measurement engine, calls Distribution Core
+3. **SEE** (Strategy Evolution Engine) — advisory simulation
+4. **AOL** — governance, tone, structural integrity (observational only)
+
+**Distribution State Vector** (shared nervous system):
+
+```
+{ skew, ltc, cii, drawdown_profile, regime_sensitivity, strategy_mix_exposure }
+```
+
+---
+
+# **25. Quantitative Doctrine**
+
+## **The North Star**
+
+Engineer **positively skewed return distributions**. Small controlled left tails, rare meaningful right-tail expansions. This is not about winning more — it's about engineering the shape of outcomes.
+
+## **Metric Hierarchy (Non-Negotiable Order)**
+
+1. **Survival** (Tier 1) — Max drawdown, LTC, halt compliance. If this fails, nothing else matters.
+2. **Distribution Shape** (Tier 2) — Skew, tail contribution, tail ratio, kurtosis. The heart.
+3. **Risk Efficiency** (Tier 3) — ROCPR, profit factor, Sortino. Secondary to skew. Always.
+4. **Smoothness** (Tier 4) — Sharpe. Never displayed alone. Must pair with skew + drawdown.
+
+Win rate **never appears** as a primary metric.
+
+## **Guardrail Rules**
+
+1. Sharpe ↑ + Skew ↓ → "Smoothness increasing at cost of convexity"
+2. ROCPR ↑ + MaxDD ↑ → "Risk concentration rising"
+3. Win Rate ↑ + AvgW/AvgL ↓ → "Fragile win-rate drift"
+4. Tail Contribution collapses → "Right tail suppression"
+5. LTC drops → Immediate Tier 1 warning
+
+## **Mandatory Visualization Pairings**
+
+No single metric panels allowed. Always paired:
+
+* Sharpe + Skew
+* AvgW/AvgL + Tail Contribution
+* Drawdown + Regime State
+* ROCPR + Max Risk Deployed
+
+## **UCSP (Universal Compounding Stability Protocol)**
+
+Drawdown elasticity > 1 when scaling position size — drawdowns amplify superlinearly. Distribution Core's DrawdownEngine exposes primitives (depth series, peak equity, recovery metrics) for governance systems to detect instability before it compounds.
+
+## **Survival First Hard Stop**
+
+If Tier 1 breaches threshold: CII is muted, tail metrics contextual only. System prompts: *"Stabilize survival before pursuing expansion."*
+
+---
+
 # **26. Formal System Architecture Diagram**
 
 ## **26.1 High-Level Topology**
