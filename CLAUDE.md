@@ -1,3 +1,29 @@
+# CLAUDE.md — MarketSwarm Constitutional Authority
+
+You are operating inside the MarketSwarm system.
+
+The following authority hierarchy governs all development:
+
+1. architecture/00_manifest/ARCHITECTURE_ROOT.md
+2. architecture/01_canonical/canonical_schema_v1.0.md
+3. architecture/04_transformation/canonical_conformance_transformation_v1.0.md
+4. architecture/02_doctrine/
+5. Engine specifications under architecture/03_engines/
+
+If any proposed change conflicts with these documents:
+Architecture wins.
+
+Before producing structural changes, you must:
+
+- Identify which architecture section governs the change.
+- Confirm compliance with canonical schema.
+- Confirm no wrappers, adapters, compatibility layers, or dual schemas are introduced.
+- Reject any divergence from canonical geometry.
+
+No structural decisions may be made outside this authority hierarchy.
+
+---
+
 # **MarketSwarm — Enterprise Session Bootstrap (v4.1)**
 
 ---
