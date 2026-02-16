@@ -240,39 +240,61 @@ export function authMiddleware(options = {}) {
 }
 
 /**
+ * Derive cookie domain from request Host header.
+ * For known production domains (e.g. flyonthewall.io, www.flyonthewall.io),
+ * returns ".flyonthewall.io" so the cookie covers apex + www.
+ * For dev (localhost, *.local, IP addresses), returns null (use default).
+ */
+function getCookieDomain(req) {
+  const host = (req.hostname || req.headers?.host || "").split(":")[0].toLowerCase();
+  if (!host || host === "localhost" || host.endsWith(".local") || /^\d+\.\d+\.\d+\.\d+$/.test(host)) {
+    return null;
+  }
+  // Extract registrable domain (last two segments)
+  const parts = host.split(".");
+  if (parts.length >= 2) {
+    return "." + parts.slice(-2).join(".");
+  }
+  return null;
+}
+
+/**
  * Set session cookie on response
  */
 export function setSessionCookie(res, sessionJwt, req) {
   const env = getAuthConfig();
   const isHttps = isHttpsRequest(req);
   const secureCookie = isHttps;
+  const cookieDomain = getCookieDomain(req);
 
-  res.cookie(SESSION_COOKIE, sessionJwt, {
+  const opts = {
     httpOnly: true,
     secure: secureCookie,
     sameSite: "lax",
     path: "/",
     maxAge: env.APP_SESSION_TTL_SECONDS * 1000,
-  });
+  };
+  if (cookieDomain) opts.domain = cookieDomain;
+
+  res.cookie(SESSION_COOKIE, sessionJwt, opts);
 }
 
 /**
  * Clear session cookie on response
  */
-export function clearSessionCookie(res) {
-  res.clearCookie(SESSION_COOKIE, {
+export function clearSessionCookie(res, req) {
+  const cookieDomain = req ? getCookieDomain(req) : null;
+
+  const baseOpts = {
     httpOnly: true,
-    secure: false,
     sameSite: "lax",
     path: "/",
-  });
+  };
+  if (cookieDomain) baseOpts.domain = cookieDomain;
+
+  res.clearCookie(SESSION_COOKIE, { ...baseOpts, secure: false });
   // Also clear with secure=true in case it was set over HTTPS
-  res.clearCookie(SESSION_COOKIE, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    path: "/",
-  });
+  res.clearCookie(SESSION_COOKIE, { ...baseOpts, secure: true });
 }
 
 export { SESSION_COOKIE };

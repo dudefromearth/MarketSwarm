@@ -391,7 +391,7 @@ router.get("/me", (req, res) => {
     const userTier = tierFromRoles(roles, user.wp?.subscription_tier);
     const isAdmin = roles.some(r => ["administrator", "admin"].includes(r.toLowerCase()));
     if (!isAdmin && user.wp?.issuer !== "0-dte" && gatesConfig.allowed_tiers[userTier] === false) {
-      clearSessionCookie(res);
+      clearSessionCookie(res, req);
       return res.status(403).json({
         error: "tier_blocked",
         tier: userTier,
@@ -449,7 +449,7 @@ router.get("/sso", async (req, res) => {
           console.log(`[auth] Tier rejected: ${wpUser.email} is ${userTier}, not allowed on this machine`);
 
           // Clear any existing session cookie so they get a fresh login next time
-          clearSessionCookie(res);
+          clearSessionCookie(res, req);
 
           // Configurable redirect URL for the correct dashboard
           const mvpDashboardUrl = process.env.TIER_REDIRECT_URL || "https://mvp.flyonthewall.io";
@@ -566,7 +566,7 @@ router.get("/logout", (req, res) => {
     console.log(`[auth] Logout: ${user.wp?.email || user.wp?.id || "unknown"}`);
   }
 
-  clearSessionCookie(res);
+  clearSessionCookie(res, req);
   return res.redirect(302, next);
 });
 
