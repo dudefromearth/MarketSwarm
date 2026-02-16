@@ -286,6 +286,9 @@ class JournalDBv2:
             if current_version < 27:
                 self._migrate_to_v27(conn)
 
+            if current_version < 28:
+                self._migrate_to_v28(conn)
+
             conn.commit()
         finally:
             conn.close()
@@ -2409,6 +2412,38 @@ class JournalDBv2:
         finally:
             cursor.close()
 
+    def _migrate_to_v28(self, conn):
+        """Migrate to v28: Trade expiration lifecycle (open → expired → closed)."""
+        cursor = conn.cursor()
+        try:
+            # DATETIME (UTC), not VARCHAR — native MySQL comparison
+            cursor.execute("""
+                ALTER TABLE trades ADD COLUMN expiration_date DATETIME DEFAULT NULL
+            """)
+            cursor.execute("""
+                ALTER TABLE trades ADD COLUMN auto_close_reason VARCHAR(50) DEFAULT NULL
+            """)
+            cursor.execute("""
+                ALTER TABLE trades ADD INDEX idx_trades_expiration (status, expiration_date)
+            """)
+
+            # Backfill expiration_date from entry_time + dte
+            # TIMESTAMP(date, time) combines date + time safely
+            # 21:15 UTC = 4:15 PM EST (conservative: uses EST year-round
+            # to avoid premature expiration during DST transitions)
+            cursor.execute("""
+                UPDATE trades
+                SET expiration_date = TIMESTAMP(
+                    DATE_ADD(DATE(entry_time), INTERVAL dte DAY),
+                    '21:15:00'
+                )
+                WHERE dte IS NOT NULL AND expiration_date IS NULL
+            """)
+
+            self._set_schema_version(conn, 28)
+        finally:
+            cursor.close()
+
     # ==================== Algo Alert CRUD ====================
 
     def create_algo_alert(self, alert_id: str, user_id: int, name: str, mode: str,
@@ -3171,6 +3206,13 @@ class JournalDBv2:
 
     def create_trade(self, trade: Trade) -> Trade:
         """Create a new trade and auto-create OPEN event."""
+        # Compute expiration_date from dte if not already set
+        if trade.dte is not None and not trade.expiration_date:
+            entry_date = datetime.fromisoformat(trade.entry_time).date()
+            exp_date = entry_date + timedelta(days=trade.dte)
+            # 21:15 UTC = 4:15 PM EST (conservative: avoids premature expiration during DST)
+            trade.expiration_date = datetime(exp_date.year, exp_date.month, exp_date.day, 21, 15, 0).isoformat()
+
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
@@ -3392,11 +3434,12 @@ class JournalDBv2:
         exit_price: int,
         exit_spot: Optional[float] = None,
         exit_time: Optional[str] = None,
-        notes: Optional[str] = None
+        notes: Optional[str] = None,
+        auto_close_reason: Optional[str] = None
     ) -> Optional[Trade]:
-        """Close a trade and calculate P&L."""
+        """Close a trade and calculate P&L. Single P&L path — no duplication."""
         trade = self.get_trade(trade_id)
-        if not trade or trade.status != 'open':
+        if not trade or trade.status not in ('open', 'expired'):
             return None
 
         if exit_time is None:
@@ -3426,16 +3469,18 @@ class JournalDBv2:
                 UPDATE trades SET
                     exit_time = %s, exit_price = %s, exit_spot = %s,
                     pnl = %s, r_multiple = %s, planned_risk = %s,
+                    auto_close_reason = COALESCE(%s, auto_close_reason),
                     status = 'closed', updated_at = %s
                 WHERE id = %s
             """, (exit_time, exit_price, exit_spot, pnl, r_multiple, planned_risk,
-                  datetime.utcnow().isoformat(), trade_id))
+                  auto_close_reason, datetime.utcnow().isoformat(), trade_id))
 
-            # Create CLOSE event
+            # Create event — 'auto_expired' if settling an expired trade, else 'close'
+            event_type = 'auto_expired' if auto_close_reason else 'close'
             event = TradeEvent(
                 id=TradeEvent.new_id(),
                 trade_id=trade_id,
-                event_type='close',
+                event_type=event_type,
                 event_time=exit_time,
                 price=exit_price,
                 spot=exit_spot,
@@ -3452,6 +3497,62 @@ class JournalDBv2:
 
             conn.commit()
             return self.get_trade(trade_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def expire_trade(self, trade_id: str) -> Optional[Trade]:
+        """Mark a trade as expired. No settlement computed. Requires manual close for P&L."""
+        trade = self.get_trade(trade_id)
+        if not trade or trade.status != 'open':
+            return None
+
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                UPDATE trades SET
+                    status = 'expired',
+                    auto_close_reason = 'expiration',
+                    updated_at = %s
+                WHERE id = %s
+            """, (datetime.utcnow().isoformat(), trade_id))
+
+            # Create expiration event for transparency
+            event = TradeEvent(
+                id=TradeEvent.new_id(),
+                trade_id=trade_id,
+                event_type='auto_expired',
+                event_time=trade.expiration_date or datetime.utcnow().isoformat(),
+                notes='Trade auto-expired at expiration. Settlement required.'
+            )
+            data = event.to_dict()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"INSERT INTO trade_events ({columns}) VALUES ({placeholders})",
+                list(data.values())
+            )
+
+            conn.commit()
+            return self.get_trade(trade_id)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_expired_open_trades(self) -> List[Trade]:
+        """Get all open trades past their expiration date."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT * FROM trades
+                WHERE status = 'open'
+                AND expiration_date IS NOT NULL
+                AND expiration_date < UTC_TIMESTAMP()
+            """)
+            rows = cursor.fetchall()
+            return [Trade.from_dict(self._row_to_dict(cursor, row)) for row in rows]
         finally:
             cursor.close()
             conn.close()

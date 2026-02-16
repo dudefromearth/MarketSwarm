@@ -1088,6 +1088,80 @@
 [data-theme="light"] .som-rating-yellow { background: #ca8a04; box-shadow: none; }
 [data-theme="light"] .som-rating-gray { background: #9ca3af; }
 
+/* ========== Open Loops ========== */
+.routine-loops-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.routine-loop-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--routine-bg-subtle);
+}
+
+.routine-loop-item-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.routine-loop-icon {
+  font-size: 14px;
+  width: 20px;
+  text-align: center;
+}
+
+.routine-loop-label {
+  font-size: 13px;
+  color: var(--routine-text-muted);
+}
+
+.routine-loop-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--routine-text);
+  min-width: 20px;
+  text-align: right;
+}
+
+.routine-loop-empty {
+  font-size: 13px;
+  color: var(--routine-text-dim);
+  text-align: center;
+  padding: 12px 0;
+}
+
+.routine-loop-warning .routine-loop-label {
+  color: #e8a830;
+}
+
+.routine-loop-warning .routine-loop-count {
+  color: #e8a830;
+}
+
+.routine-loop-urgent .routine-loop-label {
+  color: #e85050;
+}
+
+.routine-loop-urgent .routine-loop-count {
+  color: #e85050;
+}
+
+[data-theme="light"] .routine-loop-warning .routine-loop-label,
+[data-theme="light"] .routine-loop-warning .routine-loop-count {
+  color: #b07010;
+}
+
+[data-theme="light"] .routine-loop-urgent .routine-loop-label,
+[data-theme="light"] .routine-loop-urgent .routine-loop-count {
+  color: #c03030;
+}
+
 /* ========== Legacy styles (for backwards compatibility) ========== */
 .routine-spacer {
   height: 32px;

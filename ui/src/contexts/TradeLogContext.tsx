@@ -62,6 +62,7 @@ export interface TradeLogContextValue {
   trades: LegacyTrade[];
   openTrades: LegacyTrade[];
   closedTrades: LegacyTrade[];
+  expiredTrades: LegacyTrade[];
 
   // Position Operations (new API)
   refreshPositions: () => Promise<void>;
@@ -139,6 +140,11 @@ export function TradeLogProvider({ children }: TradeLogProviderProps) {
 
   const closedTrades = useMemo(
     () => trades.filter(t => t.status === 'closed'),
+    [trades]
+  );
+
+  const expiredTrades = useMemo(
+    () => trades.filter(t => t.status === 'expired'),
     [trades]
   );
 
@@ -467,6 +473,7 @@ export function TradeLogProvider({ children }: TradeLogProviderProps) {
     trades,
     openTrades,
     closedTrades,
+    expiredTrades,
 
     // Position Operations
     refreshPositions,

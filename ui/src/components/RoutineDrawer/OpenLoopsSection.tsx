@@ -33,6 +33,26 @@ export default function OpenLoopsSection({ data }: OpenLoopsSectionProps) {
         </div>
       )}
 
+      {data.expiringSoon.length > 0 && (
+        <div className="routine-loop-item routine-loop-warning">
+          <div className="routine-loop-item-left">
+            <span className="routine-loop-icon">&#9888;</span>
+            <span className="routine-loop-label">{data.expiringSoon.length === 1 ? '1 trade expires' : `${data.expiringSoon.length} trades expire`} within 24h</span>
+          </div>
+          <span className="routine-loop-count">{data.expiringSoon.length}</span>
+        </div>
+      )}
+
+      {data.needsSettlement.length > 0 && (
+        <div className="routine-loop-item routine-loop-urgent">
+          <div className="routine-loop-item-left">
+            <span className="routine-loop-icon">&#10071;</span>
+            <span className="routine-loop-label">Needs Settlement</span>
+          </div>
+          <span className="routine-loop-count">{data.needsSettlement.length}</span>
+        </div>
+      )}
+
       {data.unjournaled.length > 0 && (
         <div className="routine-loop-item">
           <div className="routine-loop-item-left">

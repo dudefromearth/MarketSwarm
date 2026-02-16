@@ -4609,6 +4609,21 @@ class JournalOrchestrator:
             self.logger.error(f"trigger_afi_calculation error: {e}")
             return self._error_response(str(e), 500, request)
 
+    async def trigger_expire_trades(self, request: web.Request) -> web.Response:
+        """POST /api/internal/expire-trades - Trigger expiration sweep (internal)."""
+        try:
+            count = await self._run_expiration_sweep()
+            self.logger.info(f"Expire trades triggered: {count} trades expired")
+
+            return self._json_response({
+                'success': True,
+                'message': f'Expired {count} trades',
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"trigger_expire_trades error: {e}")
+            return self._error_response(str(e), 500, request)
+
     async def _afi_scheduler(self):
         """Background task: recalculate AFI scores every hour."""
         await asyncio.sleep(15)
@@ -4626,6 +4641,42 @@ class JournalOrchestrator:
                 self.logger.info(f"AFI scheduler: {count} users scored")
             except Exception as e:
                 self.logger.error(f"AFI scheduler error: {e}")
+
+    async def _expiration_scheduler(self):
+        """Background task: expire past-due trades every hour.
+
+        Transitions open trades past expiration_date to status='expired'.
+        No settlement computed — requires manual close for P&L.
+        Expiration timestamp is 21:15 UTC year-round (4:15 PM EST,
+        conservative to avoid premature expiration during DST transitions).
+        """
+        await asyncio.sleep(30)  # startup delay
+        # Run initial sweep
+        try:
+            count = await self._run_expiration_sweep()
+            if count > 0:
+                self.logger.info(f"Expiration sweeper initial: marked {count} trades as expired")
+        except Exception as e:
+            self.logger.error(f"Expiration sweeper initial error: {e}")
+
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                count = await self._run_expiration_sweep()
+                if count > 0:
+                    self.logger.info(f"Expiration sweeper: marked {count} trades as expired")
+            except Exception as e:
+                self.logger.error(f"Expiration sweeper error: {e}")
+
+    async def _run_expiration_sweep(self) -> int:
+        """Sweep expired open trades. Returns count expired."""
+        expired = self.db.get_expired_open_trades()
+        count = 0
+        for trade in expired:
+            result = self.db.expire_trade(trade.id)
+            if result:
+                count += 1
+        return count
 
     # ==================== Risk Graph Service ====================
 
@@ -6690,6 +6741,7 @@ class JournalOrchestrator:
         app.router.add_get('/api/leaderboard', self.get_leaderboard)
         app.router.add_get('/api/leaderboard/me', self.get_my_leaderboard)
         app.router.add_post('/api/internal/leaderboard/calculate', self.trigger_leaderboard_calculation)
+        app.router.add_post('/api/internal/expire-trades', self.trigger_expire_trades)
 
         # =================================================================
         # Risk Graph Service API
@@ -7501,6 +7553,12 @@ async def run(config: Dict[str, Any], logger) -> None:
         name="edge-lab-scheduler",
     )
 
+    # Start trade expiration sweeper as background task
+    expiry_task = asyncio.create_task(
+        orchestrator._expiration_scheduler(),
+        name="expiration-scheduler",
+    )
+
     try:
         # Run forever until cancelled
         while True:
@@ -7509,6 +7567,7 @@ async def run(config: Dict[str, Any], logger) -> None:
         logger.info("Orchestrator cancelled", emoji="🛑")
         afi_task.cancel()
         edge_lab_task.cancel()
+        expiry_task.cancel()
     finally:
         logger.info("Shutting down API server", emoji="🛑")
         await runner.cleanup()

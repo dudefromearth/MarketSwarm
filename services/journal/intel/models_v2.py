@@ -142,6 +142,10 @@ class Trade:
     entry_mode: str = "instant"  # instant/freeform/simulated
     immutable_at: Optional[str] = None  # Timestamp when sim trade became locked
 
+    # Expiration lifecycle
+    expiration_date: Optional[str] = None   # DATETIME in DB, ISO string in Python. UTC.
+    auto_close_reason: Optional[str] = None # 'expiration' when auto-expired by sweeper
+
     # Metadata
     notes: Optional[str] = None
     tags: List[str] = field(default_factory=list)
