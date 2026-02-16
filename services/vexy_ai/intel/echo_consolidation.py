@@ -50,6 +50,7 @@ class EchoConsolidator:
             "readiness_stored": False,
             "compression_ratio": 0.0,
             "flagged": False,
+            "keys_flushed": 0,
             "errors": [],
         }
 
@@ -103,7 +104,15 @@ class EchoConsolidator:
         except Exception as e:
             result["errors"].append(f"readiness: {e}")
 
-        # 4. Compute compression ratio
+        # 4. Flush processed hot-tier keys
+        if not result["errors"]:
+            try:
+                flushed = await self._echo.flush_user_hot_data(user_id, today)
+                result["keys_flushed"] = flushed
+            except Exception as e:
+                result["errors"].append(f"flush: {e}")
+
+        # 5. Compute compression ratio
         if total_warm_items > 0 and total_hot_items > 0:
             result["compression_ratio"] = round(total_hot_items / total_warm_items, 1)
             if result["compression_ratio"] < 4.0:

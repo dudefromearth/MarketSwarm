@@ -12,6 +12,7 @@ import asyncio
 import os
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 # Ensure MarketSwarm root is on sys.path
@@ -134,6 +135,36 @@ async def main():
 
     routine_task = asyncio.create_task(routine_data_loop())
 
+    # Phase 8b: Start daily echo consolidation loop (17:30 ET)
+    async def consolidation_loop():
+        """Run echo consolidation daily at 17:30 ET (post market close + buffer)."""
+        import pytz
+        ET_TZ = pytz.timezone("America/New_York")
+        ran_today = None  # Track which date we last ran
+
+        await asyncio.sleep(30)  # Let services settle
+        while True:
+            try:
+                now = datetime.now(ET_TZ)
+                today = now.strftime("%Y-%m-%d")
+
+                if now.hour == 17 and now.minute >= 30 and ran_today != today:
+                    logger.info("Starting daily echo consolidation...", emoji="🔄")
+                    from services.vexy_ai.intel.scheduled_jobs import run_echo_consolidation
+                    result = await run_echo_consolidation(logger=logger)
+                    logger.info(
+                        f"Consolidation complete: {result.get('users_consolidated')}/{result.get('users_processed')} users, "
+                        f"{result.get('total_conversations')} convs, {result.get('total_activities')} acts, "
+                        f"{result.get('duration_ms')}ms",
+                        emoji="✅",
+                    )
+                    ran_today = today
+            except Exception as e:
+                logger.warning(f"Consolidation loop error: {e}")
+            await asyncio.sleep(60)  # Check every minute
+
+    consolidation_task = asyncio.create_task(consolidation_loop())
+
     # Phase 9: Run HTTP server
     logger.ok(f"Hydrator ready on port {http_port}", emoji="🌿")
 
@@ -152,6 +183,7 @@ async def main():
     finally:
         await presence.stop()
         routine_task.cancel()
+        consolidation_task.cancel()
         hb_stop.set()
         logger.info("Vexy Hydrator shutdown complete", emoji="✓")
 

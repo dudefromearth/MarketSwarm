@@ -204,6 +204,30 @@ class EchoRedisClient:
             self._logger.warning(f"Echo read_readiness failed: {e}")
             return None
 
+    # ── Hot-Tier Flush (post-consolidation cleanup) ──────────────
+
+    async def flush_user_hot_data(self, user_id: int, date_str: str) -> int:
+        """Delete processed hot-tier keys after consolidation.
+
+        Returns number of keys deleted.
+        """
+        if not self._redis:
+            return 0
+        keys_to_delete = [
+            f"echo:hot:{user_id}:conversations",
+            f"echo:hot:{user_id}:session",
+            f"echo:hot:{user_id}:micro_signals",
+            f"echo:activity:{user_id}:{date_str}",
+            f"echo:readiness:{user_id}:{date_str}",
+        ]
+        deleted = 0
+        for key in keys_to_delete:
+            try:
+                deleted += await self._redis.delete(key)
+            except Exception:
+                pass
+        return deleted
+
     # ── Warm Snapshot (read-only — written by hydrator) ──────────
 
     async def read_warm_snapshot(self, user_id: int) -> Optional[Dict[str, Any]]:

@@ -8815,7 +8815,7 @@ class JournalDBv2:
         cursor = conn.cursor()
         try:
             cursor.execute(
-                "SELECT * FROM routine_data_daily WHERE routine_date = %s",
+                "SELECT * FROM routine_data_daily WHERE snapshot_date = %s",
                 (date_str,)
             )
             row = cursor.fetchone()
