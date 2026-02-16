@@ -1,5 +1,11 @@
 # CLAUDE.md — MarketSwarm Constitutional Authority
 
+# Active Skills
+
+- swarm_core
+
+All Claude instances operating in MarketSwarm must load and obey the swarm_core skill before performing any task.
+
 You are operating inside the MarketSwarm system.
 
 The following authority hierarchy governs all development:
