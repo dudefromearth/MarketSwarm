@@ -3407,9 +3407,16 @@ class JournalDBv2:
         # P&L = (exit - entry) * multiplier * quantity
         multiplier = self._get_multiplier(trade.symbol)
         pnl = (exit_price - trade.entry_price) * multiplier * trade.quantity
+
+        # Compute planned_risk fallback if not set at entry
+        planned_risk = trade.planned_risk
+        if not planned_risk or planned_risk <= 0:
+            if trade.entry_price and trade.entry_price > 0:
+                planned_risk = trade.entry_price * multiplier * trade.quantity
+
         r_multiple = None
-        if trade.planned_risk and trade.planned_risk > 0:
-            r_multiple = pnl / trade.planned_risk
+        if planned_risk and planned_risk > 0:
+            r_multiple = pnl / planned_risk
 
         conn = self._get_conn()
         cursor = conn.cursor()
@@ -3418,9 +3425,10 @@ class JournalDBv2:
             cursor.execute("""
                 UPDATE trades SET
                     exit_time = %s, exit_price = %s, exit_spot = %s,
-                    pnl = %s, r_multiple = %s, status = 'closed', updated_at = %s
+                    pnl = %s, r_multiple = %s, planned_risk = %s,
+                    status = 'closed', updated_at = %s
                 WHERE id = %s
-            """, (exit_time, exit_price, exit_spot, pnl, r_multiple,
+            """, (exit_time, exit_price, exit_spot, pnl, r_multiple, planned_risk,
                   datetime.utcnow().isoformat(), trade_id))
 
             # Create CLOSE event
