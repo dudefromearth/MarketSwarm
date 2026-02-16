@@ -1,10 +1,7 @@
 // src/components/LeaderboardView.tsx
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import type {
-  LeaderboardPeriod,
-  LeaderboardScore,
-  LeaderboardResponse,
-} from '../types/leaderboard';
+import type { AFIScore, AFILeaderboardResponse } from '../types/afi';
+import { getAFITier } from '../types/afi';
 import LeaderboardSettingsModal from './LeaderboardSettingsModal';
 
 const JOURNAL_API = '';
@@ -14,17 +11,29 @@ interface LeaderboardViewProps {
   onClose: () => void;
 }
 
+const TREND_ARROWS: Record<string, { symbol: string; className: string }> = {
+  improving: { symbol: '\u2191', className: 'trend-improving' },
+  stable:    { symbol: '\u2194', className: 'trend-stable' },
+  decaying:  { symbol: '\u2193', className: 'trend-decaying' },
+};
+
+const COMPONENT_LABELS: Record<string, string> = {
+  r_slope: 'R-Slope',
+  sharpe: 'Sharpe',
+  ltc: 'LTC',
+  dd_containment: 'DD',
+};
+
 export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
-  const [period, setPeriod] = useState<LeaderboardPeriod>('weekly');
-  const [rankings, setRankings] = useState<LeaderboardScore[]>([]);
-  const [currentUserRank, setCurrentUserRank] = useState<LeaderboardScore | null>(null);
+  const [rankings, setRankings] = useState<AFIScore[]>([]);
+  const [currentUserRank, setCurrentUserRank] = useState<AFIScore | null>(null);
   const [totalParticipants, setTotalParticipants] = useState(0);
-  const [periodKey, setPeriodKey] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [hoveredUserId, setHoveredUserId] = useState<number | null>(null);
 
   const filteredRankings = useMemo(() => {
     if (!searchQuery.trim()) return rankings;
@@ -40,13 +49,13 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
     currentPage * PAGE_SIZE
   );
 
-  const fetchLeaderboard = useCallback(async (selectedPeriod: LeaderboardPeriod) => {
+  const fetchLeaderboard = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
       const res = await fetch(
-        `${JOURNAL_API}/api/leaderboard?period=${selectedPeriod}&limit=200`,
+        `${JOURNAL_API}/api/leaderboard?limit=200`,
         { credentials: 'include' }
       );
 
@@ -54,12 +63,11 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
         throw new Error('Failed to fetch leaderboard');
       }
 
-      const data: LeaderboardResponse = await res.json();
+      const data: AFILeaderboardResponse = await res.json();
       if (data.success) {
         setRankings(data.data.rankings);
         setCurrentUserRank(data.data.currentUserRank);
         setTotalParticipants(data.data.totalParticipants);
-        setPeriodKey(data.data.periodKey);
       }
     } catch (err) {
       console.error('Failed to fetch leaderboard:', err);
@@ -70,47 +78,83 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
   }, []);
 
   useEffect(() => {
-    fetchLeaderboard(period);
-  }, [period, fetchLeaderboard]);
+    fetchLeaderboard();
+  }, [fetchLeaderboard]);
 
-  // Reset page when period or search changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [period, searchQuery]);
+  }, [searchQuery]);
 
   const handleRefresh = () => {
-    fetchLeaderboard(period);
-  };
-
-  const formatPnl = (pnl: number): string => {
-    const dollars = pnl / 100;
-    const sign = dollars >= 0 ? '+' : '';
-    return `${sign}$${dollars.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
-
-  const getPeriodLabel = (pt: LeaderboardPeriod, key: string): string => {
-    if (pt === 'weekly') {
-      // Parse 2026-W06 format
-      return `Week ${key.split('-W')[1]}, ${key.split('-W')[0]}`;
-    } else if (pt === 'monthly') {
-      // Parse 2026-02 format
-      const [year, month] = key.split('-');
-      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      return `${monthNames[parseInt(month) - 1]} ${year}`;
-    }
-    return 'All Time';
+    fetchLeaderboard();
   };
 
   const getRankBadge = (rank: number): string => {
-    if (rank === 1) return '🥇';
-    if (rank === 2) return '🥈';
-    if (rank === 3) return '🥉';
+    if (rank === 1) return '\uD83E\uDD47';
+    if (rank === 2) return '\uD83E\uDD48';
+    if (rank === 3) return '\uD83E\uDD49';
     return `#${rank}`;
   };
 
-  const isCurrentUser = (score: LeaderboardScore): boolean => {
+  const isCurrentUser = (score: AFIScore): boolean => {
     return currentUserRank?.user_id === score.user_id;
   };
+
+  const formatComponentTooltip = (components: AFIScore['components']): string => {
+    return Object.entries(COMPONENT_LABELS)
+      .map(([key, label]) => `${label}: ${(components[key as keyof typeof components] * 100).toFixed(0)}%`)
+      .join(' | ');
+  };
+
+  const renderAFICell = (score: AFIScore) => {
+    const tier = getAFITier(score.afi_score);
+    return (
+      <span
+        className={`afi-score-value ${tier.className}`}
+        onMouseEnter={() => setHoveredUserId(score.user_id)}
+        onMouseLeave={() => setHoveredUserId(null)}
+      >
+        {Math.round(score.afi_score)}
+        {score.is_provisional && <span className="provisional-badge">P</span>}
+        {hoveredUserId === score.user_id && (
+          <span className="afi-tooltip">
+            {formatComponentTooltip(score.components)}
+          </span>
+        )}
+      </span>
+    );
+  };
+
+  const renderTrend = (trend: string) => {
+    const t = TREND_ARROWS[trend] || TREND_ARROWS.stable;
+    return <span className={`trend-arrow ${t.className}`}>{t.symbol}</span>;
+  };
+
+  const renderRow = (score: AFIScore, isSticky = false) => (
+    <tr
+      key={score.user_id}
+      className={`${isCurrentUser(score) ? 'current-user-row' : ''} ${score.is_provisional ? 'provisional-row' : ''}`}
+    >
+      <td className="col-rank">
+        <span className="rank-badge">{getRankBadge(score.rank)}</span>
+      </td>
+      <td className="col-user">
+        <span className="user-name">
+          {isSticky ? 'You' : (score.displayName || `User #${score.user_id}`)}
+        </span>
+        {!isSticky && isCurrentUser(score) && <span className="you-badge">You</span>}
+      </td>
+      <td className="col-afi">
+        {renderAFICell(score)}
+      </td>
+      <td className="col-rb">
+        <span className="rb-value">{score.robustness.toFixed(0)}</span>
+      </td>
+      <td className="col-trend">
+        {renderTrend(score.trend)}
+      </td>
+    </tr>
+  );
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -123,7 +167,7 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
               onClick={() => setShowSettings(true)}
               title="Leaderboard Settings"
             >
-              ⚙️
+              &#9881;&#65039;
             </button>
             <button
               className="btn-icon"
@@ -131,35 +175,14 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
               disabled={loading}
               title="Refresh"
             >
-              🔄
+              &#128260;
             </button>
             <button className="modal-close" onClick={onClose}>&times;</button>
           </div>
         </div>
 
-        <div className="leaderboard-tabs">
-          <button
-            className={`tab-btn ${period === 'weekly' ? 'active' : ''}`}
-            onClick={() => setPeriod('weekly')}
-          >
-            Weekly
-          </button>
-          <button
-            className={`tab-btn ${period === 'monthly' ? 'active' : ''}`}
-            onClick={() => setPeriod('monthly')}
-          >
-            Monthly
-          </button>
-          <button
-            className={`tab-btn ${period === 'all_time' ? 'active' : ''}`}
-            onClick={() => setPeriod('all_time')}
-          >
-            All-Time
-          </button>
-        </div>
-
         <div className="period-info">
-          <span className="period-label">{getPeriodLabel(period, periodKey)}</span>
+          <span className="period-label">Antifragile Index</span>
           <span className="participant-count">{totalParticipants} participants</span>
         </div>
 
@@ -185,12 +208,12 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
             <div className="error-state">{error}</div>
           ) : rankings.length === 0 ? (
             <div className="empty-state">
-              <p>No rankings yet for this period.</p>
-              <p className="hint">Log trades, write journal entries, and use tags to earn points!</p>
+              <p>No rankings yet.</p>
+              <p className="hint">Log trades with planned risk and R-multiples to appear on the leaderboard.</p>
             </div>
           ) : filteredRankings.length === 0 ? (
             <div className="empty-state">
-              <p>No results for "{searchQuery}"</p>
+              <p>No results for &quot;{searchQuery}&quot;</p>
             </div>
           ) : (
             <>
@@ -198,97 +221,23 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
                 <thead>
                   <tr>
                     <th className="col-rank">Rank</th>
-                    <th className="col-user">User</th>
-                    <th className="col-score">Total</th>
-                    <th className="col-activity">Activity</th>
-                    <th className="col-performance">Performance</th>
-                    <th className="col-stats">Stats</th>
+                    <th className="col-user">Name</th>
+                    <th className="col-afi">AFI</th>
+                    <th className="col-rb">RB</th>
+                    <th className="col-trend">Trend</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedRankings.map((score) => (
-                    <tr
-                      key={score.user_id}
-                      className={isCurrentUser(score) ? 'current-user-row' : ''}
-                    >
-                      <td className="col-rank">
-                        <span className="rank-badge">{getRankBadge(score.rank)}</span>
-                      </td>
-                      <td className="col-user">
-                        <span className="user-name">
-                          {score.displayName || `User #${score.user_id}`}
-                        </span>
-                        {isCurrentUser(score) && <span className="you-badge">You</span>}
-                      </td>
-                      <td className="col-score">
-                        <span className="total-score">{score.total_score.toFixed(1)}</span>
-                      </td>
-                      <td className="col-activity">
-                        <div className="score-breakdown">
-                          <span className="score-value">{score.activity_score.toFixed(1)}</span>
-                          <span className="score-detail">
-                            {score.trades_logged}T / {score.journal_entries}J / {score.tags_used}🏷️
-                          </span>
-                        </div>
-                      </td>
-                      <td className="col-performance">
-                        <div className="score-breakdown">
-                          <span className="score-value">{score.performance_score.toFixed(1)}</span>
-                          <span className="score-detail">
-                            {score.win_rate.toFixed(0)}% / {score.avg_r_multiple.toFixed(2)}R
-                          </span>
-                        </div>
-                      </td>
-                      <td className="col-stats">
-                        <span className={`pnl-value ${score.total_pnl >= 0 ? 'positive' : 'negative'}`}>
-                          {formatPnl(score.total_pnl)}
-                        </span>
-                        <span className="trades-count">{score.closed_trades} closed</span>
-                      </td>
-                    </tr>
-                  ))}
+                  {paginatedRankings.map((score) => renderRow(score))}
                 </tbody>
               </table>
 
-              {/* Sticky current user row if not visible on current page */}
               {currentUserRank && !paginatedRankings.some(r => r.user_id === currentUserRank.user_id) && !searchQuery && (
                 <div className="sticky-user-row">
                   <div className="sticky-separator">...</div>
                   <table className="leaderboard-table">
                     <tbody>
-                      <tr className="current-user-row">
-                        <td className="col-rank">
-                          <span className="rank-badge">#{currentUserRank.rank}</span>
-                        </td>
-                        <td className="col-user">
-                          <span className="user-name">You</span>
-                        </td>
-                        <td className="col-score">
-                          <span className="total-score">{currentUserRank.total_score.toFixed(1)}</span>
-                        </td>
-                        <td className="col-activity">
-                          <div className="score-breakdown">
-                            <span className="score-value">{currentUserRank.activity_score.toFixed(1)}</span>
-                            <span className="score-detail">
-                              {currentUserRank.trades_logged}T / {currentUserRank.journal_entries}J / {currentUserRank.tags_used}🏷️
-                            </span>
-                          </div>
-                        </td>
-                        <td className="col-performance">
-                          <div className="score-breakdown">
-                            <span className="score-value">{currentUserRank.performance_score.toFixed(1)}</span>
-                            <span className="score-detail">
-                              {currentUserRank.win_rate.toFixed(0)}% / {currentUserRank.avg_r_multiple.toFixed(2)}R
-                            </span>
-                          </div>
-                        </td>
-                        <td className="col-stats">
-                          <span className={`pnl-value ${currentUserRank.total_pnl >= 0 ? 'positive' : 'negative'}`}>
-                            {formatPnl(currentUserRank.total_pnl)}
-                          </span>
-                          <span className="trades-count">{currentUserRank.closed_trades} closed</span>
-                        </td>
-                      </tr>
+                      {renderRow(currentUserRank, true)}
                     </tbody>
                   </table>
                 </div>
@@ -326,8 +275,8 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
             </div>
           )}
           <div className="scoring-info">
-            <span className="info-label">Scoring:</span>
-            <span className="info-item">Activity (0-50) + Performance (0-50) = Total (0-100)</span>
+            <span className="info-label">AFI:</span>
+            <span className="info-item">300-900 | Hover AFI for component breakdown</span>
             {searchQuery && (
               <span className="info-item search-count">
                 {filteredRankings.length} of {rankings.length} shown
@@ -340,7 +289,7 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
       {showSettings && (
         <LeaderboardSettingsModal
           onClose={() => setShowSettings(false)}
-          onSaved={() => fetchLeaderboard(period)}
+          onSaved={() => fetchLeaderboard()}
         />
       )}
     </div>

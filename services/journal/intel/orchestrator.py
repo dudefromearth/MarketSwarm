@@ -17,6 +17,7 @@ from openpyxl.utils import get_column_letter
 import redis.asyncio as redis
 
 from .db_v2 import JournalDBv2, VersionConflictError
+from .afi_engine import compute_afi, trim_wss_history
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, Symbol, Setting, Tag, Order,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
@@ -4478,197 +4479,85 @@ class JournalOrchestrator:
 
     # ==================== Leaderboard API ====================
 
-    def _get_period_key(self, period_type: str) -> str:
-        """Get the current period key for a period type."""
-        now = datetime.utcnow()
-        if period_type == 'weekly':
-            # ISO week format: 2026-W06
-            return now.strftime('%G-W%V')
-        elif period_type == 'monthly':
-            # Month format: 2026-02
-            return now.strftime('%Y-%m')
-        else:
-            return 'all'
-
-    def _get_period_boundaries(self, period_type: str, period_key: str) -> tuple:
-        """Get start and end dates for a period."""
-        if period_type == 'weekly':
-            # Parse ISO week: 2026-W06
-            year, week = period_key.split('-W')
-            # Get first day of ISO week (Monday)
-            first_day = datetime.strptime(f'{year}-W{week}-1', '%G-W%V-%u')
-            start = first_day.strftime('%Y-%m-%d')
-            end = (first_day + timedelta(days=7)).strftime('%Y-%m-%d')
-        elif period_type == 'monthly':
-            # Parse month: 2026-02
-            year, month = period_key.split('-')
-            start = f'{year}-{month}-01'
-            # Get first day of next month
-            if int(month) == 12:
-                end = f'{int(year)+1}-01-01'
-            else:
-                end = f'{year}-{int(month)+1:02d}-01'
-        else:
-            # All time: use a very old start date
-            start = '2000-01-01'
-            end = '2100-01-01'
-        return start, end
-
-    def _calculate_activity_score(self, trades: int, entries: int, tags: int) -> float:
-        """Calculate activity score (0-50)."""
-        # Points with caps
-        trade_pts = min(trades * 5, 100)
-        entry_pts = min(entries * 10, 70)
-        tag_pts = min(tags * 2, 30)
-
-        # Raw total capped at 200, scaled to 0-50
-        raw = min(trade_pts + entry_pts + tag_pts, 200)
-        return raw / 4.0
-
-    def _calculate_performance_score(
-        self, win_rate, avg_r, pnl, pnl_percentile: float, closed_trades: int, min_trades: int
-    ) -> float:
-        """Calculate performance score (0-50)."""
-        if closed_trades < min_trades:
-            return 0.0
-
-        # Convert to float to handle Decimal from DB
-        win_rate = float(win_rate) if win_rate else 0.0
-        avg_r = float(avg_r) if avg_r else 0.0
-
-        has_r_data = avg_r != 0.0
-
-        if has_r_data:
-            # Full scoring: win_rate(20) + r_multiple(17.5) + pnl_percentile(12.5) = 50
-            win_rate_pts = min(win_rate / 100 * 20, 20)
-            r_clamped = max(-2.0, min(3.0, avg_r))
-            r_normalized = (r_clamped + 2) / 5  # 0 to 1
-            r_pts = r_normalized * 17.5
-            pnl_pts = pnl_percentile / 100 * 12.5
-        else:
-            # No R-multiple data — redistribute to win_rate(30) + pnl_percentile(20) = 50
-            win_rate_pts = min(win_rate / 100 * 30, 30)
-            r_pts = 0.0
-            pnl_pts = pnl_percentile / 100 * 20
-
-        return win_rate_pts + r_pts + pnl_pts
-
-    def _get_min_trades_for_period(self, period_type: str) -> int:
-        """Get minimum trades required for performance score."""
-        if period_type == 'weekly':
-            return 1
-        elif period_type == 'monthly':
-            return 3
-        else:
-            return 5
-
-    async def calculate_leaderboard(self, period_type: str) -> int:
-        """Calculate leaderboard scores for all users in a period. Returns count of users scored."""
-        period_key = self._get_period_key(period_type)
-        start_date, end_date = self._get_period_boundaries(period_type, period_key)
-        min_trades = self._get_min_trades_for_period(period_type)
-
-        # Get all users with activity
-        user_ids = self.db.get_all_user_ids_with_activity(start_date, end_date)
-
-        # Collect all P&L values for percentile calculation
-        all_pnl = []
-        user_data = []
+    async def calculate_afi_scores(self) -> int:
+        """Calculate AFI scores for all eligible users. Returns count of users scored."""
+        user_ids = self.db.get_all_afi_eligible_user_ids()
+        count = 0
 
         for user_id in user_ids:
-            activity = self.db.get_user_activity_metrics(user_id, start_date, end_date)
-            performance = self.db.get_user_performance_metrics(user_id, start_date, end_date)
+            try:
+                # Load all closed trades for this user
+                trades = self.db.get_all_closed_trades_for_user(user_id)
+                if not trades:
+                    continue
 
-            user_data.append({
-                'user_id': user_id,
-                'activity': activity,
-                'performance': performance,
-            })
-            all_pnl.append(performance['total_pnl'])
+                # Load prior state for RB dampening
+                prior_record = self.db.get_afi_score(user_id)
+                prior_afi = float(prior_record['afi_score']) if prior_record else None
 
-        # Calculate P&L percentiles
-        sorted_pnl = sorted(all_pnl)
+                # Load WSS history for trend detection
+                wss_history = []
+                if prior_record and prior_record.get('wss_history'):
+                    try:
+                        raw = prior_record['wss_history']
+                        wss_history = json.loads(raw) if isinstance(raw, str) else raw
+                    except (json.JSONDecodeError, TypeError):
+                        wss_history = []
 
-        for data in user_data:
-            pnl = data['performance']['total_pnl']
-            if len(sorted_pnl) > 1:
-                # Find percentile rank using bisect for fair tie handling
-                from bisect import bisect_left, bisect_right
-                lo = bisect_left(sorted_pnl, pnl)
-                hi = bisect_right(sorted_pnl, pnl)
-                rank = (lo + hi - 1) / 2  # midpoint rank for ties
-                pnl_percentile = (rank / (len(sorted_pnl) - 1)) * 100
-            else:
-                pnl_percentile = 50.0
+                # Compute AFI
+                result = compute_afi(trades, prior_afi, wss_history)
 
-            activity_score = self._calculate_activity_score(
-                data['activity']['trades_logged'],
-                data['activity']['journal_entries'],
-                data['activity']['tags_used'],
-            )
+                # Append today's WSS to history (one per calendar day)
+                today_str = datetime.utcnow().strftime('%Y-%m-%d')
+                # Deduplicate: remove existing entry for today
+                wss_history = [e for e in wss_history if e.get('date') != today_str]
+                wss_history.append({'date': today_str, 'wss': round(result.wss, 5)})
+                wss_history = trim_wss_history(wss_history)
 
-            performance_score = self._calculate_performance_score(
-                data['performance']['win_rate'],
-                data['performance']['avg_r_multiple'],
-                data['performance']['total_pnl'],
-                pnl_percentile,
-                data['performance']['closed_trades'],
-                min_trades,
-            )
+                # Persist
+                self.db.upsert_afi_score(
+                    user_id=user_id,
+                    afi_score=round(result.afi_score, 2),
+                    afi_raw=round(result.afi_raw, 2),
+                    wss=round(result.wss, 5),
+                    comp_r_slope=round(result.components.r_slope, 4),
+                    comp_sharpe=round(result.components.sharpe, 4),
+                    comp_ltc=round(result.components.ltc, 4),
+                    comp_dd_containment=round(result.components.dd_containment, 4),
+                    robustness=round(result.robustness, 2),
+                    trend=result.trend.value,
+                    is_provisional=result.is_provisional,
+                    trade_count=result.trade_count,
+                    active_days=result.active_days,
+                    wss_history=json.dumps(wss_history),
+                )
+                count += 1
 
-            total_score = activity_score + performance_score
+            except Exception as e:
+                self.logger.error(f"AFI calculation error for user {user_id}: {e}")
 
-            # Upsert score
-            self.db.upsert_leaderboard_score(
-                user_id=data['user_id'],
-                period_type=period_type,
-                period_key=period_key,
-                trades_logged=data['activity']['trades_logged'],
-                journal_entries=data['activity']['journal_entries'],
-                tags_used=data['activity']['tags_used'],
-                total_pnl=data['performance']['total_pnl'],
-                win_rate=data['performance']['win_rate'],
-                avg_r_multiple=data['performance']['avg_r_multiple'],
-                closed_trades=data['performance']['closed_trades'],
-                activity_score=activity_score,
-                performance_score=performance_score,
-                total_score=total_score,
-            )
+        # Update ranks after all scores computed
+        if count > 0:
+            self.db.update_afi_ranks()
 
-        # Update ranks
-        self.db.update_leaderboard_ranks(period_type, period_key)
-
-        return len(user_data)
+        return count
 
     async def get_leaderboard(self, request: web.Request) -> web.Response:
-        """GET /api/leaderboard - Get leaderboard rankings."""
+        """GET /api/leaderboard - Get AFI leaderboard rankings."""
         try:
             params = request.query
-            period_type = params.get('period', 'weekly')
-            if period_type not in ('weekly', 'monthly', 'all_time'):
-                return self._error_response('Invalid period type', 400, request)
-
             limit = min(int(params.get('limit', 20)), 100)
             offset = int(params.get('offset', 0))
-            recalculate = params.get('recalculate', 'false').lower() == 'true'
-
-            period_key = self._get_period_key(period_type)
-
-            # Optionally recalculate (admin/trigger)
-            if recalculate:
-                user = await self.auth.get_request_user(request)
-                if user:  # Only allow recalculation for authenticated users
-                    await self.calculate_leaderboard(period_type)
 
             # Get rankings
-            rankings = self.db.get_leaderboard(period_type, period_key, limit, offset)
-            total_participants = self.db.get_leaderboard_participant_count(period_type, period_key)
+            rankings = self.db.get_afi_leaderboard(limit, offset)
+            total_participants = self.db.get_afi_participant_count()
 
             # Get current user's rank if authenticated
             current_user_rank = None
             user = await self.auth.get_request_user(request)
             if user:
-                current_user_rank = self.db.get_user_leaderboard_score(user['id'], period_type, period_key)
+                current_user_rank = self.db.get_afi_score(user['id'])
 
             return self._json_response({
                 'success': True,
@@ -4676,8 +4565,6 @@ class JournalOrchestrator:
                     'rankings': rankings,
                     'currentUserRank': current_user_rank,
                     'totalParticipants': total_participants,
-                    'periodType': period_type,
-                    'periodKey': period_key,
                 }
             }, request=request)
 
@@ -4686,26 +4573,21 @@ class JournalOrchestrator:
             return self._error_response(str(e), 500, request)
 
     async def get_my_leaderboard(self, request: web.Request) -> web.Response:
-        """GET /api/leaderboard/me - Get current user's leaderboard stats for all periods."""
+        """GET /api/leaderboard/me - Get current user's AFI score with components."""
         try:
             user = await self.auth.get_request_user(request)
             if not user:
                 return self._error_response('Authentication required', 401, request)
 
-            result = {}
-            for period_type in ('weekly', 'monthly', 'all_time'):
-                period_key = self._get_period_key(period_type)
-                score = self.db.get_user_leaderboard_score(user['id'], period_type, period_key)
-                total = self.db.get_leaderboard_participant_count(period_type, period_key)
-                result[period_type] = {
-                    'score': score,
-                    'totalParticipants': total,
-                    'periodKey': period_key,
-                }
+            score = self.db.get_afi_score(user['id'])
+            total = self.db.get_afi_participant_count()
 
             return self._json_response({
                 'success': True,
-                'data': result
+                'data': {
+                    'score': score,
+                    'totalParticipants': total,
+                }
             }, request=request)
 
         except Exception as e:
@@ -4713,47 +4595,37 @@ class JournalOrchestrator:
             return self._error_response(str(e), 500, request)
 
     async def trigger_leaderboard_calculation(self, request: web.Request) -> web.Response:
-        """POST /api/internal/leaderboard/calculate - Trigger leaderboard calculation (internal)."""
+        """POST /api/internal/leaderboard/calculate - Trigger AFI calculation (internal)."""
         try:
-            params = request.query
-            period_type = params.get('period', 'weekly')
-            if period_type not in ('weekly', 'monthly', 'all_time'):
-                return self._error_response('Invalid period type', 400, request)
-
-            count = await self.calculate_leaderboard(period_type)
-            self.logger.info(f"Calculated leaderboard for {period_type}: {count} users", emoji="🏆")
+            count = await self.calculate_afi_scores()
+            self.logger.info(f"Calculated AFI scores: {count} users")
 
             return self._json_response({
                 'success': True,
-                'message': f'Calculated scores for {count} users',
-                'period': period_type,
+                'message': f'Calculated AFI scores for {count} users',
             }, request=request)
 
         except Exception as e:
-            self.logger.error(f"trigger_leaderboard_calculation error: {e}")
+            self.logger.error(f"trigger_afi_calculation error: {e}")
             return self._error_response(str(e), 500, request)
 
-    async def _leaderboard_scheduler(self):
-        """Background task: recalculate all leaderboard periods every hour."""
-        # Initial calculation on startup (wait for DB to be ready)
+    async def _afi_scheduler(self):
+        """Background task: recalculate AFI scores every hour."""
         await asyncio.sleep(15)
-        self.logger.info("Leaderboard scheduler: running initial calculation", emoji="🏆")
-        for period in ('weekly', 'monthly', 'all_time'):
-            try:
-                count = await self.calculate_leaderboard(period)
-                self.logger.info(f"Leaderboard [{period}]: {count} users scored", emoji="🏆")
-            except Exception as e:
-                self.logger.error(f"Leaderboard [{period}] initial calc error: {e}")
+        self.logger.info("AFI scheduler: running initial calculation")
+        try:
+            count = await self.calculate_afi_scores()
+            self.logger.info(f"AFI initial: {count} users scored")
+        except Exception as e:
+            self.logger.error(f"AFI initial calc error: {e}")
 
-        # Then recalculate every hour
         while True:
             await asyncio.sleep(3600)
-            for period in ('weekly', 'monthly', 'all_time'):
-                try:
-                    count = await self.calculate_leaderboard(period)
-                    self.logger.info(f"Leaderboard [{period}]: {count} users scored", emoji="🏆")
-                except Exception as e:
-                    self.logger.error(f"Leaderboard [{period}] scheduler error: {e}")
+            try:
+                count = await self.calculate_afi_scores()
+                self.logger.info(f"AFI scheduler: {count} users scored")
+            except Exception as e:
+                self.logger.error(f"AFI scheduler error: {e}")
 
     # ==================== Risk Graph Service ====================
 
@@ -7617,10 +7489,10 @@ async def run(config: Dict[str, Any], logger) -> None:
     orchestrator = JournalOrchestrator(config, logger)
     runner = await orchestrator.start()
 
-    # Start leaderboard scheduler as background task
-    leaderboard_task = asyncio.create_task(
-        orchestrator._leaderboard_scheduler(),
-        name="leaderboard-scheduler",
+    # Start AFI leaderboard scheduler as background task
+    afi_task = asyncio.create_task(
+        orchestrator._afi_scheduler(),
+        name="afi-scheduler",
     )
 
     # Start Edge Lab metrics scheduler as background task
@@ -7635,7 +7507,7 @@ async def run(config: Dict[str, Any], logger) -> None:
             await asyncio.sleep(1)
     except asyncio.CancelledError:
         logger.info("Orchestrator cancelled", emoji="🛑")
-        leaderboard_task.cancel()
+        afi_task.cancel()
         edge_lab_task.cancel()
     finally:
         logger.info("Shutting down API server", emoji="🛑")

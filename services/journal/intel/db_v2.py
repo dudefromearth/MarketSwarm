@@ -31,7 +31,7 @@ from .models_v2 import (
 class JournalDBv2:
     """MySQL database manager for FOTW trade logs."""
 
-    SCHEMA_VERSION = 26
+    SCHEMA_VERSION = 27
 
     # Default symbols with multipliers
     DEFAULT_SYMBOLS = [
@@ -282,6 +282,9 @@ class JournalDBv2:
 
             if current_version < 26:
                 self._migrate_to_v26(conn)
+
+            if current_version < 27:
+                self._migrate_to_v27(conn)
 
             conn.commit()
         finally:
@@ -2369,6 +2372,40 @@ class JournalDBv2:
             """)
 
             self._set_schema_version(conn, 26)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v27(self, conn):
+        """Migrate to v27: AFI (Antifragile Index) leaderboard scoring."""
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS afi_scores (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    user_id INT NOT NULL,
+                    afi_score DECIMAL(7,2) NOT NULL DEFAULT 500,
+                    afi_raw DECIMAL(7,2) NOT NULL DEFAULT 500,
+                    wss DECIMAL(8,5) NOT NULL DEFAULT 0,
+                    comp_r_slope DECIMAL(6,4) DEFAULT 0,
+                    comp_sharpe DECIMAL(6,4) DEFAULT 0,
+                    comp_ltc DECIMAL(6,4) DEFAULT 0,
+                    comp_dd_containment DECIMAL(6,4) DEFAULT 0,
+                    robustness DECIMAL(7,2) DEFAULT 0,
+                    trend ENUM('improving','stable','decaying') DEFAULT 'stable',
+                    is_provisional TINYINT DEFAULT 1,
+                    trade_count INT DEFAULT 0,
+                    active_days INT DEFAULT 0,
+                    rank_position INT DEFAULT 0,
+                    calculated_at DATETIME NOT NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    wss_history JSON DEFAULT NULL,
+                    UNIQUE KEY uq_afi_user (user_id),
+                    INDEX idx_afi_rank (rank_position),
+                    INDEX idx_afi_score (afi_score DESC)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """)
+
+            self._set_schema_version(conn, 27)
         finally:
             cursor.close()
 
@@ -6101,6 +6138,266 @@ class JournalDBv2:
                 WHERE user_id IS NOT NULL
                 AND entry_date >= %s AND entry_date < %s
             """, (start_date, end_date, start_date, end_date, start_date, end_date))
+
+            return [row[0] for row in cursor.fetchall()]
+        finally:
+            cursor.close()
+            conn.close()
+
+    # ==================== AFI Leaderboard CRUD ====================
+
+    def get_all_closed_trades_for_user(self, user_id: int) -> List[Dict[str, Any]]:
+        """Get all closed trades for AFI computation.
+
+        Returns trades with r_multiple, exit_time, planned_risk, pnl, quantity
+        ordered by exit_time ASC (oldest first).
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    t.r_multiple,
+                    t.exit_time,
+                    t.planned_risk,
+                    t.pnl,
+                    t.quantity
+                FROM trades t
+                JOIN trade_logs tl ON t.log_id = tl.id
+                WHERE tl.user_id = %s
+                AND tl.is_active = 1
+                AND t.status = 'closed'
+                AND t.exit_time IS NOT NULL
+                AND t.r_multiple IS NOT NULL
+                AND t.planned_risk IS NOT NULL
+                AND t.planned_risk > 0
+                ORDER BY t.exit_time ASC
+            """, (user_id,))
+
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append({
+                    'r_multiple': float(row[0]) if row[0] is not None else 0.0,
+                    'exit_time': row[1],
+                    'planned_risk': float(row[2]) if row[2] is not None else 0.0,
+                    'pnl': float(row[3]) if row[3] is not None else 0.0,
+                    'quantity': row[4] or 1,
+                })
+
+            return results
+        finally:
+            cursor.close()
+            conn.close()
+
+    def upsert_afi_score(
+        self,
+        user_id: int,
+        afi_score: float,
+        afi_raw: float,
+        wss: float,
+        comp_r_slope: float,
+        comp_sharpe: float,
+        comp_ltc: float,
+        comp_dd_containment: float,
+        robustness: float,
+        trend: str,
+        is_provisional: bool,
+        trade_count: int,
+        active_days: int,
+        wss_history: str,
+    ) -> bool:
+        """Upsert an AFI score for a user (single row per user)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            now = datetime.utcnow().isoformat()
+
+            cursor.execute("""
+                INSERT INTO afi_scores
+                    (user_id, afi_score, afi_raw, wss,
+                     comp_r_slope, comp_sharpe, comp_ltc, comp_dd_containment,
+                     robustness, trend, is_provisional,
+                     trade_count, active_days, calculated_at, wss_history)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    afi_score = VALUES(afi_score),
+                    afi_raw = VALUES(afi_raw),
+                    wss = VALUES(wss),
+                    comp_r_slope = VALUES(comp_r_slope),
+                    comp_sharpe = VALUES(comp_sharpe),
+                    comp_ltc = VALUES(comp_ltc),
+                    comp_dd_containment = VALUES(comp_dd_containment),
+                    robustness = VALUES(robustness),
+                    trend = VALUES(trend),
+                    is_provisional = VALUES(is_provisional),
+                    trade_count = VALUES(trade_count),
+                    active_days = VALUES(active_days),
+                    calculated_at = VALUES(calculated_at),
+                    wss_history = VALUES(wss_history)
+            """, (
+                user_id, afi_score, afi_raw, wss,
+                comp_r_slope, comp_sharpe, comp_ltc, comp_dd_containment,
+                robustness, trend, 1 if is_provisional else 0,
+                trade_count, active_days, now, wss_history
+            ))
+            conn.commit()
+            return True
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_afi_score(self, user_id: int) -> Optional[Dict[str, Any]]:
+        """Get a single user's AFI score with components."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    a.user_id, a.afi_score, a.afi_raw, a.wss,
+                    a.comp_r_slope, a.comp_sharpe, a.comp_ltc, a.comp_dd_containment,
+                    a.robustness, a.trend, a.is_provisional,
+                    a.trade_count, a.active_days, a.rank_position,
+                    a.calculated_at, a.wss_history,
+                    COALESCE(
+                        CASE WHEN u.show_screen_name = 1 AND u.screen_name IS NOT NULL AND u.screen_name != '' THEN u.screen_name END,
+                        u.display_name
+                    ) as display_name
+                FROM afi_scores a
+                LEFT JOIN users u ON a.user_id = u.id
+                WHERE a.user_id = %s
+            """, (user_id,))
+
+            row = cursor.fetchone()
+            if not row:
+                return None
+
+            return {
+                'user_id': row[0],
+                'afi_score': float(row[1]) if row[1] is not None else 500.0,
+                'afi_raw': float(row[2]) if row[2] is not None else 500.0,
+                'wss': float(row[3]) if row[3] is not None else 0.0,
+                'components': {
+                    'r_slope': float(row[4]) if row[4] is not None else 0.0,
+                    'sharpe': float(row[5]) if row[5] is not None else 0.0,
+                    'ltc': float(row[6]) if row[6] is not None else 0.0,
+                    'dd_containment': float(row[7]) if row[7] is not None else 0.0,
+                },
+                'robustness': float(row[8]) if row[8] is not None else 0.0,
+                'trend': row[9] or 'stable',
+                'is_provisional': bool(row[10]),
+                'trade_count': row[11] or 0,
+                'active_days': row[12] or 0,
+                'rank': row[13] or 0,
+                'calculated_at': row[14],
+                'wss_history': row[15],
+                'displayName': row[16],
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_afi_leaderboard(self, limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
+        """Get AFI leaderboard rankings ordered by afi_score DESC."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT
+                    a.user_id, a.afi_score, a.robustness, a.trend,
+                    a.is_provisional, a.trade_count, a.rank_position,
+                    a.calculated_at,
+                    a.comp_r_slope, a.comp_sharpe, a.comp_ltc, a.comp_dd_containment,
+                    COALESCE(
+                        CASE WHEN u.show_screen_name = 1 AND u.screen_name IS NOT NULL AND u.screen_name != '' THEN u.screen_name END,
+                        u.display_name
+                    ) as display_name
+                FROM afi_scores a
+                LEFT JOIN users u ON a.user_id = u.id
+                ORDER BY a.rank_position ASC
+                LIMIT %s OFFSET %s
+            """, (limit, offset))
+
+            rows = cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append({
+                    'user_id': row[0],
+                    'afi_score': float(row[1]) if row[1] is not None else 500.0,
+                    'robustness': float(row[2]) if row[2] is not None else 0.0,
+                    'trend': row[3] or 'stable',
+                    'is_provisional': bool(row[4]),
+                    'trade_count': row[5] or 0,
+                    'rank': row[6] or 0,
+                    'calculated_at': row[7],
+                    'components': {
+                        'r_slope': float(row[8]) if row[8] is not None else 0.0,
+                        'sharpe': float(row[9]) if row[9] is not None else 0.0,
+                        'ltc': float(row[10]) if row[10] is not None else 0.0,
+                        'dd_containment': float(row[11]) if row[11] is not None else 0.0,
+                    },
+                    'displayName': row[12],
+                })
+
+            return results
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_afi_participant_count(self) -> int:
+        """Get total AFI participant count."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("SELECT COUNT(*) FROM afi_scores")
+            return cursor.fetchone()[0]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def update_afi_ranks(self) -> int:
+        """Update rank positions for all AFI users. Returns count updated."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT id FROM afi_scores
+                ORDER BY afi_score DESC, robustness DESC, user_id ASC
+            """)
+
+            rows = cursor.fetchall()
+            count = 0
+
+            for rank, (score_id,) in enumerate(rows, start=1):
+                cursor.execute(
+                    "UPDATE afi_scores SET rank_position = %s WHERE id = %s",
+                    (rank, score_id)
+                )
+                count += 1
+
+            conn.commit()
+            return count
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_all_afi_eligible_user_ids(self) -> List[int]:
+        """Get all user IDs eligible for AFI scoring (have closed trades with planned_risk > 0)."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT DISTINCT tl.user_id
+                FROM trade_logs tl
+                JOIN trades t ON t.log_id = tl.id
+                WHERE tl.user_id IS NOT NULL
+                AND tl.is_active = 1
+                AND t.status = 'closed'
+                AND t.exit_time IS NOT NULL
+                AND t.r_multiple IS NOT NULL
+                AND t.planned_risk IS NOT NULL
+                AND t.planned_risk > 0
+            """)
 
             return [row[0] for row in cursor.fetchall()]
         finally:
