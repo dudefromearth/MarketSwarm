@@ -381,6 +381,11 @@
         "massive",
         "vigil"
       ],
+      "doctrine": {
+        "playbook_dir": "doctrine/playbooks",
+        "strict_mode": true,
+        "validation_mode": "enforce"
+      },
       "capabilities": [
         "chat",
         "routine",
@@ -388,12 +393,13 @@
         "playbook",
         "commentary",
         "interaction",
-        "edge_lab"
+        "edge_lab",
+        "aol"
       ],
       "env": {
         "VEXY_MODE": "full",
         "VEXY_LOOP_SLEEP_SEC": "60",
-        "PATH_DOCTRINE_DIR": "/Users/ernie/The_Path",
+        "PATH_DOCTRINE_DIR": "/Users/ernie/path",
         "XAI_API_KEY": "${XAI_API_KEY}",
         "OPENAI_API_KEY": "${OPENAI_API_KEY}",
         "CONVEXITY_ASSISTANT_ID": "asst_yNLi7GCN2q2TkixGLiDYLxwP"
@@ -1010,7 +1016,8 @@
         "JOURNAL_MYSQL_PASSWORD": "PfedKtaTaAa2iV21QTZp",
         "JOURNAL_MYSQL_DATABASE": "fotw_app",
         "APP_SESSION_SECRET": "8f3a9d0f1c1c9c5e91b3d4e6f0a9b2d7b8c4e1a9f6d3c2b1a8f7e4d9c5b0",
-        "JOURNAL_ATTACHMENTS_PATH": "services/journal/data/attachments"
+        "JOURNAL_ATTACHMENTS_PATH": "services/journal/data/attachments",
+        "POLYGON_API_KEY": "pdjraOWSpDbg3ER_RslZYe3dmn4Y7WCC"
       }
     },
     "copilot": {

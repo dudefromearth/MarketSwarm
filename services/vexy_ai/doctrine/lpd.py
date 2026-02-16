@@ -12,12 +12,16 @@ kernel re-runs LPD+DCL internally.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
+
+LPD_PATTERNS_KEY_PREFIX = "doctrine:lpd_patterns"
+DOMAIN_PLAYBOOK_MAP_KEY = "doctrine:domain_playbook_map"
 
 
 class DomainCategory(Enum):
@@ -140,12 +144,133 @@ class LanguagePatternDetector:
         logger: Any = None,
         confidence_threshold: Optional[float] = None,
         hybrid_margin: Optional[float] = None,
+        redis_client: Any = None,
     ):
         self._logger = logger or logging.getLogger(__name__)
+        self._redis = redis_client
         if confidence_threshold is not None:
             self.CONFIDENCE_THRESHOLD = confidence_threshold
         if hybrid_margin is not None:
             self.HYBRID_MARGIN = hybrid_margin
+
+    def set_redis(self, redis_client) -> None:
+        """Set Redis client for admin pattern loading."""
+        self._redis = redis_client
+
+    def _get_effective_patterns(self) -> Dict[DomainCategory, List[tuple]]:
+        """Get base patterns merged with admin-added patterns from Redis."""
+        # Start with base patterns
+        merged = {k: list(v) for k, v in DOMAIN_PATTERNS.items()}
+
+        if not self._redis:
+            return merged
+
+        try:
+            for domain in DomainCategory:
+                if domain == DomainCategory.HYBRID:
+                    continue
+                raw = self._redis.get(f"{LPD_PATTERNS_KEY_PREFIX}:{domain.value}")
+                if raw:
+                    admin_patterns = json.loads(raw)
+                    for p in admin_patterns:
+                        try:
+                            compiled = re.compile(p["pattern"], re.I)
+                            merged.setdefault(domain, []).append(
+                                (compiled, float(p.get("weight", 2.0)))
+                            )
+                        except re.error:
+                            continue
+        except Exception:
+            pass
+
+        return merged
+
+    def _get_effective_playbook_map(self) -> Dict[DomainCategory, str]:
+        """Get base playbook map merged with admin overrides."""
+        base_map = dict(DOMAIN_TO_PLAYBOOK)
+        if not self._redis:
+            return base_map
+        try:
+            raw = self._redis.get(DOMAIN_PLAYBOOK_MAP_KEY)
+            if raw:
+                overrides = json.loads(raw)
+                for domain_str, playbook in overrides.items():
+                    try:
+                        domain = DomainCategory(domain_str)
+                        base_map[domain] = playbook
+                    except ValueError:
+                        continue
+        except Exception:
+            pass
+        return base_map
+
+    def get_routing_map(self) -> Dict:
+        """Get full routing map for admin UI."""
+        patterns = self._get_effective_patterns()
+        playbook_map = self._get_effective_playbook_map()
+        admin_patterns = {}
+
+        if self._redis:
+            for domain in DomainCategory:
+                if domain == DomainCategory.HYBRID:
+                    continue
+                try:
+                    raw = self._redis.get(
+                        f"{LPD_PATTERNS_KEY_PREFIX}:{domain.value}"
+                    )
+                    if raw:
+                        admin_patterns[domain.value] = json.loads(raw)
+                except Exception:
+                    pass
+
+        result = {}
+        for domain in DomainCategory:
+            if domain == DomainCategory.HYBRID:
+                continue
+            domain_patterns = patterns.get(domain, [])
+            base_count = len(DOMAIN_PATTERNS.get(domain, []))
+            result[domain.value] = {
+                "patterns": [
+                    {
+                        "pattern": p.pattern if hasattr(p, "pattern") else str(p),
+                        "weight": w,
+                        "source": "admin" if i >= base_count else "base",
+                    }
+                    for i, (p, w) in enumerate(domain_patterns)
+                ],
+                "playbook": playbook_map.get(domain, ""),
+                "admin_patterns": admin_patterns.get(domain.value, []),
+            }
+
+        return result
+
+    def save_admin_patterns(self, domain_str: str,
+                            patterns: List[Dict]) -> bool:
+        """Save admin-added patterns for a domain."""
+        if not self._redis:
+            return False
+        try:
+            self._redis.set(
+                f"{LPD_PATTERNS_KEY_PREFIX}:{domain_str}",
+                json.dumps(patterns),
+            )
+            return True
+        except Exception:
+            return False
+
+    def save_playbook_map_override(self, domain_str: str,
+                                   playbook: str) -> bool:
+        """Override which playbook a domain maps to."""
+        if not self._redis:
+            return False
+        try:
+            raw = self._redis.get(DOMAIN_PLAYBOOK_MAP_KEY)
+            current = json.loads(raw) if raw else {}
+            current[domain_str] = playbook
+            self._redis.set(DOMAIN_PLAYBOOK_MAP_KEY, json.dumps(current))
+            return True
+        except Exception:
+            return False
 
     def classify(self, query: str) -> LPDClassification:
         """
@@ -164,7 +289,8 @@ class LanguagePatternDetector:
         scores: Dict[DomainCategory, float] = {}
         all_matches: Dict[DomainCategory, List[str]] = {}
 
-        for domain, patterns in DOMAIN_PATTERNS.items():
+        effective_patterns = self._get_effective_patterns()
+        for domain, patterns in effective_patterns.items():
             domain_score = 0.0
             matches = []
             for pattern, weight in patterns:

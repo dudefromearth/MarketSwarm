@@ -13,6 +13,7 @@ import MLLabPage from './pages/MLLab.tsx'
 import VPLineEditor from './pages/VPLineEditor.tsx'
 import AdminEconIndicatorsPage from './pages/AdminEconIndicators.tsx'
 import AdminRSSIntelPage from './pages/AdminRSSIntel.tsx'
+import AdminDoctrinePage from './pages/AdminDoctrine.tsx'
 import EdgeLabPage from './pages/EdgeLab.tsx'
 import { AlertProvider } from './contexts/AlertContext.tsx'
 import { SystemNotificationsProvider } from './contexts/SystemNotificationsContext.tsx'
@@ -73,6 +74,7 @@ createRoot(document.getElementById('root')!).render(
                 <Route path="/admin/vexy" element={<AdminVexyPage />} />
                 <Route path="/admin/economic-indicators" element={<AdminEconIndicatorsPage />} />
                 <Route path="/admin/rss-intel" element={<AdminRSSIntelPage />} />
+                <Route path="/admin/doctrine" element={<AdminDoctrinePage />} />
                 <Route path="/edge-lab" element={
                   <TradingProviders>
                     <EdgeLabPage />

@@ -1,5 +1,5 @@
 // ui/src/pages/AdminDoctrine.tsx
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   useDoctrinePlaybooks,
@@ -15,17 +15,34 @@ import {
   useDoctrinePatternMetrics,
   useDoctrineOverlays,
   suppressUserOverlay,
+  usePlaybookFull,
+  updatePlaybookField,
+  clearPlaybookOverrides,
+  regeneratePlaybooks,
+  useRoutingMap,
+  updateRoutingPatterns,
+  updatePlaybookMap,
+  testClassification,
+  useTermRegistry,
+  createTerm,
+  updateTermRegistry,
+  deleteTerm,
   type DoctrinePlaybookSummary,
   type KillSwitchState,
   type ValidationLogEntry,
   type PatternAlert,
   type OverlayRecord,
+  type AnnotatedTerm,
+  type AnnotatedListItem,
+  type ClassificationTestResult,
+  type TermRegistryEntry,
 } from "../hooks/useDoctrine";
 
 type TabType =
   | "health"
   | "playbooks"
   | "terms"
+  | "routing"
   | "validator"
   | "lpd"
   | "thresholds"
@@ -62,6 +79,7 @@ export default function AdminDoctrinePage() {
               { id: "health", label: "Health" },
               { id: "playbooks", label: "Playbooks" },
               { id: "terms", label: "Terms" },
+              { id: "routing", label: "Routing" },
               { id: "validator", label: "Validator" },
               { id: "lpd", label: "LPD Config" },
               { id: "thresholds", label: "Thresholds" },
@@ -86,6 +104,7 @@ export default function AdminDoctrinePage() {
           {activeTab === "health" && <HealthPanel />}
           {activeTab === "playbooks" && <PlaybooksPanel />}
           {activeTab === "terms" && <TermsPanel />}
+          {activeTab === "routing" && <RoutingPanel />}
           {activeTab === "validator" && <ValidatorPanel />}
           {activeTab === "lpd" && <LPDPanel />}
           {activeTab === "thresholds" && <ThresholdsPanel />}
@@ -126,8 +145,8 @@ function HealthPanel() {
         <div className="health-grid">
           <HealthItem
             label="Synchronized"
-            value={reg.synchronized ? "Yes" : "No"}
-            status={reg.synchronized ? "ok" : "error"}
+            value={reg.doctrine_synchronized ? "Yes" : "No"}
+            status={reg.doctrine_synchronized ? "ok" : "error"}
           />
           <HealthItem
             label="Safe Mode"
@@ -145,6 +164,59 @@ function HealthPanel() {
             status="ok"
           />
         </div>
+
+        {/* Safe Mode Diagnostic */}
+        {reg.safe_mode && (
+          <div className="diagnostic-box error">
+            <div className="diagnostic-title">Playbook Desync Detected</div>
+            <div className="diagnostic-body">
+              <p>
+                One or more playbooks were generated against a different version of the Path doctrine
+                than what is currently loaded. While in safe mode, domain-specific playbook guidance
+                is disabled — responses use core doctrine only.
+              </p>
+              {Array.isArray(reg.mismatch_details) && (reg.mismatch_details as string[]).length > 0 && (
+                <div className="diagnostic-details">
+                  <div className="diagnostic-label">Mismatched files:</div>
+                  <ul>
+                    {(reg.mismatch_details as string[]).map((d, i) => (
+                      <li key={i} className="mono">{d}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div className="diagnostic-fix">
+                <div className="diagnostic-label">To fix:</div>
+                <p>Regenerate playbooks from the current PathRuntime. Admin overrides will be preserved and re-applied.</p>
+                <RegenerateButton onDone={refetch} />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Per-Playbook Hash Status */}
+        {reg.playbooks && (
+          <div className="playbook-health-list">
+            {Object.entries(reg.playbooks as Record<string, { version: string; generated_at: string; hash: string }>).map(
+              ([domain, pb]) => {
+                const allHashes = Object.values(reg.playbooks as Record<string, { hash: string }>).map((p) => p.hash);
+                const commonHash = allHashes.sort((a, b) => allHashes.filter((h) => h === b).length - allHashes.filter((h) => h === a).length)[0];
+                const isMatch = pb.hash === commonHash;
+                return (
+                  <div key={domain} className={`playbook-health-row ${isMatch ? "" : "mismatch"}`}>
+                    <span className={`health-dot ${isMatch ? "ok" : "error"}`} />
+                    <span className="playbook-health-domain">{domain.replace(/_/g, " ")}</span>
+                    <span className="playbook-health-version">v{pb.version}</span>
+                    <span className="playbook-health-hash mono">{pb.hash}</span>
+                    <span className="playbook-health-date">
+                      {new Date(pb.generated_at).toLocaleDateString()}
+                    </span>
+                  </div>
+                );
+              }
+            )}
+          </div>
+        )}
       </div>
 
       {/* Kill Switch Status */}
@@ -191,16 +263,171 @@ function HealthItem({ label, value, status }: { label: string; value: string; st
   );
 }
 
+function RegenerateButton({ onDone }: { onDone?: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+
+  const handleRegenerate = async () => {
+    if (!confirm("Regenerate all 8 playbooks from the current Path doctrine? Admin overrides will be preserved and re-applied.")) return;
+    setBusy(true);
+    setResult(null);
+    try {
+      const res = await regeneratePlaybooks();
+      if (res.success) {
+        setResult(`Regenerated ${res.regenerated_count} playbooks. Hash: ${res.new_hash?.slice(0, 16)}...`);
+        onDone?.();
+      } else {
+        setResult(`Error: ${res.error}`);
+      }
+    } catch (e) {
+      setResult("Regeneration failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ marginTop: "0.5rem" }}>
+      <button className="refresh-btn" onClick={handleRegenerate} disabled={busy} style={{ padding: "0.5rem 1rem" }}>
+        {busy ? "Regenerating..." : "Regenerate Playbooks"}
+      </button>
+      {result && <span className="save-msg" style={{ marginLeft: "0.5rem" }}>{result}</span>}
+    </div>
+  );
+}
+
 function PlaybooksPanel() {
-  const { data, loading, error } = useDoctrinePlaybooks();
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const { data, loading, error, refetch: refetchList } = useDoctrinePlaybooks();
+  const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
+  const { data: fullData, loading: fullLoading, refetch: refetchFull } = usePlaybookFull(selectedDomain);
+  const [viewMode, setViewMode] = useState<"merged" | "changes">("merged");
+  const [msg, setMsg] = useState<string | null>(null);
+
+  // Inline editing state
+  const [addingTerm, setAddingTerm] = useState(false);
+  const [newTermName, setNewTermName] = useState("");
+  const [newTermDef, setNewTermDef] = useState("");
+  const [addingField, setAddingField] = useState<string | null>(null);
+  const [newFieldText, setNewFieldText] = useState("");
 
   if (loading) return <div className="panel-loading">Loading playbooks...</div>;
   if (error) return <div className="panel-error">{error}</div>;
   if (!data) return null;
 
+  const showMsg = (m: string) => { setMsg(m); setTimeout(() => setMsg(null), 3000); };
+
+  const handleAddTerm = async () => {
+    if (!selectedDomain || !newTermName.trim() || !newTermDef.trim()) return;
+    const res = await updatePlaybookField(selectedDomain, "terms", {
+      add: [{ term: newTermName.trim(), definition: newTermDef.trim() }],
+    });
+    if (res.success) {
+      showMsg("Term added");
+      setAddingTerm(false);
+      setNewTermName("");
+      setNewTermDef("");
+      refetchFull();
+    } else {
+      showMsg(res.error || "Failed");
+    }
+  };
+
+  const handleRemoveTerm = async (term: string) => {
+    if (!selectedDomain || !confirm(`Remove term "${term}"?`)) return;
+    const res = await updatePlaybookField(selectedDomain, "terms", { remove: [term] });
+    if (res.success) { showMsg("Term removed"); refetchFull(); }
+  };
+
+  const handleRestoreTerm = async (term: AnnotatedTerm) => {
+    if (!selectedDomain) return;
+    // Re-add the hidden base term as admin override
+    const res = await updatePlaybookField(selectedDomain, "terms", {
+      add: [{ term: term.term, definition: term.definition }],
+    });
+    if (res.success) { showMsg("Term restored"); refetchFull(); }
+  };
+
+  const handleAddListItem = async (field: string) => {
+    if (!selectedDomain || !newFieldText.trim()) return;
+    const res = await updatePlaybookField(selectedDomain, field, {
+      add: [newFieldText.trim()],
+    });
+    if (res.success) {
+      showMsg("Added");
+      setAddingField(null);
+      setNewFieldText("");
+      refetchFull();
+    }
+  };
+
+  const handleRemoveListItem = async (field: string, idx: number) => {
+    if (!selectedDomain || !confirm("Remove this item?")) return;
+    const res = await updatePlaybookField(selectedDomain, field, { remove: [idx] });
+    if (res.success) { showMsg("Removed"); refetchFull(); }
+  };
+
+  const handleResetDomain = async () => {
+    if (!selectedDomain || !confirm(`Reset "${selectedDomain}" to base YAML? All admin overrides will be cleared.`)) return;
+    const res = await clearPlaybookOverrides(selectedDomain);
+    if (res.success) { showMsg("Reset to default"); refetchFull(); refetchList(); }
+  };
+
+  const pb = fullData?.playbook;
+
+  const fieldLabel: Record<string, string> = {
+    structural_logic: "structural-logic",
+    mechanisms: "mechanisms",
+    constraints: "constraints",
+    failure_modes: "failure-modes",
+    non_capabilities: "non-capabilities",
+  };
+
+  const renderListSection = (title: string, field: string, items: AnnotatedListItem[]) => {
+    const visible = items.filter((i) => !i.hidden);
+    const hidden = items.filter((i) => i.hidden);
+    return (
+      <div className="pb-section">
+        <div className="pb-section-header">
+          <h4>{title}</h4>
+          <button className="add-btn" onClick={() => { setAddingField(field); setNewFieldText(""); }}>+ Add</button>
+        </div>
+        <div className="pb-list">
+          {visible.map((item, i) => (
+            <div key={i} className={`pb-list-item ${item.source}`}>
+              <span className="pb-list-text">{item.text}</span>
+              <div className="pb-list-actions">
+                {item.source === "admin" && <span className="source-badge admin">admin</span>}
+                <button className="remove-btn" onClick={() => handleRemoveListItem(fieldLabel[field] || field, i)} title="Remove">x</button>
+              </div>
+            </div>
+          ))}
+          {hidden.map((item, i) => (
+            <div key={`h${i}`} className="pb-list-item hidden">
+              <span className="pb-list-text strikethrough">{item.text}</span>
+              <span className="source-badge hidden">hidden</span>
+            </div>
+          ))}
+        </div>
+        {addingField === field && (
+          <div className="inline-add-form">
+            <textarea
+              value={newFieldText}
+              onChange={(e) => setNewFieldText(e.target.value)}
+              placeholder={`New ${title.toLowerCase()} item...`}
+              rows={2}
+            />
+            <div className="inline-add-actions">
+              <button className="refresh-btn" onClick={() => handleAddListItem(fieldLabel[field] || field)}>Save</button>
+              <button className="remove-btn" onClick={() => setAddingField(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
-    <div className="panel">
+    <div className="panel playbooks-editor">
       <div className="panel-header">
         <h2>Doctrine Playbooks</h2>
         <div className="panel-badges">
@@ -209,73 +436,467 @@ function PlaybooksPanel() {
           </span>
           {data.safe_mode && <span className="safe-mode-badge">SAFE MODE</span>}
           <span className="count-badge">{data.count} playbooks</span>
+          {msg && <span className="save-msg">{msg}</span>}
+          <RegenerateButton onDone={() => { refetchList(); refetchFull(); }} />
         </div>
       </div>
-      <p className="panel-desc">
-        Immutable doctrine playbooks derived from PathRuntime. Changes require version bump + service restart + deployment.
-      </p>
-      <div className="playbook-list">
-        {data.playbooks.map((pb: DoctrinePlaybookSummary) => (
-          <div
-            key={pb.domain}
-            className={`playbook-card ${expanded === pb.domain ? "expanded" : ""}`}
-            onClick={() => setExpanded(expanded === pb.domain ? null : pb.domain)}
-          >
-            <div className="playbook-header">
-              <span className="playbook-domain">{pb.domain.replace(/_/g, " ")}</span>
-              <span className="playbook-version">v{pb.version}</span>
-              <span className="playbook-terms">{pb.term_count} terms</span>
-              <span className="playbook-constraints">{pb.constraint_count} constraints</span>
+
+      <div className="playbooks-layout">
+        {/* Left sidebar: playbook list */}
+        <div className="pb-sidebar">
+          {data.playbooks.map((p: DoctrinePlaybookSummary) => (
+            <div
+              key={p.domain}
+              className={`pb-sidebar-item ${selectedDomain === p.domain ? "active" : ""}`}
+              onClick={() => setSelectedDomain(p.domain)}
+            >
+              <span className="pb-sidebar-domain">{p.domain.replace(/_/g, " ")}</span>
+              <span className="pb-sidebar-meta">v{p.version} | {p.term_count}t {p.constraint_count}c</span>
             </div>
-            {expanded === pb.domain && (
-              <div className="playbook-detail">
-                <div className="detail-row">
-                  <span className="label">Source</span>
-                  <span className="value">{pb.doctrine_source}</span>
+          ))}
+        </div>
+
+        {/* Right content: selected playbook detail */}
+        <div className="pb-content">
+          {!selectedDomain && (
+            <div className="pb-empty">Select a playbook from the sidebar to view and edit its content.</div>
+          )}
+          {selectedDomain && fullLoading && <div className="panel-loading">Loading playbook...</div>}
+          {selectedDomain && pb && (
+            <>
+              {/* Header */}
+              <div className="pb-detail-header">
+                <div className="pb-detail-title">
+                  <h3>{pb.domain.replace(/_/g, " ")}</h3>
+                  <span className="playbook-version">v{pb.version}</span>
+                  {pb.has_overrides && <span className="source-badge admin">has overrides</span>}
+                  <span className={`health-dot ${data.synchronized ? "ok" : "error"}`} style={{ marginLeft: "0.5rem" }} />
                 </div>
-                <div className="detail-row">
-                  <span className="label">Runtime Version</span>
-                  <span className="value">{pb.path_runtime_version}</span>
-                </div>
-                <div className="detail-row">
-                  <span className="label">Runtime Hash</span>
-                  <span className="value mono">{pb.path_runtime_hash}</span>
-                </div>
-                <div className="detail-row">
-                  <span className="label">Generated</span>
-                  <span className="value">{new Date(pb.generated_at).toLocaleString()}</span>
+                <div className="pb-detail-actions">
+                  <button
+                    className={`tab-btn ${viewMode === "merged" ? "active" : ""}`}
+                    onClick={() => setViewMode("merged")}
+                  >Merged</button>
+                  <button
+                    className={`tab-btn ${viewMode === "changes" ? "active" : ""}`}
+                    onClick={() => setViewMode("changes")}
+                  >Changes</button>
+                  {pb.has_overrides && (
+                    <button className="suppress-btn" onClick={handleResetDomain}>Reset to Default</button>
+                  )}
                 </div>
               </div>
-            )}
-          </div>
-        ))}
+
+              {/* Meta info */}
+              <div className="pb-meta-row">
+                <span>Hash: <span className="mono">{pb.path_runtime_hash.slice(0, 16)}...</span></span>
+                <span>Generated: {new Date(pb.generated_at).toLocaleDateString()}</span>
+                <span>Source: {pb.doctrine_source}</span>
+              </div>
+
+              {viewMode === "merged" ? (
+                <>
+                  {/* Canonical Terms */}
+                  <div className="pb-section">
+                    <div className="pb-section-header">
+                      <h4>Canonical Terms ({pb.canonical_terminology.filter((t: AnnotatedTerm) => !t.hidden).length})</h4>
+                      <button className="add-btn" onClick={() => { setAddingTerm(true); setNewTermName(""); setNewTermDef(""); }}>+ Add Term</button>
+                    </div>
+                    <div className="pb-terms-table">
+                      {pb.canonical_terminology.filter((t: AnnotatedTerm) => !t.hidden).map((t: AnnotatedTerm) => (
+                        <div key={t.term} className={`pb-term-row ${t.source}`}>
+                          <span className="pb-term-name">{t.term}</span>
+                          <span className="pb-term-def">{t.definition}</span>
+                          <div className="pb-term-actions">
+                            {t.source === "admin" && <span className="source-badge admin">admin</span>}
+                            <button className="remove-btn" onClick={() => handleRemoveTerm(t.term)} title="Remove">x</button>
+                          </div>
+                        </div>
+                      ))}
+                      {pb.canonical_terminology.filter((t: AnnotatedTerm) => t.hidden).map((t: AnnotatedTerm) => (
+                        <div key={`h-${t.term}`} className="pb-term-row hidden">
+                          <span className="pb-term-name strikethrough">{t.term}</span>
+                          <span className="pb-term-def strikethrough">{t.definition}</span>
+                          <div className="pb-term-actions">
+                            <span className="source-badge hidden">hidden</span>
+                            <button className="add-btn" onClick={() => handleRestoreTerm(t)} title="Restore">restore</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {addingTerm && (
+                      <div className="inline-add-form">
+                        <input placeholder="Term name" value={newTermName} onChange={(e) => setNewTermName(e.target.value)} />
+                        <input placeholder="Definition" value={newTermDef} onChange={(e) => setNewTermDef(e.target.value)} />
+                        <div className="inline-add-actions">
+                          <button className="refresh-btn" onClick={handleAddTerm}>Save</button>
+                          <button className="remove-btn" onClick={() => setAddingTerm(false)}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Definitions */}
+                  <div className="pb-section">
+                    <h4>Definitions</h4>
+                    <div className="pb-definitions">
+                      {Object.entries(pb.definitions).map(([key, def]) => {
+                        const d = def as { value: string; source: string };
+                        return (
+                          <div key={key} className="pb-def-row">
+                            <span className="pb-def-key">{key}</span>
+                            <span className="pb-def-value">{d.value}</span>
+                            {d.source === "admin" && <span className="source-badge admin">admin</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* List sections */}
+                  {renderListSection("Structural Logic", "structural_logic", pb.structural_logic)}
+                  {renderListSection("Mechanisms", "mechanisms", pb.mechanisms)}
+                  {renderListSection("Constraints", "constraints", pb.constraints)}
+                  {renderListSection("Failure Modes", "failure_modes", pb.failure_modes)}
+                  {renderListSection("Non-Capabilities", "non_capabilities", pb.non_capabilities)}
+                </>
+              ) : (
+                <DiffView domain={selectedDomain} />
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
+function RoutingPanel() {
+  const { data, loading, error, refetch } = useRoutingMap();
+  const { data: pbData } = useDoctrinePlaybooks();
+  const [selectedDomain, setSelectedDomain] = useState<string | null>(null);
+  const [addingPattern, setAddingPattern] = useState(false);
+  const [newPattern, setNewPattern] = useState("");
+  const [newWeight, setNewWeight] = useState(1.0);
+  const [testInput, setTestInput] = useState("");
+  const [testResult, setTestResult] = useState<ClassificationTestResult | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  if (loading) return <div className="panel-loading">Loading routing...</div>;
+  if (error) return <div className="panel-error">{error}</div>;
+  if (!data) return null;
+
+  const routing = data.routing;
+  const domains = Object.keys(routing);
+  const allPlaybooks = pbData?.playbooks?.map((p: DoctrinePlaybookSummary) => p.domain) || [];
+  const showMsg = (m: string) => { setMsg(m); setTimeout(() => setMsg(null), 3000); };
+
+  const handleAddPattern = async () => {
+    if (!selectedDomain || !newPattern.trim()) return;
+    const res = await updateRoutingPatterns(selectedDomain, {
+      add: [{ pattern: newPattern.trim(), weight: newWeight }],
+    });
+    if (res.success) {
+      showMsg("Pattern added");
+      setAddingPattern(false);
+      setNewPattern("");
+      setNewWeight(1.0);
+      refetch();
+    }
+  };
+
+  const handleRemovePattern = async (domain: string, idx: number) => {
+    if (!confirm("Remove this pattern?")) return;
+    const res = await updateRoutingPatterns(domain, { remove: [idx] });
+    if (res.success) { showMsg("Pattern removed"); refetch(); }
+  };
+
+  const handlePlaybookMap = async (domain: string, playbook: string) => {
+    const res = await updatePlaybookMap(domain, playbook);
+    if (res.success) { showMsg("Mapping updated"); refetch(); }
+  };
+
+  const handleTest = async () => {
+    if (!testInput.trim()) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await testClassification(testInput);
+      if (res.success) setTestResult(res.result);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const sel = selectedDomain ? routing[selectedDomain] : null;
+
+  return (
+    <div className="panel">
+      <div className="panel-header">
+        <h2>Classification Routing</h2>
+        <div className="panel-badges">
+          <span className="count-badge">{domains.length} domains</span>
+          {msg && <span className="save-msg">{msg}</span>}
+        </div>
+      </div>
+      <p className="panel-desc">
+        Domain classification patterns, weights, and playbook mapping. Patterns are matched against user messages to route to the correct playbook.
+      </p>
+
+      <div className="routing-layout">
+        {/* Left: Domain List */}
+        <div className="routing-sidebar">
+          {domains.map((d) => (
+            <div
+              key={d}
+              className={`routing-domain-item ${selectedDomain === d ? "active" : ""}`}
+              onClick={() => { setSelectedDomain(d); setAddingPattern(false); }}
+            >
+              <span className="routing-domain-name">{d.replace(/_/g, " ")}</span>
+              <span className="routing-domain-meta">
+                {routing[d].patterns.length}p → {routing[d].playbook}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        {/* Right: Selected Domain Detail */}
+        <div className="routing-content">
+          {!selectedDomain && (
+            <div className="pb-empty">Select a domain to view and edit its routing patterns.</div>
+          )}
+          {sel && selectedDomain && (
+            <>
+              <div className="routing-detail-header">
+                <h3>{selectedDomain.replace(/_/g, " ")}</h3>
+                <div className="routing-playbook-map">
+                  <span className="routing-map-label">Playbook:</span>
+                  <select
+                    value={sel.playbook}
+                    onChange={(e) => handlePlaybookMap(selectedDomain, e.target.value)}
+                  >
+                    {allPlaybooks.map((p: string) => (
+                      <option key={p} value={p}>{p.replace(/_/g, " ")}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Patterns Table */}
+              <div className="routing-patterns-section">
+                <div className="pb-section-header">
+                  <h4>Patterns ({sel.patterns.length})</h4>
+                  <button className="add-btn" onClick={() => { setAddingPattern(true); setNewPattern(""); setNewWeight(1.0); }}>+ Add Pattern</button>
+                </div>
+                <div className="routing-patterns-list">
+                  {sel.patterns.map((p, i) => (
+                    <div key={i} className={`routing-pattern-row ${p.source}`}>
+                      <span className="routing-pattern-text">{p.pattern}</span>
+                      <span className="routing-pattern-weight">w: {p.weight.toFixed(1)}</span>
+                      {p.source === "admin" && <span className="source-badge admin">admin</span>}
+                      <button className="remove-btn" onClick={() => handleRemovePattern(selectedDomain, i)} title="Remove">x</button>
+                    </div>
+                  ))}
+                </div>
+                {addingPattern && (
+                  <div className="inline-add-form">
+                    <input
+                      placeholder="Pattern text (e.g. 'options chain')"
+                      value={newPattern}
+                      onChange={(e) => setNewPattern(e.target.value)}
+                    />
+                    <div className="inline-add-row">
+                      <label>Weight:</label>
+                      <input
+                        type="number"
+                        value={newWeight}
+                        onChange={(e) => setNewWeight(parseFloat(e.target.value))}
+                        min={0.1}
+                        max={5}
+                        step={0.1}
+                        style={{ width: "80px" }}
+                      />
+                    </div>
+                    <div className="inline-add-actions">
+                      <button className="refresh-btn" onClick={handleAddPattern}>Save</button>
+                      <button className="remove-btn" onClick={() => setAddingPattern(false)}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Admin Pattern Overrides */}
+              {sel.admin_patterns.length > 0 && (
+                <div className="routing-admin-section">
+                  <h4>Admin Override Patterns</h4>
+                  <div className="routing-patterns-list">
+                    {sel.admin_patterns.map((p, i) => (
+                      <div key={i} className="routing-pattern-row admin">
+                        <span className="routing-pattern-text">{p.pattern}</span>
+                        <span className="routing-pattern-weight">w: {p.weight.toFixed(1)}</span>
+                        <span className="source-badge admin">admin</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Test Console */}
+      <div className="routing-test-section">
+        <h3>Classification Test Console</h3>
+        <p className="panel-desc">Dry-run a message through the LPD classifier to see which domain and playbook it routes to.</p>
+        <div className="routing-test-form">
+          <textarea
+            placeholder="Type a test message... e.g. 'What does gamma exposure look like for SPY?'"
+            value={testInput}
+            onChange={(e) => setTestInput(e.target.value)}
+            rows={3}
+          />
+          <button className="refresh-btn" onClick={handleTest} disabled={testing || !testInput.trim()}>
+            {testing ? "Classifying..." : "Test Classification"}
+          </button>
+        </div>
+        {testResult && (
+          <div className="routing-test-result">
+            <div className="routing-result-grid">
+              <div className="routing-result-item">
+                <span className="routing-result-label">Domain</span>
+                <span className="routing-result-value">{testResult.domain.replace(/_/g, " ")}</span>
+              </div>
+              <div className="routing-result-item">
+                <span className="routing-result-label">Confidence</span>
+                <span className="routing-result-value">{(testResult.confidence * 100).toFixed(0)}%</span>
+              </div>
+              <div className="routing-result-item">
+                <span className="routing-result-label">Doctrine Mode</span>
+                <span className="routing-result-value">
+                  <span className={`mode-badge ${testResult.doctrine_mode}`}>{testResult.doctrine_mode}</span>
+                </span>
+              </div>
+              <div className="routing-result-item">
+                <span className="routing-result-label">Playbook</span>
+                <span className="routing-result-value">{testResult.playbook_domain.replace(/_/g, " ")}</span>
+              </div>
+              {testResult.secondary_domain && (
+                <div className="routing-result-item">
+                  <span className="routing-result-label">Secondary</span>
+                  <span className="routing-result-value">{testResult.secondary_domain.replace(/_/g, " ")}</span>
+                </div>
+              )}
+              <div className="routing-result-item">
+                <span className="routing-result-label">Require Playbook</span>
+                <span className="routing-result-value">{testResult.require_playbook ? "Yes" : "No"}</span>
+              </div>
+            </div>
+            {testResult.matched_patterns.length > 0 && (
+              <div className="routing-matched-patterns">
+                <span className="routing-result-label">Matched Patterns:</span>
+                <div className="routing-matched-list">
+                  {testResult.matched_patterns.map((p, i) => (
+                    <span key={i} className="chip active">{p}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DiffView({ domain }: { domain: string }) {
+  const { data, loading } = usePlaybookDiff(domain);
+  if (loading) return <div className="panel-loading">Loading diff...</div>;
+  if (!data?.diff) return <div className="no-results">No diff data available</div>;
+
+  const { diff } = data;
+  if (!diff.has_overrides) return <div className="no-results">No admin overrides for this playbook.</div>;
+
+  return (
+    <div className="diff-view">
+      <h4>Admin Overrides</h4>
+      <pre className="diff-json">{JSON.stringify(diff.overrides, null, 2)}</pre>
+    </div>
+  );
+}
+
 function TermsPanel() {
-  const { data, loading, error } = useDoctrineTerms();
+  const { data, loading, error, refetch } = useTermRegistry();
   const [search, setSearch] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [newTerm, setNewTerm] = useState("");
+  const [newDef, setNewDef] = useState("");
+  const [newPlaybooks, setNewPlaybooks] = useState<string[]>([]);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [editTerm, setEditTerm] = useState<TermRegistryEntry | null>(null);
+  const [editDef, setEditDef] = useState("");
+  const [editPlaybooks, setEditPlaybooks] = useState<string[]>([]);
+  const { data: pbData } = useDoctrinePlaybooks();
 
   if (loading) return <div className="panel-loading">Loading terms...</div>;
   if (error) return <div className="panel-error">{error}</div>;
   if (!data) return null;
 
-  const entries = Object.entries(data.terms).filter(
-    ([term, def]) =>
-      term.toLowerCase().includes(search.toLowerCase()) ||
-      def.toLowerCase().includes(search.toLowerCase())
+  const allDomains = pbData?.playbooks?.map((p: DoctrinePlaybookSummary) => p.domain) || [];
+  const showMsg = (m: string) => { setMsg(m); setTimeout(() => setMsg(null), 3000); };
+
+  const entries = data.terms.filter(
+    (t) =>
+      t.term.toLowerCase().includes(search.toLowerCase()) ||
+      t.definition.toLowerCase().includes(search.toLowerCase())
   );
+
+  const handleCreate = async () => {
+    if (!newTerm.trim() || !newDef.trim() || newPlaybooks.length === 0) return;
+    const res = await createTerm(newTerm.trim(), newDef.trim(), newPlaybooks);
+    if (res.success) {
+      showMsg("Term created");
+      setAdding(false);
+      setNewTerm("");
+      setNewDef("");
+      setNewPlaybooks([]);
+      refetch();
+    }
+  };
+
+  const handleUpdate = async () => {
+    if (!editTerm || !editDef.trim() || editPlaybooks.length === 0) return;
+    const res = await updateTermRegistry(editTerm.term, editDef.trim(), editPlaybooks);
+    if (res.success) {
+      showMsg("Term updated");
+      setEditTerm(null);
+      refetch();
+    }
+  };
+
+  const handleDelete = async (term: string) => {
+    if (!confirm(`Remove term "${term}" from all playbooks?`)) return;
+    const res = await deleteTerm(term);
+    if (res.success) { showMsg("Term removed"); refetch(); }
+  };
+
+  const togglePlaybook = (list: string[], domain: string, setter: (v: string[]) => void) => {
+    setter(list.includes(domain) ? list.filter((d) => d !== domain) : [...list, domain]);
+  };
 
   return (
     <div className="panel">
       <div className="panel-header">
-        <h2>Canonical Terms</h2>
-        <span className="count-badge">{data.count} terms</span>
+        <h2>Term Registry</h2>
+        <div className="panel-badges">
+          <span className="count-badge">{data.count} terms</span>
+          {msg && <span className="save-msg">{msg}</span>}
+          <button className="add-btn" onClick={() => setAdding(true)}>+ Add Term</button>
+        </div>
       </div>
       <p className="panel-desc">
-        Canonical terminology dictionary. Read-only — changes require playbook regeneration.
+        Unified canonical term dictionary across all playbooks. Edit terms and assign them to playbooks.
       </p>
       <div className="search-box">
         <input
@@ -285,11 +906,64 @@ function TermsPanel() {
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
+
+      {adding && (
+        <div className="term-add-form">
+          <input placeholder="Term name" value={newTerm} onChange={(e) => setNewTerm(e.target.value)} />
+          <input placeholder="Definition" value={newDef} onChange={(e) => setNewDef(e.target.value)} />
+          <div className="playbook-chips">
+            {allDomains.map((d: string) => (
+              <button key={d} className={`chip ${newPlaybooks.includes(d) ? "active" : ""}`}
+                onClick={() => togglePlaybook(newPlaybooks, d, setNewPlaybooks)}>
+                {d.replace(/_/g, " ")}
+              </button>
+            ))}
+          </div>
+          <div className="inline-add-actions">
+            <button className="refresh-btn" onClick={handleCreate}>Create</button>
+            <button className="remove-btn" onClick={() => setAdding(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       <div className="terms-list">
-        {entries.map(([term, definition]) => (
-          <div key={term} className="term-item">
-            <div className="term-name">{term}</div>
-            <div className="term-def">{definition}</div>
+        {entries.map((t) => (
+          <div key={t.term} className="term-item-registry">
+            {editTerm?.term === t.term ? (
+              <div className="term-edit-form">
+                <div className="term-name">{t.term}</div>
+                <textarea value={editDef} onChange={(e) => setEditDef(e.target.value)} rows={2} />
+                <div className="playbook-chips">
+                  {allDomains.map((d: string) => (
+                    <button key={d} className={`chip ${editPlaybooks.includes(d) ? "active" : ""}`}
+                      onClick={() => togglePlaybook(editPlaybooks, d, setEditPlaybooks)}>
+                      {d.replace(/_/g, " ")}
+                    </button>
+                  ))}
+                </div>
+                <div className="inline-add-actions">
+                  <button className="refresh-btn" onClick={handleUpdate}>Save</button>
+                  <button className="remove-btn" onClick={() => setEditTerm(null)}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="term-info">
+                  <div className="term-name">{t.term}</div>
+                  <div className="term-def">{t.definition}</div>
+                  <div className="term-playbooks">
+                    {t.playbooks.map((d) => (
+                      <span key={d} className="chip active">{d.replace(/_/g, " ")}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="term-actions">
+                  {t.source === "admin" && <span className="source-badge admin">admin</span>}
+                  <button className="add-btn" onClick={() => { setEditTerm(t); setEditDef(t.definition); setEditPlaybooks([...t.playbooks]); }}>Edit</button>
+                  <button className="remove-btn" onClick={() => handleDelete(t.term)}>x</button>
+                </div>
+              </>
+            )}
           </div>
         ))}
         {entries.length === 0 && <div className="no-results">No matching terms</div>}
@@ -1517,4 +2191,766 @@ const styles = `
 
   .suppress-btn:hover { background: rgba(239, 68, 68, 0.2); }
   .suppress-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* Diagnostic Box */
+  .diagnostic-box {
+    margin-top: 1rem;
+    padding: 1rem 1.25rem;
+    border-radius: 0.5rem;
+    font-size: 0.8125rem;
+    line-height: 1.6;
+  }
+
+  .diagnostic-box.error {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+  }
+
+  .diagnostic-title {
+    font-weight: 700;
+    font-size: 0.875rem;
+    color: #f87171;
+    margin-bottom: 0.5rem;
+  }
+
+  .diagnostic-body p {
+    color: var(--text-secondary);
+    margin: 0 0 0.75rem;
+  }
+
+  .diagnostic-label {
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 0.25rem;
+  }
+
+  .diagnostic-details ul {
+    margin: 0.25rem 0 0.75rem 1.25rem;
+    padding: 0;
+  }
+
+  .diagnostic-details li {
+    color: #f87171;
+    font-size: 0.75rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .diagnostic-fix p {
+    color: var(--text-secondary);
+    margin: 0;
+  }
+
+  /* Per-Playbook Health Rows */
+  .playbook-health-list {
+    margin-top: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .playbook-health-row {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-surface-alt);
+    border-radius: 0.375rem;
+    border: 1px solid transparent;
+    font-size: 0.8125rem;
+  }
+
+  .playbook-health-row.mismatch {
+    border-color: rgba(239, 68, 68, 0.25);
+    background: rgba(239, 68, 68, 0.05);
+  }
+
+  .playbook-health-domain {
+    flex: 1;
+    font-weight: 500;
+    text-transform: capitalize;
+    color: var(--text-primary);
+  }
+
+  .playbook-health-version {
+    font-size: 0.6875rem;
+    color: #60a5fa;
+    background: rgba(59, 130, 246, 0.1);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+  }
+
+  .playbook-health-hash {
+    font-size: 0.6875rem;
+    color: var(--text-muted);
+  }
+
+  .playbook-health-date {
+    font-size: 0.6875rem;
+    color: var(--text-secondary);
+  }
+
+  .mono { font-family: 'SF Mono', ui-monospace, monospace; }
+
+  /* =========================================================
+     Playbooks Editor Layout
+     ========================================================= */
+  .playbooks-editor { padding: 0; }
+  .playbooks-editor .panel-header { padding: 1.25rem 1.25rem 0; }
+  .playbooks-editor .panel-badges { flex-wrap: wrap; }
+
+  .playbooks-layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 0;
+    min-height: 500px;
+    border-top: 1px solid var(--border-subtle);
+    margin-top: 0.75rem;
+  }
+
+  .pb-sidebar {
+    border-right: 1px solid var(--border-subtle);
+    overflow-y: auto;
+    max-height: 700px;
+  }
+
+  .pb-sidebar-item {
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-subtle);
+    transition: all 0.15s;
+  }
+
+  .pb-sidebar-item:hover { background: var(--bg-hover); }
+  .pb-sidebar-item.active {
+    background: rgba(124, 58, 237, 0.08);
+    border-left: 3px solid #7c3aed;
+  }
+
+  .pb-sidebar-domain {
+    display: block;
+    font-weight: 600;
+    font-size: 0.8125rem;
+    text-transform: capitalize;
+    color: var(--text-primary);
+  }
+
+  .pb-sidebar-meta {
+    font-size: 0.6875rem;
+    color: var(--text-secondary);
+  }
+
+  .pb-content {
+    padding: 1.25rem;
+    overflow-y: auto;
+    max-height: 700px;
+  }
+
+  .pb-empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 300px;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+  }
+
+  /* Playbook Detail Header */
+  .pb-detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .pb-detail-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .pb-detail-title h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin: 0;
+    text-transform: capitalize;
+  }
+
+  .pb-detail-actions {
+    display: flex;
+    gap: 0.375rem;
+    align-items: center;
+  }
+
+  .pb-meta-row {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-bottom: 1.25rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border-subtle);
+    flex-wrap: wrap;
+  }
+
+  /* Playbook Sections */
+  .pb-section {
+    margin-bottom: 1.5rem;
+  }
+
+  .pb-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+  }
+
+  .pb-section h4, .pb-section-header h4 {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+  }
+
+  /* Terms Table */
+  .pb-terms-table {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .pb-term-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-surface-alt);
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+  }
+
+  .pb-term-row.hidden { opacity: 0.5; }
+  .pb-term-row.admin { border-left: 2px solid #f59e0b; }
+
+  .pb-term-name {
+    font-weight: 600;
+    color: #c4b5fd;
+    min-width: 120px;
+    flex-shrink: 0;
+  }
+
+  .pb-term-def {
+    flex: 1;
+    color: var(--text-secondary);
+    line-height: 1.4;
+  }
+
+  .pb-term-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-shrink: 0;
+  }
+
+  /* Definitions */
+  .pb-definitions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .pb-def-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-surface-alt);
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+  }
+
+  .pb-def-key {
+    font-weight: 600;
+    color: #60a5fa;
+    min-width: 120px;
+    flex-shrink: 0;
+  }
+
+  .pb-def-value {
+    flex: 1;
+    color: var(--text-secondary);
+    line-height: 1.4;
+  }
+
+  /* List Items */
+  .pb-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .pb-list-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-surface-alt);
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+  }
+
+  .pb-list-item.hidden { opacity: 0.5; }
+  .pb-list-item.admin { border-left: 2px solid #f59e0b; }
+
+  .pb-list-text {
+    flex: 1;
+    color: var(--text-secondary);
+    line-height: 1.4;
+  }
+
+  .pb-list-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-shrink: 0;
+  }
+
+  /* Source Badges */
+  .source-badge {
+    font-size: 0.625rem;
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .source-badge.admin {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+  }
+
+  .source-badge.hidden {
+    background: rgba(107, 114, 128, 0.15);
+    color: #9ca3af;
+  }
+
+  .strikethrough { text-decoration: line-through; }
+
+  /* Add / Remove Buttons */
+  .add-btn {
+    padding: 0.25rem 0.625rem;
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    border-radius: 0.375rem;
+    color: #22c55e;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .add-btn:hover { background: rgba(34, 197, 94, 0.2); }
+
+  .remove-btn {
+    padding: 0.25rem 0.5rem;
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    border-radius: 0.375rem;
+    color: #f87171;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+
+  .remove-btn:hover { background: rgba(239, 68, 68, 0.2); }
+
+  /* Inline Add Forms */
+  .inline-add-form {
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    background: var(--bg-surface-alt);
+    border: 1px solid var(--border-default);
+    border-radius: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .inline-add-form input,
+  .inline-add-form textarea {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    border-radius: 0.375rem;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+    font-family: inherit;
+    resize: vertical;
+  }
+
+  .inline-add-form input:focus,
+  .inline-add-form textarea:focus {
+    outline: none;
+    border-color: rgba(59, 130, 246, 0.5);
+  }
+
+  .inline-add-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+  }
+
+  .inline-add-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  /* Diff View */
+  .diff-view {
+    padding: 0.5rem 0;
+  }
+
+  .diff-view h4 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin: 0 0 0.75rem;
+    color: var(--text-primary);
+  }
+
+  .diff-json {
+    padding: 1rem;
+    background: var(--bg-surface-alt);
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.5rem;
+    font-family: 'SF Mono', ui-monospace, monospace;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    overflow-x: auto;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  /* =========================================================
+     Term Registry Panel
+     ========================================================= */
+  .term-item-registry {
+    padding: 0.75rem;
+    background: var(--bg-surface-alt);
+    border-radius: 0.5rem;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .term-info { flex: 1; min-width: 0; }
+
+  .term-playbooks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-top: 0.375rem;
+  }
+
+  .term-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    flex-shrink: 0;
+  }
+
+  .term-edit-form {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .term-edit-form textarea {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    border-radius: 0.375rem;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+    font-family: inherit;
+    resize: vertical;
+  }
+
+  .term-add-form {
+    padding: 0.75rem;
+    background: var(--bg-surface-alt);
+    border: 1px solid var(--border-default);
+    border-radius: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .term-add-form input {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    border-radius: 0.375rem;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+  }
+
+  /* Chips */
+  .playbook-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .chip {
+    padding: 0.2rem 0.5rem;
+    border-radius: 0.25rem;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: var(--bg-hover);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    text-transform: capitalize;
+  }
+
+  .chip.active {
+    background: rgba(124, 58, 237, 0.15);
+    border-color: rgba(124, 58, 237, 0.3);
+    color: #a78bfa;
+  }
+
+  .chip:hover { border-color: rgba(124, 58, 237, 0.4); }
+
+  /* =========================================================
+     Routing Panel
+     ========================================================= */
+  .routing-layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 0;
+    min-height: 400px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 0.5rem;
+    margin-bottom: 1.5rem;
+    overflow: hidden;
+  }
+
+  .routing-sidebar {
+    border-right: 1px solid var(--border-subtle);
+    overflow-y: auto;
+    max-height: 500px;
+    background: var(--bg-surface-alt);
+  }
+
+  .routing-domain-item {
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    border-bottom: 1px solid var(--border-subtle);
+    transition: all 0.15s;
+  }
+
+  .routing-domain-item:hover { background: var(--bg-hover); }
+  .routing-domain-item.active {
+    background: rgba(59, 130, 246, 0.08);
+    border-left: 3px solid #3b82f6;
+  }
+
+  .routing-domain-name {
+    display: block;
+    font-weight: 600;
+    font-size: 0.8125rem;
+    text-transform: capitalize;
+    color: var(--text-primary);
+  }
+
+  .routing-domain-meta {
+    font-size: 0.6875rem;
+    color: var(--text-secondary);
+  }
+
+  .routing-content {
+    padding: 1.25rem;
+    overflow-y: auto;
+    max-height: 500px;
+  }
+
+  .routing-detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+
+  .routing-detail-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+    text-transform: capitalize;
+  }
+
+  .routing-playbook-map {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .routing-map-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+
+  .routing-playbook-map select {
+    padding: 0.375rem 0.625rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    border-radius: 0.375rem;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+    text-transform: capitalize;
+  }
+
+  .routing-patterns-section, .routing-admin-section {
+    margin-bottom: 1.25rem;
+  }
+
+  .routing-admin-section h4 {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    margin: 0 0 0.5rem;
+    color: var(--text-primary);
+  }
+
+  .routing-patterns-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .routing-pattern-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg-surface-alt);
+    border-radius: 0.375rem;
+    font-size: 0.8125rem;
+  }
+
+  .routing-pattern-row.admin { border-left: 2px solid #f59e0b; }
+
+  .routing-pattern-text {
+    flex: 1;
+    color: var(--text-primary);
+    font-family: 'SF Mono', ui-monospace, monospace;
+    font-size: 0.75rem;
+  }
+
+  .routing-pattern-weight {
+    font-size: 0.6875rem;
+    color: #60a5fa;
+    background: rgba(59, 130, 246, 0.1);
+    padding: 0.125rem 0.375rem;
+    border-radius: 0.25rem;
+    flex-shrink: 0;
+  }
+
+  /* Test Console */
+  .routing-test-section {
+    margin-top: 1.5rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .routing-test-section h3 {
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin: 0 0 0.25rem;
+    color: var(--text-primary);
+  }
+
+  .routing-test-form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .routing-test-form textarea {
+    width: 100%;
+    padding: 0.75rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    border-radius: 0.5rem;
+    color: var(--text-primary);
+    font-size: 0.8125rem;
+    font-family: inherit;
+    resize: vertical;
+  }
+
+  .routing-test-form textarea:focus {
+    outline: none;
+    border-color: rgba(59, 130, 246, 0.5);
+  }
+
+  .routing-test-result {
+    padding: 1rem;
+    background: var(--bg-surface-alt);
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 0.5rem;
+  }
+
+  .routing-result-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .routing-result-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .routing-result-label {
+    font-size: 0.6875rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .routing-result-value {
+    font-size: 0.875rem;
+    color: var(--text-primary);
+    font-weight: 600;
+    text-transform: capitalize;
+  }
+
+  .routing-matched-patterns {
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .routing-matched-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    margin-top: 0.375rem;
+  }
 `;

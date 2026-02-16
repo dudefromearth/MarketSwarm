@@ -42,11 +42,16 @@
     "massive",
     "vigil"
   ],
-  "capabilities": ["chat", "routine", "journal", "playbook", "commentary", "interaction", "edge_lab"],
+  "doctrine": {
+    "playbook_dir": "doctrine/playbooks",
+    "strict_mode": true,
+    "validation_mode": "enforce"
+  },
+  "capabilities": ["chat", "routine", "journal", "playbook", "commentary", "interaction", "edge_lab", "aol"],
   "env": {
     "VEXY_MODE": "full",
     "VEXY_LOOP_SLEEP_SEC": "60",
-    "PATH_DOCTRINE_DIR": "/Users/conor/path",
+    "PATH_DOCTRINE_DIR": "/Users/ernie/path",
     "XAI_API_KEY": "${XAI_API_KEY}",
     "OPENAI_API_KEY": "${OPENAI_API_KEY}",
     "CONVEXITY_ASSISTANT_ID": "asst_yNLi7GCN2q2TkixGLiDYLxwP"

@@ -10,6 +10,9 @@ const VEXY_TARGET = process.env.VEXY_TARGET || 'http://localhost:3005';
 const PORT = parseInt(process.env.VEXY_PROXY_PORT || '3006', 10);
 const TRUTH_REDIS_URL = process.env.TRUTH_REDIS_URL || 'redis://127.0.0.1:6379';
 
+// AOL v2.0 — Orchestrate endpoint config
+const ORCHESTRATE_TIMEOUT_MS = 2000;  // Circuit breaker timeout
+
 // --- Load secret from truth in Redis ---
 async function loadSecret() {
   const redis = new Redis(TRUTH_REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: 2 });
@@ -39,31 +42,61 @@ function parseCookies(cookieHeader) {
   return cookies;
 }
 
-// --- Tier resolution (mirrors tierFromRoles in tierGates.js) ---
-function resolveUserTier(roles, subscriptionTier) {
-  // Prefer explicit subscription_tier from JWT (disambiguates "subscriber" role)
-  if (subscriptionTier && typeof subscriptionTier === 'string') {
-    const t = subscriptionTier.toLowerCase().trim();
-    if (t.includes('administrator') || t.includes('admin')) return 'administrator';
-    if (t.includes('coaching')) return 'coaching';
-    if (t.includes('navigator')) return 'navigator';
-    if (t.includes('activator')) return 'activator';
-    if (t.includes('observer')) return 'observer';
-  }
-  // Fall back to role-based detection
-  if (!Array.isArray(roles) || roles.length === 0) return 'observer';
-  const lower = roles.map(r => r.toLowerCase());
-  if (lower.includes('administrator') || lower.includes('admin')) return 'administrator';
-  if (lower.includes('coaching') || lower.includes('fotw_coaching')) return 'coaching';
-  if (lower.includes('navigator') || lower.includes('fotw_navigator')) return 'navigator';
-  if (lower.includes('activator') || lower.includes('fotw_activator')) return 'activator';
-  return 'observer';
-}
-
 // --- JSON response helper ---
 function jsonReply(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify(body));
+}
+
+// --- Buffer request body ---
+function bufferBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => resolve(Buffer.concat(chunks).toString()));
+    req.on('error', reject);
+  });
+}
+
+// --- Fetch with timeout (circuit breaker) ---
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// --- Forward request with modified body ---
+function proxyWithBody(req, res, body) {
+  const proxyReq = http.request(
+    {
+      hostname: new URL(VEXY_TARGET).hostname,
+      port: new URL(VEXY_TARGET).port,
+      path: req.url,
+      method: req.method,
+      headers: {
+        ...req.headers,
+        'content-type': 'application/json',
+        'content-length': Buffer.byteLength(body),
+      },
+    },
+    (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    }
+  );
+  proxyReq.on('error', (err) => {
+    console.error(`[vexy_proxy] Forward error: ${err.message}`);
+    if (!res.headersSent) {
+      jsonReply(res, 502, { error: 'Vexy unavailable' });
+    }
+  });
+  proxyReq.write(body);
+  proxyReq.end();
 }
 
 // --- Proxy ---
@@ -76,8 +109,18 @@ proxy.on('error', (err, req, res) => {
   }
 });
 
+// --- STRICT fallback classification (used when orchestrate fails) ---
+const STRICT_FALLBACK = {
+  doctrine_mode: 'strict',
+  lpd_domain: 'unknown',
+  lpd_confidence: 0,
+  playbook_domain: '',
+  allow_overlay: false,
+  fallback: true,
+};
+
 // --- Server ---
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   // Health check
   if (req.url === '/health' && req.method === 'GET') {
     return jsonReply(res, 200, { status: 'ok' });
@@ -100,15 +143,85 @@ const server = http.createServer((req, res) => {
   }
 
   // Set user headers for Vexy
-  req.headers['x-user-id'] = String(decoded.wp?.id || '');
+  const userId = String(decoded.wp?.id || '');
+  req.headers['x-user-id'] = userId;
   req.headers['x-user-email'] = String(decoded.wp?.email || '');
 
-  // Resolve and forward user tier for rate limiting
-  const roles = decoded.wp?.roles || [];
-  req.headers['x-user-tier'] = resolveUserTier(roles, decoded.wp?.subscription_tier);
-  req.headers['x-user-roles'] = JSON.stringify(roles);
+  // =====================================================================
+  // AOL v2.0 — Two-Phase Orchestration
+  // Only intercept POST /api/vexy/interaction
+  // =====================================================================
+  if (req.method === 'POST' && req.url.startsWith('/api/vexy/interaction') && !req.url.includes('/cancel')) {
+    try {
+      const t0 = Date.now();
 
-  // Forward to Vexy
+      // Phase 1: Buffer body and call classification endpoint
+      const body = await bufferBody(req);
+      let parsed;
+      try {
+        parsed = JSON.parse(body);
+      } catch (e) {
+        return jsonReply(res, 400, { error: 'Invalid JSON' });
+      }
+
+      // Call orchestrate endpoint with circuit breaker
+      let classification;
+      try {
+        const orchestrateRes = await fetchWithTimeout(
+          `${VEXY_TARGET}/api/vexy/admin/orchestrate`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: parsed.message || '',
+              user_id: parseInt(userId) || 0,
+            }),
+          },
+          ORCHESTRATE_TIMEOUT_MS,
+        );
+        classification = await orchestrateRes.json();
+      } catch (err) {
+        // FALLBACK: orchestrate failed → default to STRICT mode
+        // Interaction must NEVER proceed without doctrine routing
+        console.warn(`[vexy_proxy] Orchestrate failed, falling back to STRICT: ${err.message}`);
+        classification = { ...STRICT_FALLBACK };
+      }
+
+      // Phase 2: Merge doctrine metadata into request body
+      parsed.doctrine_meta = {
+        doctrine_mode: classification.doctrine_mode || 'strict',
+        lpd_domain: classification.lpd_domain || 'unknown',
+        lpd_confidence: classification.lpd_confidence || 0,
+        playbook_domain: classification.playbook_domain || '',
+        allow_overlay: classification.allow_overlay || false,
+        fallback: classification.fallback || false,
+      };
+
+      // Include overlay data if present (M5)
+      if (classification.overlay_data) {
+        parsed.overlay_meta = classification.overlay_data;
+      }
+
+      const latency = Date.now() - t0;
+      console.log(
+        `[vexy_proxy] Orchestrate: ${classification.doctrine_mode} ` +
+        `domain=${classification.lpd_domain} ` +
+        `conf=${classification.lpd_confidence} ` +
+        `${classification.fallback ? '(FALLBACK) ' : ''}` +
+        `${latency}ms`
+      );
+
+      // Forward with enriched body
+      proxyWithBody(req, res, JSON.stringify(parsed));
+    } catch (err) {
+      console.error(`[vexy_proxy] Orchestration error: ${err.message}`);
+      // If everything fails, still try to forward the original request
+      proxy.web(req, res);
+    }
+    return;
+  }
+
+  // All other routes: pass-through as before
   proxy.web(req, res);
 });
 
@@ -160,6 +273,7 @@ async function main() {
 
   server.listen(PORT, () => {
     console.log(`[vexy_proxy] Listening on :${PORT} → ${VEXY_TARGET}`);
+    console.log(`[vexy_proxy] AOL v2.0 two-phase orchestration active`);
   });
 
   await startHeartbeat();

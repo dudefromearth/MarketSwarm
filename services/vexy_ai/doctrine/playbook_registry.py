@@ -12,6 +12,8 @@ Constitutional constraints:
 
 from __future__ import annotations
 
+import copy
+import json
 import logging
 import os
 import re
@@ -20,6 +22,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import yaml
+
+OVERRIDE_KEY_PREFIX = "doctrine:playbook_override"
 
 
 @dataclass
@@ -54,8 +58,14 @@ class PlaybookRegistry:
         self._path_runtime = path_runtime
         self._logger = logger or logging.getLogger(__name__)
         self._playbooks: Dict[str, DoctrinePlaybook] = {}
+        self._base_playbooks: Dict[str, DoctrinePlaybook] = {}
         self._safe_mode = False
         self._mismatch_details: List[str] = []
+        self._redis = None
+
+    def set_redis(self, redis_client) -> None:
+        """Set Redis client for override persistence."""
+        self._redis = redis_client
 
     @property
     def safe_mode(self) -> bool:
@@ -71,6 +81,7 @@ class PlaybookRegistry:
         enters safe mode (STRICT-only, no playbook injection).
         """
         self._playbooks.clear()
+        self._base_playbooks.clear()
         self._safe_mode = False
         self._mismatch_details.clear()
 
@@ -105,6 +116,14 @@ class PlaybookRegistry:
                         f"{yaml_path.name}: embedded={playbook.path_runtime_hash[:12]}... "
                         f"current={current_hash[:12]}..."
                     )
+
+                # Store base copy before overrides
+                self._base_playbooks[playbook.domain] = copy.deepcopy(playbook)
+
+                # Apply Redis overrides
+                overrides = self._load_overrides(playbook.domain)
+                if overrides:
+                    self._apply_overrides(playbook, overrides)
 
                 self._playbooks[playbook.domain] = playbook
 
@@ -277,6 +296,320 @@ class PlaybookRegistry:
                 parts.append(f"- {item}\n")
 
         return "".join(parts)
+
+    # =================================================================
+    # Redis Override System
+    # =================================================================
+
+    def _load_overrides(self, domain: str) -> Optional[Dict]:
+        """Load admin overrides from Redis for a domain."""
+        if not self._redis:
+            return None
+        try:
+            raw = self._redis.get(f"{OVERRIDE_KEY_PREFIX}:{domain}")
+            if raw:
+                return json.loads(raw)
+        except Exception as e:
+            self._log(f"Failed to load overrides for {domain}: {e}", emoji="⚠️")
+        return None
+
+    def _apply_overrides(self, playbook: DoctrinePlaybook, overrides: Dict) -> None:
+        """Apply admin overrides to a playbook (in-place mutation)."""
+        if "canonical_terminology" in overrides:
+            term_ovr = overrides["canonical_terminology"]
+            for term_name in term_ovr.get("remove", []):
+                playbook.canonical_terminology.pop(term_name, None)
+            for term_name, definition in term_ovr.get("add", {}).items():
+                playbook.canonical_terminology[term_name] = definition
+
+        if "definitions" in overrides:
+            playbook.definitions.update(overrides["definitions"])
+
+        for list_field in ("structural_logic", "mechanisms", "constraints",
+                           "failure_modes", "non_capabilities"):
+            if list_field in overrides:
+                field_ovr = overrides[list_field]
+                base_list = getattr(playbook, list_field)
+                remove_indices = sorted(field_ovr.get("remove", []), reverse=True)
+                for idx in remove_indices:
+                    if 0 <= idx < len(base_list):
+                        base_list.pop(idx)
+                for item in field_ovr.get("add", []):
+                    base_list.append(item)
+
+    def save_override(self, domain: str, field: str, data: Dict) -> bool:
+        """Save an admin override for a specific field of a domain playbook."""
+        if not self._redis:
+            return False
+        try:
+            existing = self._load_overrides(domain) or {}
+
+            if field == "canonical_terminology":
+                current = existing.get("canonical_terminology", {"add": {}, "remove": []})
+                if "add" in data:
+                    for item in data["add"]:
+                        current.setdefault("add", {})[item["term"]] = item["definition"]
+                if "remove" in data:
+                    current.setdefault("remove", [])
+                    for term in data["remove"]:
+                        if term not in current["remove"]:
+                            current["remove"].append(term)
+                        current.get("add", {}).pop(term, None)
+                existing["canonical_terminology"] = current
+
+            elif field == "definitions":
+                current = existing.get("definitions", {})
+                current.update(data)
+                existing["definitions"] = current
+
+            elif field in ("structural_logic", "mechanisms", "constraints",
+                           "failure_modes", "non_capabilities"):
+                current = existing.get(field, {"add": [], "remove": []})
+                if "add" in data:
+                    current.setdefault("add", []).extend(data["add"])
+                if "remove" in data:
+                    current.setdefault("remove", [])
+                    for idx in data["remove"]:
+                        if idx not in current["remove"]:
+                            current["remove"].append(idx)
+                existing[field] = current
+            else:
+                return False
+
+            self._redis.set(
+                f"{OVERRIDE_KEY_PREFIX}:{domain}", json.dumps(existing)
+            )
+            self._reload_playbook(domain)
+            return True
+
+        except Exception as e:
+            self._log(f"Failed to save override for {domain}/{field}: {e}", emoji="❌")
+            return False
+
+    def clear_overrides(self, domain: str) -> bool:
+        """Clear all admin overrides for a domain, reverting to base YAML."""
+        if not self._redis:
+            return False
+        try:
+            self._redis.delete(f"{OVERRIDE_KEY_PREFIX}:{domain}")
+            self._reload_playbook(domain)
+            return True
+        except Exception as e:
+            self._log(f"Failed to clear overrides for {domain}: {e}", emoji="❌")
+            return False
+
+    def _reload_playbook(self, domain: str) -> None:
+        """Reload a single playbook from base + overrides."""
+        base = self._base_playbooks.get(domain)
+        if not base:
+            return
+        merged = copy.deepcopy(base)
+        overrides = self._load_overrides(domain)
+        if overrides:
+            self._apply_overrides(merged, overrides)
+        self._playbooks[domain] = merged
+
+    def has_overrides(self, domain: str) -> bool:
+        """Check if a domain has admin overrides."""
+        if not self._redis:
+            return False
+        try:
+            return bool(self._redis.exists(f"{OVERRIDE_KEY_PREFIX}:{domain}"))
+        except Exception:
+            return False
+
+    def get_full_content(self, domain: str) -> Optional[Dict]:
+        """Get full playbook content with source annotations for admin UI."""
+        merged = self._playbooks.get(domain)
+        base = self._base_playbooks.get(domain)
+        if not merged or not base:
+            return None
+
+        overrides = self._load_overrides(domain) or {}
+        term_ovr = overrides.get("canonical_terminology", {})
+        admin_added_terms = set(term_ovr.get("add", {}).keys())
+        hidden_terms = set(term_ovr.get("remove", []))
+
+        terms = []
+        for term, definition in merged.canonical_terminology.items():
+            terms.append({
+                "term": term,
+                "definition": definition,
+                "source": "admin" if term in admin_added_terms else "base",
+            })
+        for term in hidden_terms:
+            if term in base.canonical_terminology:
+                terms.append({
+                    "term": term,
+                    "definition": base.canonical_terminology[term],
+                    "source": "base",
+                    "hidden": True,
+                })
+
+        def annotate_list(field_name: str) -> List[Dict]:
+            merged_list = getattr(merged, field_name)
+            base_list = getattr(base, field_name)
+            field_ovr = overrides.get(field_name, {})
+            admin_additions = field_ovr.get("add", [])
+            hidden_indices = set(field_ovr.get("remove", []))
+
+            items = []
+            for item in merged_list:
+                source = "admin" if item in admin_additions else "base"
+                items.append({"text": item, "source": source})
+            for idx in hidden_indices:
+                if 0 <= idx < len(base_list):
+                    items.append({
+                        "text": base_list[idx], "source": "base", "hidden": True,
+                    })
+            return items
+
+        def_overrides = overrides.get("definitions", {})
+        definitions = {}
+        for key, val in merged.definitions.items():
+            definitions[key] = {
+                "value": val,
+                "source": "admin" if key in def_overrides else "base",
+            }
+
+        return {
+            "domain": merged.domain,
+            "version": merged.version,
+            "doctrine_source": merged.doctrine_source,
+            "path_runtime_version": merged.path_runtime_version,
+            "path_runtime_hash": merged.path_runtime_hash,
+            "generated_at": merged.generated_at,
+            "has_overrides": bool(overrides),
+            "canonical_terminology": terms,
+            "definitions": definitions,
+            "structural_logic": annotate_list("structural_logic"),
+            "mechanisms": annotate_list("mechanisms"),
+            "constraints": annotate_list("constraints"),
+            "failure_modes": annotate_list("failure_modes"),
+            "non_capabilities": annotate_list("non_capabilities"),
+        }
+
+    def get_diff(self, domain: str) -> Optional[Dict]:
+        """Show what admin has changed vs base YAML."""
+        base = self._base_playbooks.get(domain)
+        merged = self._playbooks.get(domain)
+        if not base or not merged:
+            return None
+        overrides = self._load_overrides(domain) or {}
+        return {
+            "domain": domain,
+            "has_overrides": bool(overrides),
+            "overrides": overrides,
+            "base": {
+                "canonical_terminology": base.canonical_terminology,
+                "definitions": base.definitions,
+                "structural_logic": base.structural_logic,
+                "mechanisms": base.mechanisms,
+                "constraints": base.constraints,
+                "failure_modes": base.failure_modes,
+                "non_capabilities": base.non_capabilities,
+            },
+            "merged": {
+                "canonical_terminology": merged.canonical_terminology,
+                "definitions": merged.definitions,
+                "structural_logic": merged.structural_logic,
+                "mechanisms": merged.mechanisms,
+                "constraints": merged.constraints,
+                "failure_modes": merged.failure_modes,
+                "non_capabilities": merged.non_capabilities,
+            },
+        }
+
+    # =================================================================
+    # Term Registry (Cross-Playbook)
+    # =================================================================
+
+    def get_term_registry(self) -> List[Dict]:
+        """Get all canonical terms with playbook assignments."""
+        term_map: Dict[str, Dict] = {}
+        for domain, pb in self._playbooks.items():
+            base_pb = self._base_playbooks.get(domain)
+            overrides = self._load_overrides(domain) or {}
+            admin_terms = set(overrides.get("canonical_terminology", {}).get("add", {}).keys())
+
+            for term, definition in pb.canonical_terminology.items():
+                if term not in term_map:
+                    term_map[term] = {
+                        "term": term,
+                        "definition": definition,
+                        "playbooks": [],
+                        "source": "admin" if term in admin_terms else "base",
+                    }
+                term_map[term]["playbooks"].append(domain)
+                if term in admin_terms:
+                    term_map[term]["source"] = "admin"
+
+        return sorted(term_map.values(), key=lambda t: t["term"])
+
+    def add_term_to_playbooks(self, term: str, definition: str,
+                              playbooks: List[str]) -> bool:
+        """Add a term to one or more playbooks via overrides."""
+        if not self._redis:
+            return False
+        for domain in playbooks:
+            if domain not in self._base_playbooks:
+                continue
+            self.save_override(domain, "canonical_terminology", {
+                "add": [{"term": term, "definition": definition}],
+            })
+        return True
+
+    def remove_term_from_all(self, term: str) -> bool:
+        """Hide a term from all playbooks that contain it."""
+        if not self._redis:
+            return False
+        for domain, pb in self._base_playbooks.items():
+            if term in pb.canonical_terminology:
+                self.save_override(domain, "canonical_terminology", {
+                    "remove": [term],
+                })
+        for domain in list(self._playbooks.keys()):
+            overrides = self._load_overrides(domain) or {}
+            admin_add = overrides.get("canonical_terminology", {}).get("add", {})
+            if term in admin_add:
+                del admin_add[term]
+                self._redis.set(
+                    f"{OVERRIDE_KEY_PREFIX}:{domain}", json.dumps(overrides)
+                )
+                self._reload_playbook(domain)
+        return True
+
+    def update_term(self, term: str, definition: str,
+                    playbooks: List[str]) -> bool:
+        """Update a term's definition and playbook assignments."""
+        if not self._redis:
+            return False
+        current_playbooks = set()
+        for domain, pb in self._playbooks.items():
+            if term in pb.canonical_terminology:
+                current_playbooks.add(domain)
+
+        target_playbooks = set(playbooks)
+
+        # Add to new playbooks
+        for domain in target_playbooks - current_playbooks:
+            self.save_override(domain, "canonical_terminology", {
+                "add": [{"term": term, "definition": definition}],
+            })
+
+        # Remove from old playbooks
+        for domain in current_playbooks - target_playbooks:
+            self.save_override(domain, "canonical_terminology", {
+                "remove": [term],
+            })
+
+        # Update definition in remaining playbooks
+        for domain in target_playbooks & current_playbooks:
+            self.save_override(domain, "canonical_terminology", {
+                "add": [{"term": term, "definition": definition}],
+            })
+
+        return True
 
     def get_health(self) -> Dict[str, Any]:
         """Get registry health status for admin endpoints."""

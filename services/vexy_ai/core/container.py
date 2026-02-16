@@ -40,6 +40,7 @@ CAPABILITY_REGISTRY: Dict[str, str] = {
     "mesh": "capabilities.mesh.capability.MeshCapability",
     "interaction": "capabilities.interaction.capability.InteractionCapability",
     "edge_lab": "capabilities.edge_lab.capability.EdgeLabCapability",
+    "aol": "capabilities.aol.capability.AOLCapability",
 }
 
 

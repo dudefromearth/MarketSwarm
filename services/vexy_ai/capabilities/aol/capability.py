@@ -61,6 +61,14 @@ class AOLCapability(BaseCapability):
             redis_client = None
 
         self._aos = AdminOrchestrationService(logger=self.logger, redis_client=redis_client)
+        self._redis = redis_client
+
+        # Wire Redis to playbook registry for override persistence
+        if redis_client and self._kernel:
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if registry:
+                registry.set_redis(redis_client)
+                self.logger.info("AOL: Redis wired to playbook registry for overrides", emoji="🔗")
 
         # Scan loop state
         # NOTE: Single-process assumption. Multi-instance requires Redis-based
@@ -187,6 +195,252 @@ class AOLCapability(BaseCapability):
                     "non_capabilities": pb.non_capabilities,
                 },
             }
+
+        # =================================================================
+        # PLAYBOOK EDITOR: Full Content + CRUD
+        # =================================================================
+
+        @router.get("/playbooks/{domain}/full")
+        async def get_playbook_full(domain: str):
+            """Full playbook content with source annotations."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+
+            content = registry.get_full_content(domain)
+            if not content:
+                return {"success": False, "error": f"Playbook '{domain}' not found"}
+
+            return {"success": True, "playbook": content}
+
+        @router.put("/playbooks/{domain}/terms")
+        async def update_playbook_terms(domain: str, body: dict):
+            """Add/edit/remove canonical terms for a domain."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+
+            ok = registry.save_override(domain, "canonical_terminology", body)
+            if not ok:
+                return {"success": False, "error": "Failed to save override (Redis unavailable?)"}
+            return {"success": True}
+
+        @router.put("/playbooks/{domain}/constraints")
+        async def update_playbook_constraints(domain: str, body: dict):
+            """Add/remove constraints for a domain."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            ok = registry.save_override(domain, "constraints", body)
+            return {"success": ok, "error": None if ok else "Failed to save"}
+
+        @router.put("/playbooks/{domain}/definitions")
+        async def update_playbook_definitions(domain: str, body: dict):
+            """Edit definitions dict for a domain."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            ok = registry.save_override(domain, "definitions", body)
+            return {"success": ok, "error": None if ok else "Failed to save"}
+
+        @router.put("/playbooks/{domain}/failure-modes")
+        async def update_playbook_failure_modes(domain: str, body: dict):
+            """Add/remove failure modes for a domain."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            ok = registry.save_override(domain, "failure_modes", body)
+            return {"success": ok, "error": None if ok else "Failed to save"}
+
+        @router.put("/playbooks/{domain}/non-capabilities")
+        async def update_playbook_non_capabilities(domain: str, body: dict):
+            """Add/remove non-capabilities for a domain."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            ok = registry.save_override(domain, "non_capabilities", body)
+            return {"success": ok, "error": None if ok else "Failed to save"}
+
+        @router.put("/playbooks/{domain}/structural-logic")
+        async def update_playbook_structural_logic(domain: str, body: dict):
+            """Add/remove structural logic for a domain."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            ok = registry.save_override(domain, "structural_logic", body)
+            return {"success": ok, "error": None if ok else "Failed to save"}
+
+        @router.put("/playbooks/{domain}/mechanisms")
+        async def update_playbook_mechanisms(domain: str, body: dict):
+            """Add/remove mechanisms for a domain."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            ok = registry.save_override(domain, "mechanisms", body)
+            return {"success": ok, "error": None if ok else "Failed to save"}
+
+        @router.delete("/playbooks/{domain}/overrides")
+        async def clear_playbook_overrides(domain: str):
+            """Clear all Redis overrides for domain, revert to base YAML."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            ok = registry.clear_overrides(domain)
+            return {"success": ok}
+
+        @router.post("/playbooks/regenerate")
+        async def regenerate_playbooks():
+            """Regenerate all playbooks from PathRuntime."""
+            from services.vexy_ai.doctrine.playbook_generator import PlaybookGenerator
+            result = PlaybookGenerator.regenerate_from_runtime()
+            if result["success"]:
+                # Reload registry
+                registry = getattr(self._kernel, "playbook_registry", None)
+                if registry:
+                    registry.load_all()
+            return result
+
+        @router.get("/playbooks/diff/{domain}")
+        async def get_playbook_diff(domain: str):
+            """Show what admin has changed vs base YAML."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            diff = registry.get_diff(domain)
+            if not diff:
+                return {"success": False, "error": f"Playbook '{domain}' not found"}
+            return {"success": True, "diff": diff}
+
+        # =================================================================
+        # ROUTING: Classification Router + Test Console (Phase 2)
+        # =================================================================
+
+        @router.get("/routing/map")
+        async def get_routing_map():
+            """Full routing map: domain -> patterns -> playbook."""
+            from services.vexy_ai.doctrine.lpd import LanguagePatternDetector
+            lpd = LanguagePatternDetector(redis_client=self._redis)
+            return {"success": True, "routing": lpd.get_routing_map()}
+
+        @router.put("/routing/{domain}/patterns")
+        async def update_routing_patterns(domain: str, body: dict):
+            """Add/remove classification patterns for a domain."""
+            from services.vexy_ai.doctrine.lpd import LanguagePatternDetector
+            lpd = LanguagePatternDetector(redis_client=self._redis)
+
+            current = []
+            if self._redis:
+                import json as _json
+                raw = self._redis.get(f"doctrine:lpd_patterns:{domain}")
+                if raw:
+                    current = _json.loads(raw)
+
+            if "add" in body:
+                current.extend(body["add"])
+            if "remove" in body:
+                for idx in sorted(body["remove"], reverse=True):
+                    if 0 <= idx < len(current):
+                        current.pop(idx)
+
+            ok = lpd.save_admin_patterns(domain, current)
+            return {"success": ok}
+
+        @router.put("/routing/playbook-map")
+        async def update_playbook_map(body: dict):
+            """Change which playbook a domain maps to."""
+            from services.vexy_ai.doctrine.lpd import LanguagePatternDetector
+            lpd = LanguagePatternDetector(redis_client=self._redis)
+            domain = body.get("domain", "")
+            playbook = body.get("playbook", "")
+            ok = lpd.save_playbook_map_override(domain, playbook)
+            return {"success": ok}
+
+        @router.post("/routing/test")
+        async def test_classification(body: dict):
+            """Classify a query without affecting logs/metrics (dry-run)."""
+            from services.vexy_ai.doctrine.lpd import LanguagePatternDetector
+            from services.vexy_ai.doctrine.dcl import DoctrineControlLayer
+
+            message = body.get("message", "")
+            if not message:
+                return {"success": False, "error": "message is required"}
+
+            lpd_config = self.service.get_lpd_config() if self.service else {}
+            lpd = LanguagePatternDetector(
+                confidence_threshold=lpd_config.get("confidence_threshold"),
+                hybrid_margin=lpd_config.get("hybrid_margin"),
+                redis_client=self._redis,
+            )
+            classification = lpd.classify(message)
+
+            dcl = DoctrineControlLayer()
+            mode = dcl.determine_mode(classification)
+            constraints = dcl.get_constraints(mode)
+
+            return {
+                "success": True,
+                "result": {
+                    "domain": classification.domain.value,
+                    "confidence": classification.confidence,
+                    "secondary_domain": (
+                        classification.secondary_domain.value
+                        if classification.secondary_domain else None
+                    ),
+                    "doctrine_mode": mode,
+                    "playbook_domain": classification.playbook_domain,
+                    "matched_patterns": classification.matched_patterns[:10],
+                    "require_playbook": constraints.get("require_playbook", False),
+                },
+            }
+
+        # =================================================================
+        # TERM REGISTRY: Cross-Playbook Mapping (Phase 3)
+        # =================================================================
+
+        @router.get("/terms/registry")
+        async def get_term_registry():
+            """All canonical terms across all playbooks with assignments."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            terms = registry.get_term_registry()
+            return {"success": True, "terms": terms, "count": len(terms)}
+
+        @router.post("/terms")
+        async def create_term(body: dict):
+            """Create new term, assign to playbooks."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            term = body.get("term", "")
+            definition = body.get("definition", "")
+            playbooks = body.get("playbooks", [])
+            if not term or not definition or not playbooks:
+                return {"success": False, "error": "term, definition, playbooks required"}
+            ok = registry.add_term_to_playbooks(term, definition, playbooks)
+            return {"success": ok}
+
+        @router.put("/terms/{term}")
+        async def update_term(term: str, body: dict):
+            """Update term definition and playbook assignments."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            definition = body.get("definition", "")
+            playbooks = body.get("playbooks", [])
+            if not definition or not playbooks:
+                return {"success": False, "error": "definition, playbooks required"}
+            ok = registry.update_term(term, definition, playbooks)
+            return {"success": ok}
+
+        @router.delete("/terms/{term}")
+        async def delete_term(term: str):
+            """Remove a term from all playbooks."""
+            registry = getattr(self._kernel, "playbook_registry", None)
+            if not registry:
+                return {"success": False, "error": "Playbook registry not available"}
+            ok = registry.remove_term_from_all(term)
+            return {"success": ok}
 
         @router.get("/terms")
         async def get_canonical_terms():

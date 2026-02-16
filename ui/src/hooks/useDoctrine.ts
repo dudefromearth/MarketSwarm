@@ -166,6 +166,281 @@ export async function updateThresholds(
 }
 
 // =================================================================
+// Playbook Full Content + CRUD Hooks (Phase 1)
+// =================================================================
+
+export interface AnnotatedTerm {
+  term: string;
+  definition: string;
+  source: "base" | "admin";
+  hidden?: boolean;
+}
+
+export interface AnnotatedListItem {
+  text: string;
+  source: "base" | "admin";
+  hidden?: boolean;
+}
+
+export interface AnnotatedDefinition {
+  value: string;
+  source: "base" | "admin";
+}
+
+export interface PlaybookFullContent {
+  domain: string;
+  version: string;
+  doctrine_source: string;
+  path_runtime_version: string;
+  path_runtime_hash: string;
+  generated_at: string;
+  has_overrides: boolean;
+  canonical_terminology: AnnotatedTerm[];
+  definitions: Record<string, AnnotatedDefinition>;
+  structural_logic: AnnotatedListItem[];
+  mechanisms: AnnotatedListItem[];
+  constraints: AnnotatedListItem[];
+  failure_modes: AnnotatedListItem[];
+  non_capabilities: AnnotatedListItem[];
+}
+
+export interface PlaybookFullResponse {
+  success: boolean;
+  playbook: PlaybookFullContent;
+}
+
+export function usePlaybookFull(domain: string | null) {
+  const url = domain ? `${BASE}/playbooks/${domain}/full` : null;
+  const [data, setData] = useState<PlaybookFullResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const refetch = useCallback(async () => {
+    if (!url) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || "Request failed");
+      setData(json);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unknown error");
+    } finally {
+      setLoading(false);
+    }
+  }, [url]);
+
+  useEffect(() => {
+    if (domain) refetch();
+  }, [domain, refetch]);
+
+  return { data, loading, error, refetch };
+}
+
+export async function updatePlaybookField(
+  domain: string,
+  field: string,
+  data: Record<string, unknown>
+): Promise<{ success: boolean; error?: string }> {
+  const res = await fetch(`${BASE}/playbooks/${domain}/${field}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function clearPlaybookOverrides(
+  domain: string
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${BASE}/playbooks/${domain}/overrides`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  return res.json();
+}
+
+export async function regeneratePlaybooks(): Promise<{
+  success: boolean;
+  regenerated_count?: number;
+  new_hash?: string;
+  error?: string;
+}> {
+  const res = await fetch(`${BASE}/playbooks/regenerate`, {
+    method: "POST",
+    credentials: "include",
+  });
+  return res.json();
+}
+
+export interface PlaybookDiff {
+  domain: string;
+  has_overrides: boolean;
+  overrides: Record<string, unknown>;
+  base: Record<string, unknown>;
+  merged: Record<string, unknown>;
+}
+
+export function usePlaybookDiff(domain: string | null) {
+  const url = domain ? `${BASE}/playbooks/diff/${domain}` : null;
+  const [data, setData] = useState<{ success: boolean; diff: PlaybookDiff } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const refetch = useCallback(async () => {
+    if (!url) return;
+    setLoading(true);
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      const json = await res.json();
+      setData(json);
+    } catch { /* ignore */ } finally {
+      setLoading(false);
+    }
+  }, [url]);
+
+  useEffect(() => {
+    if (domain) refetch();
+  }, [domain, refetch]);
+
+  return { data, loading, refetch };
+}
+
+// =================================================================
+// Routing + Test Console Hooks (Phase 2)
+// =================================================================
+
+export interface RoutingPattern {
+  pattern: string;
+  weight: number;
+  source: "base" | "admin";
+}
+
+export interface RoutingDomainInfo {
+  patterns: RoutingPattern[];
+  playbook: string;
+  admin_patterns: { pattern: string; weight: number }[];
+}
+
+export interface RoutingMapResponse {
+  success: boolean;
+  routing: Record<string, RoutingDomainInfo>;
+}
+
+export function useRoutingMap() {
+  return useFetch<RoutingMapResponse>(`${BASE}/routing/map`);
+}
+
+export async function updateRoutingPatterns(
+  domain: string,
+  data: { add?: { pattern: string; weight: number }[]; remove?: number[] }
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${BASE}/routing/${domain}/patterns`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
+  });
+  return res.json();
+}
+
+export async function updatePlaybookMap(
+  domain: string,
+  playbook: string
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${BASE}/routing/playbook-map`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ domain, playbook }),
+  });
+  return res.json();
+}
+
+export interface ClassificationTestResult {
+  domain: string;
+  confidence: number;
+  secondary_domain: string | null;
+  doctrine_mode: string;
+  playbook_domain: string;
+  matched_patterns: string[];
+  require_playbook: boolean;
+}
+
+export async function testClassification(
+  message: string
+): Promise<{ success: boolean; result: ClassificationTestResult }> {
+  const res = await fetch(`${BASE}/routing/test`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ message }),
+  });
+  return res.json();
+}
+
+// =================================================================
+// Term Registry Hooks (Phase 3)
+// =================================================================
+
+export interface TermRegistryEntry {
+  term: string;
+  definition: string;
+  playbooks: string[];
+  source: "base" | "admin";
+}
+
+export interface TermRegistryResponse {
+  success: boolean;
+  terms: TermRegistryEntry[];
+  count: number;
+}
+
+export function useTermRegistry() {
+  return useFetch<TermRegistryResponse>(`${BASE}/terms/registry`);
+}
+
+export async function createTerm(
+  term: string,
+  definition: string,
+  playbooks: string[]
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${BASE}/terms`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ term, definition, playbooks }),
+  });
+  return res.json();
+}
+
+export async function updateTermRegistry(
+  term: string,
+  definition: string,
+  playbooks: string[]
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${BASE}/terms/${encodeURIComponent(term)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ definition, playbooks }),
+  });
+  return res.json();
+}
+
+export async function deleteTerm(
+  term: string
+): Promise<{ success: boolean }> {
+  const res = await fetch(`${BASE}/terms/${encodeURIComponent(term)}`, {
+    method: "DELETE",
+    credentials: "include",
+  });
+  return res.json();
+}
+
+// =================================================================
 // PDE Pattern Detection Hooks
 // =================================================================
 

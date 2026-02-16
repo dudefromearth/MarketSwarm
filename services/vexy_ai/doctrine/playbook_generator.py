@@ -149,6 +149,46 @@ class PlaybookGenerator:
             print(f"  Generated: {output_path}")
 
         print(f"\nAll playbooks generated with hash: {runtime_hash[:16]}...")
+        return runtime_hash
+
+    @staticmethod
+    def regenerate_from_runtime(
+        path_dir: str = None,
+        output_dir: str = None,
+    ) -> Dict:
+        """Programmatic regeneration entry point (not just CLI).
+
+        Returns: { success, regenerated_count, new_hash, error? }
+        """
+        from services.vexy_ai.intel.path_runtime import PathRuntime
+
+        path_dir = path_dir or os.path.expanduser("~/path")
+        output_dir = output_dir or os.path.join(
+            os.path.dirname(__file__), "playbooks"
+        )
+
+        try:
+            runtime = PathRuntime(path_dir=path_dir)
+            try:
+                runtime.load()
+            except FileNotFoundError:
+                pass
+
+            gen = PlaybookGenerator(runtime)
+            new_hash = gen.generate_all(output_dir)
+            domains = gen._get_domain_definitions()
+            return {
+                "success": True,
+                "regenerated_count": len(domains),
+                "new_hash": new_hash,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "regenerated_count": 0,
+                "new_hash": "",
+                "error": str(e),
+            }
 
     def generate_domain(self, domain: str) -> Optional[Dict]:
         """Generate a single domain playbook."""
