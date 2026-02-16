@@ -39,6 +39,32 @@ No structural decisions may be made outside this authority hierarchy.
 
 ---
 
+# **Canonical Authority Reference**
+
+The authoritative structural definitions for MarketSwarm live in a separate constitutional repository:
+
+**Repository:** `MarketSwarm-Canonical`
+
+This repository is the structural authority for:
+
+- Canonical Instrument Model
+- Canonical Contract Model
+- Canonical Position Model
+- Canonical Portfolio Model
+- Strategy Derivation Rules
+- Settlement Geometry
+- Engine Interface Contracts
+
+**Governance Rules:**
+
+1. Production must conform to canonical definitions. Canonical overrides production in case of any structural discrepancy.
+2. No divergence from canonical geometry is permitted in production code.
+3. No compatibility adapters, translation layers, or schema redefinitions may be introduced to bridge production and canonical models.
+4. MarketSwarm-Canonical is constitutional, not a runtime dependency. Production must never import canonical code directly. There are no cross-repo code imports, no package dependencies, no shared modules.
+5. Canonical defines the geometry of truth. Production implements that geometry. The relationship is governance, not coupling.
+
+---
+
 # **Engine Admission Governance (Effective Immediately)**
 
 **Authority:** `architecture/05_engine_governance/architectural_engine_admission_spec_v1.0.md`
