@@ -3,6 +3,14 @@
 # Active Skills
 
 - swarm_core
+- architect_guard
+- canonical_auditor
+- engine_builder
+- interface_contract_author
+- transformation_executor
+- doctrine_integrator
+- review_gate
+- backtest_quant_guard
 
 All Claude instances operating in MarketSwarm must load and obey the swarm_core skill before performing any task.
 
@@ -13,8 +21,9 @@ The following authority hierarchy governs all development:
 1. architecture/00_manifest/ARCHITECTURE_ROOT.md
 2. architecture/01_canonical/canonical_schema_v1.0.md
 3. architecture/04_transformation/canonical_conformance_transformation_v1.0.md
-4. architecture/02_doctrine/
-5. Engine specifications under architecture/03_engines/
+4. architecture/05_engine_governance/architectural_engine_admission_spec_v1.0.md
+5. architecture/02_doctrine/
+6. Engine specifications under architecture/03_engines/
 
 If any proposed change conflicts with these documents:
 Architecture wins.
@@ -27,6 +36,37 @@ Before producing structural changes, you must:
 - Reject any divergence from canonical geometry.
 
 No structural decisions may be made outside this authority hierarchy.
+
+---
+
+# **Engine Admission Governance (Effective Immediately)**
+
+**Authority:** `architecture/05_engine_governance/architectural_engine_admission_spec_v1.0.md`
+
+No engine may be implemented unless compliant with the Architectural Engine Admission Specification v1.0. This supersedes feature-driven implementation priorities.
+
+**Admission Requirements:**
+
+1. **Canonical Dependency** — Engines operate exclusively on Canonical Instrument, Contract, Position, Portfolio. No dependency on `strategy`, `side`, `width` as primary structure.
+2. **Transformation Precondition** — Canonical Conformance Transformation must be complete before engine construction begins.
+3. **No Transitional Architecture** — No compatibility adapters, dual schemas, legacy mode, translation layers, shadow models, or parallel entity hierarchies.
+4. **Single P&L Path** — One settlement path, one P&L path, one margin path, one exposure path. No alternate computation paths.
+
+**Freeze Directive:** Until Canonical Conformance is declared complete, no new engine enters production. No feature work supersedes architecture work.
+
+**Engine Build Order:** Canonical Schema → Conformance Transformation → Refactor & Audit → Execution → Cost → Settlement → Margin → Backtest → Forward-Walk → ML.
+
+**Engine Tiers:**
+- Tier 1 (Structural): Execution, Position, Cost & Commission
+- Tier 2 (Financial): Settlement, Margin, Risk
+- Tier 3 (Analytical): Backtest, Forward-Walk, Statistical Edge
+- Tier 4 (Cognitive): AFI, Playbook, Vexy Interpretation
+
+Each tier depends on prior tiers being canonical-compliant.
+
+**Prohibited Shortcuts:** Strategy-first modeling, butterfly/vertical width shortcuts, implicit BPV, hard-coded 100 multiplier, ignoring exercise style semantics, simulated P&L detached from canonical geometry.
+
+All engine plans currently in progress must be evaluated against this specification before continuation.
 
 ---
 
