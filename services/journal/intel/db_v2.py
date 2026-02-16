@@ -6151,35 +6151,61 @@ class JournalDBv2:
 
         Returns trades with r_multiple, exit_time, planned_risk, pnl, quantity
         ordered by exit_time ASC (oldest first).
+
+        When r_multiple or planned_risk are NULL, computes them from entry_price
+        using the symbol multiplier: planned_risk = entry_price * multiplier * quantity,
+        r_multiple = pnl / planned_risk.
         """
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
             cursor.execute("""
                 SELECT
-                    t.r_multiple,
+                    COALESCE(t.r_multiple,
+                        CASE WHEN t.planned_risk IS NOT NULL AND t.planned_risk > 0
+                             THEN t.pnl * 1.0 / t.planned_risk
+                             WHEN t.entry_price IS NOT NULL AND t.entry_price > 0
+                             THEN t.pnl * 1.0 / (t.entry_price * COALESCE(s.multiplier, 100) * t.quantity)
+                             ELSE NULL END
+                    ) as r_multiple,
                     t.exit_time,
-                    t.planned_risk,
+                    COALESCE(t.planned_risk,
+                        CASE WHEN t.entry_price IS NOT NULL AND t.entry_price > 0
+                             THEN t.entry_price * COALESCE(s.multiplier, 100) * t.quantity
+                             ELSE NULL END
+                    ) as planned_risk,
                     t.pnl,
                     t.quantity
                 FROM trades t
                 JOIN trade_logs tl ON t.log_id = tl.id
+                LEFT JOIN symbols s ON t.underlying = s.symbol
                 WHERE tl.user_id = %s
                 AND tl.is_active = 1
                 AND t.status = 'closed'
                 AND t.exit_time IS NOT NULL
-                AND t.r_multiple IS NOT NULL
-                AND t.planned_risk IS NOT NULL
-                AND t.planned_risk > 0
+                AND t.pnl IS NOT NULL
+                AND (t.r_multiple IS NOT NULL
+                     OR t.planned_risk > 0
+                     OR (t.entry_price IS NOT NULL AND t.entry_price > 0))
                 ORDER BY t.exit_time ASC
             """, (user_id,))
 
             rows = cursor.fetchall()
             results = []
             for row in rows:
+                r_mult = float(row[0]) if row[0] is not None else None
+                if r_mult is None:
+                    continue  # skip trades where R can't be computed
+                # Parse exit_time: stored as VARCHAR (ISO format) in the DB
+                exit_time = row[1]
+                if isinstance(exit_time, str):
+                    try:
+                        exit_time = datetime.fromisoformat(exit_time)
+                    except (ValueError, TypeError):
+                        continue  # skip trades with unparseable timestamps
                 results.append({
-                    'r_multiple': float(row[0]) if row[0] is not None else 0.0,
-                    'exit_time': row[1],
+                    'r_multiple': r_mult,
+                    'exit_time': exit_time,
                     'planned_risk': float(row[2]) if row[2] is not None else 0.0,
                     'pnl': float(row[3]) if row[3] is not None else 0.0,
                     'quantity': row[4] or 1,
@@ -6382,7 +6408,13 @@ class JournalDBv2:
             conn.close()
 
     def get_all_afi_eligible_user_ids(self) -> List[int]:
-        """Get all user IDs eligible for AFI scoring (have closed trades with planned_risk > 0)."""
+        """Get all user IDs eligible for AFI scoring.
+
+        Includes users with closed trades that have either:
+        - r_multiple directly set, OR
+        - planned_risk > 0 (can compute r_multiple from pnl), OR
+        - entry_price > 0 (can derive planned_risk from premium * multiplier)
+        """
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
@@ -6394,9 +6426,10 @@ class JournalDBv2:
                 AND tl.is_active = 1
                 AND t.status = 'closed'
                 AND t.exit_time IS NOT NULL
-                AND t.r_multiple IS NOT NULL
-                AND t.planned_risk IS NOT NULL
-                AND t.planned_risk > 0
+                AND t.pnl IS NOT NULL
+                AND (t.r_multiple IS NOT NULL
+                     OR (t.planned_risk IS NOT NULL AND t.planned_risk > 0)
+                     OR (t.entry_price IS NOT NULL AND t.entry_price > 0))
             """)
 
             return [row[0] for row in cursor.fetchall()]
