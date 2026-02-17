@@ -35,6 +35,7 @@ from .models_v2 import (
 from .analytics_v2 import AnalyticsV2
 from .edge_lab_analytics import EdgeLabAnalytics
 from .auth import JournalAuth, require_auth, optional_auth
+from .settlement import compute_settlement
 from .tier_gates import get_gate_limit, get_user_tier
 
 
@@ -751,7 +752,12 @@ class JournalOrchestrator:
 
             # Calculate P&L if closed
             if status == 'closed':
-                trade.calculate_pnl()
+                pnl_override = body.get('pnl_realized')
+                if pnl_override is not None:
+                    # Honor explicit P&L (e.g. from imports with known Net P/L)
+                    trade.pnl = int(pnl_override)
+                else:
+                    trade.calculate_pnl()
 
             created = self.db.create_trade(trade)
             self.logger.info(f"Created {entry_mode} trade: {created.strategy} {created.strike} @ ${entry_price/100:.2f}", emoji="📝")
@@ -1149,17 +1155,13 @@ class JournalOrchestrator:
             log_id = request.match_info['logId']
             params = request.query
 
-            # Bin size in dollars (default $50)
-            bin_size_dollars = int(params.get('bin_size', 50))
-            bin_size_cents = bin_size_dollars * 100
-
-            distribution = self.analytics.get_return_distribution(log_id, bin_size_cents)
+            target_bins = int(params.get('bins', 100))
+            distribution = self.analytics.get_return_distribution(log_id, target_bins)
 
             return self._json_response({
                 'success': True,
                 'data': {
                     'distribution': distribution,
-                    'bin_size_dollars': bin_size_dollars
                 }
             })
         except Exception as e:
@@ -4669,14 +4671,78 @@ class JournalOrchestrator:
                 self.logger.error(f"Expiration sweeper error: {e}")
 
     async def _run_expiration_sweep(self) -> int:
-        """Sweep expired open trades. Returns count expired."""
+        """Sweep expired open trades, then attempt settlement. Returns count expired."""
+        # Phase 1: Mark open trades past expiration as expired
         expired = self.db.get_expired_open_trades()
         count = 0
         for trade in expired:
             result = self.db.expire_trade(trade.id)
             if result:
                 count += 1
+
+        # Phase 2: Attempt settlement on all unsettled expired trades
+        settled, failed = await self._run_settlement_sweep()
+        if settled > 0:
+            self.logger.info(f"Settlement sweep: {settled} settled, {failed} failed")
+
         return count
+
+    async def _run_settlement_sweep(self) -> tuple:
+        """Attempt to settle expired trades with Polygon close prices. Returns (settled, failed)."""
+        unsettled = self.db.get_unsettled_trades()
+        if not unsettled:
+            return 0, 0
+
+        api_key = self.config.get('POLYGON_API_KEY')
+        if not api_key:
+            self.logger.warning("Settlement sweep skipped: no POLYGON_API_KEY in config")
+            return 0, 0
+
+        settled = 0
+        failed = 0
+        price_cache = {}  # {ticker:date -> price} avoids redundant API calls
+
+        for trade in unsettled:
+            try:
+                result = compute_settlement(trade, api_key, price_cache)
+                if result.available:
+                    closed = self.db.close_trade(
+                        trade_id=trade.id,
+                        exit_price=result.exit_price_cents,
+                        exit_spot=result.exit_spot,
+                        exit_time=trade.expiration_date,
+                        auto_close_reason='expiration_intrinsic',
+                        settlement_source=result.source,
+                        notes='Auto-settled at intrinsic value'
+                    )
+                    if closed:
+                        settled += 1
+                else:
+                    failed += 1
+                    self.logger.debug(f"Settlement unavailable for {trade.id}: {result.error}")
+            except Exception as e:
+                failed += 1
+                self.logger.error(f"Settlement error for {trade.id}: {e}")
+
+            await asyncio.sleep(0.25)  # rate-limit Polygon API (4 req/sec)
+
+        return settled, failed
+
+    async def trigger_settle_trades(self, request: web.Request) -> web.Response:
+        """POST /api/internal/settle-trades - Trigger settlement sweep."""
+        try:
+            settled, failed = await self._run_settlement_sweep()
+            self.logger.info(f"Settlement triggered: {settled} settled, {failed} failed")
+
+            return self._json_response({
+                'success': True,
+                'settled': settled,
+                'failed': failed,
+            }, request=request)
+
+        except Exception as e:
+            self.logger.error(f"trigger_settle_trades error: {e}")
+            return self._error_response(str(e), 500, request)
 
     # ==================== Risk Graph Service ====================
 
@@ -6742,6 +6808,7 @@ class JournalOrchestrator:
         app.router.add_get('/api/leaderboard/me', self.get_my_leaderboard)
         app.router.add_post('/api/internal/leaderboard/calculate', self.trigger_leaderboard_calculation)
         app.router.add_post('/api/internal/expire-trades', self.trigger_expire_trades)
+        app.router.add_post('/api/internal/settle-trades', self.trigger_settle_trades)
 
         # =================================================================
         # Risk Graph Service API

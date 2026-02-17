@@ -145,6 +145,7 @@ class Trade:
     # Expiration lifecycle
     expiration_date: Optional[str] = None   # DATETIME in DB, ISO string in Python. UTC.
     auto_close_reason: Optional[str] = None # 'expiration' when auto-expired by sweeper
+    settlement_source: Optional[str] = None # Settlement tracking (migration v29)
 
     # Metadata
     notes: Optional[str] = None

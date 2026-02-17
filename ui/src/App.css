@@ -10764,11 +10764,60 @@ body {
   border: 1px solid rgba(51, 65, 85, 0.5);
 }
 
-.distribution-section h4 {
-  margin: 0 0 16px 0;
+.distribution-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.distribution-header h4 {
+  margin: 0;
   color: var(--text-secondary);
   font-size: 13px;
   font-weight: 500;
+}
+
+.distribution-resolution {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.resolution-label {
+  font-size: 11px;
+  color: var(--text-faint);
+  min-width: 52px;
+  text-align: right;
+}
+
+.resolution-slider {
+  width: 100px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: rgba(51, 65, 85, 0.6);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.resolution-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #3b82f6;
+  cursor: pointer;
+}
+
+.resolution-slider::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: none;
+  cursor: pointer;
 }
 
 .distribution-chart {
@@ -10776,55 +10825,13 @@ body {
   height: 180px;
 }
 
-.distribution-bars {
-  display: flex;
-  align-items: flex-end;
-  height: 150px;
-  gap: 1px;
-  padding: 0 4px;
+.distribution-chart svg {
+  display: block;
 }
 
-.distribution-bar {
-  flex: 1;
-  min-width: 2px;
-  max-width: 12px;
-  background: #3b82f6;
-  border-radius: 2px 2px 0 0;
-  transition: opacity 0.15s;
+.distribution-chart svg rect:hover {
+  opacity: 0.75;
   cursor: pointer;
-}
-
-.distribution-bar:hover {
-  opacity: 0.8;
-}
-
-.distribution-bar.loss {
-  background: #3b82f6;
-}
-
-.distribution-bar.profit {
-  background: #3b82f6;
-}
-
-.distribution-bar.zero-bin {
-  background: #ef4444;
-}
-
-.distribution-axis {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 8px;
-  padding: 0 4px;
-}
-
-.axis-label {
-  font-size: 10px;
-  color: var(--text-faint);
-}
-
-.axis-label.center {
-  color: #ef4444;
-  font-weight: 600;
 }
 
 .distribution-hint {

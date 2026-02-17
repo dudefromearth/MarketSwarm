@@ -289,6 +289,9 @@ class JournalDBv2:
             if current_version < 28:
                 self._migrate_to_v28(conn)
 
+            if current_version < 29:
+                self._migrate_to_v29(conn)
+
             conn.commit()
         finally:
             conn.close()
@@ -2444,6 +2447,17 @@ class JournalDBv2:
         finally:
             cursor.close()
 
+    def _migrate_to_v29(self, conn):
+        """Migrate to v29: Add settlement_source to trades for deterministic settlement tracking."""
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                ALTER TABLE trades ADD COLUMN settlement_source VARCHAR(50) DEFAULT NULL
+            """)
+            self._set_schema_version(conn, 29)
+        finally:
+            cursor.close()
+
     # ==================== Algo Alert CRUD ====================
 
     def create_algo_alert(self, alert_id: str, user_id: int, name: str, mode: str,
@@ -3435,7 +3449,8 @@ class JournalDBv2:
         exit_spot: Optional[float] = None,
         exit_time: Optional[str] = None,
         notes: Optional[str] = None,
-        auto_close_reason: Optional[str] = None
+        auto_close_reason: Optional[str] = None,
+        settlement_source: Optional[str] = None
     ) -> Optional[Trade]:
         """Close a trade and calculate P&L. Single P&L path — no duplication."""
         trade = self.get_trade(trade_id)
@@ -3470,10 +3485,12 @@ class JournalDBv2:
                     exit_time = %s, exit_price = %s, exit_spot = %s,
                     pnl = %s, r_multiple = %s, planned_risk = %s,
                     auto_close_reason = COALESCE(%s, auto_close_reason),
+                    settlement_source = COALESCE(%s, settlement_source),
                     status = 'closed', updated_at = %s
                 WHERE id = %s
             """, (exit_time, exit_price, exit_spot, pnl, r_multiple, planned_risk,
-                  auto_close_reason, datetime.utcnow().isoformat(), trade_id))
+                  auto_close_reason, settlement_source,
+                  datetime.utcnow().isoformat(), trade_id))
 
             # Create event — 'auto_expired' if settling an expired trade, else 'close'
             event_type = 'auto_expired' if auto_close_reason else 'close'
@@ -3550,6 +3567,23 @@ class JournalDBv2:
                 WHERE status = 'open'
                 AND expiration_date IS NOT NULL
                 AND expiration_date < UTC_TIMESTAMP()
+            """)
+            rows = cursor.fetchall()
+            return [Trade.from_dict(self._row_to_dict(cursor, row)) for row in rows]
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_unsettled_trades(self) -> List[Trade]:
+        """Get expired trades that haven't been settled yet."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT * FROM trades
+                WHERE status = 'expired'
+                  AND exit_price IS NULL
+                  AND settlement_source IS NULL
             """)
             rows = cursor.fetchall()
             return [Trade.from_dict(self._row_to_dict(cursor, row)) for row in rows]

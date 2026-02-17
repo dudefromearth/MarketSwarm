@@ -116,6 +116,8 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
   const [equityData, setEquityData] = useState<EquityPoint[]>([]);
   const [drawdownData, setDrawdownData] = useState<DrawdownPoint[]>([]);
   const [distributionData, setDistributionData] = useState<DistributionBin[]>([]);
+  const [distBins, setDistBins] = useState(100);
+  const distBinsRef = useRef(100);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<TimeRange>('ALL');
   const [theme, setTheme] = useState(document.documentElement.dataset.theme || 'dark');
@@ -129,20 +131,30 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
     return () => observer.disconnect();
   }, []);
 
+  const fetchDistribution = useCallback(async (bins: number) => {
+    try {
+      const res = await fetch(`${JOURNAL_API}/api/logs/${logId}/distribution?bins=${bins}`);
+      const data = await res.json();
+      if (data.success) {
+        setDistributionData(data.data.distribution || []);
+      }
+    } catch (err) {
+      console.error('Distribution fetch error:', err);
+    }
+  }, [logId]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [analyticsRes, equityRes, drawdownRes, distributionRes] = await Promise.all([
+      const [analyticsRes, equityRes, drawdownRes] = await Promise.all([
         fetch(`${JOURNAL_API}/api/logs/${logId}/analytics`),
         fetch(`${JOURNAL_API}/api/logs/${logId}/equity`),
         fetch(`${JOURNAL_API}/api/logs/${logId}/drawdown`),
-        fetch(`${JOURNAL_API}/api/logs/${logId}/distribution?bin_size=50`)
       ]);
 
       const analyticsData = await analyticsRes.json();
       const equityDataRes = await equityRes.json();
       const drawdownDataRes = await drawdownRes.json();
-      const distributionDataRes = await distributionRes.json();
 
       if (analyticsData.success) {
         setAnalytics(analyticsData.data);
@@ -156,15 +168,13 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
         setDrawdownData(drawdownDataRes.data.drawdown || []);
       }
 
-      if (distributionDataRes.success) {
-        setDistributionData(distributionDataRes.data.distribution || []);
-      }
+      await fetchDistribution(100);
     } catch (err) {
       console.error('ReportingView fetch error:', err);
     } finally {
       setLoading(false);
     }
-  }, [logId]);
+  }, [logId, fetchDistribution]);
 
   useEffect(() => {
     fetchData();
@@ -419,32 +429,94 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
 
           {distributionData.length > 0 && (
             <div className="distribution-section">
-              <h4>Return Distribution</h4>
+              <div className="distribution-header">
+                <h4>Return Distribution</h4>
+                <div className="distribution-resolution">
+                  <span className="resolution-label">{distBins} bins</span>
+                  <input
+                    type="range"
+                    min={20}
+                    max={300}
+                    step={10}
+                    value={distBins}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      setDistBins(val);
+                      distBinsRef.current = val;
+                    }}
+                    onMouseUp={() => fetchDistribution(distBinsRef.current)}
+                    onTouchEnd={() => fetchDistribution(distBinsRef.current)}
+                    className="resolution-slider"
+                  />
+                </div>
+              </div>
               <div className="distribution-chart">
                 {(() => {
                   const maxCount = Math.max(...distributionData.map(b => b.count));
+                  const totalBins = distributionData.length;
+                  const chartW = 800;
+                  const chartH = 150;
+                  const axisH = 20;
+                  const barW = chartW / totalBins;
+
+                  // Pick ~12 label positions + always $0 and endpoints
+                  const labelCount = Math.min(12, totalBins);
+                  const labelStep = Math.max(1, Math.floor(totalBins / labelCount));
+                  const labelIndices = new Set<number>();
+                  for (let i = 0; i < totalBins; i += labelStep) labelIndices.add(i);
+                  labelIndices.add(totalBins - 1);
+                  const zeroIdx = distributionData.findIndex(b => b.is_zero);
+                  if (zeroIdx >= 0) labelIndices.add(zeroIdx);
+
                   return (
-                    <div className="distribution-bars">
-                      {distributionData.map((bin, idx) => (
-                        <div
-                          key={idx}
-                          className={`distribution-bar ${bin.is_zero ? 'zero-bin' : ''} ${bin.bin_start_dollars < 0 ? 'loss' : 'profit'}`}
-                          style={{ height: `${(bin.count / maxCount) * 100}%` }}
-                          title={`$${bin.bin_start_dollars} to $${bin.bin_end_dollars}: ${bin.count} trades`}
-                        />
-                      ))}
-                    </div>
+                    <svg
+                      viewBox={`0 0 ${chartW} ${chartH + axisH}`}
+                      preserveAspectRatio="none"
+                      style={{ width: '100%', height: `${chartH + axisH}px` }}
+                    >
+                      {distributionData.map((bin, idx) => {
+                        const h = maxCount > 0 ? (bin.count / maxCount) * chartH : 0;
+                        const x = idx * barW;
+                        const fill = bin.is_zero ? '#ef4444' : '#3b82f6';
+                        // Empty bins get a 1px baseline so all 100 slots are visible
+                        const barH = bin.count > 0 ? Math.max(h, 2) : 1;
+                        const barOpacity = bin.count > 0 ? 1 : 0.15;
+                        return (
+                          <rect
+                            key={idx}
+                            x={x}
+                            y={chartH - barH}
+                            width={barW}
+                            height={barH}
+                            fill={fill}
+                            opacity={barOpacity}
+                          >
+                            <title>{`$${bin.bin_start_dollars.toFixed(0)} to $${bin.bin_end_dollars.toFixed(0)}: ${bin.count} trades`}</title>
+                          </rect>
+                        );
+                      })}
+                      {/* Axis labels */}
+                      {distributionData.map((bin, idx) => {
+                        if (!labelIndices.has(idx)) return null;
+                        const x = idx * barW + barW / 2;
+                        const isZero = bin.is_zero;
+                        return (
+                          <text
+                            key={`lbl-${idx}`}
+                            x={x}
+                            y={chartH + 14}
+                            textAnchor="middle"
+                            fill={isZero ? '#ef4444' : 'var(--text-faint)'}
+                            fontWeight={isZero ? 600 : 400}
+                            fontSize="9"
+                          >
+                            ${bin.bin_start_dollars.toFixed(0)}
+                          </text>
+                        );
+                      })}
+                    </svg>
                   );
                 })()}
-                <div className="distribution-axis">
-                  <span className="axis-label left">
-                    ${distributionData[0]?.bin_start_dollars || 0}
-                  </span>
-                  <span className="axis-label center">$0</span>
-                  <span className="axis-label right">
-                    ${distributionData[distributionData.length - 1]?.bin_end_dollars || 0}
-                  </span>
-                </div>
               </div>
               <p className="distribution-hint">
                 Right-skewed distribution with fat tail = convexity edge
