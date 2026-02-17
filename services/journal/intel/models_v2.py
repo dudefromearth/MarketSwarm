@@ -42,6 +42,7 @@ class TradeLog:
 
     # ML/Alert inclusion (can override defaults for archived logs)
     ml_included: int = 1  # whether to include in ML training
+    is_default: int = 0  # 1 = user's default log for reporting
 
     created_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())

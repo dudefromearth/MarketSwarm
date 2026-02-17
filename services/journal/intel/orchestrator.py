@@ -162,6 +162,7 @@ class JournalOrchestrator:
                     summary['retire_scheduled_at'] = log.retire_scheduled_at
                     summary['is_read_only'] = log.lifecycle_state != 'active'
                     summary['ml_included'] = bool(log.ml_included)
+                    summary['is_default'] = bool(log.is_default)
                     log_data.append(summary)
 
             # Include active log count for UI
@@ -473,6 +474,26 @@ class JournalOrchestrator:
             }, request=request)
         except Exception as e:
             self.logger.error(f"cancel_retire_log error: {e}")
+            return self._error_response(str(e), 500, request)
+
+    @require_auth
+    async def set_default_log(self, request: web.Request) -> web.Response:
+        """POST /api/logs/:id/set-default - Set a log as the user's default."""
+        try:
+            user = request['user']
+            log_id = request.match_info['id']
+            result = self.db.set_default_log(log_id, user['id'])
+
+            if not result.get('success'):
+                return self._json_response(result, 400, request)
+
+            self.logger.info(f"Set default trade log {log_id}", emoji="⭐")
+            return self._json_response({
+                'success': True,
+                'message': 'Default log updated'
+            }, request=request)
+        except Exception as e:
+            self.logger.error(f"set_default_log error: {e}")
             return self._error_response(str(e), 500, request)
 
     async def get_logs_for_import(self, request: web.Request) -> web.Response:
@@ -6652,6 +6673,7 @@ class JournalOrchestrator:
         app.router.add_post('/api/logs/{id}/reactivate', self.reactivate_log)
         app.router.add_post('/api/logs/{id}/retire', self.schedule_retire_log)
         app.router.add_delete('/api/logs/{id}/retire', self.cancel_retire_log)
+        app.router.add_post('/api/logs/{id}/set-default', self.set_default_log)
         app.router.add_get('/api/logs/for-import', self.get_logs_for_import)
         app.router.add_post('/api/logs/import-recommendation', self.get_import_recommendation)
 

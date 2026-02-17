@@ -712,8 +712,9 @@ function App() {
         const response = await fetch('/api/logs', { credentials: 'include' });
         const result = await response.json();
         if (result.success && result.data && result.data.length > 0) {
-          // Select the first active log (or just the first log)
-          const activeLog = result.data.find((log: TradeLog) => log.is_active) || result.data[0];
+          // Prefer user's default log, then first active, then first log
+          const defaultLog = result.data.find((log: TradeLog) => log.is_default);
+          const activeLog = defaultLog || result.data.find((log: TradeLog) => log.is_active) || result.data[0];
           setSelectedLog(activeLog);
         }
       } catch (err) {

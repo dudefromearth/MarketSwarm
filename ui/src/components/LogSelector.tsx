@@ -31,6 +31,7 @@ export interface TradeLog {
   retired_at: string | null;
   retire_scheduled_at: string | null;
   ml_included: number;
+  is_default?: boolean;
   pending_alerts?: number;
 }
 

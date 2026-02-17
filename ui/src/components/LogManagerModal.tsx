@@ -46,12 +46,22 @@ export default function LogManagerModal({
   const [retireConfirmId, setRetireConfirmId] = useState<string | null>(null);
   const [retireConfirmName, setRetireConfirmName] = useState('');
 
+  // Highlighted log in the manager (independent from the app's active log)
+  const [highlightedLogId, setHighlightedLogId] = useState<string | null>(null);
+
+  // Inline rename state
+  const [renamingLogId, setRenamingLogId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
   useEffect(() => {
     if (isOpen) {
       fetchLogs();
       setView('list');
       setRetireConfirmId(null);
       setRetireConfirmName('');
+      setRenamingLogId(null);
+      // Initialize highlight to whatever is currently selected in the app
+      setHighlightedLogId(selectedLogId);
     }
   }, [isOpen]);
 
@@ -272,6 +282,54 @@ export default function LogManagerModal({
     }
   };
 
+  const handleSetDefault = async (log: TradeLog) => {
+    setActionLoading(log.id);
+    try {
+      const response = await fetch(`${JOURNAL_API}/api/logs/${log.id}/set-default`, {
+        method: 'POST'
+      });
+      const result = await response.json();
+      if (result.success) {
+        fetchLogs();
+        onLogCreated();
+      } else {
+        alert(result.error || 'Failed to set default log');
+      }
+    } catch (err) {
+      console.error('Set default error:', err);
+      alert('Failed to set default log');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRename = async (log: TradeLog) => {
+    const trimmed = renameValue.trim();
+    if (!trimmed || trimmed === log.name) {
+      setRenamingLogId(null);
+      return;
+    }
+    try {
+      const response = await fetch(`${JOURNAL_API}/api/logs/${log.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed })
+      });
+      const result = await response.json();
+      if (result.success) {
+        fetchLogs();
+        onLogCreated();
+      } else {
+        alert(result.error || 'Failed to rename log');
+      }
+    } catch (err) {
+      console.error('Rename error:', err);
+      alert('Failed to rename log');
+    } finally {
+      setRenamingLogId(null);
+    }
+  };
+
   // Helper to calculate days until retirement
   const getDaysUntilRetirement = (retireScheduledAt: string | null): number | null => {
     if (!retireScheduledAt) return null;
@@ -310,17 +368,30 @@ export default function LogManagerModal({
     if (log.lifecycle_state === 'active') {
       const canArchive = (log.open_positions ?? log.open_trades) === 0 && (log.pending_alerts ?? 0) === 0;
       return (
-        <button
-          className="btn-lifecycle archive"
-          onClick={(e) => {
-            e.stopPropagation();
-            handleArchive(log);
-          }}
-          disabled={isLoading || !canArchive}
-          title={canArchive ? 'Archive this log' : 'Close positions and dismiss alerts first'}
-        >
-          {isLoading ? '...' : 'Archive'}
-        </button>
+        <div className="action-buttons" onClick={e => e.stopPropagation()}>
+          <label
+            className="default-radio-label"
+            title={log.is_default ? 'Default log' : 'Set as default log'}
+          >
+            <input
+              type="radio"
+              name="default-log"
+              className="default-radio"
+              checked={!!log.is_default}
+              onChange={() => { if (!log.is_default) handleSetDefault(log); }}
+              disabled={isLoading}
+            />
+            Default
+          </label>
+          <button
+            className="btn-lifecycle archive"
+            onClick={() => handleArchive(log)}
+            disabled={isLoading || !canArchive}
+            title={canArchive ? 'Archive this log' : 'Close positions and dismiss alerts first'}
+          >
+            {isLoading ? '...' : 'Archive'}
+          </button>
+        </div>
       );
     }
 
@@ -466,24 +537,48 @@ export default function LogManagerModal({
                 filteredLogs.map(log => {
                   const isRetiring = log.lifecycle_state === 'archived' && !!log.retire_scheduled_at;
                   const isSelectable = log.lifecycle_state === 'active';
+                  const isHighlighted = log.id === highlightedLogId;
 
                   return (
                   <div
                     key={log.id}
-                    className={`log-list-item ${log.id === selectedLogId ? 'selected' : ''} ${log.lifecycle_state} ${isRetiring ? 'retiring' : ''}`}
+                    className={`log-list-item ${isHighlighted ? 'selected' : ''} ${log.lifecycle_state} ${isRetiring ? 'retiring' : ''}`}
                     onClick={() => {
                       if (isSelectable) {
-                        onSelectLog(log);
-                        onClose();
+                        setHighlightedLogId(log.id);
                       }
                     }}
                     style={{ cursor: isSelectable ? 'pointer' : 'default' }}
                   >
                     <div className="log-item-main">
-                      <span className="log-item-indicator">
-                        {log.id === selectedLogId ? '●' : ''}
-                      </span>
-                      <span className="log-item-name">{log.name}</span>
+                      {renamingLogId === log.id ? (
+                        <input
+                          className="log-item-name-input"
+                          value={renameValue}
+                          onChange={e => setRenameValue(e.target.value)}
+                          onBlur={() => handleRename(log)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') handleRename(log);
+                            if (e.key === 'Escape') setRenamingLogId(null);
+                          }}
+                          onClick={e => e.stopPropagation()}
+                          autoFocus
+                        />
+                      ) : (
+                        <span
+                          className="log-item-name"
+                          onClick={e => {
+                            if (log.lifecycle_state === 'active') {
+                              e.stopPropagation();
+                              setRenamingLogId(log.id);
+                              setRenameValue(log.name);
+                            }
+                          }}
+                          title={log.lifecycle_state === 'active' ? 'Click to rename' : undefined}
+                        >
+                          {log.name}
+                        </span>
+                      )}
                       {renderLifecycleBadge(log)}
                       <span className="log-item-capital">
                         ${(log.starting_capital / 100).toLocaleString()}
@@ -534,6 +629,20 @@ export default function LogManagerModal({
                 title={atHardCap ? `Maximum ${HARD_CAP} active logs reached` : 'Create a new log'}
               >
                 + New Log
+              </button>
+              <button
+                className="btn-go-to-log"
+                onClick={() => {
+                  const target = logs.find(l => l.id === highlightedLogId && l.lifecycle_state === 'active');
+                  if (target) {
+                    onSelectLog(target);
+                    onClose();
+                  }
+                }}
+                disabled={!highlightedLogId || !logs.find(l => l.id === highlightedLogId && l.lifecycle_state === 'active')}
+                title="Navigate to highlighted log"
+              >
+                Go to Log
               </button>
             </div>
           </>

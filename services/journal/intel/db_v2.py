@@ -292,6 +292,9 @@ class JournalDBv2:
             if current_version < 29:
                 self._migrate_to_v29(conn)
 
+            if current_version < 30:
+                self._migrate_to_v30(conn)
+
             conn.commit()
         finally:
             conn.close()
@@ -2458,6 +2461,17 @@ class JournalDBv2:
         finally:
             cursor.close()
 
+    def _migrate_to_v30(self, conn):
+        """Migrate to v30: Add is_default column to trade_logs for default log selection."""
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                ALTER TABLE trade_logs ADD COLUMN is_default TINYINT(1) NOT NULL DEFAULT 0
+            """)
+            self._set_schema_version(conn, 30)
+        finally:
+            cursor.close()
+
     # ==================== Algo Alert CRUD ====================
 
     def create_algo_alert(self, alert_id: str, user_id: int, name: str, mode: str,
@@ -3133,6 +3147,30 @@ class JournalDBv2:
             conn.commit()
 
             return {'success': True, 'retired_at': now}
+        finally:
+            cursor.close()
+            conn.close()
+
+    def set_default_log(self, log_id: str, user_id: int) -> Dict[str, Any]:
+        """Set a log as the user's default. Clears any previous default first."""
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            # Clear all defaults for this user
+            cursor.execute(
+                "UPDATE trade_logs SET is_default = 0 WHERE user_id = %s",
+                (user_id,)
+            )
+            # Set the requested log as default
+            cursor.execute(
+                "UPDATE trade_logs SET is_default = 1 WHERE id = %s AND user_id = %s",
+                (log_id, user_id)
+            )
+            if cursor.rowcount == 0:
+                conn.rollback()
+                return {'success': False, 'error': 'Log not found'}
+            conn.commit()
+            return {'success': True}
         finally:
             cursor.close()
             conn.close()

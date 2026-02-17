@@ -9962,16 +9962,29 @@ body {
   flex: 1;
 }
 
-.log-item-indicator {
-  width: 12px;
-  color: #60a5fa;
-  font-weight: bold;
-}
-
 .log-item-name {
   font-weight: 500;
   color: var(--text-heading);
   min-width: 120px;
+  cursor: text;
+}
+
+.log-item-name:hover {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.log-item-name-input {
+  font-weight: 500;
+  font-size: inherit;
+  color: var(--text-heading);
+  background: #1e293b;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  padding: 2px 6px;
+  min-width: 120px;
+  outline: none;
 }
 
 .log-item-capital {
@@ -10301,6 +10314,50 @@ body {
 
 .btn-lifecycle.retire-confirm-btn:hover:not(:disabled) {
   background: rgba(239, 68, 68, 0.15);
+}
+
+.default-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: #94a3b8;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.default-radio-label:has(input:checked) {
+  color: #fbbf24;
+}
+
+.default-radio {
+  accent-color: #fbbf24;
+  margin: 0;
+  cursor: pointer;
+}
+
+.btn-go-to-log {
+  background: #22c55e;
+  color: #0f172a;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  width: 33.33%;
+  text-align: center;
+}
+
+.btn-go-to-log:hover:not(:disabled) {
+  background: #4ade80;
+}
+
+.btn-go-to-log:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #1e293b;
+  color: #64748b;
 }
 
 .btn-create-log:disabled {
