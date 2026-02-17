@@ -175,3 +175,39 @@ def compute_trend(wss_history: List[dict]) -> TrendSignal:
 def is_provisional(trade_count: int, active_days: int) -> bool:
     """Check if user is in provisional state."""
     return trade_count < MIN_TRADES_PROVISIONAL or active_days < MIN_ACTIVE_DAYS_PROVISIONAL
+
+
+# ---------------------------------------------------------------------------
+#  v2: Robustness & Distribution Stability
+# ---------------------------------------------------------------------------
+STABILITY_VAR_CAP: float = 0.05  # WSS variance cap for normalization
+
+
+def compute_robustness_v2(
+    regime_diversity: float,
+    survived_dds: int,
+    distribution_stability: float,
+) -> float:
+    """Robustness v2: no trade_count, no active_days.
+
+    RB_v2 = 10 × regime_diversity + 3 × survived_dds + 5 × distribution_stability
+    """
+    return (
+        10.0 * max(0.0, min(1.0, regime_diversity))
+        + 3.0 * max(survived_dds, 0)
+        + 5.0 * max(0.0, min(1.0, distribution_stability))
+    )
+
+
+def compute_distribution_stability(wss_history: List[dict]) -> float:
+    """Compute distribution stability from full lifetime WSS history.
+
+    Low WSS variance = high stability = consistent structural quality.
+    Returns [0, 1]. If < 3 data points, returns 0.5 (neutral).
+    """
+    if len(wss_history) < 3:
+        return 0.5
+
+    wss_values = np.array([e["wss"] for e in wss_history], dtype=np.float64)
+    variance = float(np.var(wss_values))
+    return 1.0 - min(variance / STABILITY_VAR_CAP, 1.0)

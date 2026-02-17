@@ -17,7 +17,7 @@ from openpyxl.utils import get_column_letter
 import redis.asyncio as redis
 
 from .db_v2 import JournalDBv2, VersionConflictError
-from .afi_engine import compute_afi, trim_wss_history
+from .afi_engine import AFI_VERSION, compute_afi, trim_wss_history
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, Symbol, Setting, Tag, Order,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
@@ -4502,8 +4502,9 @@ class JournalOrchestrator:
 
     # ==================== Leaderboard API ====================
 
-    async def calculate_afi_scores(self) -> int:
+    async def calculate_afi_scores(self, version: int = None) -> int:
         """Calculate AFI scores for all eligible users. Returns count of users scored."""
+        afi_version = version if version is not None else AFI_VERSION
         user_ids = self.db.get_all_afi_eligible_user_ids()
         count = 0
 
@@ -4514,7 +4515,7 @@ class JournalOrchestrator:
                 if not trades:
                     continue
 
-                # Load prior state for RB dampening
+                # Load prior state
                 prior_record = self.db.get_afi_score(user_id)
                 prior_afi = float(prior_record['afi_score']) if prior_record else None
 
@@ -4527,15 +4528,19 @@ class JournalOrchestrator:
                     except (json.JSONDecodeError, TypeError):
                         wss_history = []
 
-                # Compute AFI
-                result = compute_afi(trades, prior_afi, wss_history)
+                # Compute AFI with version dispatch
+                result = compute_afi(trades, prior_afi, wss_history, version=afi_version)
 
                 # Append today's WSS to history (one per calendar day)
                 today_str = datetime.utcnow().strftime('%Y-%m-%d')
                 # Deduplicate: remove existing entry for today
                 wss_history = [e for e in wss_history if e.get('date') != today_str]
                 wss_history.append({'date': today_str, 'wss': round(result.wss, 5)})
-                wss_history = trim_wss_history(wss_history)
+                # v1: trim to 90 entries; v2: full lifetime retention
+                if afi_version == 1:
+                    wss_history = trim_wss_history(wss_history)
+                else:
+                    wss_history = trim_wss_history(wss_history, max_entries=None)
 
                 # Persist
                 self.db.upsert_afi_score(
@@ -4553,6 +4558,7 @@ class JournalOrchestrator:
                     trade_count=result.trade_count,
                     active_days=result.active_days,
                     wss_history=json.dumps(wss_history),
+                    afi_version=afi_version,
                 )
                 count += 1
 
@@ -4618,10 +4624,16 @@ class JournalOrchestrator:
             return self._error_response(str(e), 500, request)
 
     async def trigger_leaderboard_calculation(self, request: web.Request) -> web.Response:
-        """POST /api/internal/leaderboard/calculate - Trigger AFI calculation (internal)."""
+        """POST /api/internal/leaderboard/calculate - Trigger AFI calculation (internal).
+
+        Query params:
+            version: int (1 or 2) — AFI version to compute. Defaults to AFI_VERSION.
+        """
         try:
-            count = await self.calculate_afi_scores()
-            self.logger.info(f"Calculated AFI scores: {count} users")
+            version_param = request.query.get('version')
+            afi_version = int(version_param) if version_param else None
+            count = await self.calculate_afi_scores(version=afi_version)
+            self.logger.info(f"Calculated AFI v{afi_version or AFI_VERSION} scores: {count} users")
 
             return self._json_response({
                 'success': True,

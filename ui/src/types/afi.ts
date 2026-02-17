@@ -20,6 +20,7 @@ export interface AFIScore {
   calculated_at: string;
   components: AFIComponents;
   displayName?: string;
+  afi_version?: number;
 }
 
 export interface AFILeaderboardResponse {

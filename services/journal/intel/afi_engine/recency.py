@@ -53,6 +53,13 @@ def compute_weights(
     return raw / total
 
 
+def compute_equal_weights(n: int) -> np.ndarray:
+    """Return uniform 1/n weights for n trades (v2: no recency decay)."""
+    if n <= 0:
+        return np.empty(0, dtype=np.float64)
+    return np.full(n, 1.0 / n, dtype=np.float64)
+
+
 def weighted_mean(values: np.ndarray, weights: np.ndarray) -> float:
     """Weighted mean: Σ(w_i × v_i)  (weights already normalised)."""
     if len(values) == 0:

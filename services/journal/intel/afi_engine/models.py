@@ -37,7 +37,7 @@ class AFIComponents:
 @dataclass(frozen=True)
 class AFIResult:
     """Complete AFI computation output."""
-    afi_score: float            # 300-900 soft-compressed (after RB dampening)
+    afi_score: float            # 300-900 soft-compressed (after RB dampening in v1, raw in v2)
     afi_raw: float              # before RB dampening
     wss: float                  # Weighted Structural Score (pre-compression)
     components: AFIComponents   # individual metric values (for hover tooltip)
@@ -47,3 +47,4 @@ class AFIResult:
     trade_count: int
     active_days: int
     computed_at: datetime
+    afi_version: int = 1        # 1 = recency-weighted + dampened, 2 = equal-weight + no dampening

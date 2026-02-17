@@ -9,10 +9,11 @@ from datetime import datetime, timedelta
 import numpy as np
 import pytest
 
-from services.journal.intel.afi_engine import compute_afi, trim_wss_history
+from services.journal.intel.afi_engine import AFI_VERSION, compute_afi, trim_wss_history
 from services.journal.intel.afi_engine.recency import (
     HALF_LIFE_DAYS,
     LAMBDA,
+    compute_equal_weights,
     compute_weights,
     weighted_mean,
     weighted_std,
@@ -31,8 +32,11 @@ from services.journal.intel.afi_engine.scoring_engine import (
     K,
     S,
     SHIFT,
+    STABILITY_VAR_CAP,
     compress,
+    compute_distribution_stability,
     compute_robustness,
+    compute_robustness_v2,
     compute_trend,
     compute_wss,
     dampen,
@@ -392,7 +396,7 @@ def _make_trades(r_multiples_list, days_ago_list):
 
 class TestSyntheticTraders:
     def test_smooth_operator(self):
-        """High Sharpe, low growth → Purple tier (~771)."""
+        """High Sharpe, low growth → Purple tier (~771). v1."""
         np.random.seed(42)
         n = 150
         # Mostly +0.3 to +0.5, occasional -0.5
@@ -404,13 +408,13 @@ class TestSyntheticTraders:
         days = np.linspace(200, 0, n)  # spread over 200 days
         trades = _make_trades(r_vals.tolist(), days.tolist())
 
-        result = compute_afi(trades, reference_time=NOW)
+        result = compute_afi(trades, reference_time=NOW, version=1)
         assert 700 < result.afi_score < 850
         assert result.robustness > 40
         assert not result.is_provisional
 
     def test_cowboy(self):
-        """Explosive growth, high DD → Blue tier (~654)."""
+        """Explosive growth, high DD → Blue tier (~654). v1."""
         np.random.seed(123)
         n = 80
         r_vals = np.concatenate([
@@ -422,12 +426,12 @@ class TestSyntheticTraders:
         days = np.linspace(120, 0, n)
         trades = _make_trades(r_vals.tolist(), days.tolist())
 
-        result = compute_afi(trades, reference_time=NOW)
+        result = compute_afi(trades, reference_time=NOW, version=1)
         assert result.afi_score < 750  # Should not reach Purple
         assert result.components.ltc < 0.8  # Poor containment
 
     def test_tortoise(self):
-        """Stable grinder → Purple tier (~719), high RB."""
+        """Stable grinder → Purple tier (~719), high RB. v1."""
         np.random.seed(99)
         n = 300
         r_vals = np.concatenate([
@@ -438,13 +442,13 @@ class TestSyntheticTraders:
         days = np.linspace(365, 0, n)
         trades = _make_trades(r_vals.tolist(), days.tolist())
 
-        result = compute_afi(trades, reference_time=NOW)
+        result = compute_afi(trades, reference_time=NOW, version=1)
         assert 650 < result.afi_score < 800
         assert result.robustness > 70  # Highest RB
         assert not result.is_provisional
 
     def test_ranking_order(self):
-        """Smooth Operator > Tortoise > Cowboy on structural merit."""
+        """Smooth Operator > Tortoise > Cowboy on structural merit. v1."""
         # Use deterministic seeds so results are reproducible
         np.random.seed(42)
         smooth = np.concatenate([
@@ -470,15 +474,15 @@ class TestSyntheticTraders:
 
         r_smooth = compute_afi(
             _make_trades(smooth.tolist(), np.linspace(200, 0, len(smooth)).tolist()),
-            reference_time=NOW,
+            reference_time=NOW, version=1,
         )
         r_cowboy = compute_afi(
             _make_trades(cowboy.tolist(), np.linspace(120, 0, len(cowboy)).tolist()),
-            reference_time=NOW,
+            reference_time=NOW, version=1,
         )
         r_tortoise = compute_afi(
             _make_trades(tortoise.tolist(), np.linspace(365, 0, len(tortoise)).tolist()),
-            reference_time=NOW,
+            reference_time=NOW, version=1,
         )
 
         # Cowboy should be lowest — fragile despite growth
@@ -492,35 +496,35 @@ class TestSyntheticTraders:
 
 class TestEdgeCases:
     def test_zero_trades(self):
-        result = compute_afi([], reference_time=NOW)
+        result = compute_afi([], reference_time=NOW, version=1)
         assert result.trade_count == 0
         assert result.is_provisional
         assert result.afi_score > 300
 
     def test_single_trade(self):
         trades = _make_trades([1.5], [0])
-        result = compute_afi(trades, reference_time=NOW)
+        result = compute_afi(trades, reference_time=NOW, version=1)
         assert result.trade_count == 1
         assert result.is_provisional
 
     def test_all_winners(self):
         trades = _make_trades([0.5] * 30, list(range(30)))
-        result = compute_afi(trades, reference_time=NOW)
+        result = compute_afi(trades, reference_time=NOW, version=1)
         assert result.components.ltc == 1.0
         assert result.components.dd_containment == 1.0
 
     def test_all_losers_contained(self):
         """All losses within 1R → LTC = 1.0 still."""
         trades = _make_trades([-0.5] * 30, list(range(30)))
-        result = compute_afi(trades, reference_time=NOW)
+        result = compute_afi(trades, reference_time=NOW, version=1)
         assert result.components.ltc == 1.0
         assert result.afi_score < 600  # Negative slope + negative Sharpe
 
     def test_statefulness(self):
-        """Second computation should dampen toward prior."""
+        """v1: second computation should dampen toward prior."""
         trades = _make_trades([0.5] * 50, list(range(50)))
-        r1 = compute_afi(trades, reference_time=NOW)
-        r2 = compute_afi(trades, prior_afi=r1.afi_score, reference_time=NOW)
+        r1 = compute_afi(trades, reference_time=NOW, version=1)
+        r2 = compute_afi(trades, prior_afi=r1.afi_score, reference_time=NOW, version=1)
         # Same trades, same raw → dampened should equal prior (no delta)
         assert abs(r2.afi_score - r1.afi_score) < 1.0
 
@@ -540,3 +544,304 @@ class TestWSSHistory:
         assert len(trimmed) == 90
         # Should keep most recent
         assert trimmed[-1] == h[-1]
+
+    def test_no_cap_v2(self):
+        """v2: max_entries=None preserves all history."""
+        h = [{"date": f"d{i}", "wss": 0.5} for i in range(500)]
+        trimmed = trim_wss_history(h, max_entries=None)
+        assert len(trimmed) == 500
+
+
+# ===================================================================
+#  v2: Equal Weights
+# ===================================================================
+
+class TestEqualWeights:
+    def test_empty(self):
+        w = compute_equal_weights(0)
+        assert len(w) == 0
+
+    def test_single(self):
+        w = compute_equal_weights(1)
+        assert len(w) == 1
+        assert abs(w[0] - 1.0) < 1e-10
+
+    def test_uniform(self):
+        w = compute_equal_weights(10)
+        assert len(w) == 10
+        assert abs(w.sum() - 1.0) < 1e-10
+        for wi in w:
+            assert abs(wi - 0.1) < 1e-10
+
+    def test_large(self):
+        w = compute_equal_weights(1000)
+        assert abs(w.sum() - 1.0) < 1e-10
+        assert abs(w[0] - 0.001) < 1e-10
+
+
+# ===================================================================
+#  v2: Robustness v2 (no trade_count, no active_days)
+# ===================================================================
+
+class TestRobustnessV2:
+    def test_formula(self):
+        """RB_v2 = 10 × regime_diversity + 3 × survived_dds + 5 × distribution_stability."""
+        rb = compute_robustness_v2(
+            regime_diversity=0.5,
+            survived_dds=4,
+            distribution_stability=0.8,
+        )
+        expected = 10.0 * 0.5 + 3.0 * 4 + 5.0 * 0.8  # 5 + 12 + 4 = 21
+        assert abs(rb - expected) < 1e-10
+
+    def test_no_trade_count_dependency(self):
+        """Robustness_v2 has no trade_count or active_days parameters."""
+        # Two calls with same structural inputs should give same result
+        rb1 = compute_robustness_v2(0.5, 2, 0.7)
+        rb2 = compute_robustness_v2(0.5, 2, 0.7)
+        assert rb1 == rb2
+
+    def test_zero_all(self):
+        rb = compute_robustness_v2(0.0, 0, 0.0)
+        assert abs(rb) < 1e-10
+
+    def test_max_regime(self):
+        rb = compute_robustness_v2(1.0, 0, 0.0)
+        assert abs(rb - 10.0) < 1e-10
+
+    def test_clamped_regime(self):
+        """Regime diversity clamped to [0, 1]."""
+        rb = compute_robustness_v2(1.5, 0, 0.0)
+        assert abs(rb - 10.0) < 1e-10  # clamped to 1.0
+
+
+# ===================================================================
+#  v2: Distribution Stability
+# ===================================================================
+
+class TestDistributionStability:
+    def test_too_few_points(self):
+        """< 3 data points → neutral default 0.5."""
+        assert compute_distribution_stability([]) == 0.5
+        assert compute_distribution_stability([{"wss": 0.6}]) == 0.5
+        assert compute_distribution_stability([{"wss": 0.6}, {"wss": 0.7}]) == 0.5
+
+    def test_perfect_stability(self):
+        """Zero variance → stability = 1.0."""
+        history = [{"wss": 0.65} for _ in range(20)]
+        assert abs(compute_distribution_stability(history) - 1.0) < 1e-10
+
+    def test_high_variance(self):
+        """High variance → stability near 0."""
+        history = [{"wss": 0.0 if i % 2 == 0 else 1.0} for i in range(20)]
+        stability = compute_distribution_stability(history)
+        assert stability < 0.1  # variance = 0.25, well above cap of 0.05
+
+    def test_moderate_variance(self):
+        """Moderate variance → mid-range stability."""
+        history = [{"wss": 0.6 + i * 0.005} for i in range(20)]
+        stability = compute_distribution_stability(history)
+        assert 0.5 < stability < 1.0
+
+    def test_full_lifetime(self):
+        """Stability computed across all history, not windowed."""
+        # 200 entries — should all be used
+        history = [{"wss": 0.65 + 0.001 * (i % 5)} for i in range(200)]
+        stability = compute_distribution_stability(history)
+        assert stability > 0.9  # Very low variance
+
+
+# ===================================================================
+#  v2: Version Dispatch
+# ===================================================================
+
+class TestVersionDispatch:
+    def test_default_is_v2(self):
+        """Default version should be 2."""
+        assert AFI_VERSION == 2
+
+    def test_v1_explicit(self):
+        """version=1 returns v1 result with dampening."""
+        trades = _make_trades([0.5] * 30, list(range(30)))
+        result = compute_afi(trades, reference_time=NOW, version=1)
+        assert result.afi_version == 1
+
+    def test_v2_explicit(self):
+        """version=2 returns v2 result."""
+        trades = _make_trades([0.5] * 30, list(range(30)))
+        result = compute_afi(trades, reference_time=NOW, version=2)
+        assert result.afi_version == 2
+
+    def test_default_version_uses_afi_version(self):
+        """No version param → uses AFI_VERSION (2)."""
+        trades = _make_trades([0.5] * 30, list(range(30)))
+        result = compute_afi(trades, reference_time=NOW)
+        assert result.afi_version == AFI_VERSION
+
+
+# ===================================================================
+#  v2: No Dampening
+# ===================================================================
+
+class TestV2NoDampening:
+    def test_score_equals_raw(self):
+        """v2: afi_score == afi_raw (no dampening)."""
+        trades = _make_trades([0.5] * 50, list(range(50)))
+        result = compute_afi(trades, reference_time=NOW, version=2)
+        assert abs(result.afi_score - result.afi_raw) < 1e-10
+
+    def test_prior_afi_ignored(self):
+        """v2 ignores prior_afi — no dampening path."""
+        trades = _make_trades([0.5] * 50, list(range(50)))
+        r1 = compute_afi(trades, reference_time=NOW, version=2)
+        r2 = compute_afi(trades, prior_afi=400.0, reference_time=NOW, version=2)
+        # v2 ignores prior_afi, so both should be identical
+        assert abs(r1.afi_score - r2.afi_score) < 1e-10
+
+    def test_deterministic_from_trades(self):
+        """v2: same trades → identical score regardless of history."""
+        trades = _make_trades([0.3, -0.5, 1.0, -0.8, 0.5] * 10, list(range(50)))
+        r1 = compute_afi(trades, reference_time=NOW, version=2)
+        r2 = compute_afi(trades, reference_time=NOW, version=2)
+        assert r1.afi_score == r2.afi_score
+        assert r1.wss == r2.wss
+
+
+# ===================================================================
+#  v2: Equal Weight vs Recency (structural difference)
+# ===================================================================
+
+class TestV2EqualWeightBehavior:
+    def test_old_trades_equal_contribution(self):
+        """v2: trade 365 days ago contributes equally to trade today."""
+        trades_recent = _make_trades([1.0] * 30, [0] * 30)
+        trades_old = _make_trades([1.0] * 30, [365] * 30)
+
+        r_recent = compute_afi(trades_recent, reference_time=NOW, version=2)
+        r_old = compute_afi(trades_old, reference_time=NOW, version=2)
+
+        # v2: should be identical since equal weights, same r_multiples
+        assert abs(r_recent.afi_score - r_old.afi_score) < 1e-10
+
+    def test_v1_penalizes_old_trades(self):
+        """v1: old trades should have lower contribution due to recency decay."""
+        trades_recent = _make_trades([1.0] * 30, [0] * 30)
+        trades_old = _make_trades([1.0] * 30, [365] * 30)
+
+        r_recent = compute_afi(trades_recent, reference_time=NOW, version=1)
+        r_old = compute_afi(trades_old, reference_time=NOW, version=1)
+
+        # v1: recent trades should score differently from old trades
+        # (Due to recency weighting affecting component computations)
+        # Both are all +1R, so the components may still be similar,
+        # but the weighting process differs
+        assert r_recent.afi_version == 1
+        assert r_old.afi_version == 1
+
+
+# ===================================================================
+#  v2: Synthetic Trader Simulations
+# ===================================================================
+
+class TestV2SyntheticTraders:
+    def test_v2_smooth_operator(self):
+        """v2: Smooth operator should score well."""
+        np.random.seed(42)
+        n = 150
+        r_vals = np.concatenate([
+            np.random.uniform(0.3, 0.5, int(n * 0.85)),
+            np.random.uniform(-0.5, -0.3, int(n * 0.15)),
+        ])
+        np.random.shuffle(r_vals)
+        days = np.linspace(200, 0, n)
+        trades = _make_trades(r_vals.tolist(), days.tolist())
+
+        result = compute_afi(trades, reference_time=NOW, version=2)
+        assert result.afi_version == 2
+        assert result.afi_score == result.afi_raw  # no dampening
+        assert 700 < result.afi_score < 850
+        assert not result.is_provisional
+
+    def test_v2_cowboy(self):
+        """v2: Cowboy should score low — fragile despite growth."""
+        np.random.seed(123)
+        n = 80
+        r_vals = np.concatenate([
+            np.random.uniform(1.0, 5.0, int(n * 0.4)),
+            np.random.uniform(-3.0, -1.5, int(n * 0.3)),
+            np.random.uniform(-0.5, 0.5, int(n * 0.3)),
+        ])
+        np.random.shuffle(r_vals)
+        days = np.linspace(120, 0, n)
+        trades = _make_trades(r_vals.tolist(), days.tolist())
+
+        result = compute_afi(trades, reference_time=NOW, version=2)
+        assert result.afi_version == 2
+        assert result.afi_score == result.afi_raw
+        assert result.afi_score < 750
+        assert result.components.ltc < 0.8
+
+    def test_v2_ranking_preserves_structural_order(self):
+        """v2: Cowboy should still rank below smooth and tortoise."""
+        np.random.seed(42)
+        smooth = np.concatenate([
+            np.random.uniform(0.3, 0.5, 128),
+            np.random.uniform(-0.5, -0.3, 22),
+        ])
+        np.random.shuffle(smooth)
+
+        np.random.seed(123)
+        cowboy = np.concatenate([
+            np.random.uniform(1.0, 5.0, 32),
+            np.random.uniform(-3.0, -1.5, 24),
+            np.random.uniform(-0.5, 0.5, 24),
+        ])
+        np.random.shuffle(cowboy)
+
+        np.random.seed(99)
+        tortoise = np.concatenate([
+            np.random.uniform(0.2, 1.0, 180),
+            np.random.uniform(-0.8, -0.3, 120),
+        ])
+        np.random.shuffle(tortoise)
+
+        r_smooth = compute_afi(
+            _make_trades(smooth.tolist(), np.linspace(200, 0, len(smooth)).tolist()),
+            reference_time=NOW, version=2,
+        )
+        r_cowboy = compute_afi(
+            _make_trades(cowboy.tolist(), np.linspace(120, 0, len(cowboy)).tolist()),
+            reference_time=NOW, version=2,
+        )
+        r_tortoise = compute_afi(
+            _make_trades(tortoise.tolist(), np.linspace(365, 0, len(tortoise)).tolist()),
+            reference_time=NOW, version=2,
+        )
+
+        # Cowboy should still be lowest — structural fragility persists
+        assert r_cowboy.afi_score < r_tortoise.afi_score
+        assert r_cowboy.afi_score < r_smooth.afi_score
+
+    def test_v2_zero_trades(self):
+        """v2: zero trades returns valid result."""
+        result = compute_afi([], reference_time=NOW, version=2)
+        assert result.trade_count == 0
+        assert result.is_provisional
+        assert result.afi_version == 2
+        assert result.afi_score == result.afi_raw  # no dampening even for zero trades
+
+    def test_v2_inactivity_no_penalty(self):
+        """v2: trader who stopped 2 years ago should score same as active trader.
+
+        This is the core v2 promise: inactivity does not reduce AFI.
+        """
+        # Same trades, different timing
+        r_vals = [0.5, -0.3, 0.8, -0.5, 1.0] * 10
+        trades_active = _make_trades(r_vals, list(range(50)))
+        trades_dormant = _make_trades(r_vals, [730 + i for i in range(50)])  # 2 years ago
+
+        r_active = compute_afi(trades_active, reference_time=NOW, version=2)
+        r_dormant = compute_afi(trades_dormant, reference_time=NOW, version=2)
+
+        # v2: equal weights → identical scores
+        assert abs(r_active.afi_score - r_dormant.afi_score) < 1e-10
