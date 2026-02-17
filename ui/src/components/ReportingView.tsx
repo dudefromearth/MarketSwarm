@@ -117,7 +117,7 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
   const [drawdownData, setDrawdownData] = useState<DrawdownPoint[]>([]);
   const [distributionData, setDistributionData] = useState<DistributionBin[]>([]);
   const [distBins, setDistBins] = useState(100);
-  const distBinsRef = useRef(100);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<TimeRange>('ALL');
   const [theme, setTheme] = useState(document.documentElement.dataset.theme || 'dark');
@@ -442,10 +442,9 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
                     onChange={(e) => {
                       const val = parseInt(e.target.value);
                       setDistBins(val);
-                      distBinsRef.current = val;
+                      if (debounceRef.current) clearTimeout(debounceRef.current);
+                      debounceRef.current = setTimeout(() => fetchDistribution(val), 300);
                     }}
-                    onMouseUp={() => fetchDistribution(distBinsRef.current)}
-                    onTouchEnd={() => fetchDistribution(distBinsRef.current)}
                     className="resolution-slider"
                   />
                 </div>
