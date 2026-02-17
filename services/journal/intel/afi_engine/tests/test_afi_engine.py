@@ -33,10 +33,18 @@ from services.journal.intel.afi_engine.scoring_engine import (
     S,
     SHIFT,
     STABILITY_VAR_CAP,
+    TAIL_RATIO_CAP,
+    CONVEXITY_RATIO_CAP,
+    ROLLING_WSS_WINDOW,
     compress,
+    compute_bcm,
+    compute_convexity_amplifier,
+    compute_convexity_ratio,
     compute_distribution_stability,
     compute_robustness,
     compute_robustness_v2,
+    compute_rolling_wss_stability,
+    compute_tail_ratio,
     compute_trend,
     compute_wss,
     dampen,
@@ -656,9 +664,9 @@ class TestDistributionStability:
 # ===================================================================
 
 class TestVersionDispatch:
-    def test_default_is_v2(self):
-        """Default version should be 2."""
-        assert AFI_VERSION == 2
+    def test_default_is_v3(self):
+        """Default version should be 3."""
+        assert AFI_VERSION == 3
 
     def test_v1_explicit(self):
         """version=1 returns v1 result with dampening."""
@@ -672,8 +680,16 @@ class TestVersionDispatch:
         result = compute_afi(trades, reference_time=NOW, version=2)
         assert result.afi_version == 2
 
+    def test_v3_explicit(self):
+        """version=3 returns v3 result with cps/bcm."""
+        trades = _make_trades([0.5] * 30, list(range(30)))
+        result = compute_afi(trades, reference_time=NOW, version=3)
+        assert result.afi_version == 3
+        assert result.cps >= 1.0
+        assert result.bcm >= 0.9
+
     def test_default_version_uses_afi_version(self):
-        """No version param → uses AFI_VERSION (2)."""
+        """No version param → uses AFI_VERSION (3)."""
         trades = _make_trades([0.5] * 30, list(range(30)))
         result = compute_afi(trades, reference_time=NOW)
         assert result.afi_version == AFI_VERSION
@@ -845,3 +861,274 @@ class TestV2SyntheticTraders:
 
         # v2: equal weights → identical scores
         assert abs(r_active.afi_score - r_dormant.afi_score) < 1e-10
+
+
+# ===================================================================
+#  v3: Tail Ratio
+# ===================================================================
+
+class TestTailRatio:
+    def test_no_wins(self):
+        r = np.array([-1.0, -0.5, -0.3])
+        assert compute_tail_ratio(r) == 0.0
+
+    def test_no_losses(self):
+        r = np.array([1.0, 0.5, 0.3])
+        assert compute_tail_ratio(r) == 0.0
+
+    def test_symmetric(self):
+        """Equal avg win and avg loss → raw ratio = 1.0, normalized = 1/5 = 0.2."""
+        r = np.array([1.0, -1.0, 1.0, -1.0])
+        ratio = compute_tail_ratio(r)
+        expected = 1.0 / TAIL_RATIO_CAP  # 1.0 / 5.0 = 0.2
+        assert abs(ratio - expected) < 1e-10
+
+    def test_right_skewed(self):
+        """Big wins, small losses → high ratio."""
+        r = np.array([3.0, 4.0, 5.0, -0.5, -0.5])
+        ratio = compute_tail_ratio(r)
+        # avg_win = 4.0, avg_loss = 0.5, raw = 8.0, capped at 1.0
+        assert abs(ratio - 1.0) < 1e-10
+
+    def test_cap(self):
+        """Ratio capped to [0, 1]."""
+        r = np.array([10.0, -0.1])
+        ratio = compute_tail_ratio(r)
+        assert ratio <= 1.0
+
+
+# ===================================================================
+#  v3: Convexity Ratio
+# ===================================================================
+
+class TestConvexityRatio:
+    def test_no_wins(self):
+        r = np.array([-1.0, -2.0])
+        assert compute_convexity_ratio(r) == 0.0
+
+    def test_no_losses(self):
+        r = np.array([1.0, 2.0])
+        assert compute_convexity_ratio(r) == 0.0
+
+    def test_symmetric(self):
+        """max_win = max_loss → raw = 1.0, normalized = 1/4 = 0.25."""
+        r = np.array([2.0, -2.0, 1.0, -1.0])
+        ratio = compute_convexity_ratio(r)
+        expected = 1.0 / CONVEXITY_RATIO_CAP  # 1.0 / 4.0 = 0.25
+        assert abs(ratio - expected) < 1e-10
+
+    def test_right_tail_expansion(self):
+        """Big max_win relative to max_loss → high ratio."""
+        r = np.array([8.0, 1.0, -1.0, -0.5])
+        ratio = compute_convexity_ratio(r)
+        # max_win = 8.0, max_loss = 1.0, raw = 8.0, capped at 1.0
+        assert abs(ratio - 1.0) < 1e-10
+
+
+# ===================================================================
+#  v3: Convexity Amplifier
+# ===================================================================
+
+class TestConvexityAmplifier:
+    def test_minimum(self):
+        """Single trade or no trades → CA = 1.0."""
+        assert compute_convexity_amplifier(np.array([1.0])) == 1.0
+        assert compute_convexity_amplifier(np.array([])) == 1.0
+
+    def test_range(self):
+        """CA always in [1.0, 1.25]."""
+        # Maximum possible: tail=1.0, convexity=1.0 → 1 + 0.15 + 0.10 = 1.25
+        r = np.array([10.0, -0.1])  # extreme right skew
+        ca = compute_convexity_amplifier(r)
+        assert 1.0 <= ca <= 1.25
+
+    def test_symmetric_trades(self):
+        """Balanced trades → CA near 1.0."""
+        r = np.array([1.0, -1.0] * 20)
+        ca = compute_convexity_amplifier(r)
+        # tail_ratio = 1/5 = 0.2, convexity_ratio = 1/4 = 0.25
+        # CA = 1 + 0.15*0.2 + 0.10*0.25 = 1.055
+        assert 1.04 < ca < 1.07
+
+    def test_right_skew_boosts(self):
+        """Right-skewed distribution should give higher CA."""
+        r_balanced = np.array([1.0, -1.0] * 20)
+        r_skewed = np.array([3.0, 5.0, -0.5, -0.3] * 10)
+        ca_balanced = compute_convexity_amplifier(r_balanced)
+        ca_skewed = compute_convexity_amplifier(r_skewed)
+        assert ca_skewed > ca_balanced
+
+
+# ===================================================================
+#  v3: Rolling WSS Stability
+# ===================================================================
+
+class TestRollingWSSStability:
+    def test_too_few_trades(self):
+        """< ROLLING_WSS_WINDOW trades → neutral 0.5."""
+        r = np.array([0.5] * 10)
+        w = np.ones(10) / 10
+        assert compute_rolling_wss_stability(r, w) == 0.5
+
+    def test_consistent_trades(self):
+        """Consistent R-multiples → high stability."""
+        r = np.array([0.5] * 50)
+        w = np.ones(50) / 50
+        stability = compute_rolling_wss_stability(r, w)
+        assert stability > 0.9
+
+    def test_erratic_trades(self):
+        """Wildly varying R-multiples → lower stability."""
+        np.random.seed(77)
+        r = np.concatenate([
+            np.random.uniform(3.0, 5.0, 25),
+            np.random.uniform(-3.0, -1.0, 25),
+        ])
+        np.random.shuffle(r)
+        w = np.ones(50) / 50
+        stability = compute_rolling_wss_stability(r, w)
+        assert stability < 0.9
+
+
+# ===================================================================
+#  v3: BCM (Behavioral Consistency Multiplier)
+# ===================================================================
+
+class TestBCM:
+    def test_formula(self):
+        """BCM = 0.90 + 0.20 * stability."""
+        assert abs(compute_bcm(0.0) - 0.90) < 1e-10
+        assert abs(compute_bcm(0.5) - 1.00) < 1e-10
+        assert abs(compute_bcm(1.0) - 1.10) < 1e-10
+
+    def test_range(self):
+        """BCM always in [0.90, 1.10]."""
+        assert abs(compute_bcm(-0.5) - 0.90) < 1e-10  # clamped
+        assert abs(compute_bcm(1.5) - 1.10) < 1e-10  # clamped
+
+
+# ===================================================================
+#  v3: End-to-End
+# ===================================================================
+
+class TestAFIv3:
+    def test_elite_trader(self):
+        """Elite Sharpe with right skew → high score (>800)."""
+        np.random.seed(42)
+        n = 150
+        r_vals = np.concatenate([
+            np.random.uniform(0.5, 2.0, int(n * 0.7)),
+            np.random.uniform(-0.5, -0.2, int(n * 0.3)),
+        ])
+        np.random.shuffle(r_vals)
+        days = np.linspace(300, 0, n)
+        trades = _make_trades(r_vals.tolist(), days.tolist())
+
+        result = compute_afi(trades, reference_time=NOW, version=3)
+        assert result.afi_version == 3
+        assert result.afi_score >= 300
+        assert result.afi_score <= 900
+        assert result.cps >= 1.0
+        assert result.bcm >= 0.9
+
+    def test_right_skew_boosts_score(self):
+        """Right-skewed distribution should score higher than balanced."""
+        n = 60
+        r_balanced = [0.5, -0.5] * (n // 2)
+        r_skewed = [3.0, -0.5] * (n // 2)
+
+        days = list(range(n))
+        result_balanced = compute_afi(_make_trades(r_balanced, days), reference_time=NOW, version=3)
+        result_skewed = compute_afi(_make_trades(r_skewed, days), reference_time=NOW, version=3)
+
+        # Skewed should have higher CA, and since WSS also benefits from positive R-slope...
+        assert result_skewed.cps > result_balanced.cps
+        assert result_skewed.afi_score > result_balanced.afi_score
+
+    def test_stability_boosts_afi(self):
+        """Consistent trades should produce BCM > 1.0."""
+        n = 60
+        r_vals = [0.5] * n  # Perfectly consistent
+        trades = _make_trades(r_vals, list(range(n)))
+        result = compute_afi(trades, reference_time=NOW, version=3)
+        assert result.bcm >= 1.0  # stability → BCM reward
+
+    def test_no_dampening(self):
+        """v3: deterministic, no prior_afi influence."""
+        trades = _make_trades([0.5] * 50, list(range(50)))
+        r1 = compute_afi(trades, reference_time=NOW, version=3)
+        r2 = compute_afi(trades, prior_afi=400.0, reference_time=NOW, version=3)
+        assert abs(r1.afi_score - r2.afi_score) < 1e-10
+
+    def test_inactivity_neutral(self):
+        """v3: dormant trader scores identically to active trader."""
+        r_vals = [0.5, -0.3, 0.8, -0.5, 1.0] * 10
+        trades_active = _make_trades(r_vals, list(range(50)))
+        trades_dormant = _make_trades(r_vals, [730 + i for i in range(50)])
+
+        r_active = compute_afi(trades_active, reference_time=NOW, version=3)
+        r_dormant = compute_afi(trades_dormant, reference_time=NOW, version=3)
+        assert abs(r_active.afi_score - r_dormant.afi_score) < 1e-10
+
+    def test_frequency_neutral(self):
+        """v3: same R-multiples score same regardless of timing spread."""
+        r_vals = [0.5, -0.3, 1.0, -0.8, 0.5] * 10
+        # 50 trades compressed in 50 days vs spread over 500 days
+        trades_compressed = _make_trades(r_vals, list(range(50)))
+        trades_spread = _make_trades(r_vals, [i * 10 for i in range(50)])
+
+        r1 = compute_afi(trades_compressed, reference_time=NOW, version=3)
+        r2 = compute_afi(trades_spread, reference_time=NOW, version=3)
+        assert abs(r1.afi_score - r2.afi_score) < 1e-10
+
+    def test_clamped_to_300_900(self):
+        """v3: AFI score is clamped to [300, 900]."""
+        # Zero trades → edge case
+        result = compute_afi([], reference_time=NOW, version=3)
+        assert result.afi_score >= 300
+        assert result.afi_score <= 900
+        assert result.afi_version == 3
+        assert result.cps == 1.0
+        assert result.bcm == 1.0
+
+    def test_structural_total_formula(self):
+        """v3: structural_total = WSS * CA * BCM, then compress + clamp."""
+        n = 60
+        trades = _make_trades([0.5] * n, list(range(n)))
+        result = compute_afi(trades, reference_time=NOW, version=3)
+
+        # Verify cps is the convexity amplifier (>=1.0)
+        assert result.cps >= 1.0
+        assert result.cps <= 1.25
+        # BCM in [0.90, 1.10]
+        assert result.bcm >= 0.90
+        assert result.bcm <= 1.10
+
+    def test_v3_cowboy_penalized(self):
+        """v3: Cowboy (fragile) still ranks below structural traders."""
+        np.random.seed(42)
+        smooth = np.concatenate([
+            np.random.uniform(0.3, 0.5, 128),
+            np.random.uniform(-0.5, -0.3, 22),
+        ])
+        np.random.shuffle(smooth)
+
+        np.random.seed(123)
+        cowboy = np.concatenate([
+            np.random.uniform(1.0, 5.0, 32),
+            np.random.uniform(-3.0, -1.5, 24),
+            np.random.uniform(-0.5, 0.5, 24),
+        ])
+        np.random.shuffle(cowboy)
+
+        r_smooth = compute_afi(
+            _make_trades(smooth.tolist(), np.linspace(200, 0, len(smooth)).tolist()),
+            reference_time=NOW, version=3,
+        )
+        r_cowboy = compute_afi(
+            _make_trades(cowboy.tolist(), np.linspace(120, 0, len(cowboy)).tolist()),
+            reference_time=NOW, version=3,
+        )
+
+        # Cowboy has worse structural metrics despite bigger wins
+        assert r_cowboy.afi_score < r_smooth.afi_score

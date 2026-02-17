@@ -211,3 +211,121 @@ def compute_distribution_stability(wss_history: List[dict]) -> float:
     wss_values = np.array([e["wss"] for e in wss_history], dtype=np.float64)
     variance = float(np.var(wss_values))
     return 1.0 - min(variance / STABILITY_VAR_CAP, 1.0)
+
+
+# ---------------------------------------------------------------------------
+#  v3: Convexity Amplifier & Behavioral Consistency
+# ---------------------------------------------------------------------------
+TAIL_RATIO_CAP: float = 5.0
+CONVEXITY_RATIO_CAP: float = 4.0
+ROLLING_WSS_WINDOW: int = 20
+
+
+def compute_tail_ratio(r_multiples: np.ndarray) -> float:
+    """Normalized tail ratio: avg_win / avg_loss, capped to [0, 1].
+
+    Measures whether average wins exceed average losses in magnitude.
+    """
+    wins = r_multiples[r_multiples > 0]
+    losses = r_multiples[r_multiples < 0]
+
+    if len(wins) == 0 or len(losses) == 0:
+        return 0.0
+
+    avg_win = float(np.mean(wins))
+    avg_loss = float(abs(np.mean(losses)))
+
+    if avg_loss < 1e-15:
+        return 1.0
+
+    raw = avg_win / avg_loss
+    return min(raw / TAIL_RATIO_CAP, 1.0)
+
+
+def compute_convexity_ratio(r_multiples: np.ndarray) -> float:
+    """Normalized convexity ratio: max_win / max_loss, capped to [0, 1].
+
+    Measures right-tail expansion relative to left-tail worst case.
+    """
+    wins = r_multiples[r_multiples > 0]
+    losses = r_multiples[r_multiples < 0]
+
+    if len(wins) == 0 or len(losses) == 0:
+        return 0.0
+
+    max_win = float(np.max(wins))
+    max_loss = float(abs(np.min(losses)))
+
+    if max_loss < 1e-15:
+        return 1.0
+
+    raw = max_win / max_loss
+    return min(raw / CONVEXITY_RATIO_CAP, 1.0)
+
+
+def compute_convexity_amplifier(r_multiples: np.ndarray) -> float:
+    """Convexity Amplifier: multiplicative structural reward for right-skew.
+
+    CA = 1 + 0.15 * normalized_tail_ratio + 0.10 * normalized_convexity_ratio
+    Range: [1.0, 1.25]
+    """
+    if len(r_multiples) < 2:
+        return 1.0
+
+    tail = compute_tail_ratio(r_multiples)
+    convexity = compute_convexity_ratio(r_multiples)
+    return 1.0 + 0.15 * tail + 0.10 * convexity
+
+
+def compute_rolling_wss_stability(
+    r_multiples: np.ndarray,
+    weights: np.ndarray,
+) -> float:
+    """Compute behavioral stability from rolling WSS over trade history.
+
+    Slides a ROLLING_WSS_WINDOW-trade window across all trades,
+    computes WSS per window, then measures variance of the WSS series.
+
+    Returns stability score in [0, 1]. If < ROLLING_WSS_WINDOW trades, returns 0.5 (neutral).
+    """
+    n = len(r_multiples)
+    if n < ROLLING_WSS_WINDOW:
+        return 0.5
+
+    wss_series = []
+    window_size = ROLLING_WSS_WINDOW
+
+    for start in range(n - window_size + 1):
+        chunk = r_multiples[start:start + window_size]
+        w = np.full(window_size, 1.0 / window_size, dtype=np.float64)
+
+        # Compute components for this window
+        from .component_engine import (
+            compute_dd_containment,
+            compute_ltc,
+            compute_r_slope,
+            compute_sharpe,
+        )
+        r_slope_raw = compute_r_slope(chunk, w)
+        sharpe_raw = compute_sharpe(chunk, w)
+        ltc_raw = compute_ltc(chunk, w)
+        dd_raw = compute_dd_containment(chunk)
+
+        components = normalize_components(r_slope_raw, sharpe_raw, ltc_raw, dd_raw)
+        wss = compute_wss(components)
+        wss_series.append(wss)
+
+    if len(wss_series) < 3:
+        return 0.5
+
+    variance = float(np.var(wss_series))
+    return 1.0 - min(variance / STABILITY_VAR_CAP, 1.0)
+
+
+def compute_bcm(stability_score: float) -> float:
+    """Behavioral Consistency Multiplier.
+
+    BCM = 0.90 + 0.20 * stability_score
+    Range: [0.90, 1.10]
+    """
+    return 0.90 + 0.20 * max(0.0, min(1.0, stability_score))

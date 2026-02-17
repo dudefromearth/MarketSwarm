@@ -21,6 +21,8 @@ export interface AFIScore {
   components: AFIComponents;
   displayName?: string;
   afi_version?: number;
+  cps?: number;
+  bcm?: number;
 }
 
 export interface AFILeaderboardResponse {

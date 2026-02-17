@@ -298,6 +298,9 @@ class JournalDBv2:
             if current_version < 31:
                 self._migrate_to_v31(conn)
 
+            if current_version < 32:
+                self._migrate_to_v32(conn)
+
             conn.commit()
         finally:
             conn.close()
@@ -2483,6 +2486,20 @@ class JournalDBv2:
                 ALTER TABLE afi_scores ADD COLUMN afi_version TINYINT NOT NULL DEFAULT 1
             """)
             self._set_schema_version(conn, 31)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v32(self, conn):
+        """Migrate to v32: Add cps and bcm columns to afi_scores for v3 convexity tracking."""
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                ALTER TABLE afi_scores ADD COLUMN cps FLOAT NULL
+            """)
+            cursor.execute("""
+                ALTER TABLE afi_scores ADD COLUMN bcm FLOAT NULL
+            """)
+            self._set_schema_version(conn, 32)
         finally:
             cursor.close()
 
@@ -6428,6 +6445,8 @@ class JournalDBv2:
         active_days: int,
         wss_history: str,
         afi_version: int = 1,
+        cps: float = None,
+        bcm: float = None,
     ) -> bool:
         """Upsert an AFI score for a user (single row per user)."""
         conn = self._get_conn()
@@ -6440,8 +6459,9 @@ class JournalDBv2:
                     (user_id, afi_score, afi_raw, wss,
                      comp_r_slope, comp_sharpe, comp_ltc, comp_dd_containment,
                      robustness, trend, is_provisional,
-                     trade_count, active_days, calculated_at, wss_history, afi_version)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     trade_count, active_days, calculated_at, wss_history, afi_version,
+                     cps, bcm)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     afi_score = VALUES(afi_score),
                     afi_raw = VALUES(afi_raw),
@@ -6457,12 +6477,15 @@ class JournalDBv2:
                     active_days = VALUES(active_days),
                     calculated_at = VALUES(calculated_at),
                     wss_history = VALUES(wss_history),
-                    afi_version = VALUES(afi_version)
+                    afi_version = VALUES(afi_version),
+                    cps = VALUES(cps),
+                    bcm = VALUES(bcm)
             """, (
                 user_id, afi_score, afi_raw, wss,
                 comp_r_slope, comp_sharpe, comp_ltc, comp_dd_containment,
                 robustness, trend, 1 if is_provisional else 0,
-                trade_count, active_days, now, wss_history, afi_version
+                trade_count, active_days, now, wss_history, afi_version,
+                cps, bcm
             ))
             conn.commit()
             return True
@@ -6486,7 +6509,8 @@ class JournalDBv2:
                         CASE WHEN u.show_screen_name = 1 AND u.screen_name IS NOT NULL AND u.screen_name != '' THEN u.screen_name END,
                         u.display_name
                     ) as display_name,
-                    a.afi_version
+                    a.afi_version,
+                    a.cps, a.bcm
                 FROM afi_scores a
                 LEFT JOIN users u ON a.user_id = u.id
                 WHERE a.user_id = %s
@@ -6517,6 +6541,8 @@ class JournalDBv2:
                 'wss_history': row[15],
                 'displayName': row[16],
                 'afi_version': row[17] if row[17] is not None else 1,
+                'cps': float(row[18]) if row[18] is not None else None,
+                'bcm': float(row[19]) if row[19] is not None else None,
             }
         finally:
             cursor.close()

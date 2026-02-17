@@ -1,11 +1,11 @@
 """
 AFI (Antifragile Index) Engine — Public API
-v2.0.0
+v3.0.0
 
 Single entry point: compute_afi()
 
     from afi_engine import compute_afi
-    result = compute_afi(trades, prior_afi, wss_history, version=2)
+    result = compute_afi(trades, prior_afi, wss_history, version=3)
 """
 from __future__ import annotations
 
@@ -25,9 +25,12 @@ from .component_engine import (
 )
 from .scoring_engine import (
     compress,
+    compute_bcm,
+    compute_convexity_amplifier,
     compute_distribution_stability,
     compute_robustness,
     compute_robustness_v2,
+    compute_rolling_wss_stability,
     compute_trend,
     compute_wss,
     dampen,
@@ -38,8 +41,8 @@ from .scoring_engine import (
 # Re-export for external consumers
 from .models import AFIComponents, AFIResult, TrendSignal  # noqa: F811
 
-# Active AFI version — v2 is lifetime structural identity
-AFI_VERSION: int = 2
+# Active AFI version — v3 is convex structural identity
+AFI_VERSION: int = 3
 
 # Phase 1 default — VIX-at-entry lookup deferred to Phase 2
 _DEFAULT_REGIME_DIVERSITY: float = 0.5
@@ -68,7 +71,7 @@ def compute_afi(
     prior_afi : previous AFI score (None on first computation)
     wss_history : list of {"date": "YYYY-MM-DD", "wss": float}
     reference_time : anchor for recency weights (default: utcnow)
-    version : AFI version (1 or 2). Defaults to AFI_VERSION.
+    version : AFI version (1, 2, or 3). Defaults to AFI_VERSION.
 
     Returns
     -------
@@ -76,7 +79,9 @@ def compute_afi(
     """
     v = version if version is not None else AFI_VERSION
 
-    if v == 2:
+    if v == 3:
+        return _compute_afi_v3(trades, wss_history, reference_time)
+    elif v == 2:
         return _compute_afi_v2(trades, wss_history, reference_time)
     else:
         return _compute_afi_v1(trades, prior_afi, wss_history, reference_time)
@@ -266,6 +271,114 @@ def _compute_afi_v2(
     )
 
 
+def _compute_afi_v3(
+    trades: List[Dict],
+    wss_history: Optional[List[Dict]] = None,
+    reference_time: Optional[datetime] = None,
+) -> AFIResult:
+    """v3: convex structural identity.
+
+    All trades. Equal weights. No recency. No dampening. No prior_afi.
+
+    Structural_Total = WSS * Convexity_Amplifier * BCM
+    AFI = clamp(compress(Structural_Total), 300, 900)
+    """
+    if reference_time is None:
+        reference_time = datetime.utcnow()
+    if wss_history is None:
+        wss_history = []
+
+    trade_count = len(trades)
+    now = reference_time
+
+    # --- Edge case: no trades ---
+    if trade_count == 0:
+        components = normalize_components(0.0, 0.0, 1.0, 1.0)
+        wss = compute_wss(components)
+        afi_raw = compress(wss)
+        return AFIResult(
+            afi_score=afi_raw,
+            afi_raw=afi_raw,
+            wss=wss,
+            components=components,
+            robustness=0.0,
+            trend=compute_trend(wss_history),
+            is_provisional=True,
+            trade_count=0,
+            active_days=0,
+            computed_at=now,
+            afi_version=3,
+            cps=1.0,
+            bcm=1.0,
+        )
+
+    # --- Extract arrays ---
+    r_multiples = np.array([t["r_multiple"] for t in trades], dtype=np.float64)
+    exit_times = [t["exit_time"] for t in trades]
+
+    # --- Equal weights (no recency decay) ---
+    weights = compute_equal_weights(trade_count)
+
+    # --- Component computations (frozen 4 components, frozen 35/25/20/20 weights) ---
+    r_slope_raw = compute_r_slope(r_multiples, weights)
+    sharpe_raw = compute_sharpe(r_multiples, weights)
+    ltc_raw = compute_ltc(r_multiples, weights)
+    dd_raw = compute_dd_containment(r_multiples)
+
+    # --- Normalize ---
+    components = normalize_components(r_slope_raw, sharpe_raw, ltc_raw, dd_raw)
+
+    # --- WSS (frozen formula) ---
+    wss = compute_wss(components)
+
+    # --- Convexity Amplifier [1.0, 1.25] ---
+    ca = compute_convexity_amplifier(r_multiples)
+
+    # --- Behavioral Consistency Multiplier [0.90, 1.10] ---
+    stability = compute_rolling_wss_stability(r_multiples, weights)
+    bcm = compute_bcm(stability)
+
+    # --- Structural Total ---
+    structural_total = wss * ca * bcm
+
+    # --- Compress (same logistic, no modification) ---
+    afi_raw = compress(structural_total)
+
+    # --- Clamp to [300, 900] ---
+    afi_score = max(300.0, min(900.0, afi_raw))
+
+    # --- Robustness v2 (informational) ---
+    survived_dds = _count_survived_drawdowns(r_multiples)
+    rb = compute_robustness_v2(
+        regime_diversity=_DEFAULT_REGIME_DIVERSITY,
+        survived_dds=survived_dds,
+        distribution_stability=stability,
+    )
+
+    # --- Trend ---
+    trend = compute_trend(wss_history)
+
+    # --- Provisional ---
+    active_days = _compute_active_days(exit_times)
+    provisional = trade_count < 20
+
+    return AFIResult(
+        afi_score=afi_score,
+        afi_raw=afi_raw,
+        wss=wss,
+        components=components,
+        robustness=rb,
+        trend=trend,
+        is_provisional=provisional,
+        trade_count=trade_count,
+        active_days=active_days,
+        computed_at=now,
+        afi_version=3,
+        cps=round(ca, 5),
+        bcm=round(bcm, 5),
+    )
+
+
 def _compute_active_days(exit_times: List[datetime]) -> int:
     """Count distinct calendar days with at least one trade exit."""
     days: Set[str] = set()
@@ -284,7 +397,7 @@ def trim_wss_history(history: List[Dict], max_entries: int = _WSS_HISTORY_MAX) -
     """Trim WSS history to max_entries, keeping most recent.
 
     v1: capped at 90 entries.
-    v2: pass max_entries=None or large number for full lifetime retention.
+    v2/v3: pass max_entries=None for full lifetime retention.
     """
     if max_entries is None:
         return history

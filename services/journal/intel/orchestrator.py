@@ -4559,6 +4559,8 @@ class JournalOrchestrator:
                     active_days=result.active_days,
                     wss_history=json.dumps(wss_history),
                     afi_version=afi_version,
+                    cps=round(result.cps, 5) if result.cps else None,
+                    bcm=round(result.bcm, 5) if result.bcm else None,
                 )
                 count += 1
 
