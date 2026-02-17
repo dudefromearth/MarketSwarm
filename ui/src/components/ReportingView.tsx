@@ -117,7 +117,7 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
   const [drawdownData, setDrawdownData] = useState<DrawdownPoint[]>([]);
   const [distributionData, setDistributionData] = useState<DistributionBin[]>([]);
   const [distBins, setDistBins] = useState(100);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debounceRef = useRef<number>(0);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<TimeRange>('ALL');
   const [theme, setTheme] = useState(document.documentElement.dataset.theme || 'dark');
@@ -179,6 +179,21 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  // Debounced distribution fetch when slider changes
+  useEffect(() => {
+    // Skip the initial render (fetchData handles initial load at 100)
+    debounceRef.current += 1;
+    const renderCount = debounceRef.current;
+    if (renderCount <= 1) return;
+
+    const timer = setTimeout(() => {
+      if (debounceRef.current === renderCount) {
+        fetchDistribution(distBins);
+      }
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [distBins, fetchDistribution]);
 
   const filterByTimeRange = <T extends { time: string }>(data: T[], range: TimeRange): T[] => {
     if (range === 'ALL') return data;
@@ -439,12 +454,7 @@ export default function ReportingView({ logId, logName, onClose }: ReportingView
                     max={300}
                     step={10}
                     value={distBins}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value);
-                      setDistBins(val);
-                      if (debounceRef.current) clearTimeout(debounceRef.current);
-                      debounceRef.current = setTimeout(() => fetchDistribution(val), 300);
-                    }}
+                    onChange={(e) => setDistBins(parseInt(e.target.value))}
                     className="resolution-slider"
                   />
                 </div>
