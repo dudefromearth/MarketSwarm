@@ -47,6 +47,6 @@ class AFIResult:
     trade_count: int
     active_days: int
     computed_at: datetime
-    afi_version: int = 1        # 1 = recency-weighted + dampened, 2 = equal-weight, 3 = convex structural
+    afi_version: int = 1        # 1 = recency-weighted + dampened, 2 = equal-weight, 3 = credibility-gated
     cps: float = 0.0            # v3: Convexity amplifier (1.0-1.25), 0 for v1/v2
-    bcm: float = 1.0            # v3: Behavioral consistency multiplier (0.90-1.10)
+    repeatability: float = 1.0  # v3: Repeatability multiplier (1.0-~1.15)

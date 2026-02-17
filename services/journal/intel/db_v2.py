@@ -301,6 +301,9 @@ class JournalDBv2:
             if current_version < 32:
                 self._migrate_to_v32(conn)
 
+            if current_version < 33:
+                self._migrate_to_v33(conn)
+
             conn.commit()
         finally:
             conn.close()
@@ -2500,6 +2503,17 @@ class JournalDBv2:
                 ALTER TABLE afi_scores ADD COLUMN bcm FLOAT NULL
             """)
             self._set_schema_version(conn, 32)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v33(self, conn):
+        """Migrate to v33: Rename bcm to repeatability in afi_scores for v3 credibility-gated model."""
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                ALTER TABLE afi_scores CHANGE COLUMN bcm repeatability FLOAT NULL
+            """)
+            self._set_schema_version(conn, 33)
         finally:
             cursor.close()
 
@@ -6446,7 +6460,7 @@ class JournalDBv2:
         wss_history: str,
         afi_version: int = 1,
         cps: float = None,
-        bcm: float = None,
+        repeatability: float = None,
     ) -> bool:
         """Upsert an AFI score for a user (single row per user)."""
         conn = self._get_conn()
@@ -6460,7 +6474,7 @@ class JournalDBv2:
                      comp_r_slope, comp_sharpe, comp_ltc, comp_dd_containment,
                      robustness, trend, is_provisional,
                      trade_count, active_days, calculated_at, wss_history, afi_version,
-                     cps, bcm)
+                     cps, repeatability)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     afi_score = VALUES(afi_score),
@@ -6479,13 +6493,13 @@ class JournalDBv2:
                     wss_history = VALUES(wss_history),
                     afi_version = VALUES(afi_version),
                     cps = VALUES(cps),
-                    bcm = VALUES(bcm)
+                    repeatability = VALUES(repeatability)
             """, (
                 user_id, afi_score, afi_raw, wss,
                 comp_r_slope, comp_sharpe, comp_ltc, comp_dd_containment,
                 robustness, trend, 1 if is_provisional else 0,
                 trade_count, active_days, now, wss_history, afi_version,
-                cps, bcm
+                cps, repeatability
             ))
             conn.commit()
             return True
@@ -6510,7 +6524,7 @@ class JournalDBv2:
                         u.display_name
                     ) as display_name,
                     a.afi_version,
-                    a.cps, a.bcm
+                    a.cps, a.repeatability
                 FROM afi_scores a
                 LEFT JOIN users u ON a.user_id = u.id
                 WHERE a.user_id = %s
@@ -6542,7 +6556,7 @@ class JournalDBv2:
                 'displayName': row[16],
                 'afi_version': row[17] if row[17] is not None else 1,
                 'cps': float(row[18]) if row[18] is not None else None,
-                'bcm': float(row[19]) if row[19] is not None else None,
+                'repeatability': float(row[19]) if row[19] is not None else None,
             }
         finally:
             cursor.close()

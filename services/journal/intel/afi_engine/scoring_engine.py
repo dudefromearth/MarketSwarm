@@ -2,7 +2,8 @@
 AFI — Scoring Engine
 
 Normalization, WSS computation, logistic compression,
-robustness scoring, RB dampening, and trend detection.
+credibility gating, repeatability, convexity amplifier,
+skew bonus, elite bonus, and trend detection.
 
 All constants are internal and not disclosed to users (anti-gaming).
 """
@@ -16,11 +17,11 @@ import numpy as np
 from .models import AFIComponents, TrendSignal
 
 # ---------------------------------------------------------------------------
-#  WSS Component Weights (not disclosed)
+#  WSS Component Weights (v3 — not disclosed)
 # ---------------------------------------------------------------------------
-W_R_SLOPE: float = 0.35
-W_SHARPE: float = 0.25
-W_LTC: float = 0.20
+W_R_SLOPE: float = 0.25
+W_SHARPE: float = 0.40   # Sharpe_adj (credibility-adjusted) gets dominant weight
+W_LTC: float = 0.15
 W_DD_CONTAINMENT: float = 0.20
 
 # ---------------------------------------------------------------------------
@@ -37,7 +38,7 @@ S: float = 2.5           # steepness
 SHIFT: float = 0.5       # WSS value that maps to CENTER
 
 # ---------------------------------------------------------------------------
-#  Robustness Coefficients
+#  Robustness Coefficients (v1 only)
 # ---------------------------------------------------------------------------
 RB_ALPHA: float = 2.0    # √(trade_count) weight
 RB_BETA: float = 1.5     # √(active_days) weight
@@ -45,7 +46,7 @@ RB_GAMMA: float = 10.0   # regime_diversity weight (input 0-1)
 RB_DELTA: float = 3.0    # survived_drawdowns weight
 
 # ---------------------------------------------------------------------------
-#  Dampening Constant
+#  Dampening Constant (v1 only)
 # ---------------------------------------------------------------------------
 RB_C: float = 30.0
 
@@ -60,6 +61,43 @@ TREND_WINDOW_DAYS: int = 45
 # ---------------------------------------------------------------------------
 MIN_TRADES_PROVISIONAL: int = 20
 MIN_ACTIVE_DAYS_PROVISIONAL: int = 30
+
+# ---------------------------------------------------------------------------
+#  Credibility Constants (v3)
+# ---------------------------------------------------------------------------
+CRED_SHARPE_K: float = 50.0   # half-saturation for Sharpe credibility
+CRED_BONUS_K: float = 150.0   # half-saturation for bonus credibility
+
+# ---------------------------------------------------------------------------
+#  Repeatability Constants (v3)
+# ---------------------------------------------------------------------------
+REP_SHARPE_W: float = 0.4
+REP_WSS_W: float = 0.3
+REP_SKEW_W: float = 0.3
+REPEATABILITY_SCALE: float = 0.15  # max boost from repeatability
+
+# ---------------------------------------------------------------------------
+#  Skew Bonus Constants (v3)
+# ---------------------------------------------------------------------------
+SKEW_BONUS_SCALE: float = 10.0  # max magnitude of skew bonus
+
+# ---------------------------------------------------------------------------
+#  Elite Bonus Constants (v3)
+# ---------------------------------------------------------------------------
+ELITE_SHARPE_THRESHOLD: float = 5.0
+ELITE_BONUS_SCALE: float = 20.0  # max elite bonus
+
+# ---------------------------------------------------------------------------
+#  Convexity Amplifier Constants (v3)
+# ---------------------------------------------------------------------------
+TAIL_RATIO_CAP: float = 5.0
+CONVEXITY_RATIO_CAP: float = 4.0
+
+# ---------------------------------------------------------------------------
+#  Stability Constants (shared)
+# ---------------------------------------------------------------------------
+STABILITY_VAR_CAP: float = 0.05  # WSS variance cap for normalization
+ROLLING_WSS_WINDOW: int = 20
 
 
 def normalize_r_slope(raw: float) -> float:
@@ -88,7 +126,11 @@ def normalize_components(
 
 
 def compute_wss(components: AFIComponents) -> float:
-    """Weighted Structural Score from normalised components."""
+    """Weighted Structural Score from normalised components.
+
+    v3 weights: R_Slope 0.25, Sharpe_adj 0.40, LTC 0.15, DD 0.20
+    Note: components.sharpe should already be normalized from Sharpe_adj (not raw).
+    """
     return (
         W_R_SLOPE * components.r_slope
         + W_SHARPE * components.sharpe
@@ -102,130 +144,31 @@ def compress(wss: float) -> float:
     return CENTER + K * math.tanh(S * (wss - SHIFT))
 
 
-def compute_robustness(
-    trade_count: int,
-    active_days: int,
-    regime_diversity: float,
-    survived_dds: int,
-) -> float:
-    """Robustness score (0-100+, uncapped)."""
-    return (
-        RB_ALPHA * math.sqrt(max(trade_count, 0))
-        + RB_BETA * math.sqrt(max(active_days, 0))
-        + RB_GAMMA * max(0.0, min(1.0, regime_diversity))
-        + RB_DELTA * max(survived_dds, 0)
-    )
+# ---------------------------------------------------------------------------
+#  Credibility Functions (v3)
+# ---------------------------------------------------------------------------
+
+def cred_sharpe(n: int) -> float:
+    """Credibility gate for Sharpe: sqrt(N / (N + 50))."""
+    return math.sqrt(max(n, 0) / (max(n, 0) + CRED_SHARPE_K))
 
 
-def dampen(
-    afi_raw: float,
-    prior_afi: Optional[float],
-    rb: float,
-) -> float:
-    """Apply RB dampening to slow AFI movement.
-
-    AFI_next = prior + (raw - prior) × 1/(1 + RB/C)
-
-    First computation (prior_afi=None): returns afi_raw directly.
-    """
-    if prior_afi is None:
-        return afi_raw
-
-    factor = 1.0 / (1.0 + rb / RB_C)
-    return prior_afi + (afi_raw - prior_afi) * factor
+def cred_bonus(n: int) -> float:
+    """Credibility gate for bonuses: sqrt(N / (N + 150))."""
+    return math.sqrt(max(n, 0) / (max(n, 0) + CRED_BONUS_K))
 
 
-def compute_trend(wss_history: List[dict]) -> TrendSignal:
-    """Detect trend from recent WSS history.
-
-    Uses linear regression slope on WSS values from the last
-    TREND_WINDOW_DAYS days.
-
-    Each entry: {"date": "YYYY-MM-DD", "wss": float}
-    """
-    if len(wss_history) < 3:
-        return TrendSignal.STABLE
-
-    # Use last TREND_WINDOW_DAYS entries (one per day max)
-    recent = wss_history[-TREND_WINDOW_DAYS:]
-    if len(recent) < 3:
-        return TrendSignal.STABLE
-
-    y = np.array([entry["wss"] for entry in recent], dtype=np.float64)
-    x = np.arange(len(y), dtype=np.float64)
-
-    # Simple OLS slope
-    x_bar = x.mean()
-    y_bar = y.mean()
-    dx = x - x_bar
-    var_x = np.dot(dx, dx)
-    if var_x < 1e-15:
-        return TrendSignal.STABLE
-
-    slope = float(np.dot(dx, y - y_bar) / var_x)
-
-    if slope > TREND_THRESHOLD:
-        return TrendSignal.IMPROVING
-    elif slope < -TREND_THRESHOLD:
-        return TrendSignal.DECAYING
-    else:
-        return TrendSignal.STABLE
-
-
-def is_provisional(trade_count: int, active_days: int) -> bool:
-    """Check if user is in provisional state."""
-    return trade_count < MIN_TRADES_PROVISIONAL or active_days < MIN_ACTIVE_DAYS_PROVISIONAL
+def compute_sharpe_adj(sharpe_raw: float, trade_count: int) -> float:
+    """Sharpe_adj = Sharpe_raw × Cred_sharpe(N)."""
+    return sharpe_raw * cred_sharpe(trade_count)
 
 
 # ---------------------------------------------------------------------------
-#  v2: Robustness & Distribution Stability
+#  Convexity Amplifier (v3)
 # ---------------------------------------------------------------------------
-STABILITY_VAR_CAP: float = 0.05  # WSS variance cap for normalization
-
-
-def compute_robustness_v2(
-    regime_diversity: float,
-    survived_dds: int,
-    distribution_stability: float,
-) -> float:
-    """Robustness v2: no trade_count, no active_days.
-
-    RB_v2 = 10 × regime_diversity + 3 × survived_dds + 5 × distribution_stability
-    """
-    return (
-        10.0 * max(0.0, min(1.0, regime_diversity))
-        + 3.0 * max(survived_dds, 0)
-        + 5.0 * max(0.0, min(1.0, distribution_stability))
-    )
-
-
-def compute_distribution_stability(wss_history: List[dict]) -> float:
-    """Compute distribution stability from full lifetime WSS history.
-
-    Low WSS variance = high stability = consistent structural quality.
-    Returns [0, 1]. If < 3 data points, returns 0.5 (neutral).
-    """
-    if len(wss_history) < 3:
-        return 0.5
-
-    wss_values = np.array([e["wss"] for e in wss_history], dtype=np.float64)
-    variance = float(np.var(wss_values))
-    return 1.0 - min(variance / STABILITY_VAR_CAP, 1.0)
-
-
-# ---------------------------------------------------------------------------
-#  v3: Convexity Amplifier & Behavioral Consistency
-# ---------------------------------------------------------------------------
-TAIL_RATIO_CAP: float = 5.0
-CONVEXITY_RATIO_CAP: float = 4.0
-ROLLING_WSS_WINDOW: int = 20
-
 
 def compute_tail_ratio(r_multiples: np.ndarray) -> float:
-    """Normalized tail ratio: avg_win / avg_loss, capped to [0, 1].
-
-    Measures whether average wins exceed average losses in magnitude.
-    """
+    """Normalized tail ratio: avg_win / avg_loss, capped to [0, 1]."""
     wins = r_multiples[r_multiples > 0]
     losses = r_multiples[r_multiples < 0]
 
@@ -243,10 +186,7 @@ def compute_tail_ratio(r_multiples: np.ndarray) -> float:
 
 
 def compute_convexity_ratio(r_multiples: np.ndarray) -> float:
-    """Normalized convexity ratio: max_win / max_loss, capped to [0, 1].
-
-    Measures right-tail expansion relative to left-tail worst case.
-    """
+    """Normalized convexity ratio: max_win / max_loss, capped to [0, 1]."""
     wins = r_multiples[r_multiples > 0]
     losses = r_multiples[r_multiples < 0]
 
@@ -277,14 +217,42 @@ def compute_convexity_amplifier(r_multiples: np.ndarray) -> float:
     return 1.0 + 0.15 * tail + 0.10 * convexity
 
 
+# ---------------------------------------------------------------------------
+#  Repeatability (v3 — replaces BCM)
+# ---------------------------------------------------------------------------
+
+def compute_rolling_sharpe_stability(
+    r_multiples: np.ndarray,
+    weights: np.ndarray,
+) -> float:
+    """Sharpe stability: 1 - normalized variance of rolling Sharpe values.
+
+    Returns [0, 1]. If < ROLLING_WSS_WINDOW trades, returns 0.5 (neutral).
+    """
+    n = len(r_multiples)
+    if n < ROLLING_WSS_WINDOW:
+        return 0.5
+
+    from .component_engine import compute_sharpe
+
+    sharpe_series = []
+    for start in range(n - ROLLING_WSS_WINDOW + 1):
+        chunk = r_multiples[start:start + ROLLING_WSS_WINDOW]
+        w = np.full(ROLLING_WSS_WINDOW, 1.0 / ROLLING_WSS_WINDOW, dtype=np.float64)
+        sharpe_series.append(compute_sharpe(chunk, w))
+
+    if len(sharpe_series) < 3:
+        return 0.5
+
+    variance = float(np.var(sharpe_series))
+    return max(0.0, min(1.0, 1.0 - min(variance / STABILITY_VAR_CAP, 1.0)))
+
+
 def compute_rolling_wss_stability(
     r_multiples: np.ndarray,
     weights: np.ndarray,
 ) -> float:
     """Compute behavioral stability from rolling WSS over trade history.
-
-    Slides a ROLLING_WSS_WINDOW-trade window across all trades,
-    computes WSS per window, then measures variance of the WSS series.
 
     Returns stability score in [0, 1]. If < ROLLING_WSS_WINDOW trades, returns 0.5 (neutral).
     """
@@ -299,7 +267,6 @@ def compute_rolling_wss_stability(
         chunk = r_multiples[start:start + window_size]
         w = np.full(window_size, 1.0 / window_size, dtype=np.float64)
 
-        # Compute components for this window
         from .component_engine import (
             compute_dd_containment,
             compute_ltc,
@@ -322,10 +289,203 @@ def compute_rolling_wss_stability(
     return 1.0 - min(variance / STABILITY_VAR_CAP, 1.0)
 
 
-def compute_bcm(stability_score: float) -> float:
-    """Behavioral Consistency Multiplier.
+def _sample_skewness(arr: np.ndarray) -> float:
+    """Compute sample skewness (unbiased, Fisher's definition).
 
-    BCM = 0.90 + 0.20 * stability_score
-    Range: [0.90, 1.10]
+    Equivalent to scipy.stats.skew(arr, bias=False).
+    Returns 0.0 if fewer than 3 elements.
     """
-    return 0.90 + 0.20 * max(0.0, min(1.0, stability_score))
+    n = len(arr)
+    if n < 3:
+        return 0.0
+    mean = float(np.mean(arr))
+    m2 = float(np.mean((arr - mean) ** 2))
+    m3 = float(np.mean((arr - mean) ** 3))
+    if m2 < 1e-15:
+        return 0.0
+    # Biased skewness (G1)
+    g1 = m3 / (m2 ** 1.5)
+    # Adjust for sample bias (Fisher's correction)
+    return g1 * math.sqrt(n * (n - 1)) / (n - 2)
+
+
+def compute_skew_persistence(r_multiples: np.ndarray) -> float:
+    """Skew persistence: stability of rolling skew across windows.
+
+    Returns [0, 1]. High value = consistently skewed distribution.
+    If < ROLLING_WSS_WINDOW trades, returns 0.5 (neutral).
+    """
+    n = len(r_multiples)
+    if n < ROLLING_WSS_WINDOW:
+        return 0.5
+
+    skew_series = []
+    for start in range(n - ROLLING_WSS_WINDOW + 1):
+        chunk = r_multiples[start:start + ROLLING_WSS_WINDOW]
+        s = _sample_skewness(chunk)
+        skew_series.append(s)
+
+    if len(skew_series) < 3:
+        return 0.5
+
+    # Persistence = fraction of windows with positive skew × stability
+    positive_fraction = sum(1 for s in skew_series if s > 0) / len(skew_series)
+    variance = float(np.var(skew_series))
+    stability = 1.0 - min(variance / 1.0, 1.0)  # variance cap of 1.0 for skew
+
+    return max(0.0, min(1.0, positive_fraction * stability))
+
+
+def compute_repeatability(
+    sharpe_stability: float,
+    wss_stability: float,
+    skew_persistence: float,
+    trade_count: int,
+) -> float:
+    """Repeatability multiplier (replaces BCM).
+
+    Rep_raw = (0.4 × Sharpe_stability + 0.3 × WSS_stability + 0.3 × Skew_persistence) × Cred_bonus(N)
+    Repeatability = 1.0 + 0.15 × Rep_raw  → [1.0, ~1.15]
+
+    Note: stability inputs are raw (no credibility inside). Credibility applied at composite.
+    """
+    rep_raw = (
+        REP_SHARPE_W * max(0.0, min(1.0, sharpe_stability))
+        + REP_WSS_W * max(0.0, min(1.0, wss_stability))
+        + REP_SKEW_W * max(0.0, min(1.0, skew_persistence))
+    ) * cred_bonus(trade_count)
+
+    return 1.0 + REPEATABILITY_SCALE * rep_raw
+
+
+# ---------------------------------------------------------------------------
+#  Skew Bonus (v3)
+# ---------------------------------------------------------------------------
+
+def compute_skew_bonus(r_multiples: np.ndarray, trade_count: int) -> float:
+    """Skew bonus: additive adjustment based on full-history sample skew.
+
+    Skew_bonus = Cred_bonus(N) × Skew_persistence × 10 × tanh(sample_skew)
+    Range: [-10, +10]
+
+    sample_skew is full-history (all R-multiples), not windowed.
+    """
+    if len(r_multiples) < 3:
+        return 0.0
+
+    sample_skew = _sample_skewness(r_multiples)
+    skew_persist = compute_skew_persistence(r_multiples)
+
+    return cred_bonus(trade_count) * skew_persist * SKEW_BONUS_SCALE * math.tanh(sample_skew)
+
+
+# ---------------------------------------------------------------------------
+#  Elite Bonus (v3)
+# ---------------------------------------------------------------------------
+
+def compute_elite_bonus(sharpe_adj: float, trade_count: int) -> float:
+    """Elite bonus for exceptional Sharpe_adj (credibility-adjusted).
+
+    if Sharpe_adj > 5.0:
+        Elite_bonus = Cred_bonus(N) × 20 × tanh(Sharpe_adj - 5.0)
+    else: 0
+
+    Cap: +20
+    """
+    if sharpe_adj <= ELITE_SHARPE_THRESHOLD:
+        return 0.0
+
+    return cred_bonus(trade_count) * ELITE_BONUS_SCALE * math.tanh(sharpe_adj - ELITE_SHARPE_THRESHOLD)
+
+
+# ---------------------------------------------------------------------------
+#  Robustness (v1 only)
+# ---------------------------------------------------------------------------
+
+def compute_robustness(
+    trade_count: int,
+    active_days: int,
+    regime_diversity: float,
+    survived_dds: int,
+) -> float:
+    """Robustness score (0-100+, uncapped). v1 only."""
+    return (
+        RB_ALPHA * math.sqrt(max(trade_count, 0))
+        + RB_BETA * math.sqrt(max(active_days, 0))
+        + RB_GAMMA * max(0.0, min(1.0, regime_diversity))
+        + RB_DELTA * max(survived_dds, 0)
+    )
+
+
+def dampen(
+    afi_raw: float,
+    prior_afi: Optional[float],
+    rb: float,
+) -> float:
+    """Apply RB dampening to slow AFI movement. v1 only."""
+    if prior_afi is None:
+        return afi_raw
+
+    factor = 1.0 / (1.0 + rb / RB_C)
+    return prior_afi + (afi_raw - prior_afi) * factor
+
+
+def compute_trend(wss_history: List[dict]) -> TrendSignal:
+    """Detect trend from recent WSS history."""
+    if len(wss_history) < 3:
+        return TrendSignal.STABLE
+
+    recent = wss_history[-TREND_WINDOW_DAYS:]
+    if len(recent) < 3:
+        return TrendSignal.STABLE
+
+    y = np.array([entry["wss"] for entry in recent], dtype=np.float64)
+    x = np.arange(len(y), dtype=np.float64)
+
+    x_bar = x.mean()
+    y_bar = y.mean()
+    dx = x - x_bar
+    var_x = np.dot(dx, dx)
+    if var_x < 1e-15:
+        return TrendSignal.STABLE
+
+    slope = float(np.dot(dx, y - y_bar) / var_x)
+
+    if slope > TREND_THRESHOLD:
+        return TrendSignal.IMPROVING
+    elif slope < -TREND_THRESHOLD:
+        return TrendSignal.DECAYING
+    else:
+        return TrendSignal.STABLE
+
+
+def is_provisional(trade_count: int, active_days: int) -> bool:
+    """Check if user is in provisional state."""
+    return trade_count < MIN_TRADES_PROVISIONAL or active_days < MIN_ACTIVE_DAYS_PROVISIONAL
+
+
+# ---------------------------------------------------------------------------
+#  v2: Robustness & Distribution Stability
+# ---------------------------------------------------------------------------
+
+def compute_robustness_v2(
+    regime_diversity: float,
+    survived_dds: int,
+    distribution_stability: float,
+) -> float:
+    """Robustness v2: no trade_count, no active_days."""
+    return (
+        10.0 * max(0.0, min(1.0, regime_diversity))
+        + 3.0 * max(survived_dds, 0)
+        + 5.0 * max(0.0, min(1.0, distribution_stability))
+    )
+
+
+def compute_distribution_stability(wss_history: List[dict]) -> float:
+    """Compute distribution stability from full lifetime WSS history."""
+    if len(wss_history) < 3:
+        return 0.5
+
+    wss_values = np.array([e["wss"] for e in wss_history], dtype=np.float64)
+    variance = float(np.var(wss_values))
+    return 1.0 - min(variance / STABILITY_VAR_CAP, 1.0)

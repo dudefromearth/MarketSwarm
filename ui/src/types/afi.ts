@@ -22,7 +22,7 @@ export interface AFIScore {
   displayName?: string;
   afi_version?: number;
   cps?: number;
-  bcm?: number;
+  repeatability?: number;
 }
 
 export interface AFILeaderboardResponse {

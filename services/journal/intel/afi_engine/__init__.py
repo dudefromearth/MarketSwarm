@@ -25,23 +25,29 @@ from .component_engine import (
 )
 from .scoring_engine import (
     compress,
-    compute_bcm,
     compute_convexity_amplifier,
     compute_distribution_stability,
+    compute_elite_bonus,
+    compute_repeatability,
     compute_robustness,
     compute_robustness_v2,
+    compute_rolling_sharpe_stability,
     compute_rolling_wss_stability,
+    compute_sharpe_adj,
+    compute_skew_bonus,
+    compute_skew_persistence,
     compute_trend,
     compute_wss,
     dampen,
     is_provisional,
     normalize_components,
+    normalize_sharpe,
 )
 
 # Re-export for external consumers
 from .models import AFIComponents, AFIResult, TrendSignal  # noqa: F811
 
-# Active AFI version — v3 is convex structural identity
+# Active AFI version — v3 is credibility-gated structural identity
 AFI_VERSION: int = 3
 
 # Phase 1 default — VIX-at-entry lookup deferred to Phase 2
@@ -182,12 +188,7 @@ def _compute_afi_v2(
     wss_history: Optional[List[Dict]] = None,
     reference_time: Optional[datetime] = None,
 ) -> AFIResult:
-    """v2: equal-weight, no dampening, lifetime structural identity.
-
-    All trades contribute equally. No recency decay.
-    No RB dampening — AFI = AFI_raw directly.
-    Robustness_v2 is informational metadata (no trade_count/active_days).
-    """
+    """v2: equal-weight, no dampening, lifetime structural identity."""
     if reference_time is None:
         reference_time = datetime.utcnow()
     if wss_history is None:
@@ -222,7 +223,7 @@ def _compute_afi_v2(
     # --- Equal weights (v2: no recency decay) ---
     weights = compute_equal_weights(trade_count)
 
-    # --- Component computations (same 4 components, same weights 35/25/20/20) ---
+    # --- Component computations ---
     r_slope_raw = compute_r_slope(r_multiples, weights)
     sharpe_raw = compute_sharpe(r_multiples, weights)
     ltc_raw = compute_ltc(r_multiples, weights)
@@ -240,7 +241,7 @@ def _compute_afi_v2(
     # --- No dampening in v2: AFI = AFI_raw ---
     afi_score = afi_raw
 
-    # --- Robustness v2 (informational only, no trade_count/active_days) ---
+    # --- Robustness v2 (informational only) ---
     survived_dds = _count_survived_drawdowns(r_multiples)
     dist_stability = compute_distribution_stability(wss_history)
     rb = compute_robustness_v2(
@@ -252,7 +253,7 @@ def _compute_afi_v2(
     # --- Trend ---
     trend = compute_trend(wss_history)
 
-    # --- Provisional (v2: trade_count only, no active_days requirement) ---
+    # --- Provisional ---
     active_days = _compute_active_days(exit_times)
     provisional = trade_count < 20
 
@@ -276,12 +277,21 @@ def _compute_afi_v3(
     wss_history: Optional[List[Dict]] = None,
     reference_time: Optional[datetime] = None,
 ) -> AFIResult:
-    """v3: convex structural identity.
+    """v3: credibility-gated structural identity.
 
     All trades. Equal weights. No recency. No dampening. No prior_afi.
 
-    Structural_Total = WSS * Convexity_Amplifier * BCM
-    AFI = clamp(compress(Structural_Total), 300, 900)
+    Pipeline:
+        Sharpe_adj = Sharpe_raw × Cred_sharpe(N)
+        WSS = weighted sum of [norm(R_Slope), norm(Sharpe_adj), norm(LTC), norm(DD)]
+        CA = convexity amplifier [1.0, 1.25]
+        Repeatability = credibility-gated stability multiplier [1.0, ~1.15]
+        Structural_Total = WSS × CA × Repeatability
+        AFI_raw = 600 + 300 × tanh(2.5 × (Structural_Total - 0.5))
+        Skew_bonus = additive [-10, +10]
+        Elite_bonus = additive [0, +20]
+        AFI_score = clamp(AFI_raw + Skew_bonus + Elite_bonus, 300, 900)
+        Movement cap (±50) applied in orchestrator only.
     """
     if reference_time is None:
         reference_time = datetime.utcnow()
@@ -309,7 +319,7 @@ def _compute_afi_v3(
             computed_at=now,
             afi_version=3,
             cps=1.0,
-            bcm=1.0,
+            repeatability=1.0,
         )
 
     # --- Extract arrays ---
@@ -319,40 +329,51 @@ def _compute_afi_v3(
     # --- Equal weights (no recency decay) ---
     weights = compute_equal_weights(trade_count)
 
-    # --- Component computations (frozen 4 components, frozen 35/25/20/20 weights) ---
+    # --- Component computations ---
     r_slope_raw = compute_r_slope(r_multiples, weights)
     sharpe_raw = compute_sharpe(r_multiples, weights)
     ltc_raw = compute_ltc(r_multiples, weights)
     dd_raw = compute_dd_containment(r_multiples)
 
-    # --- Normalize ---
-    components = normalize_components(r_slope_raw, sharpe_raw, ltc_raw, dd_raw)
+    # --- Sharpe_adj: credibility-gated Sharpe ---
+    sharpe_adj = compute_sharpe_adj(sharpe_raw, trade_count)
 
-    # --- WSS (frozen formula) ---
+    # --- Normalize (WSS uses Sharpe_adj, not Sharpe_raw) ---
+    components = normalize_components(r_slope_raw, sharpe_adj, ltc_raw, dd_raw)
+
+    # --- WSS (v3 weights: 0.25/0.40/0.15/0.20) ---
     wss = compute_wss(components)
 
     # --- Convexity Amplifier [1.0, 1.25] ---
     ca = compute_convexity_amplifier(r_multiples)
 
-    # --- Behavioral Consistency Multiplier [0.90, 1.10] ---
-    stability = compute_rolling_wss_stability(r_multiples, weights)
-    bcm = compute_bcm(stability)
+    # --- Repeatability [1.0, ~1.15] ---
+    sharpe_stab = compute_rolling_sharpe_stability(r_multiples, weights)
+    wss_stab = compute_rolling_wss_stability(r_multiples, weights)
+    skew_persist = compute_skew_persistence(r_multiples)
+    rep = compute_repeatability(sharpe_stab, wss_stab, skew_persist, trade_count)
 
     # --- Structural Total ---
-    structural_total = wss * ca * bcm
+    structural_total = wss * ca * rep
 
-    # --- Compress (same logistic, no modification) ---
+    # --- Compress (logistic) ---
     afi_raw = compress(structural_total)
 
+    # --- Skew Bonus [-10, +10] ---
+    skew_bonus = compute_skew_bonus(r_multiples, trade_count)
+
+    # --- Elite Bonus [0, +20] ---
+    elite_bonus = compute_elite_bonus(sharpe_adj, trade_count)
+
     # --- Clamp to [300, 900] ---
-    afi_score = max(300.0, min(900.0, afi_raw))
+    afi_score = max(300.0, min(900.0, afi_raw + skew_bonus + elite_bonus))
 
     # --- Robustness v2 (informational) ---
     survived_dds = _count_survived_drawdowns(r_multiples)
     rb = compute_robustness_v2(
         regime_diversity=_DEFAULT_REGIME_DIVERSITY,
         survived_dds=survived_dds,
-        distribution_stability=stability,
+        distribution_stability=wss_stab,
     )
 
     # --- Trend ---
@@ -363,8 +384,8 @@ def _compute_afi_v3(
     provisional = trade_count < 20
 
     return AFIResult(
-        afi_score=afi_score,
-        afi_raw=afi_raw,
+        afi_score=round(afi_score, 2),
+        afi_raw=round(afi_raw, 2),
         wss=wss,
         components=components,
         robustness=rb,
@@ -375,7 +396,7 @@ def _compute_afi_v3(
         computed_at=now,
         afi_version=3,
         cps=round(ca, 5),
-        bcm=round(bcm, 5),
+        repeatability=round(rep, 5),
     )
 
 
@@ -394,11 +415,7 @@ def _count_survived_drawdowns(r_multiples: np.ndarray) -> int:
 
 
 def trim_wss_history(history: List[Dict], max_entries: int = _WSS_HISTORY_MAX) -> List[Dict]:
-    """Trim WSS history to max_entries, keeping most recent.
-
-    v1: capped at 90 entries.
-    v2/v3: pass max_entries=None for full lifetime retention.
-    """
+    """Trim WSS history to max_entries, keeping most recent."""
     if max_entries is None:
         return history
     if len(history) <= max_entries:

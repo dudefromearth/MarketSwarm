@@ -4531,12 +4531,19 @@ class JournalOrchestrator:
                 # Compute AFI with version dispatch
                 result = compute_afi(trades, prior_afi, wss_history, version=afi_version)
 
+                # v3 movement cap: ±50 per calculation cycle, applied AFTER clamp
+                final_score = result.afi_score
+                if afi_version == 3 and prior_afi is not None:
+                    delta = final_score - prior_afi
+                    capped_delta = max(-50.0, min(50.0, delta))
+                    final_score = round(prior_afi + capped_delta, 2)
+
                 # Append today's WSS to history (one per calendar day)
                 today_str = datetime.utcnow().strftime('%Y-%m-%d')
                 # Deduplicate: remove existing entry for today
                 wss_history = [e for e in wss_history if e.get('date') != today_str]
                 wss_history.append({'date': today_str, 'wss': round(result.wss, 5)})
-                # v1: trim to 90 entries; v2: full lifetime retention
+                # v1: trim to 90 entries; v2/v3: full lifetime retention
                 if afi_version == 1:
                     wss_history = trim_wss_history(wss_history)
                 else:
@@ -4545,7 +4552,7 @@ class JournalOrchestrator:
                 # Persist
                 self.db.upsert_afi_score(
                     user_id=user_id,
-                    afi_score=round(result.afi_score, 2),
+                    afi_score=round(final_score, 2),
                     afi_raw=round(result.afi_raw, 2),
                     wss=round(result.wss, 5),
                     comp_r_slope=round(result.components.r_slope, 4),
@@ -4560,7 +4567,7 @@ class JournalOrchestrator:
                     wss_history=json.dumps(wss_history),
                     afi_version=afi_version,
                     cps=round(result.cps, 5) if result.cps else None,
-                    bcm=round(result.bcm, 5) if result.bcm else None,
+                    repeatability=round(result.repeatability, 5) if result.repeatability else None,
                 )
                 count += 1
 
