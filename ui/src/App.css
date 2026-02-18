@@ -17056,15 +17056,15 @@ body {
   color: var(--text-muted);
 }
 
-.leaderboard-settings-modal .toggle-label {
+.leaderboard-settings-modal .form-group label.toggle-label {
   display: flex;
   align-items: center;
   gap: 10px;
   cursor: pointer;
 }
 
-.leaderboard-settings-modal .toggle-label input[type="checkbox"] {
-  /* inherits global Apple toggle */
+.leaderboard-settings-modal .form-group label.toggle-label input[type="checkbox"] {
+  flex-shrink: 0;
 }
 
 .leaderboard-settings-modal .toggle-text {
