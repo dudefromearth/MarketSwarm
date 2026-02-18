@@ -304,6 +304,9 @@ class JournalDBv2:
             if current_version < 33:
                 self._migrate_to_v33(conn)
 
+            if current_version < 34:
+                self._migrate_to_v34(conn)
+
             conn.commit()
         finally:
             conn.close()
@@ -2514,6 +2517,41 @@ class JournalDBv2:
                 ALTER TABLE afi_scores CHANGE COLUMN bcm repeatability FLOAT NULL
             """)
             self._set_schema_version(conn, 33)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v34(self, conn):
+        """Migrate to v34: Capital Integrity & Rating Eligibility (Governance Patch v1.1).
+
+        Adds capital_status and leaderboard_eligible to afi_scores.
+        Auto-verifies existing users whose active trade logs have starting_capital >= MIN_CAPITAL.
+        """
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                ALTER TABLE afi_scores
+                ADD COLUMN capital_status ENUM('verified','unverified') NOT NULL DEFAULT 'unverified'
+            """)
+            cursor.execute("""
+                ALTER TABLE afi_scores
+                ADD COLUMN leaderboard_eligible TINYINT(1) NOT NULL DEFAULT 0
+            """)
+
+            # Auto-verify existing users with sufficient capital in active trade logs
+            # MIN_CAPITAL = 1,000,000 cents ($10,000)
+            cursor.execute("""
+                UPDATE afi_scores a
+                SET a.capital_status = 'verified',
+                    a.leaderboard_eligible = 1
+                WHERE EXISTS (
+                    SELECT 1 FROM trade_logs tl
+                    WHERE tl.user_id = a.user_id
+                    AND tl.is_active = 1
+                    AND tl.starting_capital >= 1000000
+                )
+            """)
+
+            self._set_schema_version(conn, 34)
         finally:
             cursor.close()
 
@@ -6442,6 +6480,24 @@ class JournalDBv2:
             cursor.close()
             conn.close()
 
+    def get_user_max_starting_capital(self, user_id: int) -> Optional[int]:
+        """Get the maximum starting_capital (in cents) across a user's active trade logs.
+
+        Returns None if the user has no active trade logs.
+        """
+        conn = self._get_conn()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                SELECT MAX(starting_capital) FROM trade_logs
+                WHERE user_id = %s AND is_active = 1
+            """, (user_id,))
+            row = cursor.fetchone()
+            return int(row[0]) if row and row[0] is not None else None
+        finally:
+            cursor.close()
+            conn.close()
+
     def upsert_afi_score(
         self,
         user_id: int,
@@ -6461,6 +6517,8 @@ class JournalDBv2:
         afi_version: int = 1,
         cps: float = None,
         repeatability: float = None,
+        capital_status: str = 'unverified',
+        leaderboard_eligible: bool = False,
     ) -> bool:
         """Upsert an AFI score for a user (single row per user)."""
         conn = self._get_conn()
@@ -6474,8 +6532,8 @@ class JournalDBv2:
                      comp_r_slope, comp_sharpe, comp_ltc, comp_dd_containment,
                      robustness, trend, is_provisional,
                      trade_count, active_days, calculated_at, wss_history, afi_version,
-                     cps, repeatability)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     cps, repeatability, capital_status, leaderboard_eligible)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     afi_score = VALUES(afi_score),
                     afi_raw = VALUES(afi_raw),
@@ -6493,13 +6551,16 @@ class JournalDBv2:
                     wss_history = VALUES(wss_history),
                     afi_version = VALUES(afi_version),
                     cps = VALUES(cps),
-                    repeatability = VALUES(repeatability)
+                    repeatability = VALUES(repeatability),
+                    capital_status = VALUES(capital_status),
+                    leaderboard_eligible = VALUES(leaderboard_eligible)
             """, (
                 user_id, afi_score, afi_raw, wss,
                 comp_r_slope, comp_sharpe, comp_ltc, comp_dd_containment,
                 robustness, trend, 1 if is_provisional else 0,
                 trade_count, active_days, now, wss_history, afi_version,
-                cps, repeatability
+                cps, repeatability, capital_status,
+                1 if leaderboard_eligible else 0
             ))
             conn.commit()
             return True
@@ -6524,7 +6585,8 @@ class JournalDBv2:
                         u.display_name
                     ) as display_name,
                     a.afi_version,
-                    a.cps, a.repeatability
+                    a.cps, a.repeatability,
+                    a.capital_status, a.leaderboard_eligible
                 FROM afi_scores a
                 LEFT JOIN users u ON a.user_id = u.id
                 WHERE a.user_id = %s
@@ -6557,13 +6619,15 @@ class JournalDBv2:
                 'afi_version': row[17] if row[17] is not None else 1,
                 'cps': float(row[18]) if row[18] is not None else None,
                 'repeatability': float(row[19]) if row[19] is not None else None,
+                'capital_status': row[20] or 'unverified',
+                'leaderboard_eligible': bool(row[21]) if row[21] is not None else False,
             }
         finally:
             cursor.close()
             conn.close()
 
     def get_afi_leaderboard(self, limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
-        """Get AFI leaderboard rankings ordered by afi_score DESC."""
+        """Get AFI leaderboard rankings — only leaderboard-eligible users."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
@@ -6579,6 +6643,7 @@ class JournalDBv2:
                     ) as display_name
                 FROM afi_scores a
                 LEFT JOIN users u ON a.user_id = u.id
+                WHERE a.leaderboard_eligible = 1
                 ORDER BY a.rank_position ASC
                 LIMIT %s OFFSET %s
             """, (limit, offset))
@@ -6610,23 +6675,34 @@ class JournalDBv2:
             conn.close()
 
     def get_afi_participant_count(self) -> int:
-        """Get total AFI participant count."""
+        """Get total AFI participant count (leaderboard-eligible only)."""
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
-            cursor.execute("SELECT COUNT(*) FROM afi_scores")
+            cursor.execute("SELECT COUNT(*) FROM afi_scores WHERE leaderboard_eligible = 1")
             return cursor.fetchone()[0]
         finally:
             cursor.close()
             conn.close()
 
     def update_afi_ranks(self) -> int:
-        """Update rank positions for all AFI users. Returns count updated."""
+        """Update rank positions for leaderboard-eligible AFI users.
+
+        Eligible users get sequential ranks (1, 2, 3...).
+        Ineligible users get rank_position = 0 (unranked).
+        """
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
+            # Reset ineligible users to rank 0
+            cursor.execute(
+                "UPDATE afi_scores SET rank_position = 0 WHERE leaderboard_eligible = 0"
+            )
+
+            # Rank eligible users only
             cursor.execute("""
                 SELECT id FROM afi_scores
+                WHERE leaderboard_eligible = 1
                 ORDER BY afi_score DESC, robustness DESC, user_id ASC
             """)
 

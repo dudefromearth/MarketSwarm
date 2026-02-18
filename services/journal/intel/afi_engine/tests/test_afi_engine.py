@@ -34,6 +34,8 @@ from services.journal.intel.afi_engine.scoring_engine import (
     ELITE_BONUS_SCALE,
     ELITE_SHARPE_THRESHOLD,
     K,
+    MIN_CAPITAL,
+    NEUTRAL_AFI,
     S,
     SHIFT,
     STABILITY_VAR_CAP,
@@ -1311,3 +1313,73 @@ class TestAFIv3:
         # So Sharpe_adj < Sharpe_raw
         assert result.components.sharpe >= 0.0
         assert result.components.sharpe <= 1.0
+
+
+# ===================================================================
+#  Governance Patch v1.1: Capital Integrity Constants
+# ===================================================================
+
+class TestCapitalIntegrityConstants:
+    def test_min_capital_value(self):
+        """MIN_CAPITAL = $10,000 in cents = 1,000,000."""
+        assert MIN_CAPITAL == 1_000_000
+
+    def test_neutral_afi_value(self):
+        """NEUTRAL_AFI = 500 (midpoint baseline)."""
+        assert NEUTRAL_AFI == 500.0
+
+
+# ===================================================================
+#  Governance Patch v1.1: AFIResult Capital Fields
+# ===================================================================
+
+class TestAFIResultCapitalFields:
+    def test_default_capital_status(self):
+        """AFIResult defaults to unverified capital."""
+        trades = _make_trades([0.5] * 30, list(range(30)))
+        result = compute_afi(trades, reference_time=NOW, version=3)
+        assert result.capital_status == "unverified"
+
+    def test_default_leaderboard_eligible(self):
+        """AFIResult defaults to not leaderboard-eligible."""
+        trades = _make_trades([0.5] * 30, list(range(30)))
+        result = compute_afi(trades, reference_time=NOW, version=3)
+        assert result.leaderboard_eligible is False
+
+    def test_capital_fields_frozen(self):
+        """AFIResult is frozen — capital fields are immutable after creation."""
+        trades = _make_trades([0.5] * 30, list(range(30)))
+        result = compute_afi(trades, reference_time=NOW, version=3)
+        with pytest.raises(AttributeError):
+            result.capital_status = "verified"
+        with pytest.raises(AttributeError):
+            result.leaderboard_eligible = True
+
+    def test_v1_also_has_capital_fields(self):
+        """Capital fields present on all AFI versions (default values)."""
+        trades = _make_trades([0.5] * 30, list(range(30)))
+        result = compute_afi(trades, reference_time=NOW, version=1)
+        assert result.capital_status == "unverified"
+        assert result.leaderboard_eligible is False
+
+    def test_v2_also_has_capital_fields(self):
+        """Capital fields present on all AFI versions (default values)."""
+        trades = _make_trades([0.5] * 30, list(range(30)))
+        result = compute_afi(trades, reference_time=NOW, version=2)
+        assert result.capital_status == "unverified"
+        assert result.leaderboard_eligible is False
+
+    def test_neutral_afi_is_clamp_midpoint(self):
+        """500 is the neutral baseline — within [300, 900] clamp range."""
+        assert 300 <= NEUTRAL_AFI <= 900
+
+    def test_compute_afi_still_produces_raw_scores(self):
+        """Even with default unverified status, raw computation is performed.
+
+        The capital gating (AFI=500 override) happens in the orchestrator, not
+        the scoring engine. The engine always computes the real score.
+        """
+        trades = _make_trades([0.5] * 50, list(range(50)))
+        result = compute_afi(trades, reference_time=NOW, version=3)
+        # Raw score is computed — should NOT be 500 for good trades
+        assert result.afi_score != NEUTRAL_AFI or result.afi_raw != NEUTRAL_AFI

@@ -9,6 +9,8 @@ export interface AFIComponents {
   dd_containment: number;
 }
 
+export type CapitalStatus = 'verified' | 'unverified';
+
 export interface AFIScore {
   user_id: number;
   rank: number;
@@ -23,6 +25,8 @@ export interface AFIScore {
   afi_version?: number;
   cps?: number;
   repeatability?: number;
+  capital_status?: CapitalStatus;
+  leaderboard_eligible?: boolean;
 }
 
 export interface AFILeaderboardResponse {
@@ -42,7 +46,8 @@ export interface AFIMyResponse {
   };
 }
 
-export function getAFITier(score: number): { name: string; className: string } {
+export function getAFITier(score: number, capitalStatus?: CapitalStatus): { name: string; className: string } {
+  if (capitalStatus === 'unverified') return { name: 'Unrated', className: 'afi-unrated' };
   if (score >= 820) return { name: 'Black', className: 'afi-black' };
   if (score >= 790) return { name: 'Gold', className: 'afi-gold' };
   if (score >= 700) return { name: 'Purple', className: 'afi-purple' };

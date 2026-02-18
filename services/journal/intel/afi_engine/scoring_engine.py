@@ -88,6 +88,12 @@ ELITE_SHARPE_THRESHOLD: float = 5.0
 ELITE_BONUS_SCALE: float = 20.0  # max elite bonus
 
 # ---------------------------------------------------------------------------
+#  Capital Integrity Constants (Governance Patch v1.1)
+# ---------------------------------------------------------------------------
+MIN_CAPITAL: int = 1_000_000   # $10,000 in cents (trade_logs.starting_capital is BIGINT cents)
+NEUTRAL_AFI: float = 500.0     # Unrated baseline — no capital → no score
+
+# ---------------------------------------------------------------------------
 #  Convexity Amplifier Constants (v3)
 # ---------------------------------------------------------------------------
 TAIL_RATIO_CAP: float = 5.0

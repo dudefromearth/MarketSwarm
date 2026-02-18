@@ -18,6 +18,7 @@ import redis.asyncio as redis
 
 from .db_v2 import JournalDBv2, VersionConflictError
 from .afi_engine import AFI_VERSION, compute_afi, trim_wss_history
+from .afi_engine.scoring_engine import MIN_CAPITAL, NEUTRAL_AFI
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, Symbol, Setting, Tag, Order,
     JournalEntry, JournalRetrospective, JournalTradeRef, JournalAttachment,
@@ -4503,7 +4504,13 @@ class JournalOrchestrator:
     # ==================== Leaderboard API ====================
 
     async def calculate_afi_scores(self, version: int = None) -> int:
-        """Calculate AFI scores for all eligible users. Returns count of users scored."""
+        """Calculate AFI scores for all eligible users. Returns count of users scored.
+
+        Governance Patch v1.1: Capital Integrity
+        - Users without verified capital (starting_capital >= MIN_CAPITAL AND capital_status = 'verified')
+          receive AFI = 500 (neutral) and leaderboard_eligible = false.
+        - Raw computation is still performed and stored as afi_raw for transparency.
+        """
         afi_version = version if version is not None else AFI_VERSION
         user_ids = self.db.get_all_afi_eligible_user_ids()
         count = 0
@@ -4519,6 +4526,16 @@ class JournalOrchestrator:
                 prior_record = self.db.get_afi_score(user_id)
                 prior_afi = float(prior_record['afi_score']) if prior_record else None
 
+                # --- Capital Integrity Gate (v1.1) ---
+                starting_capital = self.db.get_user_max_starting_capital(user_id)
+                capital_status = prior_record.get('capital_status', 'unverified') if prior_record else 'unverified'
+
+                capital_verified = (
+                    starting_capital is not None
+                    and starting_capital >= MIN_CAPITAL
+                    and capital_status == 'verified'
+                )
+
                 # Load WSS history for trend detection
                 wss_history = []
                 if prior_record and prior_record.get('wss_history'):
@@ -4528,15 +4545,22 @@ class JournalOrchestrator:
                     except (json.JSONDecodeError, TypeError):
                         wss_history = []
 
-                # Compute AFI with version dispatch
+                # Always compute raw AFI (for transparency — stored as afi_raw)
                 result = compute_afi(trades, prior_afi, wss_history, version=afi_version)
 
-                # v3 movement cap: ±50 per calculation cycle, applied AFTER clamp
-                final_score = result.afi_score
-                if afi_version == 3 and prior_afi is not None:
-                    delta = final_score - prior_afi
-                    capped_delta = max(-50.0, min(50.0, delta))
-                    final_score = round(prior_afi + capped_delta, 2)
+                # Determine final score based on capital gate
+                if capital_verified:
+                    # v3 movement cap: ±50 per calculation cycle, applied AFTER clamp
+                    final_score = result.afi_score
+                    if afi_version == 3 and prior_afi is not None and prior_afi != NEUTRAL_AFI:
+                        delta = final_score - prior_afi
+                        capped_delta = max(-50.0, min(50.0, delta))
+                        final_score = round(prior_afi + capped_delta, 2)
+                    leaderboard_eligible = True
+                else:
+                    # Capital not verified → neutral clamp
+                    final_score = NEUTRAL_AFI
+                    leaderboard_eligible = False
 
                 # Append today's WSS to history (one per calendar day)
                 today_str = datetime.utcnow().strftime('%Y-%m-%d')
@@ -4568,13 +4592,15 @@ class JournalOrchestrator:
                     afi_version=afi_version,
                     cps=round(result.cps, 5) if result.cps else None,
                     repeatability=round(result.repeatability, 5) if result.repeatability else None,
+                    capital_status=capital_status,
+                    leaderboard_eligible=leaderboard_eligible,
                 )
                 count += 1
 
             except Exception as e:
                 self.logger.error(f"AFI calculation error for user {user_id}: {e}")
 
-        # Update ranks after all scores computed
+        # Update ranks after all scores computed (ranks eligible users only)
         if count > 0:
             self.db.update_afi_ranks()
 

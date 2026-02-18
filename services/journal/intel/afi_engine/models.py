@@ -50,3 +50,5 @@ class AFIResult:
     afi_version: int = 1        # 1 = recency-weighted + dampened, 2 = equal-weight, 3 = credibility-gated
     cps: float = 0.0            # v3: Convexity amplifier (1.0-1.25), 0 for v1/v2
     repeatability: float = 1.0  # v3: Repeatability multiplier (1.0-~1.15)
+    capital_status: str = "unverified"   # v1.1: verified | unverified
+    leaderboard_eligible: bool = False   # v1.1: capital-gated eligibility
