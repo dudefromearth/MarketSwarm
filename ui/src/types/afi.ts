@@ -68,8 +68,8 @@ export function getAFITier(score: number, capitalStatus?: CapitalStatus): { name
   return { name: 'Neutral', className: 'afi-neutral' };
 }
 
-/** Get the primary display score for a user (AFI-R for v4, afi_score for v1-v3). */
+/** Get the primary display score for a user (composite for v4/v5, afi_score for v1-v3). */
 export function getPrimaryScore(score: AFIScore): number {
-  if (score.afi_version === 4 && score.afi_r != null) return score.afi_r;
+  if ((score.afi_version === 5 || score.afi_version === 4) && score.composite != null) return score.composite;
   return score.afi_score;
 }

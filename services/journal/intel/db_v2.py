@@ -6796,12 +6796,12 @@ class JournalDBv2:
                 "UPDATE afi_scores SET rank_position = 0 WHERE leaderboard_eligible = 0"
             )
 
-            # Rank eligible users only — sort by AFI-R (durability primary in v4)
+            # Rank eligible users only — sort by composite (primary in v4/v5)
             # Falls back to afi_score for pre-v4 data
             cursor.execute("""
                 SELECT id FROM afi_scores
                 WHERE leaderboard_eligible = 1
-                ORDER BY COALESCE(afi_r, afi_score) DESC, afi_score DESC, user_id ASC
+                ORDER BY COALESCE(composite, afi_r, afi_score) DESC, afi_score DESC, user_id ASC
             """)
 
             rows = cursor.fetchall()

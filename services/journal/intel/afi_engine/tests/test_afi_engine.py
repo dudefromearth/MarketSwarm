@@ -626,8 +626,8 @@ class TestDistributionStability:
 # ===================================================================
 
 class TestVersionDispatch:
-    def test_default_is_v4(self):
-        assert AFI_VERSION == 4
+    def test_default_is_v5(self):
+        assert AFI_VERSION == 5
 
     def test_v1_explicit(self):
         trades = _make_trades([0.5] * 30, list(range(30)))
@@ -647,10 +647,10 @@ class TestVersionDispatch:
         assert result.cps >= 1.0
         assert result.repeatability >= 1.0
 
-    def test_default_version_raises_for_v4(self):
-        """Default AFI_VERSION=4 raises ValueError — v4 uses compute_afi_v4() directly."""
+    def test_default_version_raises_for_v5(self):
+        """Default AFI_VERSION=5 raises ValueError — v5 uses compute_afi_v5() directly."""
         trades = _make_trades([0.5] * 30, list(range(30)))
-        with pytest.raises(ValueError, match="compute_afi_v4"):
+        with pytest.raises(ValueError, match="compute_afi_v5"):
             compute_afi(trades, reference_time=NOW)
 
 
@@ -1573,3 +1573,131 @@ class TestAFIv4:
         result = compute_afi_v4(trades, 10000.0, history)
         # Should detect a trend (improving or stable depending on threshold)
         assert result.trend.value in ('improving', 'stable', 'decaying')
+
+
+# ===================================================================
+#  AFI v5 — Structural Pareto Composite Model
+# ===================================================================
+
+from services.journal.intel.afi_engine.scoring_engine import (
+    compute_afi_v5,
+    V5_D_WEIGHT,
+    V5_M_WEIGHT,
+    V5_RB_FLOOR,
+    V5_RB_FLOOR_CAP,
+)
+
+
+class TestAFIv5:
+
+    def test_durability_no_confidence(self):
+        """D_raw should NOT include confidence multiplication (unlike v4's afi_r_raw)."""
+        trades = _make_v4_trades([0.5] * 60, list(range(60, 0, -1)))
+        result_v5 = compute_afi_v5(trades, 10000.0, [])
+        result_v4 = compute_afi_v4(trades, 10000.0, [])
+
+        # v4 raw_afi_r includes confidence: raw = confidence × components
+        # v5 raw_afi_r is pure components: raw = components (no confidence)
+        # So v5 D_raw should be >= v4 raw_afi_r (since confidence ≤ 1)
+        assert result_v5.raw_afi_r >= result_v4.raw_afi_r
+
+    def test_d_structural_attenuation(self):
+        """D_structural = D × R should be less than D when R < 1."""
+        # 15 trades, 15 days → low robustness
+        trades = _make_v4_trades([0.5] * 15, list(range(15, 0, -1)))
+        result = compute_afi_v5(trades, 10000.0, [])
+
+        d_raw = result.raw_afi_r  # D (0-1)
+        robustness = result.confidence  # R (0-1)
+        d_structural = d_raw * robustness
+
+        # Robustness < 1 for few trades → D_structural < D
+        assert robustness < 1.0
+        assert d_structural < d_raw
+
+    def test_pareto_weighting(self):
+        """Composite uses 80/20 Pareto split (D_structural vs M)."""
+        assert V5_D_WEIGHT == 0.80
+        assert V5_M_WEIGHT == 0.20
+        assert abs(V5_D_WEIGHT + V5_M_WEIGHT - 1.0) < 1e-10
+
+    def test_robustness_floor(self):
+        """R < 0.25 caps composite at 550."""
+        # Very few trades → low robustness
+        trades = _make_v4_trades([2.0] * 5, list(range(5, 0, -1)))
+        result = compute_afi_v5(trades, 10000.0, [])
+
+        # 5 trades, ~5 days → R = sqrt(5/55) × sqrt(5/35) ≈ 0.30 × 0.38 ≈ 0.11
+        assert result.confidence < V5_RB_FLOOR
+        assert result.composite <= V5_RB_FLOOR_CAP
+
+    def test_composite_single_compression(self):
+        """Composite is in 300-900 range after single compression."""
+        trades = _make_v4_trades([0.5] * 60, list(range(60, 0, -1)))
+        result = compute_afi_v5(trades, 10000.0, [])
+        assert 300 <= result.composite <= 900
+        assert 300 <= result.afi_r <= 900
+        assert 300 <= result.afi_m <= 900
+
+    def test_v5_version_tag(self):
+        """Result has afi_version = 5."""
+        trades = _make_v4_trades([0.5] * 60, list(range(60, 0, -1)))
+        result = compute_afi_v5(trades, 10000.0, [])
+        assert result.afi_version == 5
+
+    def test_result_v5_structure(self):
+        """AFIResultV4 dataclass reused — all fields populated."""
+        trades = _make_v4_trades([0.5] * 60, list(range(60, 0, -1)))
+        result = compute_afi_v5(trades, 10000.0, [])
+        assert isinstance(result, AFIResultV4)
+        assert isinstance(result.components, AFIComponentsV4)
+        assert result.raw_afi_m is not None
+        assert result.raw_afi_r is not None
+        assert result.raw_sharpe_lifetime is not None
+        assert result.confidence > 0
+
+    def test_eligibility_same_as_v4(self):
+        """v5 uses same thresholds: 50 trades, 30 active days."""
+        # 30 trades → provisional
+        trades_30 = _make_v4_trades([0.5] * 30, list(range(30, 0, -1)))
+        result_30 = compute_afi_v5(trades_30, 10000.0, [])
+        assert result_30.is_provisional is True
+
+        # 60 trades, 60 days → not provisional
+        trades_60 = _make_v4_trades([0.5] * 60, list(range(60, 0, -1)))
+        result_60 = compute_afi_v5(trades_60, 10000.0, [])
+        assert result_60.is_provisional is False
+
+    def test_empty_trades(self):
+        """Zero trades → valid neutral result."""
+        result = compute_afi_v5([], 10000.0, [])
+        assert 300 <= result.composite <= 900
+        assert result.is_provisional is True
+        assert result.trade_count == 0
+        assert result.afi_version == 5
+
+    def test_high_robustness_preserves_durability(self):
+        """High trade count / active days → R near 1 → minimal attenuation."""
+        trades = _make_v4_trades([0.5] * 200, list(range(200, 0, -1)))
+        result = compute_afi_v5(trades, 10000.0, [])
+
+        # R should be high with 200 trades and 200 days
+        # sqrt(200/250) × sqrt(200/230) ≈ 0.894 × 0.932 ≈ 0.834
+        assert result.confidence > 0.80
+        # D_structural ≈ D when R is high
+        d_structural = result.raw_afi_r * result.confidence
+        assert d_structural > result.raw_afi_r * 0.80
+
+    def test_v5_composite_less_volatile_than_v4(self):
+        """v5 composite for thin accounts should be lower than v4 composite.
+
+        The Pareto model attenuates D by R in 0-1 space BEFORE compression,
+        which suppresses small-sample inflation more aggressively.
+        """
+        # Thin account: 20 trades with great returns
+        trades = _make_v4_trades([2.0] * 20, list(range(20, 0, -1)))
+        result_v4 = compute_afi_v4(trades, 10000.0, [])
+        result_v5 = compute_afi_v5(trades, 10000.0, [])
+
+        # v5 should be more conservative for thin accounts
+        assert result_v5.composite <= result_v4.composite

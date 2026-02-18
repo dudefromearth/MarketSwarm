@@ -26,6 +26,7 @@ from .component_engine import (
 from .scoring_engine import (
     compress,
     compute_afi_v4,
+    compute_afi_v5,
     compute_convexity_amplifier,
     compute_distribution_stability,
     compute_elite_bonus,
@@ -48,8 +49,8 @@ from .scoring_engine import (
 # Re-export for external consumers
 from .models import AFIComponents, AFIComponentsV4, AFIResult, AFIResultV4, TrendSignal  # noqa: F811
 
-# Active AFI version — v4 is dual-index architecture (AFI-M + AFI-R)
-AFI_VERSION: int = 4
+# Active AFI version — v5 is Structural Pareto Composite (D × R Pareto 80/20)
+AFI_VERSION: int = 5
 
 # Phase 1 default — VIX-at-entry lookup deferred to Phase 2
 _DEFAULT_REGIME_DIVERSITY: float = 0.5
@@ -86,6 +87,11 @@ def compute_afi(
     """
     v = version if version is not None else AFI_VERSION
 
+    if v == 5:
+        raise ValueError(
+            "AFI v5 uses compute_afi_v5() directly (different signature). "
+            "Pass version=3 to use legacy compute_afi()."
+        )
     if v == 4:
         raise ValueError(
             "AFI v4 uses compute_afi_v4() directly (different signature). "

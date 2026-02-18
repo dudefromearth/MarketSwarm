@@ -121,6 +121,7 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
       .join(' | ');
   };
 
+  const isV5 = rankings.length > 0 && rankings[0].afi_version === 5;
   const isV4 = rankings.length > 0 && rankings[0].afi_version === 4;
 
   const renderAFICell = (score: AFIScore, field: 'afi_r' | 'afi_m' | 'composite' | 'afi_score' = 'afi_r') => {
@@ -167,11 +168,26 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
         </span>
         {!isSticky && isCurrentUser(score) && <span className="you-badge">You</span>}
       </td>
-      {isV4 ? (
+      {isV5 ? (
+        <>
+          <td className="col-afi col-afi-primary">{renderAFICell(score, 'composite')}</td>
+          <td className="col-rb">
+            <span className="rb-value">{score.confidence != null ? `${Math.round(score.confidence * 100)}%` : '-'}</span>
+          </td>
+          <td className="col-trend">
+            {renderAFICell(score, 'afi_m')}
+            {' '}
+            {renderTrend(score.trend)}
+          </td>
+        </>
+      ) : isV4 ? (
         <>
           <td className="col-afi">{renderAFICell(score, 'afi_r')}</td>
           <td className="col-afi">{renderAFICell(score, 'afi_m')}</td>
           <td className="col-afi">{renderAFICell(score, 'composite')}</td>
+          <td className="col-trend">
+            {renderTrend(score.trend)}
+          </td>
         </>
       ) : (
         <>
@@ -179,11 +195,11 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
           <td className="col-rb">
             <span className="rb-value">{score.robustness.toFixed(0)}</span>
           </td>
+          <td className="col-trend">
+            {renderTrend(score.trend)}
+          </td>
         </>
       )}
-      <td className="col-trend">
-        {renderTrend(score.trend)}
-      </td>
     </tr>
   );
 
@@ -253,19 +269,26 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
                   <tr>
                     <th className="col-rank">Rank</th>
                     <th className="col-user">Name</th>
-                    {isV4 ? (
+                    {isV5 ? (
+                      <>
+                        <th className="col-afi col-afi-primary">COMP</th>
+                        <th className="col-rb">RB</th>
+                        <th className="col-trend">M / Trend</th>
+                      </>
+                    ) : isV4 ? (
                       <>
                         <th className="col-afi">AFI-R</th>
                         <th className="col-afi">AFI-M</th>
                         <th className="col-afi">Comp</th>
+                        <th className="col-trend">Trend</th>
                       </>
                     ) : (
                       <>
                         <th className="col-afi">AFI</th>
                         <th className="col-rb">RB</th>
+                        <th className="col-trend">Trend</th>
                       </>
                     )}
-                    <th className="col-trend">Trend</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -316,8 +339,8 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
             </div>
           )}
           <div className="scoring-info">
-            <span className="info-label">{isV4 ? 'AFI v4:' : 'AFI:'}</span>
-            <span className="info-item">{isV4 ? '300-900 | R=Durability M=Momentum | Hover for breakdown' : '300-900 | Hover AFI for component breakdown'}</span>
+            <span className="info-label">{isV5 ? 'AFI v5:' : isV4 ? 'AFI v4:' : 'AFI:'}</span>
+            <span className="info-item">{isV5 ? '300-900 | COMP=D×RB weighted | RB=Credibility | M=Momentum' : isV4 ? '300-900 | R=Durability M=Momentum | Hover for breakdown' : '300-900 | Hover AFI for component breakdown'}</span>
             {searchQuery && (
               <span className="info-item search-count">
                 {filteredRankings.length} of {rankings.length} shown

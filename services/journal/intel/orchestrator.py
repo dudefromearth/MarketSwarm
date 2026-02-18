@@ -17,7 +17,7 @@ from openpyxl.utils import get_column_letter
 import redis.asyncio as redis
 
 from .db_v2 import JournalDBv2, VersionConflictError
-from .afi_engine import AFI_VERSION, compute_afi, compute_afi_v4, trim_wss_history
+from .afi_engine import AFI_VERSION, compute_afi, compute_afi_v4, compute_afi_v5, trim_wss_history
 from .afi_engine.scoring_engine import MIN_CAPITAL, NEUTRAL_AFI
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, Symbol, Setting, Tag, Order,
@@ -4546,7 +4546,60 @@ class JournalOrchestrator:
                         wss_history = []
 
                 # Always compute raw AFI (for transparency — stored as afi_raw)
-                if afi_version == 4:
+                if afi_version == 5:
+                    # --- v5: Structural Pareto Composite ---
+                    starting_capital_val = starting_capital if starting_capital else 0
+                    result_v5 = compute_afi_v5(trades, starting_capital_val, wss_history)
+
+                    # Capital gate
+                    if capital_verified:
+                        final_score = result_v5.composite
+                        leaderboard_eligible = True
+                    else:
+                        final_score = NEUTRAL_AFI
+                        leaderboard_eligible = False
+
+                    # Append today's D_raw to history for trend
+                    today_str = datetime.utcnow().strftime('%Y-%m-%d')
+                    d_raw = result_v5.raw_afi_r  # D raw (0-1)
+                    wss_history = [e for e in wss_history if e.get('date') != today_str]
+                    wss_history.append({'date': today_str, 'wss': round(d_raw, 5)})
+                    wss_history = trim_wss_history(wss_history, max_entries=None)
+
+                    # Persist v5 (reuses v4 column layout)
+                    self.db.upsert_afi_score(
+                        user_id=user_id,
+                        afi_score=round(final_score, 2),
+                        afi_raw=round(result_v5.raw_afi_r, 4),
+                        wss=round(d_raw, 5),
+                        comp_r_slope=0.0,
+                        comp_sharpe=0.0,
+                        comp_ltc=0.0,
+                        comp_dd_containment=0.0,
+                        robustness=0.0,
+                        trend=result_v5.trend.value,
+                        is_provisional=result_v5.is_provisional,
+                        trade_count=result_v5.trade_count,
+                        active_days=result_v5.active_days,
+                        wss_history=json.dumps(wss_history),
+                        afi_version=5,
+                        capital_status=capital_status,
+                        leaderboard_eligible=leaderboard_eligible,
+                        # v4/v5 dual-index fields
+                        afi_m=result_v5.afi_m,
+                        afi_r=result_v5.afi_r,
+                        composite=result_v5.composite,
+                        comp_daily_sharpe=round(result_v5.components.daily_sharpe, 4),
+                        comp_drawdown_resilience=round(result_v5.components.drawdown_resilience, 4),
+                        comp_payoff_asymmetry=round(result_v5.components.payoff_asymmetry, 4),
+                        comp_recovery_velocity=round(result_v5.components.recovery_velocity, 4),
+                        confidence=round(result_v5.confidence, 4),
+                        raw_afi_m=round(result_v5.raw_afi_m, 4),
+                        raw_afi_r=round(result_v5.raw_afi_r, 4),
+                        raw_sharpe_lifetime=round(result_v5.raw_sharpe_lifetime, 4),
+                    )
+                    count += 1
+                elif afi_version == 4:
                     # --- v4: Dual-index architecture ---
                     starting_capital_val = starting_capital if starting_capital else 0
                     result_v4 = compute_afi_v4(trades, starting_capital_val, wss_history)

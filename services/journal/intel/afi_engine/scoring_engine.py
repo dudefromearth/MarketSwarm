@@ -892,3 +892,143 @@ def compute_afi_v4(
         active_days=active_days,
         computed_at=dt.utcnow(),
     )
+
+
+# ===========================================================================
+#  AFI v5 — Structural Pareto Composite Model
+# ===========================================================================
+
+# v5 Pareto weighting
+V5_D_WEIGHT: float = 0.80
+V5_M_WEIGHT: float = 0.20
+
+# v5 robustness floor
+V5_RB_FLOOR: float = 0.25
+V5_RB_FLOOR_CAP: float = 550.0
+
+
+def compute_afi_v5(
+    trades: List[dict],
+    starting_capital: float,
+    wss_history: List[dict],
+) -> AFIResultV4:
+    """Compute AFI v5 Structural Pareto Composite.
+
+    Key change from v4: Durability (D) is computed WITHOUT confidence.
+    Robustness (R) is separated and used as a multiplier on D.
+
+    Formula:
+        D = 0.30×sharpe + 0.30×dd_res + 0.20×asym + 0.20×recov  (no confidence)
+        R = sqrt(N/(N+50)) × sqrt(Days/(Days+30))                 (same as v4 confidence)
+        M = normalized momentum Sharpe
+        D_structural = D × R
+        composite_raw = 0.80 × D_structural + 0.20 × M            (all 0-1 space)
+        composite = compress(composite_raw)
+        If R < 0.25: composite = min(composite, 550)
+
+    Returns AFIResultV4 with:
+        afi_r = compress(D)      (durability display, 300-900)
+        afi_m = compress(M)      (momentum display, unchanged from v4)
+        composite = new composite (primary ranking metric)
+        confidence = R            (robustness, 0-1)
+        raw_afi_r = D raw         (0-1)
+        raw_afi_m = M raw         (0-1)
+        afi_version = 5
+    """
+    from datetime import datetime as dt
+
+    trade_count = len(trades)
+
+    # Count active trading days
+    active_days_set = set()
+    for t in trades:
+        exit_time = t.get('exit_time')
+        if exit_time is not None:
+            if hasattr(exit_time, 'strftime'):
+                active_days_set.add(exit_time.strftime('%Y-%m-%d'))
+            else:
+                active_days_set.add(str(exit_time).split('T')[0])
+    active_days = len(active_days_set)
+
+    # Build daily equity series (realized only)
+    equity_series = build_daily_equity_series(trades, starting_capital)
+
+    # --- Daily Sharpe ---
+    raw_sharpe_lifetime = compute_daily_sharpe(equity_series, window_days=None)
+    raw_sharpe_momentum = compute_daily_sharpe(equity_series, window_days=AFI_M_WINDOW_DAYS)
+
+    norm_sharpe = normalize_sharpe(raw_sharpe_lifetime)
+
+    # --- Drawdown Resilience ---
+    drawdown_resilience = compute_drawdown_resilience_v4(trades)
+
+    # --- Payoff Asymmetry ---
+    payoff_asymmetry = compute_payoff_asymmetry_v4(trades)
+
+    # --- Recovery Velocity ---
+    recovery_velocity = compute_recovery_velocity_v4(trades)
+
+    # --- Robustness (R) — same formula as v4 confidence, separated semantically ---
+    robustness = compute_confidence_v4(trade_count, active_days)
+
+    # --- Durability (D) — weighted components WITHOUT confidence ---
+    components = AFIComponentsV4(
+        daily_sharpe=norm_sharpe,
+        drawdown_resilience=drawdown_resilience,
+        payoff_asymmetry=payoff_asymmetry,
+        recovery_velocity=recovery_velocity,
+    )
+
+    d_raw = (
+        V4_W_SHARPE * components.daily_sharpe
+        + V4_W_DRAWDOWN * components.drawdown_resilience
+        + V4_W_ASYMMETRY * components.payoff_asymmetry
+        + V4_W_RECOVERY * components.recovery_velocity
+    )
+
+    # --- Momentum (M) ---
+    norm_sharpe_m = normalize_sharpe(raw_sharpe_momentum)
+    m_raw = norm_sharpe_m
+
+    # --- Structural Attenuation: D × R ---
+    d_structural = d_raw * robustness
+
+    # --- Pareto Composite (all in 0-1 space, single compression) ---
+    composite_raw = V5_D_WEIGHT * d_structural + V5_M_WEIGHT * m_raw
+    composite = compress(composite_raw)
+
+    # --- Robustness Floor ---
+    if robustness < V5_RB_FLOOR:
+        composite = min(composite, V5_RB_FLOOR_CAP)
+
+    # --- Durability display (compressed for tracking) ---
+    afi_r = compress(d_raw)
+
+    # --- Momentum display (unchanged from v4) ---
+    afi_m = compress(m_raw)
+
+    # --- Trend ---
+    today_str = dt.utcnow().strftime('%Y-%m-%d')
+    trend_history = [e for e in wss_history if e.get('date') != today_str]
+    trend_history.append({'date': today_str, 'wss': round(d_raw, 5)})
+    trend = compute_trend(trend_history)
+
+    # --- Provisional ---
+    provisional = trade_count < V4_MIN_TRADES or active_days < V4_MIN_ACTIVE_DAYS
+
+    return AFIResultV4(
+        afi_m=round(afi_m, 2),
+        afi_r=round(afi_r, 2),
+        composite=round(composite, 2),
+        raw_afi_m=round(m_raw, 6),
+        raw_afi_r=round(d_raw, 6),
+        raw_sharpe_lifetime=round(raw_sharpe_lifetime, 6),
+        components=components,
+        confidence=round(robustness, 6),
+        trend=trend,
+        is_provisional=provisional,
+        trade_count=trade_count,
+        active_days=active_days,
+        computed_at=dt.utcnow(),
+        afi_version=5,
+    )
