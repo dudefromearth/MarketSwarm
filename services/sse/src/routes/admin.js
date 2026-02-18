@@ -1379,7 +1379,7 @@ router.get("/activity/hourly", requireAdmin, async (req, res) => {
               DAYOFWEEK(hour_start) AS db_dow,
               user_count
        FROM hourly_activity_aggregates
-       WHERE hour_start >= DATE_SUB(NOW(), INTERVAL ? DAY)
+       WHERE hour_start >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
          AND hour_start < CURDATE()
        ORDER BY hour_start ASC`,
       [days]
