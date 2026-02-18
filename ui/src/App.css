@@ -16906,7 +16906,8 @@ body {
 }
 
 .m-trend-inline .afi-score-value {
-  font-weight: 400;
+  font-weight: 400 !important;
+  font-size: 14px;
 }
 
 .trend-arrow {
