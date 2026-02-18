@@ -14,7 +14,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from .models import AFIComponents, TrendSignal
+from .models import AFIComponents, AFIComponentsV4, AFIResultV4, TrendSignal
 
 # ---------------------------------------------------------------------------
 #  WSS Component Weights (v3 — not disclosed)
@@ -495,3 +495,400 @@ def compute_distribution_stability(wss_history: List[dict]) -> float:
     wss_values = np.array([e["wss"] for e in wss_history], dtype=np.float64)
     variance = float(np.var(wss_values))
     return 1.0 - min(variance / STABILITY_VAR_CAP, 1.0)
+
+
+# ===========================================================================
+#  AFI v4 — Dual-Index Architecture
+# ===========================================================================
+
+# v4 eligibility (stricter than v1-v3)
+V4_MIN_TRADES: int = 50
+V4_MIN_ACTIVE_DAYS: int = 30
+
+# AFI-M rolling window (calendar days)
+AFI_M_WINDOW_DAYS: int = 45
+
+# v4 component weights for AFI-R
+V4_W_SHARPE: float = 0.30
+V4_W_DRAWDOWN: float = 0.30
+V4_W_ASYMMETRY: float = 0.20
+V4_W_RECOVERY: float = 0.20
+
+# v4 composite blend
+V4_R_WEIGHT: float = 0.65
+V4_M_WEIGHT: float = 0.35
+
+# v4 drawdown resilience sub-weights
+V4_DD_DEPTH_W: float = 0.40
+V4_DD_AVG_W: float = 0.20
+V4_DD_RECOVERY_W: float = 0.20
+V4_DD_CYCLES_W: float = 0.20
+
+# v4 drawdown normalization caps
+V4_DD_MAX_CAP: float = 5.0       # max DD in R-units
+V4_DD_AVG_CAP: float = 3.0       # avg DD in R-units
+V4_DD_RECOVERY_DAYS: float = 30.0  # days normalization reference
+V4_DD_CYCLES_CAP: float = 5.0    # recovery cycle count cap
+
+# v4 asymmetry normalization cap
+V4_ASYMMETRY_CAP: float = 3.0    # avg_win/avg_loss cap
+
+# v4 recovery velocity normalization
+V4_VELOCITY_TRADES: float = 20.0  # trades normalization reference
+
+# v4 confidence dual-gate
+V4_CRED_TRADES_K: float = 50.0   # half-saturation for trade count
+V4_CRED_DAYS_K: float = 30.0     # half-saturation for active days
+
+# Annualization factor for daily Sharpe
+ANNUALIZATION_FACTOR: float = math.sqrt(252)
+
+
+def build_daily_equity_series(
+    trades: List[dict],
+    starting_capital: float,
+) -> List[tuple]:
+    """Build daily equity series from closed trades (realized PnL only).
+
+    Args:
+        trades: List of trade dicts with 'pnl' and 'exit_time' fields,
+                sorted by exit_time ASC.
+        starting_capital: Starting capital in cents.
+
+    Returns:
+        List of (date_str, equity_value) tuples, one per trading day,
+        sorted chronologically. equity_value is in cents.
+    """
+    if not trades or starting_capital <= 0:
+        return []
+
+    # Aggregate realized PnL by exit day
+    daily_pnl: dict = {}
+    for t in trades:
+        exit_time = t.get('exit_time')
+        pnl = t.get('pnl', 0.0)
+        if exit_time is None or pnl is None:
+            continue
+        if hasattr(exit_time, 'strftime'):
+            day = exit_time.strftime('%Y-%m-%d')
+        else:
+            day = str(exit_time).split('T')[0]
+        daily_pnl[day] = daily_pnl.get(day, 0.0) + float(pnl)
+
+    if not daily_pnl:
+        return []
+
+    # Build cumulative equity series
+    sorted_days = sorted(daily_pnl.keys())
+    cumulative_pnl = 0.0
+    series = []
+    for day in sorted_days:
+        cumulative_pnl += daily_pnl[day]
+        series.append((day, starting_capital + cumulative_pnl))
+
+    return series
+
+
+def compute_daily_sharpe(
+    equity_series: List[tuple],
+    window_days: Optional[int] = None,
+) -> float:
+    """Compute annualized Sharpe ratio from daily equity series.
+
+    Args:
+        equity_series: List of (date_str, equity_value) tuples.
+        window_days: If set, only use the last N calendar days.
+
+    Returns:
+        Annualized Sharpe ratio (raw, not normalized).
+        Returns 0.0 if insufficient data (< 2 days).
+    """
+    if len(equity_series) < 2:
+        return 0.0
+
+    series = equity_series
+    if window_days is not None and window_days > 0:
+        # Filter to last N calendar days
+        from datetime import datetime as dt, timedelta
+        cutoff = (dt.strptime(series[-1][0], '%Y-%m-%d') - timedelta(days=window_days)).strftime('%Y-%m-%d')
+        series = [(d, e) for d, e in series if d >= cutoff]
+        if len(series) < 2:
+            return 0.0
+
+    # Compute daily returns: R_t = (Equity_t - Equity_{t-1}) / Equity_{t-1}
+    equities = np.array([e for _, e in series], dtype=np.float64)
+    returns = np.diff(equities) / equities[:-1]
+
+    # Filter out infinite/nan returns
+    returns = returns[np.isfinite(returns)]
+    if len(returns) < 2:
+        return 0.0
+
+    mean_ret = float(np.mean(returns))
+    std_ret = float(np.std(returns, ddof=1))
+
+    if std_ret < 1e-15:
+        return 0.0
+
+    return (mean_ret / std_ret) * ANNUALIZATION_FACTOR
+
+
+def compute_drawdown_resilience_v4(trades: List[dict]) -> float:
+    """Compute drawdown resilience score [0, 1] using distribution_core.
+
+    Components (weighted):
+      40% depth_score:    1 - min(max_dd / 5.0, 1.0)
+      20% avg_dd_score:   1 - min(avg_dd / 3.0, 1.0)
+      20% recovery_score: 1 / (1 + avg_recovery_days / 30)
+      20% cycle_score:    min(num_cycles / 5.0, 1.0)
+    """
+    from ..distribution_core.drawdown_engine import DrawdownEngine
+    from ..distribution_core.models import (
+        OutcomeType,
+        PriceZone,
+        RegimeBucket,
+        SessionBucket,
+        StrategyCategory,
+        TradeRecord,
+    )
+
+    # Convert trade dicts to TradeRecord objects
+    trade_records = []
+    for i, t in enumerate(trades):
+        r = t.get('r_multiple')
+        pnl = t.get('pnl', 0.0)
+        risk = t.get('planned_risk')
+        if r is None or risk is None or risk <= 0:
+            continue
+        exit_time = t.get('exit_time')
+        if exit_time is None:
+            continue
+        try:
+            trade_records.append(TradeRecord(
+                trade_id=str(i),
+                strategy_category=StrategyCategory.PREMIUM_COLLECTION,
+                structure_signature="afi_v4",
+                entry_timestamp=exit_time,  # approx — entry not stored in AFI query
+                exit_timestamp=exit_time,
+                risk_unit=float(risk),
+                pnl_realized=float(pnl),
+                r_multiple=float(r),
+                regime_bucket=RegimeBucket.GOLDILOCKS_1,
+                session_bucket=SessionBucket.MORNING,
+                price_zone=PriceZone.INSIDE_CONVEX_BAND,
+                outcome_type=OutcomeType.STRUCTURAL_WIN if float(r) >= 0 else OutcomeType.STRUCTURAL_LOSS,
+            ))
+        except (ValueError, TypeError):
+            continue
+
+    if not trade_records:
+        return 0.5  # neutral
+
+    engine = DrawdownEngine()
+    profile = engine.compute(trade_records)
+
+    depth_score = 1.0 - min(profile.max_drawdown_depth / V4_DD_MAX_CAP, 1.0)
+    avg_dd_score = 1.0 - min(profile.average_drawdown_depth / V4_DD_AVG_CAP, 1.0)
+    recovery_score = 1.0 / (1.0 + profile.average_recovery_days / V4_DD_RECOVERY_DAYS)
+    num_cycles = len(profile.drawdown_depths)
+    cycle_score = min(num_cycles / V4_DD_CYCLES_CAP, 1.0)
+
+    return (
+        V4_DD_DEPTH_W * depth_score
+        + V4_DD_AVG_W * avg_dd_score
+        + V4_DD_RECOVERY_W * recovery_score
+        + V4_DD_CYCLES_W * cycle_score
+    )
+
+
+def compute_payoff_asymmetry_v4(trades: List[dict]) -> float:
+    """Compute payoff asymmetry [0, 1]: avg_win / avg_loss, capped at 3:1."""
+    r_multiples = np.array([t['r_multiple'] for t in trades if t.get('r_multiple') is not None], dtype=np.float64)
+    if len(r_multiples) < 2:
+        return 0.5
+
+    wins = r_multiples[r_multiples > 0]
+    losses = r_multiples[r_multiples < 0]
+
+    if len(wins) == 0 or len(losses) == 0:
+        return 0.0 if len(wins) == 0 else 1.0
+
+    avg_win = float(np.mean(wins))
+    avg_loss = float(abs(np.mean(losses)))
+
+    if avg_loss < 1e-15:
+        return 1.0
+
+    ratio = avg_win / avg_loss
+    return min(ratio / V4_ASYMMETRY_CAP, 1.0)
+
+
+def compute_recovery_velocity_v4(trades: List[dict]) -> float:
+    """Compute recovery velocity [0, 1]: speed from trough to new equity high.
+
+    Uses DrawdownProfile.average_recovery_trades.
+    Faster recovery → higher score.
+    """
+    from ..distribution_core.drawdown_engine import DrawdownEngine
+    from ..distribution_core.models import (
+        OutcomeType,
+        PriceZone,
+        RegimeBucket,
+        SessionBucket,
+        StrategyCategory,
+        TradeRecord,
+    )
+
+    trade_records = []
+    for i, t in enumerate(trades):
+        r = t.get('r_multiple')
+        pnl = t.get('pnl', 0.0)
+        risk = t.get('planned_risk')
+        if r is None or risk is None or risk <= 0:
+            continue
+        exit_time = t.get('exit_time')
+        if exit_time is None:
+            continue
+        try:
+            trade_records.append(TradeRecord(
+                trade_id=str(i),
+                strategy_category=StrategyCategory.PREMIUM_COLLECTION,
+                structure_signature="afi_v4",
+                entry_timestamp=exit_time,
+                exit_timestamp=exit_time,
+                risk_unit=float(risk),
+                pnl_realized=float(pnl),
+                r_multiple=float(r),
+                regime_bucket=RegimeBucket.GOLDILOCKS_1,
+                session_bucket=SessionBucket.MORNING,
+                price_zone=PriceZone.INSIDE_CONVEX_BAND,
+                outcome_type=OutcomeType.STRUCTURAL_WIN if float(r) >= 0 else OutcomeType.STRUCTURAL_LOSS,
+            ))
+        except (ValueError, TypeError):
+            continue
+
+    if not trade_records:
+        return 0.5
+
+    engine = DrawdownEngine()
+    profile = engine.compute(trade_records)
+
+    if profile.average_recovery_trades > 0:
+        return 1.0 / (1.0 + profile.average_recovery_trades / V4_VELOCITY_TRADES)
+    return 0.5  # neutral when no drawdowns measured
+
+
+def compute_confidence_v4(trade_count: int, active_days: int) -> float:
+    """Dual-gate confidence: sqrt(N/(N+50)) × sqrt(D/(D+30))."""
+    n = max(trade_count, 0)
+    d = max(active_days, 0)
+    return math.sqrt(n / (n + V4_CRED_TRADES_K)) * math.sqrt(d / (d + V4_CRED_DAYS_K))
+
+
+def compute_afi_v4(
+    trades: List[dict],
+    starting_capital: float,
+    wss_history: List[dict],
+) -> AFIResultV4:
+    """Compute AFI v4 dual-index scores.
+
+    Args:
+        trades: Closed trades sorted by exit_time ASC (from DB).
+        starting_capital: Starting capital in cents.
+        wss_history: Prior WSS history for trend detection.
+
+    Returns:
+        AFIResultV4 with AFI-M, AFI-R, composite, raw values, and components.
+    """
+    from datetime import datetime as dt
+
+    trade_count = len(trades)
+
+    # Count active trading days
+    active_days_set = set()
+    for t in trades:
+        exit_time = t.get('exit_time')
+        if exit_time is not None:
+            if hasattr(exit_time, 'strftime'):
+                active_days_set.add(exit_time.strftime('%Y-%m-%d'))
+            else:
+                active_days_set.add(str(exit_time).split('T')[0])
+    active_days = len(active_days_set)
+
+    # Build daily equity series (realized only)
+    equity_series = build_daily_equity_series(trades, starting_capital)
+
+    # --- Daily Sharpe ---
+    raw_sharpe_lifetime = compute_daily_sharpe(equity_series, window_days=None)
+    raw_sharpe_momentum = compute_daily_sharpe(equity_series, window_days=AFI_M_WINDOW_DAYS)
+
+    norm_sharpe = normalize_sharpe(raw_sharpe_lifetime)
+
+    # --- Drawdown Resilience ---
+    drawdown_resilience = compute_drawdown_resilience_v4(trades)
+
+    # --- Payoff Asymmetry ---
+    payoff_asymmetry = compute_payoff_asymmetry_v4(trades)
+
+    # --- Recovery Velocity ---
+    recovery_velocity = compute_recovery_velocity_v4(trades)
+
+    # --- Confidence ---
+    confidence = compute_confidence_v4(trade_count, active_days)
+
+    # --- AFI-R ---
+    components = AFIComponentsV4(
+        daily_sharpe=norm_sharpe,
+        drawdown_resilience=drawdown_resilience,
+        payoff_asymmetry=payoff_asymmetry,
+        recovery_velocity=recovery_velocity,
+    )
+
+    afi_r_raw = confidence * (
+        V4_W_SHARPE * components.daily_sharpe
+        + V4_W_DRAWDOWN * components.drawdown_resilience
+        + V4_W_ASYMMETRY * components.payoff_asymmetry
+        + V4_W_RECOVERY * components.recovery_velocity
+    )
+    afi_r = compress(afi_r_raw)
+
+    # --- AFI-M ---
+    norm_sharpe_m = normalize_sharpe(raw_sharpe_momentum)
+    afi_m_raw = norm_sharpe_m  # AFI-M is purely momentum Sharpe
+    afi_m = compress(afi_m_raw)
+
+    # --- Composite ---
+    composite = V4_R_WEIGHT * afi_r + V4_M_WEIGHT * afi_m
+
+    # --- Trend (reuse existing WSS-based trend) ---
+    # For v4, compute a WSS-equivalent from the 4 components for trend tracking
+    wss_equivalent = (
+        V4_W_SHARPE * components.daily_sharpe
+        + V4_W_DRAWDOWN * components.drawdown_resilience
+        + V4_W_ASYMMETRY * components.payoff_asymmetry
+        + V4_W_RECOVERY * components.recovery_velocity
+    )
+    # Append today's wss_equivalent to history for trend
+    today_str = dt.utcnow().strftime('%Y-%m-%d')
+    trend_history = [e for e in wss_history if e.get('date') != today_str]
+    trend_history.append({'date': today_str, 'wss': round(wss_equivalent, 5)})
+    trend = compute_trend(trend_history)
+
+    # --- Provisional ---
+    provisional = trade_count < V4_MIN_TRADES or active_days < V4_MIN_ACTIVE_DAYS
+
+    return AFIResultV4(
+        afi_m=round(afi_m, 2),
+        afi_r=round(afi_r, 2),
+        composite=round(composite, 2),
+        raw_afi_m=round(afi_m_raw, 6),
+        raw_afi_r=round(afi_r_raw, 6),
+        raw_sharpe_lifetime=round(raw_sharpe_lifetime, 6),
+        components=components,
+        confidence=round(confidence, 6),
+        trend=trend,
+        is_provisional=provisional,
+        trade_count=trade_count,
+        active_days=active_days,
+        computed_at=dt.utcnow(),
+    )

@@ -307,6 +307,9 @@ class JournalDBv2:
             if current_version < 34:
                 self._migrate_to_v34(conn)
 
+            if current_version < 35:
+                self._migrate_to_v35(conn)
+
             conn.commit()
         finally:
             conn.close()
@@ -2552,6 +2555,28 @@ class JournalDBv2:
             """)
 
             self._set_schema_version(conn, 34)
+        finally:
+            cursor.close()
+
+    def _migrate_to_v35(self, conn):
+        """Migrate to v35: AFI v4 dual-index columns (AFI-M, AFI-R, composite, v4 components)."""
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                ALTER TABLE afi_scores
+                ADD COLUMN afi_m DECIMAL(7,2) DEFAULT NULL,
+                ADD COLUMN afi_r DECIMAL(7,2) DEFAULT NULL,
+                ADD COLUMN composite DECIMAL(7,2) DEFAULT NULL,
+                ADD COLUMN comp_daily_sharpe DECIMAL(6,4) DEFAULT NULL,
+                ADD COLUMN comp_drawdown_resilience DECIMAL(6,4) DEFAULT NULL,
+                ADD COLUMN comp_payoff_asymmetry DECIMAL(6,4) DEFAULT NULL,
+                ADD COLUMN comp_recovery_velocity DECIMAL(6,4) DEFAULT NULL,
+                ADD COLUMN confidence DECIMAL(6,4) DEFAULT NULL,
+                ADD COLUMN raw_afi_m DECIMAL(8,4) DEFAULT NULL,
+                ADD COLUMN raw_afi_r DECIMAL(8,4) DEFAULT NULL,
+                ADD COLUMN raw_sharpe_lifetime DECIMAL(8,4) DEFAULT NULL
+            """)
+            self._set_schema_version(conn, 35)
         finally:
             cursor.close()
 
@@ -6519,6 +6544,18 @@ class JournalDBv2:
         repeatability: float = None,
         capital_status: str = 'unverified',
         leaderboard_eligible: bool = False,
+        # v4 dual-index fields
+        afi_m: float = None,
+        afi_r: float = None,
+        composite: float = None,
+        comp_daily_sharpe: float = None,
+        comp_drawdown_resilience: float = None,
+        comp_payoff_asymmetry: float = None,
+        comp_recovery_velocity: float = None,
+        confidence: float = None,
+        raw_afi_m: float = None,
+        raw_afi_r: float = None,
+        raw_sharpe_lifetime: float = None,
     ) -> bool:
         """Upsert an AFI score for a user (single row per user)."""
         conn = self._get_conn()
@@ -6532,8 +6569,13 @@ class JournalDBv2:
                      comp_r_slope, comp_sharpe, comp_ltc, comp_dd_containment,
                      robustness, trend, is_provisional,
                      trade_count, active_days, calculated_at, wss_history, afi_version,
-                     cps, repeatability, capital_status, leaderboard_eligible)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     cps, repeatability, capital_status, leaderboard_eligible,
+                     afi_m, afi_r, composite,
+                     comp_daily_sharpe, comp_drawdown_resilience,
+                     comp_payoff_asymmetry, comp_recovery_velocity,
+                     confidence, raw_afi_m, raw_afi_r, raw_sharpe_lifetime)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
                     afi_score = VALUES(afi_score),
                     afi_raw = VALUES(afi_raw),
@@ -6553,14 +6595,29 @@ class JournalDBv2:
                     cps = VALUES(cps),
                     repeatability = VALUES(repeatability),
                     capital_status = VALUES(capital_status),
-                    leaderboard_eligible = VALUES(leaderboard_eligible)
+                    leaderboard_eligible = VALUES(leaderboard_eligible),
+                    afi_m = VALUES(afi_m),
+                    afi_r = VALUES(afi_r),
+                    composite = VALUES(composite),
+                    comp_daily_sharpe = VALUES(comp_daily_sharpe),
+                    comp_drawdown_resilience = VALUES(comp_drawdown_resilience),
+                    comp_payoff_asymmetry = VALUES(comp_payoff_asymmetry),
+                    comp_recovery_velocity = VALUES(comp_recovery_velocity),
+                    confidence = VALUES(confidence),
+                    raw_afi_m = VALUES(raw_afi_m),
+                    raw_afi_r = VALUES(raw_afi_r),
+                    raw_sharpe_lifetime = VALUES(raw_sharpe_lifetime)
             """, (
                 user_id, afi_score, afi_raw, wss,
                 comp_r_slope, comp_sharpe, comp_ltc, comp_dd_containment,
                 robustness, trend, 1 if is_provisional else 0,
                 trade_count, active_days, now, wss_history, afi_version,
                 cps, repeatability, capital_status,
-                1 if leaderboard_eligible else 0
+                1 if leaderboard_eligible else 0,
+                afi_m, afi_r, composite,
+                comp_daily_sharpe, comp_drawdown_resilience,
+                comp_payoff_asymmetry, comp_recovery_velocity,
+                confidence, raw_afi_m, raw_afi_r, raw_sharpe_lifetime
             ))
             conn.commit()
             return True
@@ -6586,7 +6643,12 @@ class JournalDBv2:
                     ) as display_name,
                     a.afi_version,
                     a.cps, a.repeatability,
-                    a.capital_status, a.leaderboard_eligible
+                    a.capital_status, a.leaderboard_eligible,
+                    a.afi_m, a.afi_r, a.composite,
+                    a.comp_daily_sharpe, a.comp_drawdown_resilience,
+                    a.comp_payoff_asymmetry, a.comp_recovery_velocity,
+                    a.confidence,
+                    a.raw_afi_m, a.raw_afi_r, a.raw_sharpe_lifetime
                 FROM afi_scores a
                 LEFT JOIN users u ON a.user_id = u.id
                 WHERE a.user_id = %s
@@ -6596,7 +6658,7 @@ class JournalDBv2:
             if not row:
                 return None
 
-            return {
+            result = {
                 'user_id': row[0],
                 'afi_score': float(row[1]) if row[1] is not None else 500.0,
                 'afi_raw': float(row[2]) if row[2] is not None else 500.0,
@@ -6621,13 +6683,31 @@ class JournalDBv2:
                 'repeatability': float(row[19]) if row[19] is not None else None,
                 'capital_status': row[20] or 'unverified',
                 'leaderboard_eligible': bool(row[21]) if row[21] is not None else False,
+                # v4 dual-index fields
+                'afi_m': float(row[22]) if row[22] is not None else None,
+                'afi_r': float(row[23]) if row[23] is not None else None,
+                'composite': float(row[24]) if row[24] is not None else None,
+                'components_v4': {
+                    'daily_sharpe': float(row[25]) if row[25] is not None else None,
+                    'drawdown_resilience': float(row[26]) if row[26] is not None else None,
+                    'payoff_asymmetry': float(row[27]) if row[27] is not None else None,
+                    'recovery_velocity': float(row[28]) if row[28] is not None else None,
+                },
+                'confidence': float(row[29]) if row[29] is not None else None,
+                'raw_afi_m': float(row[30]) if row[30] is not None else None,
+                'raw_afi_r': float(row[31]) if row[31] is not None else None,
+                'raw_sharpe_lifetime': float(row[32]) if row[32] is not None else None,
             }
+            return result
         finally:
             cursor.close()
             conn.close()
 
     def get_afi_leaderboard(self, limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
-        """Get AFI leaderboard rankings — only leaderboard-eligible users."""
+        """Get AFI leaderboard rankings — only leaderboard-eligible users.
+
+        Default sort: AFI-R DESC (durability is primary in v4).
+        """
         conn = self._get_conn()
         cursor = conn.cursor()
         try:
@@ -6640,7 +6720,11 @@ class JournalDBv2:
                     COALESCE(
                         CASE WHEN u.show_screen_name = 1 AND u.screen_name IS NOT NULL AND u.screen_name != '' THEN u.screen_name END,
                         u.display_name
-                    ) as display_name
+                    ) as display_name,
+                    a.afi_m, a.afi_r, a.composite,
+                    a.comp_daily_sharpe, a.comp_drawdown_resilience,
+                    a.comp_payoff_asymmetry, a.comp_recovery_velocity,
+                    a.confidence
                 FROM afi_scores a
                 LEFT JOIN users u ON a.user_id = u.id
                 WHERE a.leaderboard_eligible = 1
@@ -6667,6 +6751,17 @@ class JournalDBv2:
                         'dd_containment': float(row[11]) if row[11] is not None else 0.0,
                     },
                     'displayName': row[12],
+                    # v4 dual-index fields
+                    'afi_m': float(row[13]) if row[13] is not None else None,
+                    'afi_r': float(row[14]) if row[14] is not None else None,
+                    'composite': float(row[15]) if row[15] is not None else None,
+                    'components_v4': {
+                        'daily_sharpe': float(row[16]) if row[16] is not None else None,
+                        'drawdown_resilience': float(row[17]) if row[17] is not None else None,
+                        'payoff_asymmetry': float(row[18]) if row[18] is not None else None,
+                        'recovery_velocity': float(row[19]) if row[19] is not None else None,
+                    },
+                    'confidence': float(row[20]) if row[20] is not None else None,
                 })
 
             return results
@@ -6699,11 +6794,12 @@ class JournalDBv2:
                 "UPDATE afi_scores SET rank_position = 0 WHERE leaderboard_eligible = 0"
             )
 
-            # Rank eligible users only
+            # Rank eligible users only — sort by AFI-R (durability primary in v4)
+            # Falls back to afi_score for pre-v4 data
             cursor.execute("""
                 SELECT id FROM afi_scores
                 WHERE leaderboard_eligible = 1
-                ORDER BY afi_score DESC, robustness DESC, user_id ASC
+                ORDER BY COALESCE(afi_r, afi_score) DESC, afi_score DESC, user_id ASC
             """)
 
             rows = cursor.fetchall()

@@ -17,7 +17,7 @@ from openpyxl.utils import get_column_letter
 import redis.asyncio as redis
 
 from .db_v2 import JournalDBv2, VersionConflictError
-from .afi_engine import AFI_VERSION, compute_afi, trim_wss_history
+from .afi_engine import AFI_VERSION, compute_afi, compute_afi_v4, trim_wss_history
 from .afi_engine.scoring_engine import MIN_CAPITAL, NEUTRAL_AFI
 from .models_v2 import (
     TradeLog, Trade, TradeEvent, Symbol, Setting, Tag, Order,
@@ -4546,56 +4546,117 @@ class JournalOrchestrator:
                         wss_history = []
 
                 # Always compute raw AFI (for transparency — stored as afi_raw)
-                result = compute_afi(trades, prior_afi, wss_history, version=afi_version)
+                if afi_version == 4:
+                    # --- v4: Dual-index architecture ---
+                    starting_capital_val = starting_capital if starting_capital else 0
+                    result_v4 = compute_afi_v4(trades, starting_capital_val, wss_history)
 
-                # Determine final score based on capital gate
-                if capital_verified:
-                    # v3 movement cap: ±50 per calculation cycle, applied AFTER clamp
-                    final_score = result.afi_score
-                    if afi_version == 3 and prior_afi is not None and prior_afi != NEUTRAL_AFI:
-                        delta = final_score - prior_afi
-                        capped_delta = max(-50.0, min(50.0, delta))
-                        final_score = round(prior_afi + capped_delta, 2)
-                    leaderboard_eligible = True
-                else:
-                    # Capital not verified → neutral clamp
-                    final_score = NEUTRAL_AFI
-                    leaderboard_eligible = False
+                    # Capital gate
+                    if capital_verified:
+                        # No movement cap in v4 Phase 1 (discovery mode)
+                        final_score = result_v4.composite
+                        leaderboard_eligible = True
+                    else:
+                        final_score = NEUTRAL_AFI
+                        leaderboard_eligible = False
 
-                # Append today's WSS to history (one per calendar day)
-                today_str = datetime.utcnow().strftime('%Y-%m-%d')
-                # Deduplicate: remove existing entry for today
-                wss_history = [e for e in wss_history if e.get('date') != today_str]
-                wss_history.append({'date': today_str, 'wss': round(result.wss, 5)})
-                # v1: trim to 90 entries; v2/v3: full lifetime retention
-                if afi_version == 1:
-                    wss_history = trim_wss_history(wss_history)
-                else:
+                    # Append today's WSS-equivalent to history (full lifetime retention)
+                    today_str = datetime.utcnow().strftime('%Y-%m-%d')
+                    wss_equivalent = (
+                        0.30 * result_v4.components.daily_sharpe
+                        + 0.30 * result_v4.components.drawdown_resilience
+                        + 0.20 * result_v4.components.payoff_asymmetry
+                        + 0.20 * result_v4.components.recovery_velocity
+                    )
+                    wss_history = [e for e in wss_history if e.get('date') != today_str]
+                    wss_history.append({'date': today_str, 'wss': round(wss_equivalent, 5)})
                     wss_history = trim_wss_history(wss_history, max_entries=None)
 
-                # Persist
-                self.db.upsert_afi_score(
-                    user_id=user_id,
-                    afi_score=round(final_score, 2),
-                    afi_raw=round(result.afi_raw, 2),
-                    wss=round(result.wss, 5),
-                    comp_r_slope=round(result.components.r_slope, 4),
-                    comp_sharpe=round(result.components.sharpe, 4),
-                    comp_ltc=round(result.components.ltc, 4),
-                    comp_dd_containment=round(result.components.dd_containment, 4),
-                    robustness=round(result.robustness, 2),
-                    trend=result.trend.value,
-                    is_provisional=result.is_provisional,
-                    trade_count=result.trade_count,
-                    active_days=result.active_days,
-                    wss_history=json.dumps(wss_history),
-                    afi_version=afi_version,
-                    cps=round(result.cps, 5) if result.cps else None,
-                    repeatability=round(result.repeatability, 5) if result.repeatability else None,
-                    capital_status=capital_status,
-                    leaderboard_eligible=leaderboard_eligible,
-                )
-                count += 1
+                    # Persist v4
+                    self.db.upsert_afi_score(
+                        user_id=user_id,
+                        afi_score=round(final_score, 2),
+                        afi_raw=round(result_v4.raw_afi_r, 4),
+                        wss=round(wss_equivalent, 5),
+                        comp_r_slope=0.0,
+                        comp_sharpe=0.0,
+                        comp_ltc=0.0,
+                        comp_dd_containment=0.0,
+                        robustness=0.0,
+                        trend=result_v4.trend.value,
+                        is_provisional=result_v4.is_provisional,
+                        trade_count=result_v4.trade_count,
+                        active_days=result_v4.active_days,
+                        wss_history=json.dumps(wss_history),
+                        afi_version=4,
+                        capital_status=capital_status,
+                        leaderboard_eligible=leaderboard_eligible,
+                        # v4 dual-index fields
+                        afi_m=result_v4.afi_m,
+                        afi_r=result_v4.afi_r,
+                        composite=result_v4.composite,
+                        comp_daily_sharpe=round(result_v4.components.daily_sharpe, 4),
+                        comp_drawdown_resilience=round(result_v4.components.drawdown_resilience, 4),
+                        comp_payoff_asymmetry=round(result_v4.components.payoff_asymmetry, 4),
+                        comp_recovery_velocity=round(result_v4.components.recovery_velocity, 4),
+                        confidence=round(result_v4.confidence, 4),
+                        raw_afi_m=round(result_v4.raw_afi_m, 4),
+                        raw_afi_r=round(result_v4.raw_afi_r, 4),
+                        raw_sharpe_lifetime=round(result_v4.raw_sharpe_lifetime, 4),
+                    )
+                    count += 1
+                else:
+                    # --- v1/v2/v3 path ---
+                    result = compute_afi(trades, prior_afi, wss_history, version=afi_version)
+
+                    # Determine final score based on capital gate
+                    if capital_verified:
+                        # v3 movement cap: ±50 per calculation cycle, applied AFTER clamp
+                        final_score = result.afi_score
+                        if afi_version == 3 and prior_afi is not None and prior_afi != NEUTRAL_AFI:
+                            delta = final_score - prior_afi
+                            capped_delta = max(-50.0, min(50.0, delta))
+                            final_score = round(prior_afi + capped_delta, 2)
+                        leaderboard_eligible = True
+                    else:
+                        # Capital not verified → neutral clamp
+                        final_score = NEUTRAL_AFI
+                        leaderboard_eligible = False
+
+                    # Append today's WSS to history (one per calendar day)
+                    today_str = datetime.utcnow().strftime('%Y-%m-%d')
+                    # Deduplicate: remove existing entry for today
+                    wss_history = [e for e in wss_history if e.get('date') != today_str]
+                    wss_history.append({'date': today_str, 'wss': round(result.wss, 5)})
+                    # v1: trim to 90 entries; v2/v3: full lifetime retention
+                    if afi_version == 1:
+                        wss_history = trim_wss_history(wss_history)
+                    else:
+                        wss_history = trim_wss_history(wss_history, max_entries=None)
+
+                    # Persist
+                    self.db.upsert_afi_score(
+                        user_id=user_id,
+                        afi_score=round(final_score, 2),
+                        afi_raw=round(result.afi_raw, 2),
+                        wss=round(result.wss, 5),
+                        comp_r_slope=round(result.components.r_slope, 4),
+                        comp_sharpe=round(result.components.sharpe, 4),
+                        comp_ltc=round(result.components.ltc, 4),
+                        comp_dd_containment=round(result.components.dd_containment, 4),
+                        robustness=round(result.robustness, 2),
+                        trend=result.trend.value,
+                        is_provisional=result.is_provisional,
+                        trade_count=result.trade_count,
+                        active_days=result.active_days,
+                        wss_history=json.dumps(wss_history),
+                        afi_version=afi_version,
+                        cps=round(result.cps, 5) if result.cps else None,
+                        repeatability=round(result.repeatability, 5) if result.repeatability else None,
+                        capital_status=capital_status,
+                        leaderboard_eligible=leaderboard_eligible,
+                    )
+                    count += 1
 
             except Exception as e:
                 self.logger.error(f"AFI calculation error for user {user_id}: {e}")

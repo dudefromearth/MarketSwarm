@@ -1,7 +1,7 @@
 // src/components/LeaderboardView.tsx
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import type { AFIScore, AFILeaderboardResponse } from '../types/afi';
-import { getAFITier } from '../types/afi';
+import { getAFITier, getPrimaryScore } from '../types/afi';
 import LeaderboardSettingsModal from './LeaderboardSettingsModal';
 
 const JOURNAL_API = '';
@@ -22,6 +22,13 @@ const COMPONENT_LABELS: Record<string, string> = {
   sharpe: 'Sharpe',
   ltc: 'LTC',
   dd_containment: 'DD',
+};
+
+const COMPONENT_LABELS_V4: Record<string, string> = {
+  daily_sharpe: 'Sharpe',
+  drawdown_resilience: 'DD Res',
+  payoff_asymmetry: 'Asym',
+  recovery_velocity: 'Recov',
 };
 
 export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
@@ -100,25 +107,41 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
     return currentUserRank?.user_id === score.user_id;
   };
 
-  const formatComponentTooltip = (components: AFIScore['components']): string => {
+  const formatComponentTooltip = (score: AFIScore): string => {
+    if (score.afi_version === 4 && score.components_v4) {
+      return Object.entries(COMPONENT_LABELS_V4)
+        .map(([key, label]) => {
+          const val = score.components_v4?.[key as keyof typeof score.components_v4];
+          return `${label}: ${val != null ? (val * 100).toFixed(0) + '%' : '-'}`;
+        })
+        .join(' | ');
+    }
     return Object.entries(COMPONENT_LABELS)
-      .map(([key, label]) => `${label}: ${(components[key as keyof typeof components] * 100).toFixed(0)}%`)
+      .map(([key, label]) => `${label}: ${(score.components[key as keyof typeof score.components] * 100).toFixed(0)}%`)
       .join(' | ');
   };
 
-  const renderAFICell = (score: AFIScore) => {
-    const tier = getAFITier(score.afi_score);
+  const isV4 = rankings.length > 0 && rankings[0].afi_version === 4;
+
+  const renderAFICell = (score: AFIScore, field: 'afi_r' | 'afi_m' | 'composite' | 'afi_score' = 'afi_r') => {
+    const value = field === 'afi_score' ? score.afi_score
+      : field === 'afi_r' ? (score.afi_r ?? score.afi_score)
+      : field === 'afi_m' ? (score.afi_m ?? score.afi_score)
+      : (score.composite ?? score.afi_score);
+    const tier = getAFITier(value);
+    const showTooltip = field === 'afi_r' || field === 'afi_score';
     return (
       <span
         className={`afi-score-value ${tier.className}`}
-        onMouseEnter={() => setHoveredUserId(score.user_id)}
-        onMouseLeave={() => setHoveredUserId(null)}
+        onMouseEnter={() => showTooltip && setHoveredUserId(score.user_id)}
+        onMouseLeave={() => showTooltip && setHoveredUserId(null)}
       >
-        {Math.round(score.afi_score)}
-        {score.is_provisional && <span className="provisional-badge">P</span>}
-        {hoveredUserId === score.user_id && (
+        {Math.round(value)}
+        {score.is_provisional && field === 'afi_r' && <span className="provisional-badge">P</span>}
+        {showTooltip && hoveredUserId === score.user_id && (
           <span className="afi-tooltip">
-            {formatComponentTooltip(score.components)}
+            {formatComponentTooltip(score)}
+            {score.confidence != null && ` | Conf: ${(score.confidence * 100).toFixed(0)}%`}
           </span>
         )}
       </span>
@@ -144,12 +167,20 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
         </span>
         {!isSticky && isCurrentUser(score) && <span className="you-badge">You</span>}
       </td>
-      <td className="col-afi">
-        {renderAFICell(score)}
-      </td>
-      <td className="col-rb">
-        <span className="rb-value">{score.robustness.toFixed(0)}</span>
-      </td>
+      {isV4 ? (
+        <>
+          <td className="col-afi">{renderAFICell(score, 'afi_r')}</td>
+          <td className="col-afi">{renderAFICell(score, 'afi_m')}</td>
+          <td className="col-afi">{renderAFICell(score, 'composite')}</td>
+        </>
+      ) : (
+        <>
+          <td className="col-afi">{renderAFICell(score, 'afi_score')}</td>
+          <td className="col-rb">
+            <span className="rb-value">{score.robustness.toFixed(0)}</span>
+          </td>
+        </>
+      )}
       <td className="col-trend">
         {renderTrend(score.trend)}
       </td>
@@ -222,8 +253,18 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
                   <tr>
                     <th className="col-rank">Rank</th>
                     <th className="col-user">Name</th>
-                    <th className="col-afi">AFI</th>
-                    <th className="col-rb">RB</th>
+                    {isV4 ? (
+                      <>
+                        <th className="col-afi">AFI-R</th>
+                        <th className="col-afi">AFI-M</th>
+                        <th className="col-afi">Comp</th>
+                      </>
+                    ) : (
+                      <>
+                        <th className="col-afi">AFI</th>
+                        <th className="col-rb">RB</th>
+                      </>
+                    )}
                     <th className="col-trend">Trend</th>
                   </tr>
                 </thead>
@@ -275,8 +316,8 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
             </div>
           )}
           <div className="scoring-info">
-            <span className="info-label">AFI:</span>
-            <span className="info-item">300-900 | Hover AFI for component breakdown</span>
+            <span className="info-label">{isV4 ? 'AFI v4:' : 'AFI:'}</span>
+            <span className="info-item">{isV4 ? '300-900 | R=Durability M=Momentum | Hover for breakdown' : '300-900 | Hover AFI for component breakdown'}</span>
             {searchQuery && (
               <span className="info-item search-count">
                 {filteredRankings.length} of {rankings.length} shown

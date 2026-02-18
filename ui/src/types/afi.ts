@@ -9,6 +9,13 @@ export interface AFIComponents {
   dd_containment: number;
 }
 
+export interface AFIComponentsV4 {
+  daily_sharpe: number | null;
+  drawdown_resilience: number | null;
+  payoff_asymmetry: number | null;
+  recovery_velocity: number | null;
+}
+
 export type CapitalStatus = 'verified' | 'unverified';
 
 export interface AFIScore {
@@ -27,6 +34,12 @@ export interface AFIScore {
   repeatability?: number;
   capital_status?: CapitalStatus;
   leaderboard_eligible?: boolean;
+  // v4 dual-index fields
+  afi_m?: number | null;
+  afi_r?: number | null;
+  composite?: number | null;
+  components_v4?: AFIComponentsV4;
+  confidence?: number | null;
 }
 
 export interface AFILeaderboardResponse {
@@ -53,4 +66,10 @@ export function getAFITier(score: number, capitalStatus?: CapitalStatus): { name
   if (score >= 700) return { name: 'Purple', className: 'afi-purple' };
   if (score >= 600) return { name: 'Blue', className: 'afi-blue' };
   return { name: 'Neutral', className: 'afi-neutral' };
+}
+
+/** Get the primary display score for a user (AFI-R for v4, afi_score for v1-v3). */
+export function getPrimaryScore(score: AFIScore): number {
+  if (score.afi_version === 4 && score.afi_r != null) return score.afi_r;
+  return score.afi_score;
 }

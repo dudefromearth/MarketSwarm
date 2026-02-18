@@ -626,8 +626,8 @@ class TestDistributionStability:
 # ===================================================================
 
 class TestVersionDispatch:
-    def test_default_is_v3(self):
-        assert AFI_VERSION == 3
+    def test_default_is_v4(self):
+        assert AFI_VERSION == 4
 
     def test_v1_explicit(self):
         trades = _make_trades([0.5] * 30, list(range(30)))
@@ -647,10 +647,11 @@ class TestVersionDispatch:
         assert result.cps >= 1.0
         assert result.repeatability >= 1.0
 
-    def test_default_version_uses_afi_version(self):
+    def test_default_version_raises_for_v4(self):
+        """Default AFI_VERSION=4 raises ValueError — v4 uses compute_afi_v4() directly."""
         trades = _make_trades([0.5] * 30, list(range(30)))
-        result = compute_afi(trades, reference_time=NOW)
-        assert result.afi_version == AFI_VERSION
+        with pytest.raises(ValueError, match="compute_afi_v4"):
+            compute_afi(trades, reference_time=NOW)
 
 
 # ===================================================================
@@ -1383,3 +1384,192 @@ class TestAFIResultCapitalFields:
         result = compute_afi(trades, reference_time=NOW, version=3)
         # Raw score is computed — should NOT be 500 for good trades
         assert result.afi_score != NEUTRAL_AFI or result.afi_raw != NEUTRAL_AFI
+
+
+# ===================================================================
+#  AFI v4 — Dual-Index Architecture
+# ===================================================================
+
+from services.journal.intel.afi_engine.scoring_engine import (
+    build_daily_equity_series,
+    compute_daily_sharpe,
+    compute_drawdown_resilience_v4,
+    compute_payoff_asymmetry_v4,
+    compute_recovery_velocity_v4,
+    compute_confidence_v4,
+    compute_afi_v4,
+    V4_MIN_TRADES,
+    V4_MIN_ACTIVE_DAYS,
+    V4_R_WEIGHT,
+    V4_M_WEIGHT,
+)
+from services.journal.intel.afi_engine.models import AFIResultV4, AFIComponentsV4
+
+
+def _make_v4_trades(r_multiples, days_ago_list, starting_risk=100.0):
+    """Build v4-compatible trade dicts with exit_time, r_multiple, pnl, planned_risk."""
+    trades = []
+    for r, days_ago in zip(r_multiples, days_ago_list):
+        exit_time = NOW - timedelta(days=days_ago)
+        trades.append({
+            'r_multiple': r,
+            'exit_time': exit_time,
+            'pnl': r * starting_risk,
+            'planned_risk': starting_risk,
+        })
+    # Sort by exit_time ASC
+    trades.sort(key=lambda t: t['exit_time'])
+    return trades
+
+
+class TestAFIv4:
+
+    def test_build_daily_equity_series(self):
+        """Equity series aggregates realized PnL by exit day."""
+        trades = _make_v4_trades([1.0, -0.5, 2.0], [3, 3, 1])
+        series = build_daily_equity_series(trades, 10000.0)
+        assert len(series) == 2  # two distinct days
+        # Day with trades at days_ago=3: PnL = (1.0 + -0.5) * 100 = 50
+        # Day with trade at days_ago=1: PnL = 2.0 * 100 = 200
+        assert series[0][1] == 10050.0  # cumulative after first day
+        assert series[1][1] == 10250.0  # cumulative after second day
+
+    def test_build_daily_equity_empty(self):
+        """Empty trades returns empty series."""
+        assert build_daily_equity_series([], 10000.0) == []
+        assert build_daily_equity_series([{'exit_time': None, 'pnl': 0}], 10000.0) == []
+
+    def test_daily_sharpe_lifetime(self):
+        """Lifetime Sharpe on a consistently positive equity curve."""
+        # 10 days of positive returns
+        trades = _make_v4_trades(
+            [0.3] * 10,
+            list(range(10, 0, -1)),  # days_ago 10,9,...,1
+        )
+        series = build_daily_equity_series(trades, 10000.0)
+        sharpe = compute_daily_sharpe(series, window_days=None)
+        # Consistently positive returns → positive Sharpe
+        assert sharpe > 0
+
+    def test_daily_sharpe_rolling(self):
+        """Rolling 45-day window only considers recent trades."""
+        old_trades = _make_v4_trades([0.1] * 10, list(range(100, 90, -1)))
+        recent_trades = _make_v4_trades([-0.5] * 5, list(range(5, 0, -1)))
+        all_trades = old_trades + recent_trades
+        all_trades.sort(key=lambda t: t['exit_time'])
+
+        series = build_daily_equity_series(all_trades, 10000.0)
+        rolling_sharpe = compute_daily_sharpe(series, window_days=45)
+        # Recent trades are negative → rolling Sharpe should be negative
+        assert rolling_sharpe < 0
+
+    def test_daily_sharpe_insufficient_data(self):
+        """Less than 2 equity points returns 0."""
+        trades = _make_v4_trades([1.0], [1])
+        series = build_daily_equity_series(trades, 10000.0)
+        assert len(series) == 1
+        assert compute_daily_sharpe(series) == 0.0
+
+    def test_drawdown_resilience(self):
+        """Drawdown resilience between 0 and 1."""
+        trades = _make_v4_trades(
+            [1.0, -2.0, 0.5, 0.5, 1.0, -1.0, 0.5, 0.5, 1.0, 0.5],
+            list(range(10, 0, -1)),
+        )
+        score = compute_drawdown_resilience_v4(trades)
+        assert 0.0 <= score <= 1.0
+
+    def test_payoff_asymmetry(self):
+        """Payoff asymmetry reflects avg_win/avg_loss ratio."""
+        # 3:1 avg_win/avg_loss → should be at or near 1.0 (capped at 3:1)
+        trades = _make_v4_trades([3.0, 3.0, -1.0, -1.0], [4, 3, 2, 1])
+        score = compute_payoff_asymmetry_v4(trades)
+        assert abs(score - 1.0) < 0.01
+
+        # 1:1 ratio → 0.333
+        trades_even = _make_v4_trades([1.0, -1.0, 1.0, -1.0], [4, 3, 2, 1])
+        score_even = compute_payoff_asymmetry_v4(trades_even)
+        assert abs(score_even - 1.0 / 3.0) < 0.01
+
+    def test_recovery_velocity(self):
+        """Recovery velocity between 0 and 1."""
+        trades = _make_v4_trades(
+            [1.0, -2.0, 0.5, 0.5, 1.0, 1.0, -0.5, 0.5, 1.0, 0.5],
+            list(range(10, 0, -1)),
+        )
+        score = compute_recovery_velocity_v4(trades)
+        assert 0.0 <= score <= 1.0
+
+    def test_confidence_scaling(self):
+        """Confidence increases with trade count and active days."""
+        low = compute_confidence_v4(10, 10)
+        med = compute_confidence_v4(50, 30)
+        high = compute_confidence_v4(200, 90)
+        assert low < med < high
+        assert 0.0 <= low <= 1.0
+        assert 0.0 <= high <= 1.0
+
+    def test_confidence_zero(self):
+        """Zero trades/days → zero confidence."""
+        assert compute_confidence_v4(0, 0) == 0.0
+
+    def test_afi_r_compression(self):
+        """AFI-R is in 300-900 range."""
+        trades = _make_v4_trades([0.5] * 60, list(range(60, 0, -1)))
+        result = compute_afi_v4(trades, 10000.0, [])
+        assert 300 <= result.afi_r <= 900
+
+    def test_afi_m_compression(self):
+        """AFI-M is in 300-900 range."""
+        trades = _make_v4_trades([0.5] * 60, list(range(60, 0, -1)))
+        result = compute_afi_v4(trades, 10000.0, [])
+        assert 300 <= result.afi_m <= 900
+
+    def test_composite_blend(self):
+        """Composite = 0.65 × AFI-R + 0.35 × AFI-M."""
+        trades = _make_v4_trades([0.5] * 60, list(range(60, 0, -1)))
+        result = compute_afi_v4(trades, 10000.0, [])
+        expected = V4_R_WEIGHT * result.afi_r + V4_M_WEIGHT * result.afi_m
+        assert abs(result.composite - round(expected, 2)) < 0.02
+
+    def test_eligibility_thresholds(self):
+        """Below 50 trades or 30 active days → provisional."""
+        # 30 trades, 30 days → provisional (< 50 trades)
+        trades_30 = _make_v4_trades([0.5] * 30, list(range(30, 0, -1)))
+        result_30 = compute_afi_v4(trades_30, 10000.0, [])
+        assert result_30.is_provisional is True
+
+        # 60 trades on 60 separate days → NOT provisional
+        trades_60 = _make_v4_trades([0.5] * 60, list(range(60, 0, -1)))
+        result_60 = compute_afi_v4(trades_60, 10000.0, [])
+        assert result_60.is_provisional is False
+
+    def test_result_v4_structure(self):
+        """AFIResultV4 has all required fields."""
+        trades = _make_v4_trades([0.5] * 60, list(range(60, 0, -1)))
+        result = compute_afi_v4(trades, 10000.0, [])
+        assert isinstance(result, AFIResultV4)
+        assert result.afi_version == 4
+        assert isinstance(result.components, AFIComponentsV4)
+        assert result.raw_afi_m is not None
+        assert result.raw_afi_r is not None
+        assert result.raw_sharpe_lifetime is not None
+        assert result.confidence > 0
+
+    def test_empty_trades(self):
+        """Zero trades → neutral scores."""
+        result = compute_afi_v4([], 10000.0, [])
+        # Should complete without error and produce valid range
+        assert 300 <= result.afi_r <= 900
+        assert 300 <= result.afi_m <= 900
+        assert result.is_provisional is True
+        assert result.trade_count == 0
+
+    def test_trend_detection(self):
+        """Trend detection works with WSS history."""
+        # Build improving WSS history
+        history = [{'date': f'2026-01-{i:02d}', 'wss': 0.3 + i * 0.02} for i in range(1, 16)]
+        trades = _make_v4_trades([0.5] * 60, list(range(60, 0, -1)))
+        result = compute_afi_v4(trades, 10000.0, history)
+        # Should detect a trend (improving or stable depending on threshold)
+        assert result.trend.value in ('improving', 'stable', 'decaying')

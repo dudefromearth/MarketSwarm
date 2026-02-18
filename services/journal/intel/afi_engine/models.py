@@ -52,3 +52,39 @@ class AFIResult:
     repeatability: float = 1.0  # v3: Repeatability multiplier (1.0-~1.15)
     capital_status: str = "unverified"   # v1.1: verified | unverified
     leaderboard_eligible: bool = False   # v1.1: capital-gated eligibility
+
+
+@dataclass(frozen=True)
+class AFIComponentsV4:
+    """v4 normalized component scores (0-1 each)."""
+    daily_sharpe: float         # normalized lifetime daily equity Sharpe
+    drawdown_resilience: float  # normalized drawdown depth/recovery composite
+    payoff_asymmetry: float     # normalized avg_win / avg_loss ratio
+    recovery_velocity: float    # normalized speed from trough to new high
+
+    def __post_init__(self):
+        for field_name in ("daily_sharpe", "drawdown_resilience", "payoff_asymmetry", "recovery_velocity"):
+            v = getattr(self, field_name)
+            if not isinstance(v, (int, float)) or math.isnan(v):
+                raise ValueError(f"{field_name} must be a finite number, got {v}")
+
+
+@dataclass(frozen=True)
+class AFIResultV4:
+    """AFI v4 dual-index computation output."""
+    afi_m: float                    # 300-900 momentum index (rolling daily Sharpe)
+    afi_r: float                    # 300-900 robustness index (primary)
+    composite: float                # 0.65 × AFI_R + 0.35 × AFI_M
+    raw_afi_m: float                # pre-compression AFI-M (for tuning)
+    raw_afi_r: float                # pre-compression AFI-R (for tuning)
+    raw_sharpe_lifetime: float      # raw daily Sharpe before normalization
+    components: AFIComponentsV4     # individual metric values
+    confidence: float               # sqrt(N/(N+50)) × sqrt(D/(D+30))
+    trend: TrendSignal              # recent WSS slope direction
+    is_provisional: bool            # trade_count < 50 or active_days < 30
+    trade_count: int
+    active_days: int
+    computed_at: datetime
+    afi_version: int = 4
+    capital_status: str = "unverified"
+    leaderboard_eligible: bool = False
