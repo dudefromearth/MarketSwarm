@@ -272,8 +272,8 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
                     <th className="col-user">Name</th>
                     {isV5 ? (
                       <>
-                        <th className="col-afi col-afi-primary">COMP</th>
-                        <th className="col-rb">RB</th>
+                        <th className="col-afi col-afi-primary">AFI Rank</th>
+                        <th className="col-rb">Robustness</th>
                         <th className="col-trend">M / Trend</th>
                       </>
                     ) : isV4 ? (

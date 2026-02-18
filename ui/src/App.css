@@ -16883,7 +16883,7 @@ body {
 }
 
 .col-rb {
-  width: 60px;
+  width: 80px;
   text-align: center;
 }
 
@@ -16903,6 +16903,10 @@ body {
   align-items: center;
   gap: 4px;
   white-space: nowrap;
+}
+
+.m-trend-inline .afi-score-value {
+  font-weight: 400;
 }
 
 .trend-arrow {
