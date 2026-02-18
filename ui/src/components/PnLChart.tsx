@@ -114,7 +114,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
   // Calculate bounds that fit all data + breakevens + spot with padding
   // Ensures breakevens are visible with padding around them
   const calculateFitBounds = useCallback((): ViewState => {
-    if (expirationData.length === 0) {
+    if (expirationData.length === 0 && expiredExpirationData.length === 0) {
       return { xMin: spotPrice - 50, xMax: spotPrice + 50, yMin: -100, yMax: 100 };
     }
 
@@ -157,10 +157,14 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     // Collect P&L points only within the visible X range to avoid extreme tails
     const visibleExpData = expirationData.filter(p => p.price >= xMin && p.price <= xMax);
     const visibleTheoData = theoreticalData.filter(p => p.price >= xMin && p.price <= xMax);
+    const visibleExpiredExpData = expiredExpirationData.filter(p => p.price >= xMin && p.price <= xMax);
+    const visibleExpiredTheoData = expiredTheoreticalData.filter(p => p.price >= xMin && p.price <= xMax);
 
     const allY = [
       ...visibleExpData.map(p => p.pnl),
       ...visibleTheoData.map(p => p.pnl),
+      ...visibleExpiredExpData.map(p => p.pnl),
+      ...visibleExpiredTheoData.map(p => p.pnl),
       0, // Always include zero line
     ];
 
@@ -168,6 +172,8 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
     if (allY.length <= 1) {
       allY.push(...expirationData.map(p => p.pnl));
       allY.push(...theoreticalData.map(p => p.pnl));
+      allY.push(...expiredExpirationData.map(p => p.pnl));
+      allY.push(...expiredTheoreticalData.map(p => p.pnl));
     }
 
     let yMin = Math.min(...allY);
@@ -187,7 +193,7 @@ const PnLChart = forwardRef<PnLChartHandle, PnLChartProps>(({
       yMin: yMin - yRange * 0.1,
       yMax: yMax + yRange * 0.1,
     };
-  }, [expirationData, theoreticalData, strikes, spotPrice, expirationBreakevens, theoreticalBreakevens]);
+  }, [expirationData, theoreticalData, strikes, spotPrice, expirationBreakevens, theoreticalBreakevens, expiredExpirationData, expiredTheoreticalData]);
 
   // Auto-fit view to data
   const autoFit = useCallback(() => {
