@@ -415,7 +415,7 @@ export default function MLLabPage() {
                       {breakerCheck.action === "block_all" && "Trading Blocked"}
                     </span>
                   </div>
-                  {breakerCheck.triggered_breakers.length > 0 && (
+                  {breakerCheck.triggered_breakers?.length > 0 && (
                     <div className="triggered-list">
                       {breakerCheck.triggered_breakers.map((b, i) => (
                         <div key={i} className={`triggered-item ${b.severity}`}>
