@@ -1380,11 +1380,12 @@ router.get("/activity/hourly", requireAdmin, async (req, res) => {
               user_count
        FROM hourly_activity_aggregates
        WHERE hour_start >= DATE_SUB(NOW(), INTERVAL ? DAY)
+         AND hour_start < CURDATE()
        ORDER BY hour_start ASC`,
       [days]
     );
 
-    // Calculate busiest hours (using raw DB hour — server is Eastern)
+    // Calculate busiest hours (using raw DB hour — server is Eastern, excludes today's partial data)
     const hourlyTotals = {};
     for (let i = 0; i < 24; i++) {
       hourlyTotals[i] = { count: 0, total: 0 };
