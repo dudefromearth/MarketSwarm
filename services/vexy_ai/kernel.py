@@ -224,9 +224,9 @@ class VexyKernel:
             doctrine_config = self.config.get("doctrine", {})
             playbook_dir = doctrine_config.get("playbook_dir", "doctrine/playbooks")
 
-            # Resolve relative to vexy_ai service directory
+            # Resolve relative to vexy_ai service directory (kernel.py is in core/)
             if not os.path.isabs(playbook_dir):
-                base = os.path.dirname(os.path.abspath(__file__))
+                base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                 playbook_dir = os.path.join(base, playbook_dir)
 
             self.playbook_registry = PlaybookRegistry(
