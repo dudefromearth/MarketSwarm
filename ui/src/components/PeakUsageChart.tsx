@@ -68,8 +68,9 @@ export default function PeakUsageChart({ days = 7 }: Props) {
     const counts: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
 
     rawData.forEach((d) => {
-      // Parse the UTC timestamp and convert to user's timezone
-      const utcDate = new Date(d.hour_start);
+      // Parse the UTC timestamp (stored without Z suffix) and convert to user's timezone
+      const raw = d.hour_start.endsWith('Z') ? d.hour_start : d.hour_start + 'Z';
+      const utcDate = new Date(raw);
 
       // Convert to user's timezone
       const localDate = new Date(utcDate.toLocaleString("en-US", { timeZone: timezone }));

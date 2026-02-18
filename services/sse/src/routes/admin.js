@@ -302,9 +302,10 @@ router.get("/_debug/activity/hourly", async (req, res) => {
     }
 
     rows.forEach((row) => {
-      const hour = new Date(row.hour_start).getHours();
-      hourlyTotals[hour].count++;
-      hourlyTotals[hour].total += row.user_count;
+      const utc = row.hour_start instanceof Date ? row.hour_start : new Date(row.hour_start + "Z");
+      const etHour = parseInt(utc.toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }));
+      hourlyTotals[etHour].count++;
+      hourlyTotals[etHour].total += row.user_count;
     });
 
     const busiestHours = Object.entries(hourlyTotals)
@@ -318,7 +319,7 @@ router.get("/_debug/activity/hourly", async (req, res) => {
     res.json({
       _debug: { latencyMs: Date.now() - startTime },
       data: rows.map((r) => ({
-        hour_start: r.hour_start,
+        hour_start: r.hour_start instanceof Date ? r.hour_start.toISOString() : r.hour_start,
         user_count: r.user_count,
       })),
       busiestHours,
@@ -1377,9 +1378,11 @@ router.get("/activity/hourly", requireAdmin, async (req, res) => {
     }
 
     rows.forEach((row) => {
-      const hour = new Date(row.hour_start).getHours();
-      hourlyTotals[hour].count++;
-      hourlyTotals[hour].total += row.user_count;
+      // hour_start is stored as UTC via toISOString — parse as UTC
+      const utc = row.hour_start instanceof Date ? row.hour_start : new Date(row.hour_start + "Z");
+      const etHour = parseInt(utc.toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }));
+      hourlyTotals[etHour].count++;
+      hourlyTotals[etHour].total += row.user_count;
     });
 
     const busiestHours = Object.entries(hourlyTotals)
@@ -1392,7 +1395,7 @@ router.get("/activity/hourly", requireAdmin, async (req, res) => {
 
     res.json({
       data: rows.map((r) => ({
-        hour_start: r.hour_start,
+        hour_start: r.hour_start instanceof Date ? r.hour_start.toISOString() : r.hour_start,
         user_count: r.user_count,
       })),
       busiestHours,
