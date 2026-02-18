@@ -4566,6 +4566,9 @@ class JournalOrchestrator:
                     wss_history.append({'date': today_str, 'wss': round(d_raw, 5)})
                     wss_history = trim_wss_history(wss_history, max_entries=None)
 
+                    # RB display = absolute exposure score (v5.1)
+                    rb_display = result_v5.trade_count + 0.5 * result_v5.active_days
+
                     # Persist v5 (reuses v4 column layout)
                     self.db.upsert_afi_score(
                         user_id=user_id,
@@ -4576,7 +4579,7 @@ class JournalOrchestrator:
                         comp_sharpe=0.0,
                         comp_ltc=0.0,
                         comp_dd_containment=0.0,
-                        robustness=0.0,
+                        robustness=round(rb_display, 2),
                         trend=result_v5.trend.value,
                         is_provisional=result_v5.is_provisional,
                         trade_count=result_v5.trade_count,

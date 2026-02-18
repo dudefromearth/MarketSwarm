@@ -108,7 +108,7 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
   };
 
   const formatComponentTooltip = (score: AFIScore): string => {
-    if (score.afi_version === 4 && score.components_v4) {
+    if ((score.afi_version === 4 || score.afi_version === 5) && score.components_v4) {
       return Object.entries(COMPONENT_LABELS_V4)
         .map(([key, label]) => {
           const val = score.components_v4?.[key as keyof typeof score.components_v4];
@@ -130,7 +130,7 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
       : field === 'afi_m' ? (score.afi_m ?? score.afi_score)
       : (score.composite ?? score.afi_score);
     const tier = getAFITier(value);
-    const showTooltip = field === 'afi_r' || field === 'afi_score';
+    const showTooltip = field === 'afi_r' || field === 'afi_score' || field === 'composite';
     return (
       <span
         className={`afi-score-value ${tier.className}`}
@@ -172,12 +172,13 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
         <>
           <td className="col-afi col-afi-primary">{renderAFICell(score, 'composite')}</td>
           <td className="col-rb">
-            <span className="rb-value">{score.confidence != null ? `${Math.round(score.confidence * 100)}%` : '-'}</span>
+            <span className="rb-value">{score.robustness != null ? Math.round(score.robustness) : '-'}</span>
           </td>
           <td className="col-trend">
-            {renderAFICell(score, 'afi_m')}
-            {' '}
-            {renderTrend(score.trend)}
+            <span className="m-trend-inline">
+              {renderAFICell(score, 'afi_m')}
+              {renderTrend(score.trend)}
+            </span>
           </td>
         </>
       ) : isV4 ? (
@@ -340,7 +341,7 @@ export default function LeaderboardView({ onClose }: LeaderboardViewProps) {
           )}
           <div className="scoring-info">
             <span className="info-label">{isV5 ? 'AFI v5:' : isV4 ? 'AFI v4:' : 'AFI:'}</span>
-            <span className="info-item">{isV5 ? '300-900 | COMP=D×RB weighted | RB=Credibility | M=Momentum' : isV4 ? '300-900 | R=Durability M=Momentum | Hover for breakdown' : '300-900 | Hover AFI for component breakdown'}</span>
+            <span className="info-item">{isV5 ? '300-900 | COMP=Structural Composite | RB=Exposure Depth | M=Momentum' : isV4 ? '300-900 | R=Durability M=Momentum | Hover for breakdown' : '300-900 | Hover AFI for component breakdown'}</span>
             {searchQuery && (
               <span className="info-item search-count">
                 {filteredRankings.length} of {rankings.length} shown
