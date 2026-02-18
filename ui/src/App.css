@@ -16905,9 +16905,14 @@ body {
   white-space: nowrap;
 }
 
+.col-afi-primary .afi-score-value {
+  font-size: 18px;
+}
+
 .m-trend-inline .afi-score-value {
   font-weight: 400 !important;
-  font-size: 14px;
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 .trend-arrow {
