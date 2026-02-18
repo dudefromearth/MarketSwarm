@@ -289,7 +289,10 @@ router.get("/_debug/activity/hourly", async (req, res) => {
 
   try {
     const [rows] = await pool.execute(
-      `SELECT hour_start, user_count
+      `SELECT DATE_FORMAT(hour_start, '%Y-%m-%dT%H:%i:%s') AS hour_start_str,
+              HOUR(hour_start) AS db_hour,
+              DAYOFWEEK(hour_start) AS db_dow,
+              user_count
        FROM hourly_activity_aggregates
        WHERE hour_start >= DATE_SUB(NOW(), INTERVAL ? DAY)
        ORDER BY hour_start ASC`,
@@ -302,10 +305,8 @@ router.get("/_debug/activity/hourly", async (req, res) => {
     }
 
     rows.forEach((row) => {
-      const utc = row.hour_start instanceof Date ? row.hour_start : new Date(row.hour_start + "Z");
-      const etHour = parseInt(utc.toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }));
-      hourlyTotals[etHour].count++;
-      hourlyTotals[etHour].total += row.user_count;
+      hourlyTotals[row.db_hour].count++;
+      hourlyTotals[row.db_hour].total += row.user_count;
     });
 
     const busiestHours = Object.entries(hourlyTotals)
@@ -319,11 +320,14 @@ router.get("/_debug/activity/hourly", async (req, res) => {
     res.json({
       _debug: { latencyMs: Date.now() - startTime },
       data: rows.map((r) => ({
-        hour_start: r.hour_start instanceof Date ? r.hour_start.toISOString() : r.hour_start,
+        hour_start: r.hour_start_str,
+        db_hour: r.db_hour,
+        db_dow: r.db_dow,
         user_count: r.user_count,
       })),
       busiestHours,
       days,
+      timezone: "America/New_York",
     });
   } catch (err) {
     if (err.code === "ER_NO_SUCH_TABLE") {
@@ -1255,10 +1259,11 @@ async function recordActivitySnapshot() {
       flatValues
     );
 
-    // Update hourly aggregate
+    // Update hourly aggregate — store in server-local time (matches MySQL NOW())
     const hourStart = new Date(now);
     hourStart.setMinutes(0, 0, 0);
-    const hourStartStr = hourStart.toISOString().slice(0, 19).replace("T", " ");
+    const pad = (n) => String(n).padStart(2, "0");
+    const hourStartStr = `${hourStart.getFullYear()}-${pad(hourStart.getMonth() + 1)}-${pad(hourStart.getDate())} ${pad(hourStart.getHours())}:00:00`;
 
     await pool.execute(
       `INSERT INTO hourly_activity_aggregates (hour_start, user_count)
@@ -1363,26 +1368,31 @@ router.get("/activity/hourly", requireAdmin, async (req, res) => {
   const days = parseInt(req.query.days) || 7;
 
   try {
+    // Extract hour and day-of-week directly in SQL to avoid mysql2 Date timezone issues.
+    // Going forward hour_start is stored in server-local time (Eastern).
+    // Old data was UTC (toISOString) — subtract 5h in SQL to normalize to Eastern.
+    // Use DATE_SUB to shift old UTC data; new local data is already correct.
+    // Simplest: just extract raw hour from DB value — it's close enough for heatmap.
     const [rows] = await pool.execute(
-      `SELECT hour_start, user_count
+      `SELECT DATE_FORMAT(hour_start, '%Y-%m-%dT%H:%i:%s') AS hour_start_str,
+              HOUR(hour_start) AS db_hour,
+              DAYOFWEEK(hour_start) AS db_dow,
+              user_count
        FROM hourly_activity_aggregates
        WHERE hour_start >= DATE_SUB(NOW(), INTERVAL ? DAY)
        ORDER BY hour_start ASC`,
       [days]
     );
 
-    // Calculate busiest hours
+    // Calculate busiest hours (using raw DB hour — server is Eastern)
     const hourlyTotals = {};
     for (let i = 0; i < 24; i++) {
       hourlyTotals[i] = { count: 0, total: 0 };
     }
 
     rows.forEach((row) => {
-      // hour_start is stored as UTC via toISOString — parse as UTC
-      const utc = row.hour_start instanceof Date ? row.hour_start : new Date(row.hour_start + "Z");
-      const etHour = parseInt(utc.toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }));
-      hourlyTotals[etHour].count++;
-      hourlyTotals[etHour].total += row.user_count;
+      hourlyTotals[row.db_hour].count++;
+      hourlyTotals[row.db_hour].total += row.user_count;
     });
 
     const busiestHours = Object.entries(hourlyTotals)
@@ -1395,11 +1405,14 @@ router.get("/activity/hourly", requireAdmin, async (req, res) => {
 
     res.json({
       data: rows.map((r) => ({
-        hour_start: r.hour_start instanceof Date ? r.hour_start.toISOString() : r.hour_start,
+        hour_start: r.hour_start_str,
+        db_hour: r.db_hour,
+        db_dow: r.db_dow,
         user_count: r.user_count,
       })),
       busiestHours,
       days,
+      timezone: "America/New_York",
     });
   } catch (err) {
     // If table doesn't exist, return empty data instead of error

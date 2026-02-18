@@ -3,10 +3,11 @@
 
 import { useEffect, useRef, useState, useMemo } from "react";
 import * as echarts from "echarts";
-import { useTimezone } from "../contexts/TimezoneContext";
 
 interface HourlyData {
   hour_start: string;
+  db_hour: number;
+  db_dow: number;  // MySQL DAYOFWEEK: 1=Sun, 2=Mon, ..., 7=Sat
   user_count: number;
 }
 
@@ -34,8 +35,6 @@ export default function PeakUsageChart({ days = 7 }: Props) {
   const [busiestHours, setBusiestHours] = useState<BusiestHour[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const { timezone } = useTimezone();
-
   // Fetch data
   useEffect(() => {
     async function fetchData() {
@@ -59,7 +58,7 @@ export default function PeakUsageChart({ days = 7 }: Props) {
   }, [days]);
 
   // Convert raw hourly data to heatmap format [hour, dayOfWeek, count]
-  // Aggregated by hour-of-day and day-of-week in user's timezone
+  // Backend returns db_hour and db_dow already in Eastern time
   const heatmapData = useMemo(() => {
     if (rawData.length === 0) return [];
 
@@ -68,24 +67,20 @@ export default function PeakUsageChart({ days = 7 }: Props) {
     const counts: number[][] = Array.from({ length: 7 }, () => Array(24).fill(0));
 
     rawData.forEach((d) => {
-      // Parse the UTC timestamp (stored without Z suffix) and convert to user's timezone
-      const raw = d.hour_start.endsWith('Z') ? d.hour_start : d.hour_start + 'Z';
-      const utcDate = new Date(raw);
+      // db_dow from MySQL DAYOFWEEK: 1=Sunday..7=Saturday → 0=Sunday..6=Saturday
+      const dayOfWeek = (d.db_dow ?? 1) - 1;
+      const hour = d.db_hour ?? 0;
 
-      // Convert to user's timezone
-      const localDate = new Date(utcDate.toLocaleString("en-US", { timeZone: timezone }));
-      const dayOfWeek = localDate.getDay(); // 0 = Sunday
-      const hour = localDate.getHours();
-
-      grid[dayOfWeek][hour] += d.user_count;
-      counts[dayOfWeek][hour] += 1;
+      if (dayOfWeek >= 0 && dayOfWeek < 7 && hour >= 0 && hour < 24) {
+        grid[dayOfWeek][hour] += d.user_count;
+        counts[dayOfWeek][hour] += 1;
+      }
     });
 
     // Convert to echarts heatmap format: [hour, day, value]
     const result: [number, number, number][] = [];
     for (let day = 0; day < 7; day++) {
       for (let hour = 0; hour < 24; hour++) {
-        // Average if we have multiple samples, otherwise use sum
         const value = counts[day][hour] > 0
           ? Math.round(grid[day][hour] / counts[day][hour] * 10) / 10
           : 0;
@@ -94,7 +89,7 @@ export default function PeakUsageChart({ days = 7 }: Props) {
     }
 
     return result;
-  }, [rawData, timezone]);
+  }, [rawData]);
 
   // Find peak times in user's timezone
   const peakInfo = useMemo(() => {
@@ -283,11 +278,8 @@ export default function PeakUsageChart({ days = 7 }: Props) {
     );
   }
 
-  // Get timezone abbreviation for display
-  const tzAbbrev = new Date().toLocaleTimeString("en-US", {
-    timeZone: timezone,
-    timeZoneName: "short"
-  }).split(" ").pop();
+  // Data is always Eastern time from the server
+  const tzAbbrev = "ET";
 
   return (
     <div className="peak-usage-chart">
