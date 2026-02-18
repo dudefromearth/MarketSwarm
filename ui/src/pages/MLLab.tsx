@@ -428,7 +428,7 @@ export default function MLLabPage() {
                 </div>
               )}
 
-              {circuitBreakers && (
+              {circuitBreakers?.limits && (
                 <div className="breakers-grid">
                   <div className="breaker-card">
                     <div className="breaker-label">Daily P&L</div>
