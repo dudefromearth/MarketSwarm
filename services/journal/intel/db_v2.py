@@ -6724,7 +6724,8 @@ class JournalDBv2:
                     a.afi_m, a.afi_r, a.composite,
                     a.comp_daily_sharpe, a.comp_drawdown_resilience,
                     a.comp_payoff_asymmetry, a.comp_recovery_velocity,
-                    a.confidence
+                    a.confidence,
+                    a.afi_version
                 FROM afi_scores a
                 LEFT JOIN users u ON a.user_id = u.id
                 WHERE a.leaderboard_eligible = 1
@@ -6762,6 +6763,7 @@ class JournalDBv2:
                         'recovery_velocity': float(row[19]) if row[19] is not None else None,
                     },
                     'confidence': float(row[20]) if row[20] is not None else None,
+                    'afi_version': row[21] if row[21] is not None else 1,
                 })
 
             return results
