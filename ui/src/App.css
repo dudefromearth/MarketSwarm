@@ -17064,6 +17064,9 @@ body {
 }
 
 .leaderboard-settings-modal .form-group label.toggle-label input[type="checkbox"] {
+  width: 34px;
+  min-width: 34px;
+  max-width: 34px;
   flex-shrink: 0;
 }
 
