@@ -253,12 +253,14 @@ class JournalAuth:
 
     async def get_request_user(self, request: web.Request) -> Optional[Dict[str, Any]]:
         """
-        Get user from request (async wrapper).
+        Get user from request.
+
+        Trust model: JWT validation is handled by the SSE Gateway.
+        Internal services trust the gateway's X-User-* headers.
 
         Checks in order:
         1. X-User-* headers (from SSE gateway proxy)
         2. X-Internal-User-Id header (internal service auth, localhost only)
-        3. JWT token (direct requests)
 
         Args:
             request: aiohttp request object
@@ -266,12 +268,12 @@ class JournalAuth:
         Returns:
             User dict or None
         """
-        # First try X-User headers from SSE gateway proxy
+        # Path 1: X-User headers from SSE gateway proxy (primary path)
         user = self.get_user_from_proxy_headers(request)
         if user and user.get('id'):
             return user
 
-        # Internal service auth (localhost only, uses internal DB user ID)
+        # Path 2: Internal service auth (localhost only, uses internal DB user ID)
         # NOTE: Localhost-only auth is valid for single-node deployment.
         # Must be replaced with mTLS or service JWT in distributed/multi-node mode.
         x_internal_user = request.headers.get('X-Internal-User-Id', '').strip()
@@ -288,18 +290,6 @@ class JournalAuth:
                         return user
                 except (ValueError, TypeError):
                     pass
-
-        # Fall back to JWT token extraction
-        token = self.extract_token(request)
-        if not token:
-            return None
-
-        user = self.get_user_from_session(token)
-
-        # Only return user if they have a valid db id
-        # (they must have logged in via SSE first to be persisted)
-        if user and user.get('id'):
-            return user
 
         return None
 

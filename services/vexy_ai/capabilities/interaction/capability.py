@@ -62,16 +62,9 @@ class InteractionCapability(BaseCapability):
             if not self._started or not self.service:
                 raise HTTPException(status_code=503, detail="Interaction system not ready")
 
-            # Extract user info from request headers (set by SSE gateway proxy)
-            # In production, user_id comes from auth middleware via X-User-Id header
-            user_id_str = req.headers.get("X-User-Id", "")
-            try:
-                user_id = int(user_id_str) if user_id_str else 1  # Default to 1 like chat capability
-            except ValueError:
-                user_id = 1
-
-            # Tier resolution: prefer X-User-Tier header (set by SSE gateway)
-            header_tier = req.headers.get("X-User-Tier", "")
+            # User identity from TrustBoundaryMiddleware (set by gateway headers)
+            user_id = req.state.user_id
+            header_tier = req.state.user_tier
 
             # Get user profile for fallback tier resolution
             # Roles come from the profile; created_at for trial check

@@ -20,6 +20,9 @@ REDIS_MARKET_DIR="${REDIS_BASE_DIR}/market"
 REDIS_INTEL_DIR="${REDIS_BASE_DIR}/intel"
 LOGS_DIR="${MS_ROOT}/logs"
 
+# Echo Redis uses a dedicated config file (no persistence, volatile-lru)
+ECHO_CONF="${BREW_PREFIX}/etc/redis/echo.conf"
+
 # Instance map: array of [name, port|pass|dir] (pipe delim for empty-pass safety)
 declare -A INSTANCES=(
     [system]="${REDIS_SYSTEM_PORT}|${REDIS_SYSTEM_PASS}|${REDIS_SYSTEM_DIR}"
@@ -162,6 +165,46 @@ status_instance() {
     fi
 }
 
+# ===== Echo Redis (config-file-driven, no persistence, volatile-lru) =====
+
+start_echo() {
+    if "${REDIS_CLI_PATH}" -p "${REDIS_ECHO_PORT}" ping &>/dev/null; then
+        echo "Instance echo (port ${REDIS_ECHO_PORT}) already running."
+        return 0
+    fi
+    if [[ ! -f "$ECHO_CONF" ]]; then
+        echo "Error: Echo config not found: ${ECHO_CONF}" >&2
+        return 1
+    fi
+    echo "Starting echo on port ${REDIS_ECHO_PORT}..."
+    "${REDIS_SERVER_PATH}" "${ECHO_CONF}"
+    sleep 0.5
+    if "${REDIS_CLI_PATH}" -p "${REDIS_ECHO_PORT}" ping &>/dev/null; then
+        echo "Instance echo started."
+    else
+        echo "Error: Failed to start echo." >&2
+        return 1
+    fi
+}
+
+stop_echo() {
+    if ! "${REDIS_CLI_PATH}" -p "${REDIS_ECHO_PORT}" ping &>/dev/null; then
+        echo "Instance echo (port ${REDIS_ECHO_PORT}) not running."
+        return 0
+    fi
+    echo "Stopping echo on port ${REDIS_ECHO_PORT}..."
+    "${REDIS_CLI_PATH}" -p "${REDIS_ECHO_PORT}" shutdown nosave
+    echo "Instance echo shut down gracefully."
+}
+
+status_echo() {
+    if "${REDIS_CLI_PATH}" -p "${REDIS_ECHO_PORT}" ping &>/dev/null; then
+        echo "echo: RUNNING (Port ${REDIS_ECHO_PORT}) - Ping: PONG"
+    else
+        echo "echo: STOPPED (Port ${REDIS_ECHO_PORT})"
+    fi
+}
+
 # Main: Parse arg
 case "${1:-}" in
     up|start)
@@ -170,6 +213,7 @@ case "${1:-}" in
             IFS='|' read -r port pass dir <<< "${INSTANCES[$name]}"
             start_instance "$name" "$port" "$pass" "$dir"
         done
+        start_echo
         echo "All instances up."
         ;;
     down|stop)
@@ -178,6 +222,7 @@ case "${1:-}" in
             IFS='|' read -r port pass dir <<< "${INSTANCES[$name]}"
             stop_instance "$name" "$port" "$pass" "$dir"
         done
+        stop_echo
         echo "All instances down."
         ;;
     status|st)
@@ -186,6 +231,7 @@ case "${1:-}" in
             IFS='|' read -r port pass dir <<< "${INSTANCES[$name]}"
             status_instance "$name" "$port" "$pass" "$dir"
         done
+        status_echo
         ;;
     help|-h|--help)
         echo "Usage: $0 {up|down|status|help}"

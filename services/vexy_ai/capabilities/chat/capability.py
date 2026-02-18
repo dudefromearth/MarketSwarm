@@ -73,17 +73,9 @@ class ChatCapability(BaseCapability):
             Provides direct conversational access to Vexy, the AI engine
             running on The Path OS. Access is tiered by subscription level.
             """
-            # Extract user_id from X-User-Id header (set by vexy_proxy or SSE gateway)
-            user_id_str = req.headers.get("X-User-Id", "")
-            try:
-                user_id = int(user_id_str) if user_id_str else 1
-            except ValueError:
-                user_id = 1
-
-            # Tier resolution: X-User-Tier header (set by SSE gateway) is authoritative.
-            # request.user_tier from body is only used as admin override fallback.
-            header_tier = req.headers.get("X-User-Tier", "")
-            user_tier = header_tier or request.user_tier or "observer"
+            # User identity from TrustBoundaryMiddleware (set by gateway headers)
+            user_id = req.state.user_id
+            user_tier = req.state.user_tier or request.user_tier or "observer"
 
             # Check rate limit
             allowed, remaining = self.service.check_rate_limit(user_id, user_tier)

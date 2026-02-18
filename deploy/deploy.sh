@@ -18,7 +18,7 @@ set -e  # Exit on error
 # Configuration
 MARKETSWARM_DIR="${MARKETSWARM_DIR:-/Users/ernie/MarketSwarm}"
 NGINX_HOST="${NGINX_HOST:-MiniThree}"
-NGINX_CONF_PATH="${NGINX_CONF_PATH:-/opt/homebrew/etc/nginx/servers/marketswarm.conf}"
+NGINX_CONF_PATH="${NGINX_CONF_PATH:-/opt/homebrew/etc/nginx/servers/marketswarm-https.conf}"
 LOG_FILE="${MARKETSWARM_DIR}/deploy/deploy.log"
 NODE_ADMIN_PORT="${NODE_ADMIN_PORT:-8099}"
 NODE_ADMIN_URL="http://localhost:${NODE_ADMIN_PORT}"
@@ -179,7 +179,7 @@ sync_nginx() {
     ssh "$NGINX_HOST" bash -s << 'REMOTE_SCRIPT'
         set -e
         echo "Testing nginx config..."
-        cp /tmp/marketswarm-https.conf /opt/homebrew/etc/nginx/servers/marketswarm.conf
+        cp /tmp/marketswarm-https.conf /opt/homebrew/etc/nginx/servers/marketswarm-https.conf
         nginx -t
         echo "Reloading nginx..."
         brew services reload nginx

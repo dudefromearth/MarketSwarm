@@ -45,9 +45,9 @@ class EdgeLabCapability(BaseCapability):
             if not self.service:
                 raise HTTPException(status_code=503, detail="Edge Lab not ready")
 
-            user_id_str = req.headers.get("X-User-Id", "")
-            user_id = int(user_id_str) if user_id_str else 1
-            user_tier = req.headers.get("X-User-Tier", "observer")
+            # User identity from TrustBoundaryMiddleware (set by gateway headers)
+            user_id = req.state.user_id
+            user_tier = req.state.user_tier
 
             body = await req.json()
             report_type = body.get("report_type") or body.get("reportType")

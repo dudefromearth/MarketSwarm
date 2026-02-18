@@ -84,6 +84,13 @@ class Vexy:
 
     def _setup_middleware(self) -> None:
         """Configure FastAPI middleware."""
+        from ..middleware.auth import TrustBoundaryMiddleware
+
+        # Trust boundary: reject requests without X-User-Id from gateway
+        # Added before CORS — Starlette runs LIFO, so CORS (last) handles
+        # preflight first, then TrustBoundaryMiddleware runs on real requests.
+        self.app.add_middleware(TrustBoundaryMiddleware)
+
         # CORS for development
         self.app.add_middleware(
             CORSMiddleware,

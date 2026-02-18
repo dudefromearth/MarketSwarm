@@ -229,7 +229,9 @@ export function authMiddleware(options = {}) {
     if (needsAuth && !allowUnauth) {
       const user = getCurrentUser(req);
       if (!user) {
-        console.log(`[auth] 401 for ${req.method} ${req.path} - no valid session`);
+        const rawCookie = req.headers?.cookie || '';
+        const hasMs = rawCookie.includes('ms_session');
+        console.log(`[auth] 401 for ${req.method} ${req.path} - no valid session (hasCookieHeader=${!!rawCookie} hasMs=${hasMs}${rawCookie && !hasMs ? ' keys=' + rawCookie.substring(0, 60) : ''})`);
         return res.status(401).json({ detail: "Not authenticated" });
       }
       req.user = user;

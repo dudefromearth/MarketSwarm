@@ -22,7 +22,6 @@ import VexyInteractionProgress from './VexyInteractionProgress';
 import TrialIndicator from './TrialIndicator';
 import RestrictedBanner from './RestrictedBanner';
 import ElevationHint from './ElevationHint';
-import { useTierGatesContext } from '../../contexts/TierGatesContext';
 
 // Feature flag: use synchronous /api/vexy/chat (same route as Ask Vexy in Routine Drawer)
 const USE_INTERACTION_API = false;
@@ -248,12 +247,68 @@ export default function VexyChat({
   const [lastElevationHint, setLastElevationHint] = useState<string | undefined>(undefined);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Drag state
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+  const panelRef = useRef<HTMLDivElement>(null);
+
   const tierConfig = TIER_CONFIG[userTier] || TIER_CONFIG.observer;
 
-  // Dynamic gate override for chat rate limit
-  const { getLimit: getGateLimit } = useTierGatesContext();
-  const dynamicChatLimit = getGateLimit('vexy_chat_rate');
-  const effectiveHourlyLimit = dynamicChatLimit !== null ? dynamicChatLimit : tierConfig.hourlyLimit;
+  // Reset position when panel closes so it reopens in default spot
+  useEffect(() => {
+    if (!isOpen) {
+      setPosition(null);
+      setDragging(false);
+    }
+  }, [isOpen]);
+
+  // Window-level mousemove/mouseup for drag
+  useEffect(() => {
+    if (!dragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      const panel = panelRef.current;
+      if (!panel) return;
+      const rect = panel.getBoundingClientRect();
+      const x = Math.max(0, Math.min(e.clientX - dragOffset.current.x, window.innerWidth - rect.width));
+      const y = Math.max(0, Math.min(e.clientY - dragOffset.current.y, window.innerHeight - rect.height));
+      setPosition({ x, y });
+    };
+
+    const handleMouseUp = () => {
+      setDragging(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [dragging]);
+
+  // Prevent text selection while dragging
+  useEffect(() => {
+    if (dragging) {
+      document.body.style.userSelect = 'none';
+      return () => { document.body.style.userSelect = ''; };
+    }
+  }, [dragging]);
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    // Don't drag if clicking action buttons
+    if ((e.target as HTMLElement).closest('.vexy-chat-header-actions')) return;
+    if ((e.target as HTMLElement).closest('.vexy-settings-menu')) return;
+
+    const panel = panelRef.current;
+    if (!panel) return;
+    const rect = panel.getBoundingClientRect();
+    dragOffset.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    setPosition({ x: rect.left, y: rect.top });
+    setDragging(true);
+    e.preventDefault();
+  }, []);
 
   // Interaction hook (only active when feature flag is on)
   const interaction = useVexyInteraction({
@@ -431,9 +486,16 @@ export default function VexyChat({
   }, [tierConfig.reflectionDialMax]);
 
   return (
-    <div className={`vexy-chat-panel ${isOpen ? 'open' : ''}`}>
-      {/* Header */}
-      <div className="vexy-chat-header">
+    <div
+      ref={panelRef}
+      className={`vexy-chat-panel ${isOpen ? 'open' : ''}${dragging ? ' dragging' : ''}`}
+      style={position ? { top: position.y, left: position.x, bottom: 'auto', right: 'auto' } : undefined}
+    >
+      {/* Header — drag handle */}
+      <div
+        className={`vexy-chat-header${dragging ? ' dragging' : ''}`}
+        onMouseDown={handleDragStart}
+      >
         <div className="vexy-chat-header-left">
           <div className="vexy-chat-title">
             <span>🦋</span>
@@ -558,7 +620,7 @@ export default function VexyChat({
         onReflectionDialChange={handleReflectionDialChange}
         showReflectionDial={tierConfig.showReflectionDial}
         remainingMessages={remainingMessages}
-        hourlyLimit={effectiveHourlyLimit > 0 ? effectiveHourlyLimit : undefined}
+        hourlyLimit={tierConfig.hourlyLimit > 0 ? tierConfig.hourlyLimit : undefined}
       />
     </div>
   );

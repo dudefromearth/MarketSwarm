@@ -131,6 +131,13 @@
   pointer-events: auto;
 }
 
+/* ========== Dragging ========== */
+.vexy-chat-panel.dragging {
+  cursor: grabbing;
+  user-select: none;
+  transition: none;
+}
+
 /* ========== Header ========== */
 .vexy-chat-header {
   display: flex;
@@ -140,6 +147,11 @@
   background: var(--vexy-bg-secondary);
   border-bottom: 1px solid var(--vexy-border);
   flex-shrink: 0;
+  cursor: grab;
+}
+
+.vexy-chat-header.dragging {
+  cursor: grabbing;
 }
 
 .vexy-chat-header-left {
