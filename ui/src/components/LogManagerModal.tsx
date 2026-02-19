@@ -53,6 +53,10 @@ export default function LogManagerModal({
   const [renamingLogId, setRenamingLogId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
+  // Inline capital edit state
+  const [editingCapitalLogId, setEditingCapitalLogId] = useState<string | null>(null);
+  const [editCapitalValue, setEditCapitalValue] = useState('');
+
   useEffect(() => {
     if (isOpen) {
       fetchLogs();
@@ -60,6 +64,7 @@ export default function LogManagerModal({
       setRetireConfirmId(null);
       setRetireConfirmName('');
       setRenamingLogId(null);
+      setEditingCapitalLogId(null);
       // Initialize highlight to whatever is currently selected in the app
       setHighlightedLogId(selectedLogId);
     }
@@ -330,6 +335,34 @@ export default function LogManagerModal({
     }
   };
 
+  const handleCapitalUpdate = async (log: TradeLog) => {
+    const dollars = parseFloat(editCapitalValue);
+    if (!dollars || dollars < 100 || dollars === log.starting_capital / 100) {
+      setEditingCapitalLogId(null);
+      return;
+    }
+    const cents = Math.round(dollars * 100);
+    try {
+      const response = await fetch(`${JOURNAL_API}/api/logs/${log.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ starting_capital: cents })
+      });
+      const result = await response.json();
+      if (result.success) {
+        fetchLogs();
+        onLogCreated();
+      } else {
+        alert(result.error || 'Failed to update starting capital');
+      }
+    } catch (err) {
+      console.error('Capital update error:', err);
+      alert('Failed to update starting capital');
+    } finally {
+      setEditingCapitalLogId(null);
+    }
+  };
+
   // Helper to calculate days until retirement
   const getDaysUntilRetirement = (retireScheduledAt: string | null): number | null => {
     if (!retireScheduledAt) return null;
@@ -580,9 +613,37 @@ export default function LogManagerModal({
                         </span>
                       )}
                       {renderLifecycleBadge(log)}
-                      <span className="log-item-capital">
-                        ${(log.starting_capital / 100).toLocaleString()}
-                      </span>
+                      {editingCapitalLogId === log.id ? (
+                        <input
+                          className="log-item-capital-input"
+                          type="number"
+                          value={editCapitalValue}
+                          onChange={e => setEditCapitalValue(e.target.value)}
+                          onBlur={() => handleCapitalUpdate(log)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') handleCapitalUpdate(log);
+                            if (e.key === 'Escape') setEditingCapitalLogId(null);
+                          }}
+                          onClick={e => e.stopPropagation()}
+                          min="100"
+                          step="100"
+                          autoFocus
+                        />
+                      ) : (
+                        <span
+                          className="log-item-capital"
+                          onClick={e => {
+                            if (log.lifecycle_state === 'active') {
+                              e.stopPropagation();
+                              setEditingCapitalLogId(log.id);
+                              setEditCapitalValue(String(log.starting_capital / 100));
+                            }
+                          }}
+                          title={log.lifecycle_state === 'active' ? 'Click to edit starting capital' : undefined}
+                        >
+                          ${(log.starting_capital / 100).toLocaleString()}
+                        </span>
+                      )}
                       <span className="log-item-trades">
                         {log.total_trades} trades
                       </span>
@@ -711,7 +772,7 @@ export default function LogManagerModal({
             </div>
 
             <div className="form-warning">
-              Starting capital and risk per trade cannot be changed after creation.
+              Risk per trade cannot be changed after creation.
             </div>
 
             <div className="form-actions">

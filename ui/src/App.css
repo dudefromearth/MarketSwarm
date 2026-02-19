@@ -9990,6 +9990,34 @@ body {
 .log-item-capital {
   color: var(--text-secondary);
   font-size: 12px;
+  cursor: pointer;
+}
+
+.log-item-capital:hover {
+  color: var(--text-heading);
+  text-decoration: underline dotted;
+}
+
+.archived .log-item-capital,
+.retiring .log-item-capital {
+  cursor: default;
+}
+
+.archived .log-item-capital:hover,
+.retiring .log-item-capital:hover {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.log-item-capital-input {
+  color: var(--text-secondary);
+  font-size: 12px;
+  background: #1e293b;
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+  padding: 1px 4px;
+  width: 80px;
+  outline: none;
 }
 
 .log-item-trades {

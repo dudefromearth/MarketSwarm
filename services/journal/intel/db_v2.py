@@ -2909,7 +2909,7 @@ class JournalDBv2:
         cursor = conn.cursor()
         try:
             # Prevent updating immutable fields
-            immutable = {'starting_capital', 'risk_per_trade', 'max_position_size', 'id', 'user_id', 'created_at'}
+            immutable = {'risk_per_trade', 'max_position_size', 'id', 'user_id', 'created_at'}
             updates = {k: v for k, v in updates.items() if k not in immutable}
 
             if not updates:
@@ -3308,7 +3308,7 @@ class JournalDBv2:
                         WHEN 'archived' THEN 1
                         WHEN 'retired' THEN 2
                     END,
-                    updated_at DESC
+                    created_at DESC
             """
             cursor.execute(query, [user_id] + states)
             rows = cursor.fetchall()
