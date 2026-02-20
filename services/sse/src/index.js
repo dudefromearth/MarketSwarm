@@ -25,6 +25,7 @@ import { authMiddleware, logAuthConfig } from "./auth.js";
 import { initDb, closeDb } from "./db/index.js";
 import { startScheduleBuilder, buildRollingSchedule } from "./econ/scheduleBuilder.js";
 import { initTierGates, gateMiddleware, getTierGates, tierFromRoles, checkGate } from "./tierGates.js";
+import compression from "compression";
 
 const app = express();
 
@@ -230,6 +231,10 @@ app.use("/api/vexy", async (req, res) => {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const UI_DIST = path.resolve(__dirname, "../../../ui/dist");
+
+// Compress static assets at the Express level so nginx passes through
+// without re-compressing (avoids ERR_HTTP2_PROTOCOL_ERROR on large files)
+app.use("/assets", compression({ level: 6, threshold: 1024 }));
 
 // Serve hashed assets with long cache (filenames change on each build)
 app.use("/assets", express.static(path.join(UI_DIST, "assets"), {
