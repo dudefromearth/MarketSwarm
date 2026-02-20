@@ -978,14 +978,12 @@ export default function PositionCreateModal({
                   >
                     {isEditMode ? 'Save Changes' : 'Add to Risk Graph'}
                   </button>
-                  {!isEditMode && (
-                    <button
-                      className="btn btn-import-export"
-                      onClick={() => setMode(mode === 'import' ? 'build' : 'import')}
-                    >
-                      {mode === 'import' ? 'Back to Build' : 'Import / Export'}
-                    </button>
-                  )}
+                  <button
+                    className="btn btn-import-export"
+                    onClick={() => setMode(mode === 'import' ? 'build' : 'import')}
+                  >
+                    {mode === 'import' ? 'Back to Build' : 'Import / Export'}
+                  </button>
                   <button className="btn btn-cancel" onClick={handleClose}>
                     Cancel
                   </button>
