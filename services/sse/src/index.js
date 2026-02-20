@@ -231,15 +231,32 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const UI_DIST = path.resolve(__dirname, "../../../ui/dist");
 
-// Serve static files (JS, CSS, images, etc.)
-app.use(express.static(UI_DIST));
+// Serve hashed assets with long cache (filenames change on each build)
+app.use("/assets", express.static(path.join(UI_DIST, "assets"), {
+  maxAge: "1y",
+  immutable: true,
+}));
 
-// SPA fallback - serve index.html for all non-API routes
+// Serve other static files (images, fonts, etc.) with short cache
+app.use(express.static(UI_DIST, {
+  // Exclude index.html from static serving — handled explicitly below
+  index: false,
+}));
+
+// SPA fallback - serve index.html for all non-API/SSE routes
 app.get("*", (req, res) => {
   // Don't serve index.html for API or SSE routes (they should 404 if not matched)
   if (req.path.startsWith("/api/") || req.path.startsWith("/sse/")) {
     return res.status(404).json({ error: "Not found" });
   }
+  // Return 404 for missing asset files instead of serving index.html as JS
+  if (req.path.startsWith("/assets/")) {
+    return res.status(404).json({ error: "Asset not found" });
+  }
+  // index.html must never be cached — ensures users always get the latest bundle references
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
   res.sendFile(path.join(UI_DIST, "index.html"));
 });
 
