@@ -500,7 +500,10 @@ def write_dealer_gravity_artifact(bins_tv: Dict[int, float], symbol: str) -> Non
     artifact_key = f"dealer_gravity:artifact:{symbol}"
     r = rds_system()
     r.set(artifact_key, json.dumps(artifact))
-    r.bgsave()
+    try:
+        r.bgsave()
+    except Exception:
+        pass  # BGSAVE already in progress from save_to_system_redis
     log("artifact", "💾", f"Wrote dealer gravity artifact to SYSTEM_REDIS ({artifact_key})")
     log("artifact", "💾", f"  {len(compact['volumes'])} bins, "
         f"{len(structures['volume_nodes'])} nodes, "
