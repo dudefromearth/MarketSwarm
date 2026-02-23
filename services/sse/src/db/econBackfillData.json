@@ -1,462 +1,1085 @@
 {
-  "_comment": "UERS v1.1 — Pre-computed cadence rules for economic indicators. Derived from hardcoded ECONOMIC_CALENDAR.",
+  "_comment": "UERS v1.2.1 \u2014 Cadence rules for all 48 economic indicators. Full 2026 calendar with govt shutdown corrections. Sources: BLS, BEA, Census, ISM, S&P Global, Conference Board, NAR, Fed.",
   "rules": [
     {
-      "key": "nfp",
-      "release_time_et": "08:30",
-      "cadence": "first_friday",
-      "rule_json": {
-        "type": "first_friday",
-        "time_et": "08:30",
-        "skip_holidays": true
-      }
-    },
-    {
-      "key": "cpi",
-      "release_time_et": "08:30",
-      "cadence": "fixed_dates",
-      "rule_json": {
-        "type": "fixed_dates",
-        "time_et": "08:30",
-        "dates": [
-          "2025-01-15", "2025-02-12", "2025-03-12", "2025-04-10", "2025-05-13",
-          "2025-06-11", "2025-07-10", "2025-08-12", "2025-09-10", "2025-10-14",
-          "2025-11-12", "2025-12-10",
-          "2026-01-14", "2026-02-11", "2026-03-11", "2026-04-14", "2026-05-12",
-          "2026-06-10", "2026-07-14", "2026-08-12", "2026-09-16", "2026-10-13",
-          "2026-11-10", "2026-12-09"
-        ]
-      }
-    },
-    {
-      "key": "ppi",
-      "release_time_et": "08:30",
-      "cadence": "fixed_dates",
-      "rule_json": {
-        "type": "fixed_dates",
-        "time_et": "08:30",
-        "dates": [
-          "2025-01-14", "2025-02-13", "2025-03-13", "2025-04-11", "2025-05-14",
-          "2025-06-12", "2025-07-11", "2025-08-13", "2025-09-11", "2025-10-15",
-          "2025-11-13", "2025-12-11",
-          "2026-01-15", "2026-02-12", "2026-03-12", "2026-04-15", "2026-05-13",
-          "2026-06-11", "2026-07-15", "2026-08-13", "2026-09-17", "2026-10-14",
-          "2026-11-12", "2026-12-10"
-        ]
-      }
-    },
-    {
-      "key": "fomc",
-      "release_time_et": "14:00",
-      "cadence": "fixed_dates",
-      "rule_json": {
-        "type": "fixed_dates",
-        "time_et": "14:00",
-        "dates": [
-          "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
-          "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-17",
-          "2026-01-28", "2026-03-18", "2026-05-06", "2026-06-17",
-          "2026-07-29", "2026-09-17", "2026-10-28", "2026-12-16"
-        ]
-      }
-    },
-    {
-      "key": "ism_manufacturing",
-      "release_time_et": "10:00",
-      "cadence": "fixed_dates",
-      "rule_json": {
-        "type": "fixed_dates",
-        "time_et": "10:00",
-        "dates": [
-          "2025-03-03", "2025-05-01", "2025-06-02"
-        ]
-      }
-    },
-    {
       "key": "adp_employment",
-      "release_time_et": "08:30",
       "cadence": "fixed_dates",
       "rule_json": {
         "type": "fixed_dates",
-        "time_et": "08:30",
         "dates": [
-          "2025-04-02"
-        ]
-      }
-    },
-    {
-      "key": "gdp",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
+          "2026-01-07",
+          "2026-02-04",
+          "2026-03-04",
+          "2026-04-01",
+          "2026-05-06",
+          "2026-06-03",
+          "2026-07-01",
+          "2026-08-05",
+          "2026-09-02",
+          "2026-09-30",
+          "2026-11-04",
+          "2026-12-02"
+        ],
         "time_et": "08:30"
-      }
+      },
+      "release_time_et": "08:30"
     },
     {
       "key": "avg_hourly_earnings",
-      "release_time_et": "08:30",
-      "cadence": "manual",
+      "cadence": "fixed_dates",
       "rule_json": {
-        "type": "manual",
-        "time_et": "08:30",
-        "note": "Released with NFP on first Friday"
-      }
-    },
-    {
-      "key": "unemployment_rate",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "08:30",
-        "note": "Released with NFP on first Friday"
-      }
-    },
-    {
-      "key": "retail_sales",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-09",
+          "2026-02-06",
+          "2026-03-06",
+          "2026-04-03",
+          "2026-05-08",
+          "2026-06-05",
+          "2026-07-02",
+          "2026-08-07",
+          "2026-09-04",
+          "2026-10-02",
+          "2026-11-06",
+          "2026-12-04"
+        ],
         "time_et": "08:30"
-      }
-    },
-    {
-      "key": "ism_services",
-      "release_time_et": "10:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
-    },
-    {
-      "key": "core_retail_sales",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "08:30"
-      }
-    },
-    {
-      "key": "flash_mfg_pmi",
-      "release_time_et": "09:45",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "09:45"
-      }
-    },
-    {
-      "key": "flash_services_pmi",
-      "release_time_et": "09:45",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "09:45"
-      }
-    },
-    {
-      "key": "housing_starts",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "08:30"
-      }
-    },
-    {
-      "key": "durable_goods",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "08:30"
-      }
-    },
-    {
-      "key": "core_durable_goods",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "08:30"
-      }
-    },
-    {
-      "key": "eci",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "08:30"
-      }
-    },
-    {
-      "key": "consumer_confidence",
-      "release_time_et": "10:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
-    },
-    {
-      "key": "prelim_uom_sentiment",
-      "release_time_et": "10:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
-    },
-    {
-      "key": "revised_uom_sentiment",
-      "release_time_et": "10:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
-    },
-    {
-      "key": "initial_claims",
-      "release_time_et": "08:30",
-      "cadence": "weekly",
-      "rule_json": {
-        "type": "weekly",
-        "time_et": "08:30",
-        "weekday": 4
-      }
-    },
-    {
-      "key": "jolts",
-      "release_time_et": "10:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
-    },
-    {
-      "key": "goods_trade_balance",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "08:30"
-      }
-    },
-    {
-      "key": "personal_income",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "08:30"
-      }
-    },
-    {
-      "key": "personal_spending",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "08:30"
-      }
-    },
-    {
-      "key": "revised_uom_inflation",
-      "release_time_et": "10:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
-    },
-    {
-      "key": "rcm_tipp",
-      "release_time_et": "10:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
+      },
+      "release_time_et": "08:30"
     },
     {
       "key": "beige_book",
-      "release_time_et": "14:00",
-      "cadence": "manual",
+      "cadence": "fixed_dates",
       "rule_json": {
-        "type": "manual",
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-14",
+          "2026-03-04",
+          "2026-04-22",
+          "2026-06-03",
+          "2026-07-15",
+          "2026-09-02",
+          "2026-10-14",
+          "2026-12-02"
+        ],
         "time_et": "14:00"
-      }
+      },
+      "release_time_et": "14:00"
     },
     {
-      "key": "chicago_pmi",
-      "release_time_et": "09:45",
-      "cadence": "manual",
+      "key": "capacity_utilization",
+      "cadence": "fixed_dates",
       "rule_json": {
-        "type": "manual",
-        "time_et": "09:45"
-      }
-    },
-    {
-      "key": "philly_fed",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "08:30"
-      }
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-16",
+          "2026-02-18",
+          "2026-03-16",
+          "2026-04-16",
+          "2026-05-15",
+          "2026-06-15",
+          "2026-07-17",
+          "2026-08-18",
+          "2026-09-18",
+          "2026-10-16",
+          "2026-11-17",
+          "2026-12-16"
+        ],
+        "time_et": "09:15"
+      },
+      "release_time_et": "09:15"
     },
     {
       "key": "challenger_job_cuts",
-      "release_time_et": "07:30",
-      "cadence": "manual",
+      "cadence": "fixed_dates",
       "rule_json": {
-        "type": "manual",
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-08",
+          "2026-02-05",
+          "2026-03-05",
+          "2026-04-02",
+          "2026-05-07",
+          "2026-06-04",
+          "2026-07-02",
+          "2026-08-06",
+          "2026-09-03",
+          "2026-10-01",
+          "2026-11-05",
+          "2026-12-03"
+        ],
         "time_et": "07:30"
-      }
+      },
+      "release_time_et": "07:30"
     },
     {
-      "key": "trade_balance",
-      "release_time_et": "08:30",
-      "cadence": "manual",
+      "key": "chicago_pmi",
+      "cadence": "fixed_dates",
       "rule_json": {
-        "type": "manual",
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-30",
+          "2026-02-27",
+          "2026-03-31",
+          "2026-04-30",
+          "2026-05-29",
+          "2026-06-30",
+          "2026-07-31",
+          "2026-08-28",
+          "2026-09-30",
+          "2026-10-30",
+          "2026-11-30",
+          "2026-12-30"
+        ],
+        "time_et": "09:45"
+      },
+      "release_time_et": "09:45"
+    },
+    {
+      "key": "chicago_pmi_legacy",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-30",
+          "2026-02-27",
+          "2026-03-31",
+          "2026-04-30",
+          "2026-05-29",
+          "2026-06-30",
+          "2026-07-31",
+          "2026-08-28",
+          "2026-09-30",
+          "2026-10-30",
+          "2026-11-30",
+          "2026-12-30"
+        ],
+        "time_et": "09:45"
+      },
+      "release_time_et": "09:45"
+    },
+    {
+      "key": "consumer_confidence",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-27",
+          "2026-02-24",
+          "2026-03-31",
+          "2026-04-28",
+          "2026-05-26",
+          "2026-06-30",
+          "2026-07-28",
+          "2026-08-25",
+          "2026-09-29",
+          "2026-10-27",
+          "2026-11-24",
+          "2026-12-29"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
+    },
+    {
+      "key": "core_durable_goods",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-02-18",
+          "2026-02-25",
+          "2026-03-25",
+          "2026-04-24",
+          "2026-05-27",
+          "2026-06-24",
+          "2026-07-24",
+          "2026-08-26",
+          "2026-09-24",
+          "2026-10-27",
+          "2026-11-25",
+          "2026-12-23"
+        ],
         "time_et": "08:30"
-      }
+      },
+      "release_time_et": "08:30"
     },
     {
-      "key": "new_home_sales",
-      "release_time_et": "10:00",
-      "cadence": "manual",
+      "key": "core_pce",
+      "cadence": "fixed_dates",
       "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
-    },
-    {
-      "key": "existing_home_sales",
-      "release_time_et": "10:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
-    },
-    {
-      "key": "pending_home_sales",
-      "release_time_et": "10:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
-    },
-    {
-      "key": "empire_state",
-      "release_time_et": "08:30",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
+        "type": "fixed_dates",
+        "dates": [
+          "2026-02-20",
+          "2026-03-13",
+          "2026-04-09",
+          "2026-04-30",
+          "2026-05-28",
+          "2026-06-25",
+          "2026-07-30",
+          "2026-08-26",
+          "2026-09-30",
+          "2026-10-29",
+          "2026-11-25",
+          "2026-12-23"
+        ],
         "time_et": "08:30"
-      }
+      },
+      "release_time_et": "08:30"
     },
     {
-      "key": "richmond_mfg",
-      "release_time_et": "10:00",
-      "cadence": "manual",
+      "key": "core_retail_sales",
+      "cadence": "fixed_dates",
       "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
+        "type": "fixed_dates",
+        "dates": [
+          "2026-02-10",
+          "2026-02-17",
+          "2026-03-16",
+          "2026-04-16",
+          "2026-05-14",
+          "2026-06-17",
+          "2026-07-16",
+          "2026-08-14",
+          "2026-09-16",
+          "2026-10-15",
+          "2026-11-17",
+          "2026-12-16"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
     },
     {
-      "key": "sp_cs_hpi",
-      "release_time_et": "09:00",
-      "cadence": "manual",
+      "key": "cpi",
+      "cadence": "fixed_dates",
       "rule_json": {
-        "type": "manual",
-        "time_et": "09:00"
-      }
-    },
-    {
-      "key": "hpi",
-      "release_time_et": "09:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "09:00"
-      }
-    },
-    {
-      "key": "nahb",
-      "release_time_et": "10:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
-    },
-    {
-      "key": "wholesale_inventories",
-      "release_time_et": "10:00",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "10:00"
-      }
-    },
-    {
-      "key": "industrial_production",
-      "release_time_et": "09:15",
-      "cadence": "manual",
-      "rule_json": {
-        "type": "manual",
-        "time_et": "09:15"
-      }
+        "type": "fixed_dates",
+        "dates": [
+          "2025-01-15",
+          "2025-02-12",
+          "2025-03-12",
+          "2025-04-10",
+          "2025-05-13",
+          "2025-06-11",
+          "2025-07-10",
+          "2025-08-12",
+          "2025-09-10",
+          "2025-10-14",
+          "2025-11-12",
+          "2025-12-10",
+          "2026-01-14",
+          "2026-02-11",
+          "2026-03-11",
+          "2026-04-14",
+          "2026-05-12",
+          "2026-06-10",
+          "2026-07-14",
+          "2026-08-12",
+          "2026-09-16",
+          "2026-10-13",
+          "2026-11-10",
+          "2026-12-09"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
     },
     {
       "key": "crude_oil_inventories",
-      "release_time_et": "10:30",
       "cadence": "weekly",
       "rule_json": {
         "type": "weekly",
         "time_et": "10:30",
         "weekday": 3
-      }
+      },
+      "release_time_et": "10:30"
+    },
+    {
+      "key": "durable_goods",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-02-18",
+          "2026-02-25",
+          "2026-03-25",
+          "2026-04-24",
+          "2026-05-27",
+          "2026-06-24",
+          "2026-07-24",
+          "2026-08-26",
+          "2026-09-24",
+          "2026-10-27",
+          "2026-11-25",
+          "2026-12-23"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "eci",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-02-10",
+          "2026-04-30",
+          "2026-07-31",
+          "2026-10-30"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "empire_state",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-15",
+          "2026-02-17",
+          "2026-03-16",
+          "2026-04-15",
+          "2026-05-15",
+          "2026-06-15",
+          "2026-07-15",
+          "2026-08-17",
+          "2026-09-15",
+          "2026-10-15",
+          "2026-11-16",
+          "2026-12-15"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "existing_home_sales",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-22",
+          "2026-02-12",
+          "2026-03-10",
+          "2026-04-22",
+          "2026-05-21",
+          "2026-06-22",
+          "2026-07-22",
+          "2026-08-21",
+          "2026-09-21",
+          "2026-10-22",
+          "2026-11-19",
+          "2026-12-22"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
+    },
+    {
+      "key": "flash_mfg_pmi",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-23",
+          "2026-02-20",
+          "2026-03-24",
+          "2026-04-23",
+          "2026-05-21",
+          "2026-06-23",
+          "2026-07-24",
+          "2026-08-21",
+          "2026-09-23",
+          "2026-10-22",
+          "2026-11-20",
+          "2026-12-16"
+        ],
+        "time_et": "09:45"
+      },
+      "release_time_et": "09:45"
+    },
+    {
+      "key": "flash_services_pmi",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-23",
+          "2026-02-20",
+          "2026-03-24",
+          "2026-04-23",
+          "2026-05-21",
+          "2026-06-23",
+          "2026-07-24",
+          "2026-08-21",
+          "2026-09-23",
+          "2026-10-22",
+          "2026-11-20",
+          "2026-12-16"
+        ],
+        "time_et": "09:45"
+      },
+      "release_time_et": "09:45"
+    },
+    {
+      "key": "fomc",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2025-01-29",
+          "2025-03-19",
+          "2025-05-07",
+          "2025-06-18",
+          "2025-07-30",
+          "2025-09-17",
+          "2025-10-29",
+          "2025-12-17",
+          "2026-01-28",
+          "2026-03-18",
+          "2026-05-06",
+          "2026-06-17",
+          "2026-07-29",
+          "2026-09-17",
+          "2026-10-28",
+          "2026-12-16"
+        ],
+        "time_et": "14:00"
+      },
+      "release_time_et": "14:00"
+    },
+    {
+      "key": "gdp",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-02-20",
+          "2026-03-13",
+          "2026-04-09",
+          "2026-04-30",
+          "2026-05-28",
+          "2026-06-25",
+          "2026-07-30",
+          "2026-08-26",
+          "2026-09-30",
+          "2026-10-29",
+          "2026-11-25",
+          "2026-12-23"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "goods_trade_balance",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-28",
+          "2026-02-26",
+          "2026-03-27",
+          "2026-04-28",
+          "2026-05-27",
+          "2026-06-26",
+          "2026-07-29",
+          "2026-08-26",
+          "2026-09-25",
+          "2026-10-28",
+          "2026-11-25",
+          "2026-12-30"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "housing_starts",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-02-18",
+          "2026-03-17",
+          "2026-04-16",
+          "2026-05-19",
+          "2026-06-17",
+          "2026-07-21",
+          "2026-08-18",
+          "2026-09-17",
+          "2026-10-20",
+          "2026-11-18",
+          "2026-12-17"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "hpi",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-27",
+          "2026-02-24",
+          "2026-03-24",
+          "2026-04-28",
+          "2026-05-26",
+          "2026-06-23",
+          "2026-07-28",
+          "2026-08-25",
+          "2026-09-29",
+          "2026-10-27",
+          "2026-11-24",
+          "2026-12-22"
+        ],
+        "time_et": "09:00"
+      },
+      "release_time_et": "09:00"
+    },
+    {
+      "key": "industrial_production",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-16",
+          "2026-02-18",
+          "2026-03-16",
+          "2026-04-16",
+          "2026-05-15",
+          "2026-06-15",
+          "2026-07-17",
+          "2026-08-18",
+          "2026-09-18",
+          "2026-10-16",
+          "2026-11-17",
+          "2026-12-16"
+        ],
+        "time_et": "09:15"
+      },
+      "release_time_et": "09:15"
+    },
+    {
+      "key": "initial_claims",
+      "cadence": "weekly",
+      "rule_json": {
+        "type": "weekly",
+        "time_et": "08:30",
+        "weekday": 4
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "ism_manufacturing",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-05",
+          "2026-02-02",
+          "2026-03-02",
+          "2026-04-01",
+          "2026-05-01",
+          "2026-06-01",
+          "2026-07-01",
+          "2026-08-03",
+          "2026-09-01",
+          "2026-10-01",
+          "2026-11-02",
+          "2026-12-01"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
+    },
+    {
+      "key": "ism_services",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-07",
+          "2026-02-04",
+          "2026-03-04",
+          "2026-04-03",
+          "2026-05-05",
+          "2026-06-03",
+          "2026-07-06",
+          "2026-08-05",
+          "2026-09-03",
+          "2026-10-05",
+          "2026-11-04",
+          "2026-12-03"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
+    },
+    {
+      "key": "jolts",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-06",
+          "2026-02-03",
+          "2026-03-10",
+          "2026-04-07",
+          "2026-05-05",
+          "2026-06-02",
+          "2026-07-07",
+          "2026-08-04",
+          "2026-09-01",
+          "2026-10-06",
+          "2026-11-03",
+          "2026-12-08"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
+    },
+    {
+      "key": "nahb",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-16",
+          "2026-02-17",
+          "2026-03-17",
+          "2026-04-16",
+          "2026-05-18",
+          "2026-06-16",
+          "2026-07-16",
+          "2026-08-17",
+          "2026-09-16",
+          "2026-10-19",
+          "2026-11-17",
+          "2026-12-16"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
     },
     {
       "key": "natural_gas_storage",
-      "release_time_et": "10:30",
       "cadence": "weekly",
       "rule_json": {
         "type": "weekly",
         "time_et": "10:30",
         "weekday": 4
-      }
+      },
+      "release_time_et": "10:30"
     },
     {
-      "key": "capacity_utilization",
-      "release_time_et": "09:15",
-      "cadence": "manual",
+      "key": "new_home_sales",
+      "cadence": "fixed_dates",
       "rule_json": {
-        "type": "manual",
-        "time_et": "09:15"
-      }
+        "type": "fixed_dates",
+        "dates": [
+          "2026-02-20",
+          "2026-02-25",
+          "2026-03-25",
+          "2026-04-23",
+          "2026-05-26",
+          "2026-06-24",
+          "2026-07-27",
+          "2026-08-25",
+          "2026-09-24",
+          "2026-10-27",
+          "2026-11-25",
+          "2026-12-23"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
     },
     {
-      "key": "chicago_pmi_legacy",
-      "release_time_et": "09:45",
-      "cadence": "manual",
+      "key": "nfp",
+      "cadence": "fixed_dates",
       "rule_json": {
-        "type": "manual",
-        "time_et": "09:45"
-      }
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-09",
+          "2026-02-06",
+          "2026-03-06",
+          "2026-04-03",
+          "2026-05-08",
+          "2026-06-05",
+          "2026-07-02",
+          "2026-08-07",
+          "2026-09-04",
+          "2026-10-02",
+          "2026-11-06",
+          "2026-12-04"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "pending_home_sales",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-29",
+          "2026-02-19",
+          "2026-03-17",
+          "2026-04-28",
+          "2026-05-28",
+          "2026-06-25",
+          "2026-07-29",
+          "2026-08-27",
+          "2026-09-28",
+          "2026-10-28",
+          "2026-11-30",
+          "2026-12-30"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
+    },
+    {
+      "key": "personal_income",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-02-20",
+          "2026-03-13",
+          "2026-04-09",
+          "2026-04-30",
+          "2026-05-28",
+          "2026-06-25",
+          "2026-07-30",
+          "2026-08-26",
+          "2026-09-30",
+          "2026-10-29",
+          "2026-11-25",
+          "2026-12-23"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "personal_spending",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-02-20",
+          "2026-03-13",
+          "2026-04-09",
+          "2026-04-30",
+          "2026-05-28",
+          "2026-06-25",
+          "2026-07-30",
+          "2026-08-26",
+          "2026-09-30",
+          "2026-10-29",
+          "2026-11-25",
+          "2026-12-23"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "philly_fed",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-15",
+          "2026-02-19",
+          "2026-03-19",
+          "2026-04-16",
+          "2026-05-21",
+          "2026-06-18",
+          "2026-07-16",
+          "2026-08-20",
+          "2026-09-17",
+          "2026-10-15",
+          "2026-11-19",
+          "2026-12-17"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "ppi",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2025-01-14",
+          "2025-02-13",
+          "2025-03-13",
+          "2025-04-11",
+          "2025-05-14",
+          "2025-06-12",
+          "2025-07-11",
+          "2025-08-13",
+          "2025-09-11",
+          "2025-10-15",
+          "2025-11-13",
+          "2025-12-11",
+          "2026-01-15",
+          "2026-02-12",
+          "2026-03-12",
+          "2026-04-15",
+          "2026-05-13",
+          "2026-06-11",
+          "2026-07-15",
+          "2026-08-13",
+          "2026-09-17",
+          "2026-10-14",
+          "2026-11-12",
+          "2026-12-10"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "prelim_uom_sentiment",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-16",
+          "2026-02-13",
+          "2026-03-13",
+          "2026-04-10",
+          "2026-05-15",
+          "2026-06-12",
+          "2026-07-17",
+          "2026-08-14",
+          "2026-09-11",
+          "2026-10-16",
+          "2026-11-13",
+          "2026-12-11"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
+    },
+    {
+      "key": "rcm_tipp",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-06",
+          "2026-02-03",
+          "2026-03-03",
+          "2026-04-07",
+          "2026-05-05",
+          "2026-06-02",
+          "2026-07-07",
+          "2026-08-04",
+          "2026-09-01",
+          "2026-10-06",
+          "2026-11-03",
+          "2026-12-01"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
+    },
+    {
+      "key": "retail_sales",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-02-10",
+          "2026-02-17",
+          "2026-03-16",
+          "2026-04-16",
+          "2026-05-14",
+          "2026-06-17",
+          "2026-07-16",
+          "2026-08-14",
+          "2026-09-16",
+          "2026-10-15",
+          "2026-11-17",
+          "2026-12-16"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "revised_uom_inflation",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-30",
+          "2026-02-27",
+          "2026-03-27",
+          "2026-04-24",
+          "2026-05-29",
+          "2026-06-26",
+          "2026-07-31",
+          "2026-08-28",
+          "2026-09-25",
+          "2026-10-30",
+          "2026-11-20",
+          "2026-12-23"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
+    },
+    {
+      "key": "revised_uom_sentiment",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-30",
+          "2026-02-27",
+          "2026-03-27",
+          "2026-04-24",
+          "2026-05-29",
+          "2026-06-26",
+          "2026-07-31",
+          "2026-08-28",
+          "2026-09-25",
+          "2026-10-30",
+          "2026-11-20",
+          "2026-12-23"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
+    },
+    {
+      "key": "richmond_mfg",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-27",
+          "2026-02-24",
+          "2026-03-24",
+          "2026-04-28",
+          "2026-05-26",
+          "2026-06-23",
+          "2026-07-28",
+          "2026-08-25",
+          "2026-09-22",
+          "2026-10-27",
+          "2026-11-24",
+          "2026-12-22"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
+    },
+    {
+      "key": "sp_cs_hpi",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-27",
+          "2026-02-24",
+          "2026-03-31",
+          "2026-04-28",
+          "2026-05-26",
+          "2026-06-30",
+          "2026-07-28",
+          "2026-08-25",
+          "2026-09-29",
+          "2026-10-27",
+          "2026-11-24",
+          "2026-12-29"
+        ],
+        "time_et": "09:00"
+      },
+      "release_time_et": "09:00"
+    },
+    {
+      "key": "trade_balance",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-08",
+          "2026-01-29",
+          "2026-02-19",
+          "2026-04-02",
+          "2026-05-05",
+          "2026-06-04",
+          "2026-07-02",
+          "2026-08-05",
+          "2026-09-03",
+          "2026-10-06",
+          "2026-11-05",
+          "2026-12-04"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "unemployment_rate",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-09",
+          "2026-02-06",
+          "2026-03-06",
+          "2026-04-03",
+          "2026-05-08",
+          "2026-06-05",
+          "2026-07-02",
+          "2026-08-07",
+          "2026-09-04",
+          "2026-10-02",
+          "2026-11-06",
+          "2026-12-04"
+        ],
+        "time_et": "08:30"
+      },
+      "release_time_et": "08:30"
+    },
+    {
+      "key": "wholesale_inventories",
+      "cadence": "fixed_dates",
+      "rule_json": {
+        "type": "fixed_dates",
+        "dates": [
+          "2026-01-08",
+          "2026-01-29",
+          "2026-03-10",
+          "2026-04-09",
+          "2026-05-08",
+          "2026-06-10",
+          "2026-07-10",
+          "2026-08-10",
+          "2026-09-10",
+          "2026-10-09",
+          "2026-11-10",
+          "2026-12-09"
+        ],
+        "time_et": "10:00"
+      },
+      "release_time_et": "10:00"
     }
   ]
 }

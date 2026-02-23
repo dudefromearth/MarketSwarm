@@ -393,10 +393,11 @@ class MarketStateEngine:
             if not raw:
                 return None
             artifact = json.loads(raw)
-            # Staleness guard: if today is past window_end, treat as missing
+            # Staleness guard: if today is outside the artifact window, treat as missing
+            window_start = artifact.get("window_start", "")
             window_end = artifact.get("window_end", "")
-            if today_str > window_end:
-                self.logger.warning("Rolling schedule artifact is stale", emoji="⚠️")
+            if today_str < window_start or today_str > window_end:
+                self.logger.warning("Rolling schedule artifact does not cover today", emoji="⚠️")
                 return None
             day_data = artifact.get("days", {}).get(today_str)
             if day_data is None:
