@@ -118,13 +118,13 @@
 }
 
 [data-contrast="high"] {
-  --text-primary: #fff;
-  --text-heading: #fff;
-  --text-bright: #fff;
-  --text-secondary: #c8d4e8;
-  --text-tertiary: #b8b8b8;
-  --text-muted: #959595;
-  --text-faint: #96a8be;
+  --text-primary: #f5f5f5;
+  --text-heading: #ffffff;
+  --text-bright: #ffffff;
+  --text-secondary: #e8e8e8;
+  --text-tertiary: #dcdcdc;
+  --text-muted: #c8c8c8;
+  --text-faint: #b8b8b8;
 }
 
 /* Contrast levels — light theme */
@@ -139,13 +139,13 @@
 }
 
 [data-theme="light"][data-contrast="high"] {
-  --text-primary: #000;
-  --text-heading: #000;
-  --text-bright: #000;
-  --text-secondary: #1a1a1f;
-  --text-tertiary: #333;
-  --text-muted: #555;
-  --text-faint: #555;
+  --text-primary: #0a0a0a;
+  --text-heading: #000000;
+  --text-bright: #000000;
+  --text-secondary: #111111;
+  --text-tertiary: #1a1a1a;
+  --text-muted: #2a2a2a;
+  --text-faint: #333333;
 }
 
 /* ── Apple-style range sliders ── */
