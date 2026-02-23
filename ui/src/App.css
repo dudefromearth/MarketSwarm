@@ -4144,6 +4144,14 @@ body {
   align-items: center;
 }
 
+.btn-price-lock img {
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.7));
+}
+
+[data-theme="light"] .btn-price-lock img {
+  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.3));
+}
+
 .btn-price-lock:hover {
   color: var(--text-bright, #fff);
 }
