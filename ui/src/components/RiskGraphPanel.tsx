@@ -96,6 +96,35 @@ export interface EditingAlertData {
 }
 
 
+// Compute structural max loss from strategy properties (not P&L curve)
+function computeStructuralMaxLoss(strategy: RiskGraphStrategy): { defined: boolean; maxLoss: number } {
+  const multiplier = 100;
+  const rawDebit = strategy.debit || 0;
+  const s = strategy as RiskGraphStrategy & { positionType?: string; direction?: string; costBasisType?: string };
+
+  // --- Undefined risk detection ---
+  // New position model: short singles/straddles/strangles
+  if (s.positionType && s.direction === 'short' &&
+      ['single', 'straddle', 'strangle'].includes(s.positionType)) {
+    return { defined: false, maxLoss: Infinity };
+  }
+  // Legacy model: single with credit = naked short
+  if (strategy.strategy === 'single' && !s.positionType) {
+    if (s.costBasisType === 'credit' || s.direction === 'short') {
+      return { defined: false, maxLoss: Infinity };
+    }
+  }
+
+  // --- Defined risk computation ---
+  if (s.costBasisType === 'credit') {
+    // Credit strategy: max loss = (width - credit) × multiplier
+    const width = strategy.width || 0;
+    return { defined: true, maxLoss: (width - rawDebit) * multiplier };
+  }
+  // Debit strategy: max loss = debit × multiplier
+  return { defined: true, maxLoss: rawDebit * multiplier };
+}
+
 // Local color palette (matches types/alerts.ts ALERT_COLORS)
 const ALERT_COLOR_PALETTE = [
   '#ef4444', '#f97316', '#eab308',
@@ -1595,7 +1624,16 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                 </div>
                 <div className="stat">
                   <span className="stat-label">Max Loss</span>
-                  <span className="stat-value loss">${riskGraphData.minPnL.toFixed(0)}</span>
+                  <span className="stat-value loss">
+                    {(() => {
+                      const visible = strategies.filter(s => s.visible);
+                      if (visible.length === 0) return '-';
+                      const results = visible.map(computeStructuralMaxLoss);
+                      if (results.some(r => !r.defined)) return 'UND';
+                      const total = results.reduce((sum, r) => sum + r.maxLoss, 0);
+                      return `-$${total.toFixed(0)}`;
+                    })()}
+                  </span>
                 </div>
                 <div className="stat">
                   <span className="stat-label">R2R</span>
