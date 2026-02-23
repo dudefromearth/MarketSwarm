@@ -356,6 +356,8 @@ def auto_detect_structures(
 
 def save_to_system_redis(obj: Dict[str, Any]) -> None:
     out = dict(obj)
+    # Strip OHLC bars — only needed for build, not serving. Saves ~85MB in Redis.
+    out.pop("ohlc", None)
 
     # Create standardized bins from 2000-7000
     raw_standardized = create_standardized_bins(obj.get("buckets_raw", {}))
@@ -367,9 +369,12 @@ def save_to_system_redis(obj: Dict[str, Any]) -> None:
     out["max_price"] = SPX_MAX_PRICE
     out["bin_count"] = SPX_MAX_PRICE - SPX_MIN_PRICE + 1
 
-    rds_system().set(SYSTEM_KEY, json.dumps(out))
+    r = rds_system()
+    r.set(SYSTEM_KEY, json.dumps(out))
+    r.bgsave()
     log("redis", "💾", f"Wrote base profile to SYSTEM_REDIS ({SYSTEM_KEY})")
     log("redis", "💾", f"  Standardized bins: {out['bin_count']} (${SPX_MIN_PRICE}-${SPX_MAX_PRICE})")
+    log("redis", "💾", "  BGSAVE triggered — snapshot will persist across restarts")
 
 
 def publish_to_market(obj: Dict[str, Any]) -> None:
@@ -493,7 +498,9 @@ def write_dealer_gravity_artifact(bins_tv: Dict[int, float], symbol: str) -> Non
     }
 
     artifact_key = f"dealer_gravity:artifact:{symbol}"
-    rds_system().set(artifact_key, json.dumps(artifact))
+    r = rds_system()
+    r.set(artifact_key, json.dumps(artifact))
+    r.bgsave()
     log("artifact", "💾", f"Wrote dealer gravity artifact to SYSTEM_REDIS ({artifact_key})")
     log("artifact", "💾", f"  {len(compact['volumes'])} bins, "
         f"{len(structures['volume_nodes'])} nodes, "
