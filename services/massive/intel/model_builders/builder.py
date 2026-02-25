@@ -10,7 +10,8 @@ from redis.asyncio import Redis
 
 
 # ============================================================
-# Black-Scholes pricing (for theoretical tile values)
+# Black-Scholes pricing with VIX-based volatility skew
+# (matches Risk Graph's useRiskGraphCalculations.ts model)
 # ============================================================
 
 def _norm_cdf(x: float) -> float:
@@ -36,6 +37,50 @@ def _bs_put(S: float, K: float, T: float, r: float, sigma: float) -> float:
     d1 = (log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * sqrtT)
     d2 = d1 - sigma * sqrtT
     return K * exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
+
+
+# Regime configs — must match MARKET_REGIMES in useRiskGraphCalculations.ts
+_REGIMES = {
+    "low_vol":  {"put_skew": 0.10, "call_skew": 0.02, "atm_boost": 0.0},
+    "normal":   {"put_skew": 0.15, "call_skew": 0.03, "atm_boost": 0.0},
+    "elevated": {"put_skew": 0.30, "call_skew": 0.05, "atm_boost": 0.0},
+    "panic":    {"put_skew": 0.50, "call_skew": 0.08, "atm_boost": 0.05},
+}
+
+
+def _get_regime(vix: float) -> dict:
+    """Determine regime from VIX level (matches frontend regime auto-detection)."""
+    if vix <= 14:
+        return _REGIMES["low_vol"]
+    elif vix <= 18:
+        return _REGIMES["normal"]
+    elif vix <= 30:
+        return _REGIMES["elevated"]
+    else:
+        return _REGIMES["panic"]
+
+
+def _skewed_iv(base_iv: float, strike: float, spot: float, regime: dict) -> float:
+    """
+    Calculate strike-specific IV with skew — matches calculateSkewedIV() in
+    useRiskGraphCalculations.ts exactly.
+    """
+    moneyness = (strike - spot) / spot  # negative = OTM put, positive = OTM call
+
+    skew_adj = 0.0
+    if moneyness < 0:
+        # OTM put — higher IV
+        skew_adj = regime["put_skew"] * abs(moneyness) * 10  # per 10% OTM
+    elif moneyness > 0:
+        # OTM call — slightly higher IV
+        skew_adj = regime["call_skew"] * moneyness * 10
+
+    # ATM boost — Gaussian centered at ATM
+    atm_dist = abs(moneyness)
+    atm_factor = exp(-atm_dist * atm_dist * 50)
+    atm_adj = regime["atm_boost"] * atm_factor
+
+    return base_iv * (1 + skew_adj + atm_adj)
 
 
 _TICKER_RE = re.compile(
@@ -153,12 +198,21 @@ class Builder:
         deltas_with_changes = 0
         deltas_empty = 0
 
+        # Load VIX for theoretical pricing (matches Risk Graph's VIX-based model)
+        vix = 0.0
+        try:
+            raw_vix = await r.get("massive:model:spot:I:VIX")
+            if raw_vix:
+                vix = float(json.loads(raw_vix).get("value", 0))
+        except Exception:
+            pass
+
         try:
             for symbol, contracts in snapshots.items():
                 if symbol not in self.symbols:
                     continue
 
-                new_surface = self._build_surface(symbol, contracts)
+                new_surface = self._build_surface(symbol, contracts, vix=vix)
                 delta = self._diff_surfaces(
                     self.previous_surfaces[symbol], new_surface
                 )
@@ -234,41 +288,33 @@ class Builder:
             return last
         return None
 
-    def _theo_price(self, contract: Dict[str, Any], spot: float, T: float) -> float | None:
+    def _theo_price_skew(
+        self, strike: float, opt_type: str, spot: float, T: float,
+        base_iv: float, regime: dict
+    ) -> float:
         """
-        Compute BS theoretical price using per-contract implied volatility.
-        Falls back to midpoint if IV is unavailable.
+        Compute BS theoretical price using VIX-based IV with skew.
+        Matches the Risk Graph's pricing model exactly.
         """
-        iv = contract.get("implied_volatility")
-        details = contract.get("details", {})
-        strike = details.get("strike_price")
-        contract_type = details.get("contract_type")
-
-        if iv is None or iv <= 0 or strike is None or spot <= 0:
-            return self._price(contract)
-
+        iv = _skewed_iv(base_iv, strike, spot, regime)
         r = 0.05  # risk-free rate
         try:
-            if contract_type == "call":
+            if opt_type == "call":
                 return _bs_call(spot, strike, T, r, iv)
-            elif contract_type == "put":
+            else:
                 return _bs_put(spot, strike, T, r, iv)
         except (ValueError, ZeroDivisionError):
-            pass
-
-        return self._price(contract)
+            return max(0.0, (spot - strike) if opt_type == "call" else (strike - spot))
 
     def _build_surface(
-        self, symbol: str, contracts: Dict[str, Any]
+        self, symbol: str, contracts: Dict[str, Any], vix: float = 0.0
     ) -> Dict[str, Any]:
         """
         Build full surface for a symbol across all DTEs.
         Surface key = f"{strategy}:{dte}:{width}:{strike}"
 
-        Strategies:
-        - butterfly: long lower + short 2x middle + long higher
-        - vertical: debit spread (long strike, short strike+width for calls; long strike, short strike-width for puts)
-        - single: individual option mid price
+        Uses VIX-based BS pricing with volatility skew to match the
+        Risk Graph's theoretical values exactly.
         """
         widths = self.widths_map.get(symbol, [])
 
@@ -295,6 +341,11 @@ class Builder:
                 spot = v
                 break
 
+        # VIX-based theoretical pricing (matches Risk Graph model)
+        base_iv = max(5.0, vix) / 100.0 if vix > 0 else 0.20  # fallback 20% IV
+        regime = _get_regime(vix) if vix > 0 else _REGIMES["normal"]
+        use_theo = spot > 0
+
         # Build tiles for each DTE
         for dte in sorted(by_dte_strike.keys()):
             by_strike = by_dte_strike[dte]
@@ -302,11 +353,16 @@ class Builder:
             # Time to expiry in years (floor at ~1 trading hour for 0-DTE)
             T = max(dte / 365.0, 1.0 / (365 * 24))
 
-            # Pricing helper: use BS+IV when spot available, else midpoint
-            def price(contract):
-                if spot > 0:
-                    return self._theo_price(contract, spot, T)
-                return self._price(contract)
+            # Strike-level pricing helper
+            def call_price(K: float) -> float:
+                if use_theo:
+                    return self._theo_price_skew(K, "call", spot, T, base_iv, regime)
+                return 0.0
+
+            def put_price(K: float) -> float:
+                if use_theo:
+                    return self._theo_price_skew(K, "put", spot, T, base_iv, regime)
+                return 0.0
 
             for strike in sorted(by_strike.keys()):
                 center = strike
@@ -324,12 +380,16 @@ class Builder:
                         "strike": center,
                         "width": 0,
                     }
-                    if call_contract:
-                        call_mid = price(call_contract)
+                    if call_contract and use_theo:
+                        tile["call"] = {"mid": call_price(center)}
+                    elif call_contract:
+                        call_mid = self._price(call_contract)
                         if call_mid is not None:
                             tile["call"] = {"mid": call_mid}
-                    if put_contract:
-                        put_mid = price(put_contract)
+                    if put_contract and use_theo:
+                        tile["put"] = {"mid": put_price(center)}
+                    elif put_contract:
+                        put_mid = self._price(put_contract)
                         if put_mid is not None:
                             tile["put"] = {"mid": put_mid}
 
@@ -352,83 +412,76 @@ class Builder:
                     # ========== BUTTERFLY ==========
                     if all([lc, cc, hc, lp, cp, hp]):
                         call_debit = (
-                            price(lc)
-                            - 2 * price(cc)
-                            + price(hc)
+                            call_price(low)
+                            - 2 * call_price(center)
+                            + call_price(high)
                         )
                         put_debit = (
-                            price(lp)
-                            - 2 * price(cp)
-                            + price(hp)
+                            put_price(high)
+                            - 2 * put_price(center)
+                            + put_price(low)
                         )
 
-                        if call_debit is not None and put_debit is not None:
-                            tile_key = f"butterfly:{dte}:{width}:{int(center)}"
-                            surface[tile_key] = {
-                                "symbol": symbol,
-                                "strategy": "butterfly",
-                                "dte": dte,
-                                "strike": center,
-                                "width": width,
-                                "call": {
-                                    "debit": call_debit,
-                                    "max_profit": width - call_debit,
-                                    "max_loss": call_debit,
-                                },
-                                "put": {
-                                    "debit": put_debit,
-                                    "max_profit": width - put_debit,
-                                    "max_loss": put_debit,
-                                },
-                            }
+                        tile_key = f"butterfly:{dte}:{width}:{int(center)}"
+                        surface[tile_key] = {
+                            "symbol": symbol,
+                            "strategy": "butterfly",
+                            "dte": dte,
+                            "strike": center,
+                            "width": width,
+                            "call": {
+                                "debit": call_debit,
+                                "max_profit": width - call_debit,
+                                "max_loss": call_debit,
+                            },
+                            "put": {
+                                "debit": put_debit,
+                                "max_profit": width - put_debit,
+                                "max_loss": put_debit,
+                            },
+                        }
 
                     # ========== VERTICAL (Call) ==========
                     # Long call at center, short call at center + width
                     if cc and hc:
-                        long_mid = price(cc)
-                        short_mid = price(hc)
-                        if long_mid is not None and short_mid is not None:
-                            debit = long_mid - short_mid
-                            tile_key = f"vertical:{dte}:{width}:{int(center)}"
+                        debit = call_price(center) - call_price(high)
+                        tile_key = f"vertical:{dte}:{width}:{int(center)}"
 
-                            if tile_key not in surface:
-                                surface[tile_key] = {
-                                    "symbol": symbol,
-                                    "strategy": "vertical",
-                                    "dte": dte,
-                                    "strike": center,
-                                    "width": width,
-                                }
-
-                            surface[tile_key]["call"] = {
-                                "debit": debit,
-                                "max_profit": width - debit,
-                                "max_loss": debit,
+                        if tile_key not in surface:
+                            surface[tile_key] = {
+                                "symbol": symbol,
+                                "strategy": "vertical",
+                                "dte": dte,
+                                "strike": center,
+                                "width": width,
                             }
+
+                        surface[tile_key]["call"] = {
+                            "debit": debit,
+                            "max_profit": width - debit,
+                            "max_loss": debit,
+                        }
 
                     # ========== VERTICAL (Put) ==========
                     # Long put at center, short put at center - width
                     if cp and lp:
-                        long_mid = price(cp)
-                        short_mid = price(lp)
-                        if long_mid is not None and short_mid is not None:
-                            debit = long_mid - short_mid
-                            tile_key = f"vertical:{dte}:{width}:{int(center)}"
+                        debit = put_price(center) - put_price(low)
+                        tile_key = f"vertical:{dte}:{width}:{int(center)}"
 
-                            if tile_key not in surface:
-                                surface[tile_key] = {
-                                    "symbol": symbol,
-                                    "strategy": "vertical",
-                                    "dte": dte,
-                                    "strike": center,
-                                    "width": width,
-                                }
-
-                            surface[tile_key]["put"] = {
-                                "debit": debit,
-                                "max_profit": width - debit,
-                                "max_loss": debit,
+                        if tile_key not in surface:
+                            surface[tile_key] = {
+                                "symbol": symbol,
+                                "strategy": "vertical",
+                                "dte": dte,
+                                "strike": center,
+                                "width": width,
                             }
+
+                        surface[tile_key]["put"] = {
+                            "debit": debit,
+                            "max_profit": width - debit,
+                            "max_loss": debit,
+                        }
 
         return surface
 
