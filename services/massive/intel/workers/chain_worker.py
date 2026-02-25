@@ -206,7 +206,7 @@ class ChainWorker:
         for ticker in contracts.keys():
             # Check if expiration matches today (YYMMDD or YYYYMMDD format)
             if today in ticker or today_long in ticker:
-                zero_dte_tickers.add(f"T.{ticker}")  # T for trades
+                zero_dte_tickers.add(f"Q.{ticker}")  # Q for quotes (real-time bid/ask)
 
         if not zero_dte_tickers:
             self.logger.debug("[CHAIN] No 0-DTE tickers for WS subscription")

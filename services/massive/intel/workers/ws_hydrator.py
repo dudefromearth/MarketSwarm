@@ -183,28 +183,30 @@ class WsHydrator:
             updated = False
             saw_price_field = False
 
-            # Last price
+            # Last price (from trade events)
             if e.get("p") is not None:
                 saw_price_field = True
                 if self._update_field(contract, "last", float(e["p"])):
                     updated = True
 
-            # Bid / ask (track separately for directional pressure)
-            if e.get("b") is not None:
+            # Bid / ask — handle both stock quotes (b/a) and options quotes (bp/ap)
+            bid_val = e.get("b") if e.get("b") is not None else e.get("bp")
+            if bid_val is not None:
                 saw_price_field = True
-                if self._update_field(contract, "bid", float(e["b"])):
+                if self._update_field(contract, "bid", float(bid_val)):
                     updated = True
                     if strike_stats:
                         strike_stats["bids"] += 1
 
-            if e.get("a") is not None:
+            ask_val = e.get("a") if e.get("a") is not None else e.get("ap")
+            if ask_val is not None:
                 saw_price_field = True
-                if self._update_field(contract, "ask", float(e["a"])):
+                if self._update_field(contract, "ask", float(ask_val)):
                     updated = True
                     if strike_stats:
                         strike_stats["asks"] += 1
 
-            # Size
+            # Size (from trade events)
             if e.get("s") is not None:
                 saw_price_field = True
                 if self._update_field(contract, "size", int(e["s"])):
