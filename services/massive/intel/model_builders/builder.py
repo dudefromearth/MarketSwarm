@@ -3,9 +3,39 @@ import asyncio
 import time
 import re
 from datetime import datetime, date
+from math import log, sqrt, exp, erf
 from typing import Dict, Any, Tuple, Set
 
 from redis.asyncio import Redis
+
+
+# ============================================================
+# Black-Scholes pricing (for theoretical tile values)
+# ============================================================
+
+def _norm_cdf(x: float) -> float:
+    """Standard normal CDF using math.erf (exact)."""
+    return 0.5 * (1 + erf(x / sqrt(2)))
+
+
+def _bs_call(S: float, K: float, T: float, r: float, sigma: float) -> float:
+    """Black-Scholes call price."""
+    if T <= 0 or sigma <= 0:
+        return max(0.0, S - K)
+    sqrtT = sqrt(T)
+    d1 = (log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * sqrtT)
+    d2 = d1 - sigma * sqrtT
+    return S * _norm_cdf(d1) - K * exp(-r * T) * _norm_cdf(d2)
+
+
+def _bs_put(S: float, K: float, T: float, r: float, sigma: float) -> float:
+    """Black-Scholes put price."""
+    if T <= 0 or sigma <= 0:
+        return max(0.0, K - S)
+    sqrtT = sqrt(T)
+    d1 = (log(S / K) + (r + sigma * sigma / 2) * T) / (sigma * sqrtT)
+    d2 = d1 - sigma * sqrtT
+    return K * exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
 
 
 _TICKER_RE = re.compile(
@@ -204,6 +234,30 @@ class Builder:
             return last
         return None
 
+    def _theo_price(self, contract: Dict[str, Any], spot: float, T: float) -> float | None:
+        """
+        Compute BS theoretical price using per-contract implied volatility.
+        Falls back to midpoint if IV is unavailable.
+        """
+        iv = contract.get("implied_volatility")
+        details = contract.get("details", {})
+        strike = details.get("strike_price")
+        contract_type = details.get("contract_type")
+
+        if iv is None or iv <= 0 or strike is None or spot <= 0:
+            return self._price(contract)
+
+        r = 0.05  # risk-free rate
+        try:
+            if contract_type == "call":
+                return _bs_call(spot, strike, T, r, iv)
+            elif contract_type == "put":
+                return _bs_put(spot, strike, T, r, iv)
+        except (ValueError, ZeroDivisionError):
+            pass
+
+        return self._price(contract)
+
     def _build_surface(
         self, symbol: str, contracts: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -232,9 +286,27 @@ class Builder:
 
         surface: Dict[str, Any] = {}
 
+        # Extract spot price from any contract's underlying_asset
+        spot = 0.0
+        for payload in contracts.values():
+            ua = payload.get("underlying_asset", {})
+            v = ua.get("value")
+            if v and v > 0:
+                spot = v
+                break
+
         # Build tiles for each DTE
         for dte in sorted(by_dte_strike.keys()):
             by_strike = by_dte_strike[dte]
+
+            # Time to expiry in years (floor at ~1 trading hour for 0-DTE)
+            T = max(dte / 365.0, 1.0 / (365 * 24))
+
+            # Pricing helper: use BS+IV when spot available, else midpoint
+            def price(contract):
+                if spot > 0:
+                    return self._theo_price(contract, spot, T)
+                return self._price(contract)
 
             for strike in sorted(by_strike.keys()):
                 center = strike
@@ -253,11 +325,11 @@ class Builder:
                         "width": 0,
                     }
                     if call_contract:
-                        call_mid = self._price(call_contract)
+                        call_mid = price(call_contract)
                         if call_mid is not None:
                             tile["call"] = {"mid": call_mid}
                     if put_contract:
-                        put_mid = self._price(put_contract)
+                        put_mid = price(put_contract)
                         if put_mid is not None:
                             tile["put"] = {"mid": put_mid}
 
@@ -280,14 +352,14 @@ class Builder:
                     # ========== BUTTERFLY ==========
                     if all([lc, cc, hc, lp, cp, hp]):
                         call_debit = (
-                            self._price(lc)
-                            - 2 * self._price(cc)
-                            + self._price(hc)
+                            price(lc)
+                            - 2 * price(cc)
+                            + price(hc)
                         )
                         put_debit = (
-                            self._price(lp)
-                            - 2 * self._price(cp)
-                            + self._price(hp)
+                            price(lp)
+                            - 2 * price(cp)
+                            + price(hp)
                         )
 
                         if call_debit is not None and put_debit is not None:
@@ -313,8 +385,8 @@ class Builder:
                     # ========== VERTICAL (Call) ==========
                     # Long call at center, short call at center + width
                     if cc and hc:
-                        long_mid = self._price(cc)
-                        short_mid = self._price(hc)
+                        long_mid = price(cc)
+                        short_mid = price(hc)
                         if long_mid is not None and short_mid is not None:
                             debit = long_mid - short_mid
                             tile_key = f"vertical:{dte}:{width}:{int(center)}"
@@ -337,8 +409,8 @@ class Builder:
                     # ========== VERTICAL (Put) ==========
                     # Long put at center, short put at center - width
                     if cp and lp:
-                        long_mid = self._price(cp)
-                        short_mid = self._price(lp)
+                        long_mid = price(cp)
+                        short_mid = price(lp)
                         if long_mid is not None and short_mid is not None:
                             debit = long_mid - short_mid
                             tile_key = f"vertical:{dte}:{width}:{int(center)}"
