@@ -353,10 +353,10 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     return Object.keys(map).length > 0 ? map : undefined;
   }, [spotData]);
 
-  // Lock/unlock toggle for position pricing (default: unlocked)
+  // Lock/unlock toggle for position pricing (default: locked = use market entry price)
   const togglePriceLock = useCallback((id: string) => {
     setPriceLocked(prev => {
-      const currentlyLocked = prev[id] ?? false;
+      const currentlyLocked = prev[id] ?? true;
       const next = { ...prev, [id]: !currentlyLocked };
       try { localStorage.setItem('riskGraph_priceLocked', JSON.stringify(next)); } catch {}
       return next;
@@ -367,7 +367,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   const unlockedStrategyIds = useMemo(() => {
     const ids = new Set<string>();
     for (const s of strategies) {
-      const locked = priceLocked[s.id] ?? false;
+      const locked = priceLocked[s.id] ?? true;
       if (!locked) ids.add(s.id);
     }
     return ids;
@@ -1023,7 +1023,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
                       const costBasis = strat.costBasis ?? strat.debit ?? null;
 
                       // Lock/unlock state: locked = user-entered price, unlocked = model price
-                      const isLocked = priceLocked[strat.id] ?? false;
+                      const isLocked = priceLocked[strat.id] ?? true;
                       const theoValue = pnlChartData.strategyTheoValues[strat.id];
 
                       // Use costBasisType as the source of truth for credit/debit

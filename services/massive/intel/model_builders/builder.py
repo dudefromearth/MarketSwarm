@@ -193,9 +193,16 @@ class Builder:
         return dte, strike, option_type
 
     def _price(self, contract: Dict[str, Any]) -> float | None:
-        """Get price from last trade, falling back to midpoint if no trade."""
+        """Get current fair value from bid/ask midpoint, falling back to last trade."""
         lq = contract.get("last_quote", {})
-        return lq.get("last") or lq.get("midpoint")
+        mid = lq.get("midpoint") or lq.get("mid")
+        if mid is not None and mid > 0:
+            return mid
+        # Fallback to last trade only if no midpoint available
+        last = lq.get("last")
+        if last is not None and last > 0:
+            return last
+        return None
 
     def _build_surface(
         self, symbol: str, contracts: Dict[str, Any]
