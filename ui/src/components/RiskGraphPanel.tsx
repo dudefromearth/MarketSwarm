@@ -73,6 +73,8 @@ export interface RiskGraphStrategy extends SelectedStrategy {
   // Cost basis (debit = you paid, credit = you received)
   costBasis?: number | null;      // Absolute value of cost
   costBasisType?: CostBasisType;  // 'debit' or 'credit'
+  // Market cost basis (bid/ask midpoint from heatmap tiles, captured at creation)
+  marketCostBasis?: number | null;
 }
 
 // Price alert line (visual only, separate from strategy alerts)
@@ -186,6 +188,14 @@ export interface RiskGraphPanelProps {
 
   // Full spot data map for per-symbol pricing (from SSE spot channel)
   spotData?: Record<string, { value: number; [key: string]: any }>;
+
+  // Pricing mode toggle (Theo/Market) — shared with heatmap
+  pricingMode?: 'theo' | 'market';
+  onPricingModeChange?: (mode: 'theo' | 'market') => void;
+
+  // Per-DTE ATM IV from chain data (e.g. {"0": 0.15, "1": 0.17})
+  // Used as base volatility instead of VIX for more accurate pricing
+  atmIvByDte?: Record<string, number>;
 }
 
 export interface RiskGraphPanelHandle {
@@ -224,6 +234,9 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   openTradeCount = 0,
   gexByStrike,
   spotData,
+  pricingMode = 'theo',
+  onPricingModeChange,
+  atmIvByDte,
 }, ref) {
   // Get alerts from shared context
   const {
@@ -281,7 +294,12 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   const [vixInputValue, setVixInputValue] = useState('');
 
   // Market regime for volatility skew simulation
-  const [marketRegime, setMarketRegime] = useState<MarketRegime>('normal');
+  // In live mode, auto-detect from VIX (matches backend builder.py _get_regime())
+  // In simulation mode, user can override manually
+  const [marketRegimeOverride, setMarketRegimeOverride] = useState<MarketRegime | null>(null);
+  const autoRegime: MarketRegime = vix <= 14 ? 'low_vol' : vix <= 18 ? 'normal' : vix <= 30 ? 'elevated' : 'panic';
+  const marketRegime = timeMachineEnabled && marketRegimeOverride ? marketRegimeOverride : autoRegime;
+  const setMarketRegime = (r: MarketRegime) => setMarketRegimeOverride(r);
   const regimeConfig = MARKET_REGIMES[marketRegime];
 
   // Pricing model selection and parameters
@@ -374,6 +392,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   }, [strategies, priceLocked]);
 
   // Map strategies to the format expected by useRiskGraphCalculations
+  // When pricingMode is 'market', swap debit to marketCostBasis (if available)
   const chartStrategies: Strategy[] = useMemo(() =>
     strategies.map(s => ({
       id: s.id,
@@ -381,7 +400,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
       width: s.width,
       side: s.side,
       strategy: s.strategy,
-      debit: s.debit,
+      debit: pricingMode === 'market' && s.marketCostBasis != null ? s.marketCostBasis : s.debit,
       visible: s.visible,
       dte: s.dte,
       expiration: s.expiration,
@@ -392,7 +411,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
       direction: s.direction,
       costBasisType: s.costBasisType,
     })),
-    [strategies]
+    [strategies, pricingMode]
   );
 
   // Calculate P&L data for PnLChart
@@ -412,6 +431,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     hestonCorrelation,
     mcNumPaths,
     unlockedStrategyIds,
+    atmIvByDte,
   });
 
   // Extract strikes from all visible strategies for chart (includes expired for auto-fit bounds)
@@ -851,6 +871,19 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
         )}
         <WhatsNew area="risk-graph" className="whats-new-apple" />
         <div className="panel-header-actions">
+          {/* Theo/Market Pricing Toggle */}
+          {onPricingModeChange && (
+            <div className="pricing-toggle" title="Switch between theoretical and market pricing">
+              <button
+                className={`pricing-toggle-btn ${pricingMode === 'theo' ? 'active' : ''}`}
+                onClick={() => onPricingModeChange('theo')}
+              >Theo</button>
+              <button
+                className={`pricing-toggle-btn ${pricingMode === 'market' ? 'active' : ''}`}
+                onClick={() => onPricingModeChange('market')}
+              >Mkt</button>
+            </div>
+          )}
           {/* Dealer Gravity Backdrop Controls */}
           {(dgArtifact || (gexByStrike && Object.keys(gexByStrike).length > 0)) && (
             <div className="backdrop-controls" title="Dealer Gravity Backdrop">

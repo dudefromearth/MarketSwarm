@@ -2,7 +2,7 @@ import json
 import asyncio
 import time
 import re
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 from math import log, sqrt, exp, erf
 from typing import Dict, Any, Tuple, Set
 
@@ -105,6 +105,27 @@ def _compute_dte(exp_date: date) -> int:
     today = date.today()
     delta = (exp_date - today).days
     return max(0, delta)
+
+
+# EST offset (UTC-5) — hardcoded to match frontend 'T16:00:00-05:00'
+_EST = timezone(timedelta(hours=-5))
+_MIN_T_YEARS = 1.0 / (365 * 24)   # ~1 hour floor
+
+
+def _fractional_T(exp_date: date) -> float:
+    """
+    Compute fractional years to 4pm EST on expiration date.
+    Matches frontend: new Date(expDateStr + 'T16:00:00-05:00')
+
+    This ensures heatmap tile debits and risk graph theoretical values
+    are computed with the same time-to-expiry.
+    """
+    now = datetime.now(timezone.utc)
+    exp_close = datetime(exp_date.year, exp_date.month, exp_date.day,
+                         16, 0, 0, tzinfo=_EST)
+    seconds_remaining = (exp_close - now).total_seconds()
+    T = seconds_remaining / (365.0 * 24 * 3600)
+    return max(T, _MIN_T_YEARS)
 
 
 class Builder:
@@ -212,7 +233,7 @@ class Builder:
                 if symbol not in self.symbols:
                     continue
 
-                new_surface = self._build_surface(symbol, contracts, vix=vix)
+                new_surface, atm_iv = self._build_surface(symbol, contracts, vix=vix)
                 delta = self._diff_surfaces(
                     self.previous_surfaces[symbol], new_surface
                 )
@@ -222,6 +243,8 @@ class Builder:
                 if self._model_publisher:
                     # Use empty delta if None to signal "data processed, no tile changes"
                     publish_delta = delta if delta else {"changed": {}, "removed": []}
+                    # Include ATM IV metadata for risk graph consumption
+                    publish_delta["atm_iv"] = atm_iv
                     await self._model_publisher.receive_delta(symbol, publish_delta)
 
                 if delta:
@@ -252,9 +275,9 @@ class Builder:
     # Surface / Tile construction
     # ============================================================
 
-    def _parse_ticker(self, ticker: str) -> Tuple[int, float, str] | None:
+    def _parse_ticker(self, ticker: str) -> Tuple[int, float, str, date] | None:
         """
-        Returns (dte, strike, option_type) or None if invalid/filtered.
+        Returns (dte, strike, option_type, exp_date) or None if invalid/filtered.
         """
         m = _TICKER_RE.match(ticker)
         if not m:
@@ -274,7 +297,7 @@ class Builder:
         if dte not in self.model_dtes:
             return None
 
-        return dte, strike, option_type
+        return dte, strike, option_type, exp_date
 
     def _price(self, contract: Dict[str, Any]) -> float | None:
         """Get current fair value from bid/ask midpoint, falling back to last trade."""
@@ -321,14 +344,17 @@ class Builder:
         # Index contracts by (dte, strike, type)
         # Structure: by_dte_strike[dte][strike][type] = payload
         by_dte_strike: Dict[int, Dict[float, Dict[str, Dict[str, Any]]]] = {}
+        # Map DTE → expiration date for fractional T computation
+        dte_exp_date: Dict[int, date] = {}
 
         for ticker, payload in contracts.items():
             parsed = self._parse_ticker(ticker)
             if parsed is None:
                 continue
 
-            dte, strike, opt_type = parsed
+            dte, strike, opt_type, exp_date = parsed
             by_dte_strike.setdefault(dte, {}).setdefault(strike, {})[opt_type] = payload
+            dte_exp_date[dte] = exp_date
 
         surface: Dict[str, Any] = {}
 
@@ -341,17 +367,39 @@ class Builder:
                 spot = v
                 break
 
-        # VIX-based theoretical pricing (matches Risk Graph model)
-        base_iv = max(5.0, vix) / 100.0 if vix > 0 else 0.20  # fallback 20% IV
+        # Theoretical pricing using chain ATM IV (per-DTE) with skew
         regime = _get_regime(vix) if vix > 0 else _REGIMES["normal"]
         use_theo = spot > 0
+
+        # Compute ATM IV from chain per-contract IV for each DTE.
+        # This replaces VIX as base IV — actual chain IV is more accurate,
+        # especially for 0DTE where VIX (30-day measure) diverges significantly.
+        atm_iv_by_dte: Dict[int, float] = {}
+        fallback_iv = max(5.0, vix) / 100.0 if vix > 0 else 0.20
+        for dte_key, by_strike in by_dte_strike.items():
+            iv_samples = []
+            for strike, types in by_strike.items():
+                if spot > 0 and abs(strike - spot) < 30:  # within 30 pts of ATM
+                    for opt_type, payload in types.items():
+                        iv = payload.get("implied_volatility")
+                        if iv and 0.01 < iv < 5.0:  # sanity bounds
+                            iv_samples.append(iv)
+            if iv_samples:
+                atm_iv_by_dte[dte_key] = sum(iv_samples) / len(iv_samples)
+            else:
+                atm_iv_by_dte[dte_key] = fallback_iv
 
         # Build tiles for each DTE
         for dte in sorted(by_dte_strike.keys()):
             by_strike = by_dte_strike[dte]
 
-            # Time to expiry in years (floor at ~1 trading hour for 0-DTE)
-            T = max(dte / 365.0, 1.0 / (365 * 24))
+            # Per-DTE base IV from chain ATM (falls back to VIX-based)
+            base_iv = atm_iv_by_dte.get(dte, fallback_iv)
+
+            # Fractional time to 4pm EST close (matches frontend Risk Graph)
+            # Uses actual expiration date → precise T, not integer-day approximation
+            exp_d = dte_exp_date.get(dte)
+            T = _fractional_T(exp_d) if exp_d else max(dte / 365.0, _MIN_T_YEARS)
 
             # Strike-level pricing helper
             def call_price(K: float) -> float:
@@ -380,18 +428,28 @@ class Builder:
                         "strike": center,
                         "width": 0,
                     }
-                    if call_contract and use_theo:
-                        tile["call"] = {"mid": call_price(center)}
-                    elif call_contract:
-                        call_mid = self._price(call_contract)
-                        if call_mid is not None:
-                            tile["call"] = {"mid": call_mid}
-                    if put_contract and use_theo:
-                        tile["put"] = {"mid": put_price(center)}
-                    elif put_contract:
-                        put_mid = self._price(put_contract)
-                        if put_mid is not None:
-                            tile["put"] = {"mid": put_mid}
+                    if call_contract:
+                        call_entry: Dict[str, Any] = {}
+                        if use_theo:
+                            call_entry["mid"] = call_price(center)
+                        call_market = self._price(call_contract)
+                        if call_market is not None:
+                            call_entry["market_mid"] = call_market
+                        elif not use_theo:
+                            call_entry["mid"] = call_market  # type: ignore[assignment]
+                        if call_entry:
+                            tile["call"] = call_entry
+                    if put_contract:
+                        put_entry: Dict[str, Any] = {}
+                        if use_theo:
+                            put_entry["mid"] = put_price(center)
+                        put_market = self._price(put_contract)
+                        if put_market is not None:
+                            put_entry["market_mid"] = put_market
+                        elif not use_theo:
+                            put_entry["mid"] = put_market  # type: ignore[assignment]
+                        if put_entry:
+                            tile["put"] = put_entry
 
                     if "call" in tile or "put" in tile:
                         surface[tile_key] = tile
@@ -422,23 +480,47 @@ class Builder:
                             + put_price(low)
                         )
 
+                        # Market midpoint debit from bid/ask
+                        lc_m = self._price(lc)
+                        cc_m = self._price(cc)
+                        hc_m = self._price(hc)
+                        lp_m = self._price(lp)
+                        cp_m = self._price(cp)
+                        hp_m = self._price(hp)
+
+                        call_market_debit = None
+                        if lc_m is not None and cc_m is not None and hc_m is not None:
+                            call_market_debit = lc_m - 2 * cc_m + hc_m
+
+                        put_market_debit = None
+                        if hp_m is not None and cp_m is not None and lp_m is not None:
+                            put_market_debit = hp_m - 2 * cp_m + lp_m
+
                         tile_key = f"butterfly:{dte}:{width}:{int(center)}"
+                        call_tile: Dict[str, Any] = {
+                            "debit": call_debit,
+                            "max_profit": width - call_debit,
+                            "max_loss": call_debit,
+                        }
+                        if call_market_debit is not None:
+                            call_tile["market_debit"] = call_market_debit
+
+                        put_tile: Dict[str, Any] = {
+                            "debit": put_debit,
+                            "max_profit": width - put_debit,
+                            "max_loss": put_debit,
+                        }
+                        if put_market_debit is not None:
+                            put_tile["market_debit"] = put_market_debit
+
                         surface[tile_key] = {
                             "symbol": symbol,
                             "strategy": "butterfly",
                             "dte": dte,
                             "strike": center,
                             "width": width,
-                            "call": {
-                                "debit": call_debit,
-                                "max_profit": width - call_debit,
-                                "max_loss": call_debit,
-                            },
-                            "put": {
-                                "debit": put_debit,
-                                "max_profit": width - put_debit,
-                                "max_loss": put_debit,
-                            },
+                            "call": call_tile,
+                            "put": put_tile,
                         }
 
                     # ========== VERTICAL (Call) ==========
@@ -456,11 +538,17 @@ class Builder:
                                 "width": width,
                             }
 
-                        surface[tile_key]["call"] = {
+                        vert_call: Dict[str, Any] = {
                             "debit": debit,
                             "max_profit": width - debit,
                             "max_loss": debit,
                         }
+                        cc_m = self._price(cc)
+                        hc_m = self._price(hc)
+                        if cc_m is not None and hc_m is not None:
+                            vert_call["market_debit"] = cc_m - hc_m
+
+                        surface[tile_key]["call"] = vert_call
 
                     # ========== VERTICAL (Put) ==========
                     # Long put at center, short put at center - width
@@ -477,13 +565,19 @@ class Builder:
                                 "width": width,
                             }
 
-                        surface[tile_key]["put"] = {
+                        vert_put: Dict[str, Any] = {
                             "debit": debit,
                             "max_profit": width - debit,
                             "max_loss": debit,
                         }
+                        cp_m = self._price(cp)
+                        lp_m = self._price(lp)
+                        if cp_m is not None and lp_m is not None:
+                            vert_put["market_debit"] = cp_m - lp_m
 
-        return surface
+                        surface[tile_key]["put"] = vert_put
+
+        return surface, atm_iv_by_dte
 
     # ============================================================
     # Diffing

@@ -112,9 +112,10 @@ class ModelPublisher:
                 )
         self._last_publish_ts[symbol] = ts_now
 
-        # Extract changed tiles and removed keys
+        # Extract changed tiles, removed keys, and metadata
         changed = delta_patch.get("changed", {})
         removed = delta_patch.get("removed", [])
+        atm_iv = delta_patch.get("atm_iv")  # per-DTE ATM IV from chain
 
         # Apply changed tiles to current model state
         self.current_models[symbol].update(changed)
@@ -130,17 +131,26 @@ class ModelPublisher:
         # Sub-second timestamp for versioning
         version = int(ts_now * 1000)  # millisecond version
 
+        # Store latest ATM IV if provided
+        if atm_iv is not None:
+            self._atm_iv = {symbol: atm_iv}  # update per-symbol ATM IV cache
+
         # Publish live model (full current state with DTE metadata)
         live_key = f"massive:heatmap:model:{symbol}:latest"
-        live_payload = json.dumps({
+        model_data: Dict[str, Any] = {
             "ts": ts_now,
             "symbol": symbol,
             "epoch": "current",
             "version": version,
             "dtes_available": dtes_available,
             "dte_tile_counts": dte_counts,
-            "tiles": self.current_models[symbol]
-        })
+            "tiles": self.current_models[symbol],
+        }
+        # Include ATM IV metadata (per-DTE from chain, for risk graph)
+        sym_atm_iv = getattr(self, '_atm_iv', {}).get(symbol)
+        if sym_atm_iv:
+            model_data["atm_iv"] = sym_atm_iv
+        live_payload = json.dumps(model_data)
         r = await self._redis_conn()
         await r.set(live_key, live_payload, ex=self.live_ttl_sec)
 
@@ -158,14 +168,17 @@ class ModelPublisher:
 
         # Publish diff via pub/sub for real-time SSE streaming
         diff_channel = f"massive:heatmap:diff:{symbol}"
-        diff_payload = json.dumps({
+        diff_data: Dict[str, Any] = {
             "ts": ts_now,
             "version": version,
             "symbol": symbol,
             "changed": changed,
             "removed": removed,
             "dtes_available": dtes_available,
-        })
+        }
+        if sym_atm_iv:
+            diff_data["atm_iv"] = sym_atm_iv
+        diff_payload = json.dumps(diff_data)
         await r.publish(diff_channel, diff_payload)
 
         # ─────────────────────────────────────────────────────────────

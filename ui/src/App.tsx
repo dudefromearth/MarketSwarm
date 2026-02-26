@@ -92,8 +92,8 @@ interface HeatmapTile {
   dte: number;
   strike: number;
   width: number;
-  call?: { mid?: number; debit?: number };
-  put?: { mid?: number; debit?: number };
+  call?: { mid?: number; debit?: number; market_mid?: number; market_debit?: number };
+  put?: { mid?: number; debit?: number; market_mid?: number; market_debit?: number };
 }
 
 interface HeatmapData {
@@ -101,6 +101,7 @@ interface HeatmapData {
   symbol: string;
   version?: number;
   dtes_available?: number[];
+  atm_iv?: Record<string, number>;  // per-DTE ATM IV from chain (e.g. {"0": 0.15, "1": 0.17})
   tiles: Record<string, HeatmapTile>;
 }
 
@@ -517,6 +518,10 @@ function App() {
 
   // Heatmap display modes and overlays
   const [heatmapDisplayMode, setHeatmapDisplayMode] = useState<'debit' | 'r2r' | 'pct_diff'>('debit');
+  const [heatmapPricingMode, setHeatmapPricingMode] = useState<'theo' | 'market'>('market');
+  // Market cost basis tracking: captures market debit from heatmap tiles at position creation
+  const pendingMarketCostBasis = useRef<number | null>(null);
+  const [marketCostBasisMap, setMarketCostBasisMap] = useState<Record<string, number | null>>({});
   const [showEMBoundary, setShowEMBoundary] = useState(true);
   const [optimalZoneThreshold, setOptimalZoneThreshold] = useState(45); // % change threshold for optimal zone outline
   const [blueCompression, setBlueCompression] = useState(0); // 0-100%, compress low-convexity rows
@@ -572,11 +577,15 @@ function App() {
 
   // Convert positions to legacy strategy format for RiskGraphPanel
   const riskGraphStrategies = useMemo(() => {
-    if (!USE_NEW_POSITIONS_API) {
-      return legacyStrategies;
-    }
-    return positionsToStrategies(positions);
-  }, [positions, legacyStrategies, USE_NEW_POSITIONS_API]);
+    const strategies = USE_NEW_POSITIONS_API
+      ? positionsToStrategies(positions)
+      : legacyStrategies;
+    // Overlay market cost basis from the map (captured at tile-click time)
+    return strategies.map(s => ({
+      ...s,
+      marketCostBasis: marketCostBasisMap[s.id] ?? null,
+    }));
+  }, [positions, legacyStrategies, USE_NEW_POSITIONS_API, marketCostBasisMap]);
 
   // Bridged CRUD operations - use new API when enabled
   const contextRemoveStrategy = useCallback(async (id: string) => {
@@ -585,6 +594,15 @@ function App() {
     } else {
       await legacyRemoveStrategy(id);
     }
+    // Clean up market cost basis entry
+    setMarketCostBasisMap(prev => {
+      if (id in prev) {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      }
+      return prev;
+    });
   }, [USE_NEW_POSITIONS_API, removePosition, legacyRemoveStrategy]);
 
   const contextToggleVisibility = useCallback(async (id: string) => {
@@ -1006,6 +1024,9 @@ function App() {
     } else {
       tileSide = side;
     }
+    // Capture market cost basis from market grid (for RG Theo/Mkt toggle)
+    const mktKey = strategy === 'single' ? 0 : width;
+    pendingMarketCostBasis.current = marketGrid[strike]?.[mktKey] ?? null;
     setPositionPrefill({
       positionType: strategy,
       baseStrike: strike,
@@ -1038,11 +1059,14 @@ function App() {
 
   // Create position from PositionCreateModal
   const handlePositionCreate = async (position: CreatedPosition) => {
+    // Capture pending market cost basis before async call
+    const mktCB = pendingMarketCostBasis.current;
+    pendingMarketCostBasis.current = null;
     try {
       if (USE_NEW_POSITIONS_API) {
         // Use new positions API directly with full leg data
         const recognition = recognizePositionType(position.legs);
-        await addPosition({
+        const newPos = await addPosition({
           symbol: position.symbol,
           positionType: recognition.type,
           direction: recognition.direction,
@@ -1050,6 +1074,10 @@ function App() {
           costBasis: position.costBasis,
           costBasisType: position.costBasisType,
         });
+        // Store market cost basis for this position (used by RG Theo/Mkt toggle)
+        if (mktCB != null && newPos?.id) {
+          setMarketCostBasisMap(prev => ({ ...prev, [newPos.id]: mktCB }));
+        }
       } else {
         // Legacy path: derive legacy fields from legs
         const legs = position.legs;
@@ -1917,6 +1945,7 @@ function App() {
           symbol: diff.symbol || prev?.symbol || underlying,
           version: diff.version,
           dtes_available: diff.dtes_available || prev?.dtes_available,
+          atm_iv: diff.atm_iv || prev?.atm_iv,
           tiles: updatedTiles,
         };
       });
@@ -2301,10 +2330,11 @@ function App() {
   const widths = WIDTHS[underlying][strategy];
 
   // Process data for the grid view - all widths as columns
-  const { strikes, gexByStrike, heatmapGrid, changeGrid, maxGex, maxNetGex } = useMemo(() => {
+  const { strikes, gexByStrike, heatmapGrid, marketGrid, changeGrid, maxGex, maxNetGex } = useMemo(() => {
     const gexByStrike: Record<number, { calls: number; puts: number }> = {};
-    // heatmapGrid[strike][width] = value
+    // heatmapGrid[strike][width] = theo value, marketGrid = market midpoint value
     const heatmapGrid: Record<number, Record<number, number | null>> = {};
+    const marketGrid: Record<number, Record<number, number | null>> = {};
 
     // Get GEX data for selected DTE
     if (gexCalls?.expirations) {
@@ -2344,22 +2374,23 @@ function App() {
         const strike = parseFloat(tileStrike);
         const width = parseInt(tileWidth);
 
-        if (!heatmapGrid[strike]) {
-          heatmapGrid[strike] = {};
-        }
+        if (!heatmapGrid[strike]) heatmapGrid[strike] = {};
+        if (!marketGrid[strike]) marketGrid[strike] = {};
 
         // Determine effective side: for 'both', use calls above spot, puts at/below
         const effectiveSide = side === 'both'
           ? (strike > spotPrice ? 'call' : 'put')
           : side;
 
+        const sideData = tile[effectiveSide];
+
         // Get value based on strategy and side
         if (strategy === 'single') {
-          // For single, use mid price
-          heatmapGrid[strike][0] = tile[effectiveSide]?.mid ?? null;
+          heatmapGrid[strike][0] = sideData?.mid ?? null;
+          marketGrid[strike][0] = sideData?.market_mid ?? null;
         } else {
-          // For vertical/butterfly, use debit
-          heatmapGrid[strike][width] = tile[effectiveSide]?.debit ?? null;
+          heatmapGrid[strike][width] = sideData?.debit ?? null;
+          marketGrid[strike][width] = sideData?.market_debit ?? null;
         }
       });
     }
@@ -2407,7 +2438,7 @@ function App() {
       }
     }
 
-    return { strikes, gexByStrike, heatmapGrid, changeGrid, maxGex, maxNetGex };
+    return { strikes, gexByStrike, heatmapGrid, marketGrid, changeGrid, maxGex, maxNetGex };
   }, [gexCalls, gexPuts, heatmap, strategy, side, dte, underlying, spot]);
 
   // Calculate Expected Move based on VIX and DTE
@@ -2490,9 +2521,12 @@ function App() {
     return maxProfit / debit;
   }, []);
 
+  // Active pricing grid based on mode toggle
+  const activeGrid = heatmapPricingMode === 'market' ? marketGrid : heatmapGrid;
+
   // Get display value based on mode
   const getDisplayValue = useCallback((strike: number, width: number) => {
-    const debit = heatmapGrid[strike]?.[width] ?? null;
+    const debit = activeGrid[strike]?.[width] ?? null;
     const pctChange = changeGrid[strike]?.[width] ?? 0;
 
     switch (heatmapDisplayMode) {
@@ -2505,7 +2539,7 @@ function App() {
       default:
         return debit !== null && debit > 0 ? debit.toFixed(2) : '-';
     }
-  }, [heatmapGrid, changeGrid, heatmapDisplayMode, calculateR2R]);
+  }, [activeGrid, changeGrid, heatmapDisplayMode, calculateR2R]);
 
   // Volume profile data is pre-binned and capped on the server
   // vpByPrice: key is price * 10 (e.g., 60001 = $6000.10)
@@ -3168,6 +3202,20 @@ function App() {
 
         <div className="control-separator" />
 
+        {/* Heatmap Pricing Mode Toggle */}
+        <div className="control-group">
+          <div className="pricing-toggle">
+            <button
+              className={`pricing-toggle-btn ${heatmapPricingMode === 'theo' ? 'active' : ''}`}
+              onClick={() => setHeatmapPricingMode('theo')}
+            >Theo</button>
+            <button
+              className={`pricing-toggle-btn ${heatmapPricingMode === 'market' ? 'active' : ''}`}
+              onClick={() => setHeatmapPricingMode('market')}
+            >Mkt</button>
+          </div>
+        </div>
+
         {/* Heatmap Display Controls */}
         <div className="control-group">
           <label>Display</label>
@@ -3425,7 +3473,7 @@ function App() {
                     const isAtmBelow = currentSpot && strike <= currentSpot && prevStrike > currentSpot;
                     const isAtmAbove = currentSpot && strike > currentSpot && nextStrike <= currentSpot;
                     const isAtm = isAtmBelow || isAtmAbove;
-                    const strikeData = heatmapGrid[strike] || {};
+                    const strikeData = activeGrid[strike] || {};
                     const atEMBoundary = showEMBoundary && isAtEMBoundary(strike);
                     const rowHeight = getRowHeight(strike);
                     const isCompressed = rowHeight < 16; // Hide text when too compressed
@@ -3551,6 +3599,9 @@ function App() {
           pendingOrderCount={pendingOrderCount}
           openTradeCount={openTradeCount}
           gexByStrike={gexByStrike}
+          pricingMode={heatmapPricingMode}
+          onPricingModeChange={setHeatmapPricingMode}
+          atmIvByDte={heatmap?.atm_iv}
         />
         </div>
 

@@ -273,6 +273,9 @@ interface UseRiskGraphCalculationsProps {
   mcNumPaths?: number;          // Number of simulation paths, default 5000
   // Lock/unlock: strategy IDs whose price should use model theoretical value
   unlockedStrategyIds?: Set<string>;
+  // Per-DTE ATM IV from chain data (e.g. {"0": 0.15, "1": 0.17})
+  // When available, used as base volatility instead of VIX for more accurate pricing
+  atmIvByDte?: Record<string, number>;
 }
 
 // ============================================================
@@ -1539,6 +1542,7 @@ export function useRiskGraphCalculations({
   hestonCorrelation = -0.7,
   mcNumPaths = 5000,
   unlockedStrategyIds,
+  atmIvByDte,
 }: UseRiskGraphCalculationsProps): RiskGraphData {
   return useMemo(() => {
     const visibleStrategies = strategies.filter(s => s.visible);
@@ -1621,8 +1625,33 @@ export function useRiskGraphCalculations({
     const maxStrike = Math.max(...allStrikes);
     const strikeRange = maxStrike - minStrike || 50;
 
+    // Calculate volatility (must precede regime detection which uses adjustedVix)
+    const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
+    const vixVolatility = Math.max(5, adjustedVix) / 100; // VIX-based fallback (e.g., 20 -> 0.20)
+
+    // Per-strategy volatility: in live mode, use chain ATM IV (per-DTE) for accurate pricing;
+    // in simulation mode, use VIX + manual offset. VIX-based vol still used for range/padding.
+    const getStrategyVol = (strat: Strategy): number => {
+      if (!timeMachineEnabled && atmIvByDte) {
+        const dteKey = String(strat.dte ?? 0);
+        const chainIv = atmIvByDte[dteKey];
+        if (chainIv && chainIv > 0.01 && chainIv < 5.0) return chainIv;
+      }
+      return vixVolatility;
+    };
+    // Alias for non-strategy-specific uses (range calc, padding)
+    const volatility = vixVolatility;
+
     // Get regime configuration for skew modeling
-    const regimeConfig = MARKET_REGIMES[marketRegime];
+    // In live mode, auto-detect regime from VIX (matches backend builder.py _get_regime())
+    // In simulation mode, use the user-selected regime
+    const effectiveRegime: MarketRegime = timeMachineEnabled
+      ? marketRegime
+      : adjustedVix <= 14 ? 'low_vol'
+      : adjustedVix <= 18 ? 'normal'
+      : adjustedVix <= 30 ? 'elevated'
+      : 'panic';
+    const regimeConfig = MARKET_REGIMES[effectiveRegime];
 
     // Create pricing parameters
     // For Monte Carlo curve generation, use very few paths (it runs for every price point!)
@@ -1637,25 +1666,24 @@ export function useRiskGraphCalculations({
       mcSeed: 42,
     };
 
-    // Calculate volatility
-    const adjustedVix = timeMachineEnabled ? vix + simVolatilityOffset : vix;
-    const volatility = Math.max(5, adjustedVix) / 100; // Convert VIX to decimal (e.g., 20 -> 0.20)
-
     // Time to expiration — compute dynamically from expiration date string
     // Each strategy gets its own time-to-expiry; the max is used for range/slider
     const now = new Date();
     const timeOffsetDays = timeMachineEnabled ? simTimeOffsetHours / 24 : 0;
 
-    // Compute per-strategy time-to-expiry (fractional days until 4pm ET close)
-    // realTimeDaysMap: unclamped values for active/expired filtering
-    // strategyTimeDaysMap: clamped values for pricing (Black-Scholes needs T > 0)
+    // Compute per-strategy time-to-expiry as fractional days until 4pm EST close.
+    // Both frontend and backend now use the same calculation:
+    //   T = max((4pm_EST_close - now) / (365*24*3600), 1/(365*24))
+    // This ensures heatmap debits and risk graph theoretical values match exactly.
     const realTimeDaysMap = new Map<string, number>();
     const strategyTimeDaysMap = new Map<string, number>();
+    const MIN_PRICING_DAYS = 1 / 24; // ~1 hour floor, matches backend _MIN_T_YEARS
     for (const strat of visibleStrategies) {
       let realDays: number;
       if (strat.expiration) {
         // Normalize to YYYY-MM-DD (handles ISO datetime strings like "2026-02-12T05:00:00.000Z")
         const expDateStr = String(strat.expiration).split('T')[0];
+        // Fractional days until 4pm EST close — matches backend _fractional_T()
         const expClose = new Date(expDateStr + 'T16:00:00-05:00');
         realDays = (expClose.getTime() - now.getTime()) / (1000 * 60 * 60 * 24);
       } else {
@@ -1663,7 +1691,7 @@ export function useRiskGraphCalculations({
         realDays = fallbackDte === 0 ? 0.02 : fallbackDte;
       }
       realTimeDaysMap.set(strat.id, realDays);
-      strategyTimeDaysMap.set(strat.id, Math.max(0.001, realDays));
+      strategyTimeDaysMap.set(strat.id, Math.max(MIN_PRICING_DAYS, realDays));
     }
 
     // Use the furthest-out expiration for the global time reference (range calc, slider)
@@ -1671,7 +1699,7 @@ export function useRiskGraphCalculations({
     const baseTimeDays = allTimeDays.length > 0 ? Math.max(...allTimeDays) : 30;
 
     // Filter to strategies that are still "alive" at the simulated time
-    // Uses unclamped real days so naturally expired positions are correctly detected
+    // Uses fractional days so 0DTE positions aren't prematurely expired
     const activeStrategies = visibleStrategies.filter(strat => {
       const realDays = realTimeDaysMap.get(strat.id) ?? 0;
       return realDays - timeOffsetDays > 0;
@@ -1679,9 +1707,10 @@ export function useRiskGraphCalculations({
     const activeStrategyIds = activeStrategies.map(s => s.id);
 
     // Helper to get per-strategy time-to-expiry years (with sim offset applied)
+    // Floor at ~1 hour matches backend _MIN_T_YEARS = 1/(365*24)
     const getStrategyTimeYears = (stratId: string): number => {
       const raw = strategyTimeDaysMap.get(stratId) ?? baseTimeDays;
-      return Math.max(raw - timeOffsetDays, 0.001) / 365;
+      return Math.max(raw - timeOffsetDays, MIN_PRICING_DAYS) / 365;
     };
 
     // Risk-free rate
@@ -1723,7 +1752,7 @@ export function useRiskGraphCalculations({
       const stratSpot = getStrategySpot(strat);
       const simSpot = timeMachineEnabled ? stratSpot * (1 + simSpotPct / 100) : stratSpot;
       strategyTheoValues[strat.id] = calculateStrategyTheoreticalValue(
-        strat, simSpot, volatility, riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams
+        strat, simSpot, getStrategyVol(strat), riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams
       );
     }
 
@@ -1762,7 +1791,8 @@ export function useRiskGraphCalculations({
         // Unlocked: theoValue is already signed by leg quantities — clear costBasisType to avoid double-negate
         const effectiveStrat = unlockedStrategyIds?.has(strat.id)
           ? { ...strat, debit: getEffectiveDebit(strat), costBasisType: undefined } : strat;
-        const stratExpPnL = calculateExpirationPnL(effectiveStrat, stratPrice, volatility);
+        const stratVol = getStrategyVol(strat);
+        const stratExpPnL = calculateExpirationPnL(effectiveStrat, stratPrice, stratVol);
         expPnL += stratExpPnL;
         stratExpCurves[strat.id].push({ price, pnl: stratExpPnL });
       }
@@ -1776,7 +1806,7 @@ export function useRiskGraphCalculations({
         // Unlocked: theoValue is already signed by leg quantities — clear costBasisType to avoid double-negate
         const effectiveStrat = unlockedStrategyIds?.has(strat.id)
           ? { ...strat, debit: getEffectiveDebit(strat), costBasisType: undefined } : strat;
-        theoPnL += calculateTheoreticalPnL(effectiveStrat, stratPrice, volatility, riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams);
+        theoPnL += calculateTheoreticalPnL(effectiveStrat, stratPrice, getStrategyVol(strat), riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams);
       }
       theoreticalPoints.push({ price, pnl: theoPnL });
 
@@ -1787,7 +1817,7 @@ export function useRiskGraphCalculations({
         for (const strat of expiredStrategies) {
           const stratSpot = getStrategySpot(strat);
           const stratPrice = stratSpot * (1 + pctFromIndex);
-          const ep = calculateExpirationPnL(strat, stratPrice, volatility);
+          const ep = calculateExpirationPnL(strat, stratPrice, getStrategyVol(strat));
           expiredExpPnL += ep;
           expiredTheoPnL += ep; // at expiration, theoretical = intrinsic
           stratExpCurves[strat.id].push({ price, pnl: ep });
@@ -1837,7 +1867,7 @@ export function useRiskGraphCalculations({
       const stratPnL = calculateTheoreticalPnL(
         strat,
         stratSimulatedSpot,
-        volatility,
+        getStrategyVol(strat),
         riskFreeRate,
         getStrategyTimeYears(strat.id),
         stratSpot,
@@ -1850,7 +1880,7 @@ export function useRiskGraphCalculations({
     for (const strat of expiredStrategies) {
       const stratSpot = getStrategySpot(strat);
       const stratSimulatedSpot = timeMachineEnabled ? stratSpot * (1 + simSpotPct / 100) : stratSpot;
-      strategyPnLAtSpot[strat.id] = calculateExpirationPnL(strat, stratSimulatedSpot, volatility);
+      strategyPnLAtSpot[strat.id] = calculateExpirationPnL(strat, stratSimulatedSpot, getStrategyVol(strat));
     }
 
     // Calculate aggregate Greeks at simulated spot (with skew, per-strategy time and spot)
@@ -1864,7 +1894,7 @@ export function useRiskGraphCalculations({
       const greeks = calculateStrategyGreeks(
         strat,
         stratSimulatedSpot,
-        volatility,
+        getStrategyVol(strat),
         riskFreeRate,
         getStrategyTimeYears(strat.id),
         stratSpot,
@@ -1932,7 +1962,7 @@ export function useRiskGraphCalculations({
         strategyPnLAtSpot: {},
       };
     }
-  }, [strategies, spotPrice, vix, spotPrices, weightingSpotProp, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotPct, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths, unlockedStrategyIds]);
+  }, [strategies, spotPrice, vix, spotPrices, weightingSpotProp, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotPct, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths, unlockedStrategyIds, atmIvByDte]);
 }
 
 // Export calculation functions for use elsewhere
