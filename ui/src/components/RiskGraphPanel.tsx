@@ -196,6 +196,8 @@ export interface RiskGraphPanelProps {
   // Per-DTE ATM IV from chain data (e.g. {"0": 0.15, "1": 0.17})
   // Used as base volatility instead of VIX for more accurate pricing
   atmIvByDte?: Record<string, number>;
+  // Raw heatmap tiles for anchoring risk graph pricing to market data
+  heatmapTiles?: Record<string, any>;
 }
 
 export interface RiskGraphPanelHandle {
@@ -237,6 +239,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
   pricingMode = 'theo',
   onPricingModeChange,
   atmIvByDte,
+  heatmapTiles,
 }, ref) {
   // Get alerts from shared context
   const {
@@ -432,6 +435,7 @@ const RiskGraphPanel = forwardRef<RiskGraphPanelHandle, RiskGraphPanelProps>(fun
     mcNumPaths,
     unlockedStrategyIds,
     atmIvByDte,
+    heatmapTiles,
   });
 
   // Extract strikes from all visible strategies for chart (includes expired for auto-fit bounds)

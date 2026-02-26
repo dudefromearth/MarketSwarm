@@ -3602,6 +3602,7 @@ function App() {
           pricingMode={heatmapPricingMode}
           onPricingModeChange={setHeatmapPricingMode}
           atmIvByDte={heatmap?.atm_iv}
+          heatmapTiles={heatmap?.tiles}
         />
         </div>
 

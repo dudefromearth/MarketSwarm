@@ -276,6 +276,8 @@ interface UseRiskGraphCalculationsProps {
   // Per-DTE ATM IV from chain data (e.g. {"0": 0.15, "1": 0.17})
   // When available, used as base volatility instead of VIX for more accurate pricing
   atmIvByDte?: Record<string, number>;
+  // Raw heatmap tiles for anchoring theoretical values to market data at spot
+  heatmapTiles?: Record<string, any>;
 }
 
 // ============================================================
@@ -1543,6 +1545,7 @@ export function useRiskGraphCalculations({
   mcNumPaths = 5000,
   unlockedStrategyIds,
   atmIvByDte,
+  heatmapTiles,
 }: UseRiskGraphCalculationsProps): RiskGraphData {
   return useMemo(() => {
     const visibleStrategies = strategies.filter(s => s.visible);
@@ -1746,14 +1749,38 @@ export function useRiskGraphCalculations({
     // Expired strategies (sim-expired, for faded ghost curves)
     const expiredStrategies = visibleStrategies.filter(s => !activeStrategyIds.includes(s.id));
 
+    // Look up heatmap tile market value for a strategy (anchors risk graph to heatmap)
+    const getTileAnchor = (strat: Strategy): number | null => {
+      if (!heatmapTiles || timeMachineEnabled) return null;
+      const tileKey = `${strat.strategy}:${strat.dte ?? 0}:${strat.width}:${strat.strike}`;
+      const tile = heatmapTiles[tileKey];
+      if (!tile) return null;
+      const sideData = tile[strat.side];
+      if (!sideData) return null;
+      const value = strat.strategy === 'single'
+        ? sideData.market_mid
+        : sideData.market_debit;
+      return (value != null && value > 0) ? value : null;
+    };
+
     // Compute per-strategy theoretical value at current/simulated spot (for lock/unlock pricing)
+    // When tile anchor is available, use market data instead of BS recomputation
     const strategyTheoValues: Record<string, number> = {};
+    const strategyOffsets: Record<string, number> = {};
     for (const strat of activeStrategies) {
       const stratSpot = getStrategySpot(strat);
       const simSpot = timeMachineEnabled ? stratSpot * (1 + simSpotPct / 100) : stratSpot;
-      strategyTheoValues[strat.id] = calculateStrategyTheoreticalValue(
+      const bsValue = calculateStrategyTheoreticalValue(
         strat, simSpot, getStrategyVol(strat), riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams
       );
+      const tileAnchor = getTileAnchor(strat);
+      if (tileAnchor != null) {
+        strategyTheoValues[strat.id] = tileAnchor;
+        // Offset shifts the entire theoretical curve to pass through the tile value at spot
+        strategyOffsets[strat.id] = tileAnchor - bsValue;
+      } else {
+        strategyTheoValues[strat.id] = bsValue;
+      }
     }
 
     // Helper: returns theo value for unlocked strategies, original debit for locked
@@ -1799,6 +1826,7 @@ export function useRiskGraphCalculations({
       expirationPoints.push({ price, pnl: expPnL });
 
       // Theoretical P&L (Black-Scholes with volatility skew, per-strategy time and spot)
+      // Tile anchor offset shifts the curve to match heatmap market data at spot
       let theoPnL = 0;
       for (const strat of activeStrategies) {
         const stratSpot = getStrategySpot(strat);
@@ -1806,7 +1834,13 @@ export function useRiskGraphCalculations({
         // Unlocked: theoValue is already signed by leg quantities — clear costBasisType to avoid double-negate
         const effectiveStrat = unlockedStrategyIds?.has(strat.id)
           ? { ...strat, debit: getEffectiveDebit(strat), costBasisType: undefined } : strat;
-        theoPnL += calculateTheoreticalPnL(effectiveStrat, stratPrice, getStrategyVol(strat), riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams);
+        let stratTheoPnL = calculateTheoreticalPnL(effectiveStrat, stratPrice, getStrategyVol(strat), riskFreeRate, getStrategyTimeYears(strat.id), stratSpot, pricingParams);
+        // Apply tile anchor offset for locked strategies (unlocked already use tile value as debit)
+        const offset = strategyOffsets[strat.id];
+        if (offset && !unlockedStrategyIds?.has(strat.id)) {
+          stratTheoPnL += offset;
+        }
+        theoPnL += stratTheoPnL;
       }
       theoreticalPoints.push({ price, pnl: theoPnL });
 
@@ -1864,7 +1898,7 @@ export function useRiskGraphCalculations({
       }
       const stratSpot = getStrategySpot(strat);
       const stratSimulatedSpot = timeMachineEnabled ? stratSpot * (1 + simSpotPct / 100) : stratSpot;
-      const stratPnL = calculateTheoreticalPnL(
+      let stratPnL = calculateTheoreticalPnL(
         strat,
         stratSimulatedSpot,
         getStrategyVol(strat),
@@ -1873,6 +1907,11 @@ export function useRiskGraphCalculations({
         stratSpot,
         spotPricingParams
       );
+      // Apply tile anchor offset so P&L at spot matches heatmap market data
+      const offset = strategyOffsets[strat.id];
+      if (offset) {
+        stratPnL += offset;
+      }
       theoreticalPnLAtSpot += stratPnL;
       strategyPnLAtSpot[strat.id] = stratPnL;
     }
@@ -1962,7 +2001,7 @@ export function useRiskGraphCalculations({
         strategyPnLAtSpot: {},
       };
     }
-  }, [strategies, spotPrice, vix, spotPrices, weightingSpotProp, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotPct, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths, unlockedStrategyIds, atmIvByDte]);
+  }, [strategies, spotPrice, vix, spotPrices, weightingSpotProp, timeMachineEnabled, simVolatilityOffset, simTimeOffsetHours, simSpotPct, panOffset, marketRegime, pricingModel, hestonVolOfVol, hestonMeanReversion, hestonCorrelation, mcNumPaths, unlockedStrategyIds, atmIvByDte, heatmapTiles]);
 }
 
 // Export calculation functions for use elsewhere
