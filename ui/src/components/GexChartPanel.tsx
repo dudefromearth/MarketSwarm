@@ -321,6 +321,17 @@ export default function GexChartPanel({
         borderColor: colors.borderColor,
         scaleMargins: { top: 0.08, bottom: 0.08 },  // More margin for broader view
       },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      handleScale: {
+        axisPressedMouseMove: true,
+        mouseWheel: true,
+        pinch: true,
+      },
       timeScale: {
         borderColor: colors.borderColor,
         timeVisible: true,
