@@ -32,8 +32,6 @@ import {
   sigmaToPercentile,
 } from './chart-primitives';
 import type { VolumeProfileDataPoint } from './chart-primitives';
-import { captureChart } from '../utils/chartCapture';
-import { analyzeChart, type DGAnalysisResult } from '../services/dealerGravityService';
 import { useDealerGravity } from '../contexts/DealerGravityContext';
 
 // Types
@@ -197,6 +195,8 @@ export default function GexChartPanel({
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const vpPrimitiveRef = useRef<VolumeProfilePrimitive | null>(null);
   const gexPanelRef = useRef<HTMLDivElement>(null);
+  const initialLoadDoneRef = useRef(false);
+  const lastTimeframeRef = useRef<Timeframe>('5m');
 
   const [timeframe, setTimeframe] = useState<Timeframe>('5m');
   const [candles, setCandles] = useState<CandleData[]>([]);
@@ -223,11 +223,6 @@ export default function GexChartPanel({
   const [showVpSettings, setShowVpSettings] = useState(false);
   const [showGexSettings, setShowGexSettings] = useState(false);
 
-  // AI Analysis state
-  const [analyzing, setAnalyzing] = useState(false);
-  const [analysisResult, setAnalysisResult] = useState<DGAnalysisResult | null>(null);
-  const [showAnalysis, setShowAnalysis] = useState(false);
-
   // Structural lines from Dealer Gravity context
   const { artifact: dgArtifact } = useDealerGravity();
   const [showStructuralLines, setShowStructuralLines] = useState(true);
@@ -243,32 +238,18 @@ export default function GexChartPanel({
     return () => observer.disconnect();
   }, []);
 
-  // Handle AI analysis request
-  const handleAnalyze = useCallback(async () => {
-    if (!chartRef.current || analyzing) return;
-
-    setAnalyzing(true);
-    setShowAnalysis(true);
-    setAnalysisResult(null);
-
-    try {
-      // Capture chart screenshot
-      const imageBase64 = captureChart(chartRef.current);
-      if (!imageBase64) {
-        console.error('[GexChartPanel] Failed to capture chart');
-        setAnalyzing(false);
-        return;
-      }
-
-      // Call AI analysis API
-      const result = await analyzeChart(imageBase64, currentSpot || 0);
-      setAnalysisResult(result);
-    } catch (error) {
-      console.error('[GexChartPanel] Analysis failed:', error);
-    } finally {
-      setAnalyzing(false);
-    }
-  }, [analyzing, currentSpot]);
+  const handleAutoFit = useCallback(() => {
+    if (!chartRef.current || !seriesRef.current) return;
+    // Remove the fixed 5px/pt autoscaleInfoProvider — let LW Charts auto-scale
+    seriesRef.current.applyOptions({
+      autoscaleInfoProvider: undefined,
+    });
+    chartRef.current.priceScale('right').applyOptions({
+      autoScale: true,
+      scaleMargins: { top: 0.12, bottom: 0.12 },
+    });
+    chartRef.current.timeScale().fitContent();
+  }, []);
 
   // Sync external gexMode prop with config (if parent changes it)
   useEffect(() => {
@@ -542,6 +523,8 @@ export default function GexChartPanel({
   }, [chartReady, showStructuralLines, dgArtifact?.structures?.volumeNodes]);
 
   // Update candle data and track price range
+  // On initial load or timeframe change: apply 5px/pt default view
+  // On polling updates: preserve the user's current scroll/zoom position
   useEffect(() => {
     if (!chartReady || !seriesRef.current || !candles || candles.length === 0) return;
 
@@ -553,8 +536,6 @@ export default function GexChartPanel({
       close: c.c,
     }));
 
-    seriesRef.current.setData(formatted);
-
     // Calculate price range from candle data for GEX panel
     const highs = candles.map(c => c.h);
     const lows = candles.map(c => c.l);
@@ -562,36 +543,59 @@ export default function GexChartPanel({
     const maxPrice = Math.max(...highs);
     setPriceRange({ min: minPrice, max: maxPrice });
 
-    if (chartRef.current) {
-      chartRef.current.timeScale().fitContent();
+    const timeframeChanged = lastTimeframeRef.current !== timeframe;
+    const isInitialLoad = !initialLoadDoneRef.current || timeframeChanged;
 
-      // Set default price scale: 5 pixels per point
-      // This gives a comfortable view where price movements are clearly visible
-      const DEFAULT_PIXELS_PER_POINT = 5;
-      const chartHeight = containerRef.current?.clientHeight || 600;
-      const desiredPriceRange = chartHeight / DEFAULT_PIXELS_PER_POINT;
+    if (isInitialLoad) {
+      // First load or timeframe changed — apply full view setup
+      lastTimeframeRef.current = timeframe;
+      initialLoadDoneRef.current = true;
 
-      // Center on the last candle's close price
-      const lastCandle = candles[candles.length - 1];
-      const centerPrice = lastCandle?.c || (minPrice + maxPrice) / 2;
+      seriesRef.current.setData(formatted);
 
-      const scaledMin = centerPrice - desiredPriceRange / 2;
-      const scaledMax = centerPrice + desiredPriceRange / 2;
+      if (chartRef.current) {
+        chartRef.current.timeScale().fitContent();
 
-      // Use autoscaleInfoProvider to set the initial price range
-      seriesRef.current.applyOptions({
-        autoscaleInfoProvider: () => ({
-          priceRange: {
-            minValue: scaledMin,
-            maxValue: scaledMax,
-          },
-        }),
-      });
+        // Set default price scale: 5 pixels per point
+        const DEFAULT_PIXELS_PER_POINT = 5;
+        const chartHeight = containerRef.current?.clientHeight || 600;
+        const desiredPriceRange = chartHeight / DEFAULT_PIXELS_PER_POINT;
 
-      // Trigger a re-scale to apply the new range
-      chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+        // Center on the last candle's close price
+        const lastCandle = candles[candles.length - 1];
+        const centerPrice = lastCandle?.c || (minPrice + maxPrice) / 2;
+
+        const scaledMin = centerPrice - desiredPriceRange / 2;
+        const scaledMax = centerPrice + desiredPriceRange / 2;
+
+        seriesRef.current.applyOptions({
+          autoscaleInfoProvider: () => ({
+            priceRange: {
+              minValue: scaledMin,
+              maxValue: scaledMax,
+            },
+          }),
+        });
+        chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+
+        // Clear the fixed provider after initial view renders so it won't
+        // snap back to this fixed range on subsequent auto-scale triggers
+        requestAnimationFrame(() => {
+          if (seriesRef.current) {
+            seriesRef.current.applyOptions({ autoscaleInfoProvider: undefined });
+          }
+        });
+      }
+    } else {
+      // Polling update — preserve the user's current view
+      const visibleRange = chartRef.current?.timeScale().getVisibleLogicalRange();
+      seriesRef.current.setData(formatted);
+      // Restore visible time range so scroll position is preserved
+      if (visibleRange && chartRef.current) {
+        chartRef.current.timeScale().setVisibleLogicalRange(visibleRange);
+      }
     }
-  }, [candles, chartReady]);
+  }, [candles, chartReady, timeframe]);
 
   // VP Structural Levels - will be derived from actual VP data in the future
   // For now, let the chart auto-scale based on candle data
@@ -708,23 +712,14 @@ export default function GexChartPanel({
                 {tf}
               </button>
             ))}
+            <button
+              className="gex-chart-tf-btn"
+              onClick={handleAutoFit}
+              title="Fit candles to window"
+            >
+              Fit
+            </button>
           </div>
-          <button
-            className={`gex-chart-ai-btn ${analyzing ? 'analyzing' : ''}`}
-            onClick={handleAnalyze}
-            disabled={analyzing || !chartRef.current}
-            title="AI Analysis - Analyze chart structure"
-          >
-            {analyzing ? (
-              <span className="ai-spinner" />
-            ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <circle cx="12" cy="12" r="10"/>
-                <path d="M12 16v-4M12 8h.01"/>
-              </svg>
-            )}
-            AI
-          </button>
         </div>
       </div>
 
@@ -1023,73 +1018,6 @@ export default function GexChartPanel({
         </div>
       )}
 
-      {/* AI Analysis Results Panel */}
-      {showAnalysis && (
-        <div className="dg-analysis-panel">
-          <div className="dg-analysis-header">
-            <h4>AI Analysis</h4>
-            <button
-              className="dg-analysis-close"
-              onClick={() => setShowAnalysis(false)}
-              title="Close"
-            >
-              ×
-            </button>
-          </div>
-          <div className="dg-analysis-content">
-            {analyzing ? (
-              <div className="dg-analysis-loading">
-                <div className="ai-spinner" />
-                <span>Analyzing chart structure...</span>
-              </div>
-            ) : analysisResult ? (
-              <>
-                <div className="dg-analysis-bias">
-                  <span className={`bias-badge ${analysisResult.bias}`}>
-                    {analysisResult.bias.toUpperCase()}
-                  </span>
-                  <span className="memory-strength">
-                    Memory: {(analysisResult.marketMemoryStrength * 100).toFixed(0)}%
-                  </span>
-                </div>
-                <div className="dg-analysis-structures">
-                  {analysisResult.volumeNodes.length > 0 && (
-                    <div className="structure-item">
-                      <span className="structure-label">Volume Nodes:</span>
-                      <span className="structure-values">
-                        {analysisResult.volumeNodes.map(p => p.toFixed(0)).join(', ')}
-                      </span>
-                    </div>
-                  )}
-                  {analysisResult.volumeWells.length > 0 && (
-                    <div className="structure-item">
-                      <span className="structure-label">Volume Wells:</span>
-                      <span className="structure-values">
-                        {analysisResult.volumeWells.map(p => p.toFixed(0)).join(', ')}
-                      </span>
-                    </div>
-                  )}
-                  {analysisResult.crevasses.length > 0 && (
-                    <div className="structure-item">
-                      <span className="structure-label">Crevasses:</span>
-                      <span className="structure-values">
-                        {analysisResult.crevasses.map(([s, e]) => `${s.toFixed(0)}-${e.toFixed(0)}`).join(', ')}
-                      </span>
-                    </div>
-                  )}
-                </div>
-                <div className="dg-analysis-summary">
-                  {analysisResult.summary}
-                </div>
-              </>
-            ) : (
-              <div className="dg-analysis-empty">
-                Click AI to analyze the chart
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 }
