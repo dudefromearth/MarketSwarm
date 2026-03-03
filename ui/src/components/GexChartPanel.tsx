@@ -245,6 +245,12 @@ export default function GexChartPanel({
       scaleMargins: { top: 0.12, bottom: 0.12 },
     });
     chartRef.current.timeScale().fitContent();
+    // Unlock vertical axis after fit so user can drag freely
+    requestAnimationFrame(() => {
+      if (chartRef.current) {
+        chartRef.current.priceScale('right').applyOptions({ autoScale: false });
+      }
+    });
   }, []);
 
   // Sync external gexMode prop with config (if parent changes it)
@@ -382,7 +388,6 @@ export default function GexChartPanel({
     }
 
     setChartReady(true);
-    chart.priceScale('right').applyOptions({ autoScale: true });
 
     // Subscribe to crosshair move to detect any chart interaction (zoom/pan/resize)
     // This will update the GEX panel to stay in sync with the chart's price scale
@@ -562,6 +567,13 @@ export default function GexChartPanel({
 
       if (chartRef.current) {
         chartRef.current.timeScale().fitContent();
+        // Let auto-scale fit the candles, then unlock vertical axis for free dragging
+        chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+        requestAnimationFrame(() => {
+          if (chartRef.current) {
+            chartRef.current.priceScale('right').applyOptions({ autoScale: false });
+          }
+        });
       }
     } else {
       // Polling update — preserve the user's current view
