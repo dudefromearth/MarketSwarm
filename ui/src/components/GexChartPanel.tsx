@@ -239,28 +239,19 @@ export default function GexChartPanel({
   }, []);
 
   const handleAutoFit = useCallback(() => {
-    if (!chartRef.current || !seriesRef.current || candles.length === 0) return;
-    // Compute actual data range from candle highs/lows — NOT centered on spot
-    const dataMin = Math.min(...candles.map(c => c.l));
-    const dataMax = Math.max(...candles.map(c => c.h));
-    const padding = (dataMax - dataMin) * 0.10;
-    // Set exact range via provider, apply, then clear and unlock
-    seriesRef.current.applyOptions({
-      autoscaleInfoProvider: () => ({
-        priceRange: { minValue: dataMin - padding, maxValue: dataMax + padding },
-      }),
-    });
-    chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+    if (!chartRef.current) return;
+    // Fit time axis, then let native auto-scale fit price axis across 2 frames
     chartRef.current.timeScale().fitContent();
+    chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+    // Wait 2 frames for LW Charts to render the auto-scaled view, then freeze
     requestAnimationFrame(() => {
-      if (seriesRef.current) {
-        seriesRef.current.applyOptions({ autoscaleInfoProvider: undefined });
-      }
-      if (chartRef.current) {
-        chartRef.current.priceScale('right').applyOptions({ autoScale: false });
-      }
+      requestAnimationFrame(() => {
+        if (chartRef.current) {
+          chartRef.current.priceScale('right').applyOptions({ autoScale: false });
+        }
+      });
     });
-  }, [candles]);
+  }, []);
 
   // Sync external gexMode prop with config (if parent changes it)
   useEffect(() => {
@@ -575,23 +566,15 @@ export default function GexChartPanel({
       seriesRef.current.setData(formatted);
 
       if (chartRef.current) {
-        // Fit all candles using actual data range, not spot-centered
-        const padding = (maxPrice - minPrice) * 0.10;
-        seriesRef.current.applyOptions({
-          autoscaleInfoProvider: () => ({
-            priceRange: { minValue: minPrice - padding, maxValue: maxPrice + padding },
-          }),
-        });
-        chartRef.current.priceScale('right').applyOptions({ autoScale: true });
         chartRef.current.timeScale().fitContent();
-        // Clear provider and unlock for free dragging
+        chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+        // Wait 2 frames for auto-scale to render, then unlock for free dragging
         requestAnimationFrame(() => {
-          if (seriesRef.current) {
-            seriesRef.current.applyOptions({ autoscaleInfoProvider: undefined });
-          }
-          if (chartRef.current) {
-            chartRef.current.priceScale('right').applyOptions({ autoScale: false });
-          }
+          requestAnimationFrame(() => {
+            if (chartRef.current) {
+              chartRef.current.priceScale('right').applyOptions({ autoScale: false });
+            }
+          });
         });
       }
     } else {
