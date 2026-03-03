@@ -239,19 +239,28 @@ export default function GexChartPanel({
   }, []);
 
   const handleAutoFit = useCallback(() => {
-    if (!chartRef.current) return;
-    chartRef.current.priceScale('right').applyOptions({
-      autoScale: true,
-      scaleMargins: { top: 0.12, bottom: 0.12 },
+    if (!chartRef.current || !seriesRef.current || candles.length === 0) return;
+    // Compute actual data range from candle highs/lows — NOT centered on spot
+    const dataMin = Math.min(...candles.map(c => c.l));
+    const dataMax = Math.max(...candles.map(c => c.h));
+    const padding = (dataMax - dataMin) * 0.10;
+    // Set exact range via provider, apply, then clear and unlock
+    seriesRef.current.applyOptions({
+      autoscaleInfoProvider: () => ({
+        priceRange: { minValue: dataMin - padding, maxValue: dataMax + padding },
+      }),
     });
+    chartRef.current.priceScale('right').applyOptions({ autoScale: true });
     chartRef.current.timeScale().fitContent();
-    // Unlock vertical axis after fit so user can drag freely
     requestAnimationFrame(() => {
+      if (seriesRef.current) {
+        seriesRef.current.applyOptions({ autoscaleInfoProvider: undefined });
+      }
       if (chartRef.current) {
         chartRef.current.priceScale('right').applyOptions({ autoScale: false });
       }
     });
-  }, []);
+  }, [candles]);
 
   // Sync external gexMode prop with config (if parent changes it)
   useEffect(() => {
@@ -566,10 +575,20 @@ export default function GexChartPanel({
       seriesRef.current.setData(formatted);
 
       if (chartRef.current) {
-        chartRef.current.timeScale().fitContent();
-        // Let auto-scale fit the candles, then unlock vertical axis for free dragging
+        // Fit all candles using actual data range, not spot-centered
+        const padding = (maxPrice - minPrice) * 0.10;
+        seriesRef.current.applyOptions({
+          autoscaleInfoProvider: () => ({
+            priceRange: { minValue: minPrice - padding, maxValue: maxPrice + padding },
+          }),
+        });
         chartRef.current.priceScale('right').applyOptions({ autoScale: true });
+        chartRef.current.timeScale().fitContent();
+        // Clear provider and unlock for free dragging
         requestAnimationFrame(() => {
+          if (seriesRef.current) {
+            seriesRef.current.applyOptions({ autoscaleInfoProvider: undefined });
+          }
           if (chartRef.current) {
             chartRef.current.priceScale('right').applyOptions({ autoScale: false });
           }
