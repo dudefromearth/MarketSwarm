@@ -239,11 +239,7 @@ export default function GexChartPanel({
   }, []);
 
   const handleAutoFit = useCallback(() => {
-    if (!chartRef.current || !seriesRef.current) return;
-    // Remove the fixed 5px/pt autoscaleInfoProvider — let LW Charts auto-scale
-    seriesRef.current.applyOptions({
-      autoscaleInfoProvider: undefined,
-    });
+    if (!chartRef.current) return;
     chartRef.current.priceScale('right').applyOptions({
       autoScale: true,
       scaleMargins: { top: 0.12, bottom: 0.12 },
@@ -523,7 +519,7 @@ export default function GexChartPanel({
   }, [chartReady, showStructuralLines, dgArtifact?.structures?.volumeNodes]);
 
   // Update candle data and track price range
-  // On initial load or timeframe change: apply 5px/pt default view
+  // On initial load or timeframe change: fit content to window
   // On polling updates: preserve the user's current scroll/zoom position
   useEffect(() => {
     if (!chartReady || !seriesRef.current || !candles || candles.length === 0) return;
@@ -547,7 +543,7 @@ export default function GexChartPanel({
     const isInitialLoad = !initialLoadDoneRef.current || timeframeChanged;
 
     if (isInitialLoad) {
-      // First load or timeframe changed — apply full view setup
+      // First load or timeframe changed — fit all candles to window
       lastTimeframeRef.current = timeframe;
       initialLoadDoneRef.current = true;
 
@@ -555,36 +551,6 @@ export default function GexChartPanel({
 
       if (chartRef.current) {
         chartRef.current.timeScale().fitContent();
-
-        // Set default price scale: 5 pixels per point
-        const DEFAULT_PIXELS_PER_POINT = 5;
-        const chartHeight = containerRef.current?.clientHeight || 600;
-        const desiredPriceRange = chartHeight / DEFAULT_PIXELS_PER_POINT;
-
-        // Center on the last candle's close price
-        const lastCandle = candles[candles.length - 1];
-        const centerPrice = lastCandle?.c || (minPrice + maxPrice) / 2;
-
-        const scaledMin = centerPrice - desiredPriceRange / 2;
-        const scaledMax = centerPrice + desiredPriceRange / 2;
-
-        seriesRef.current.applyOptions({
-          autoscaleInfoProvider: () => ({
-            priceRange: {
-              minValue: scaledMin,
-              maxValue: scaledMax,
-            },
-          }),
-        });
-        chartRef.current.priceScale('right').applyOptions({ autoScale: true });
-
-        // Clear the fixed provider after initial view renders so it won't
-        // snap back to this fixed range on subsequent auto-scale triggers
-        requestAnimationFrame(() => {
-          if (seriesRef.current) {
-            seriesRef.current.applyOptions({ autoscaleInfoProvider: undefined });
-          }
-        });
       }
     } else {
       // Polling update — preserve the user's current view
