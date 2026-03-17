@@ -2765,6 +2765,13 @@ function App() {
               </button>
               <button
                 className="header-admin-btn"
+                onClick={() => navigate('/admin/vp-editor')}
+                title="VP Line Editor"
+              >
+                VP Editor
+              </button>
+              <button
+                className="header-admin-btn"
                 onClick={() => navigate('/admin')}
                 title="Admin Panel"
               >
