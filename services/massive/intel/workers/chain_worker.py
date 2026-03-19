@@ -111,19 +111,27 @@ class ChainWorker:
             return None
         return float(json.loads(raw).get("value"))
 
-    def _compute_range(self, spot: float, vix: float | None, symbol: str) -> int:
+    def _compute_range(self, spot: float, vix: float | None, symbol: str, dte: int = 1) -> int:
+        """Compute strike range for a given expiration.
+
+        Range scales with √DTE so further expirations receive a wider strike
+        band proportional to the expected move over that horizon.
+        dte=0 (same-day expiry) is treated as 1 to avoid √0.
+        """
         cfg = self.symbol_config.get(symbol, {"em_mult": 2.25})
         em_mult = cfg["em_mult"]
+        effective_days = max(1, dte)
 
         if not vix or vix <= 0:
-            # Fallback: use a percentage of spot when VIX unavailable
-            return int(spot * 0.03)  # ~3% of spot as default range
+            # Fallback: percentage of spot scaled by √DTE
+            return int(spot * 0.03 * math.sqrt(effective_days))
 
-        em = spot * (vix / 100.0) * math.sqrt(self.em_days / 252.0)
+        em = spot * (vix / 100.0) * math.sqrt(effective_days / 252.0)
         computed_range = int(round(em_mult * em)) or 50
 
         self.logger.debug(
-            f"[CHAIN RANGE] {symbol}: spot={spot:.0f} vix={vix:.1f} em_mult={em_mult} range={computed_range}",
+            f"[CHAIN RANGE] {symbol} DTE={dte}: spot={spot:.0f} vix={vix:.1f} "
+            f"em_mult={em_mult} eff_days={effective_days} range={computed_range}",
             emoji="📏",
         )
         return computed_range
@@ -206,7 +214,7 @@ class ChainWorker:
         for ticker in contracts.keys():
             # Check if expiration matches today (YYMMDD or YYYYMMDD format)
             if today in ticker or today_long in ticker:
-                zero_dte_tickers.add(f"Q.{ticker}")  # Q for quotes (real-time bid/ask)
+                zero_dte_tickers.add(f"T.{ticker}")  # T for trades
 
         if not zero_dte_tickers:
             self.logger.debug("[CHAIN] No 0-DTE tickers for WS subscription")
@@ -253,16 +261,23 @@ class ChainWorker:
                 sym_cfg = self.symbol_config.get(underlying, {})
                 strike_inc = sym_cfg.get("strike_increment", 5)
                 atm = _round_to_nearest(spot, strike_inc)
-                rng = self._compute_range(spot, vix, underlying)
                 expirations = await self._list_expirations(underlying.replace("I:", ""))
-
-                self.logger.info(
-                    f"[CHAIN RANGE] {underlying}: atm={atm} range=±{rng} ({atm-rng} to {atm+rng})",
-                    emoji="📏",
-                )
+                today = date.today()
 
                 for exp in expirations:
-                    self.logger.info(f"[CHAIN FETCH] {underlying} {exp}", emoji="📡")
+                    # Compute DTE for this expiration — range scales with √DTE
+                    try:
+                        exp_date = date.fromisoformat(exp)
+                        dte = max(0, (exp_date - today).days)
+                    except (ValueError, TypeError):
+                        dte = 1
+
+                    rng = self._compute_range(spot, vix, underlying, dte=dte)
+
+                    self.logger.info(
+                        f"[CHAIN FETCH] {underlying} {exp} DTE={dte} range=±{rng} ({atm-rng} to {atm+rng})",
+                        emoji="📡",
+                    )
 
                     # Fetch chain in thread pool to avoid blocking event loop
                     contracts = await self._fetch_chain(underlying, exp, atm, rng)
